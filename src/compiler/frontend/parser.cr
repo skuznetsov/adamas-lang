@@ -17576,8 +17576,8 @@ current_token.kind == Token::Kind::Identifier &&
 
               # Parse parameter name (optional for top-level fun)
               # Check if this is a named parameter (identifier : type) or unnamed (just type)
-              param_name : Slice(UInt8)?
-              param_name_span : Span?
+              param_name = nil.as(Slice(UInt8)?)
+              param_name_span = nil.as(Span?)
 
               # Allow keywords as parameter names (e.g., if/then/else/class) when followed by ':'
               if token_can_be_arg_name?(current_token)
@@ -17599,9 +17599,15 @@ current_token.kind == Token::Kind::Identifier &&
                 # If no colon, fall through to type parsing (unnamed)
               end
 
-              # Parse parameter type using parse_bare_proc_type
-              # This handles: Int32, Void* -> Void*, (Int, String) -> Bool, etc.
-              param_type = parse_bare_proc_type
+              # Unnamed C parameters have an outer comma boundary. A bare
+              # proc parser would consume a preceding parameter together with
+              # the next parenthesized callback. Named parameters may use bare
+              # proc notation, matching Crystal's parse_fun_def grammar.
+              param_type = if param_name
+                             parse_bare_proc_type
+                           else
+                             parse_union_type_simple_for_annotation
+                           end
               if param_type.nil?
                 emit_unexpected(current_token)
                 @paren_depth -= 1
@@ -18061,6 +18067,19 @@ current_token.kind == Token::Kind::Identifier &&
           Slice.new(start_ptr, end_ptr - start_ptr)
         end
 
+        # An opening type-list parenthesis or comma requires another type,
+        # independently of outer expression delimiter depth.
+        private def skip_type_list_continuation
+          loop do
+            case current_token.kind
+            when Token::Kind::Whitespace, Token::Kind::Comment, Token::Kind::Newline
+              advance
+            else
+              break
+            end
+          end
+        end
+
         # Parse atomic (base) type
         # Handles: identifiers, paths (A::B), generics (Box(T)), tuples, self, typeof, proc types with parens
         # Returns zero-copy slice
@@ -18221,7 +18240,7 @@ current_token.kind == Token::Kind::Identifier &&
           when Token::Kind::LParen
             # Parenthesized proc type: (A, B) -> C or (A) -> B or just (Type)
             advance # consume (
-            skip_trivia
+            skip_type_list_continuation
 
             # Parse first type
             first_type = parse_union_type_for_annotation
@@ -18251,7 +18270,7 @@ current_token.kind == Token::Kind::Identifier &&
               # Multiple types: (A, B, ...) or (A, B, ... -> C)
               loop do
                 advance # consume comma
-                skip_trivia
+                skip_type_list_continuation
                 break if current_token.kind == Token::Kind::RParen
 
                 next_type = parse_union_type_for_annotation

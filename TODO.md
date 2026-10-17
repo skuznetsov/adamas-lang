@@ -1,5 +1,26 @@
 # Adamas Bootstrap TODO
 
+2026-10-17 UNNAMED C CALLBACK PARAMETER BOUNDARIES: the parser treated an
+unnamed C parameter as a bare Proc input list and consumed the comma before a
+following parenthesized callback. Lib recovery then discarded the callback and
+subsequent valid declarations without diagnostics. Match original Crystal's
+named/bare versus unnamed/union parameter grammar, reset each optional name,
+and continue parenthesized type lists locally after '(' and comma regardless
+of outer expression delimiter depth. DoD: unnamed_fun_proc_boundary_repro.sh
+qualifies six original-parser fixtures, then passes 41 Adamas/neighbor specs
+(run parser3464). Fresh S1 parser3461 builds; all 1919 production src files match
+its sealed manifest. Exact parent3423 loses following declarations in run3447;
+intermediate3453 fails the no-argument multiline callback return in run3463.
+- [x] Preserve unnamed callback formal boundaries and following lib declarations.
+- [x] Preserve named bare Proc syntax, mixed parameter names and multiline lists.
+- [ ] Make lib recovery report skipped declarations instead of silently losing
+  them; the parent reproducer reports zero diagnostics despite data loss.
+- [ ] Probe zero-input and nested Proc annotation forms against original Crystal.
+- [ ] Repair the separate string-to-TypeRef conversion of grouped Proc inputs
+  and synthesized C callback fallthrough return before claiming callback ABI parity.
+- [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
+
+
 2026-10-17 SPECULATIVE LOCAL RETURN SUMMARIES: assignment-RHS summaries
 record possible assigned types without proving that the local is initialized on
 every path. AST return inference consumed that summary as an exact result,

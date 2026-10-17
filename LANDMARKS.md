@@ -19939,3 +19939,36 @@ can still bypass local-write evidence, and a partial assignment scan is not a
 complete repair. Unchanged LavinMQ Hash#map block-result inference, fresh S2,
 runtime/spec parity and bootstrap fixed point remain open. No stdlib or
 application source was changed.
+
+
+### C callback parameters preserve outer declaration boundaries (2026-10-17)
+Original Crystal parses named C formals with its bare Proc parser and unnamed
+formals with its union-type parser. Adamas used the bare parser for both; an
+unnamed pointer followed by a parenthesized callback was consumed as one Proc
+input list. Failed lib recovery silently dropped the callback and subsequent
+valid declarations. Reset optional names per formal and preserve the unnamed
+outer comma boundary. Parenthesized type lists consume whitespace/comments/
+newlines locally after '(' and comma, independent of expression delimiter
+counters; otherwise a no-argument fun's multiline callback return still fails.
+No stdlib or application changes.
+
+`regression_tests/unnamed_fun_proc_boundary_repro.sh` passes six original-parser
+fixtures followed by 41 candidate/neighbor parser specs in pinned run3464.
+Controls cover scalar/callback/scalar formals, named bare multi-input Procs,
+mixed names, multiline callback inputs and a multiline callback return with no
+outer fun parameter list. Exact parent3423 loses all but the preceding fun in
+run3447, with zero diagnostics. Intermediate3453 fails the last continuation
+control in run3463. Fresh S1 parser3461 builds successfully; all 1919 production
+src files match its sealed manifest. Parser SHA-256
+44fd1f5cba81a62c02b070748e69ce5b05992e093c1a1d5e8505f90bcfadd631;
+host 7b2308d1c8f17272a56034130d0e1011f7939137e02e0dea6917f9413d31fd6a.
+
+Scoped source adversary ROBUST: the local continuation helper changes no
+delimiter counters or source-slice lifetimes and matches upstream trivia rules.
+Refresh after fun/type grammar, trivia handling, delimiter tracking or lib
+recovery changes; revert parser and regression together. Silent lib recovery,
+zero-input/nested Proc annotations and later string-to-TypeRef conversion need
+separate checks. Diagnostic Lavin run3460 restores all 179 LibCrypto members
+(previously 52) but exposes a separate grouped Proc input conversion bug and an
+unresolved generic-union hash return. No broker runtime/spec parity, fresh S2
+or bootstrap fixed point is established by these parser checks.
