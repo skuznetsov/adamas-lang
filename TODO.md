@@ -1,5 +1,21 @@
 # Adamas Bootstrap TODO
 
+2026-10-16 SELECTED SOURCE NEW DEFAULTS: retain a source-selected constructor
+and its defining arena when omitted named-only defaults become ABI arguments.
+A second lookup of the packed positional vector discarded String.new(Bytes,
+truncate_at_null: false) and chose a generated allocator, returning an empty
+String. DoD: constructor_default_new_identity_repro.sh, original-first exact
+bytes for embedded-NUL/empty slices, omitted/explicit false/true and ordinary
+allocator/source-new controls. string2182 exact parent fails only the omitted
+embedded-NUL case; string2184 exact String-only candidate passes. Host io2177a;
+refresh after default binding, constructor selection or source-arena changes.
+- [ ] Repair initial source-new selection separately. Generic and non-generic
+  custom constructors can already select the wrong target before defaults;
+  preserving an existing source selection cannot repair that earlier boundary.
+  Archived generic, same-arity and distinct-arity controls remain RED on both
+  parent and candidate (string2179_retained_new_evidence).
+- [ ] Complete fresh S2 and unchanged LavinMQ runtime/spec parity.
+
 2026-10-16 FLOW-LOCAL UNION JOINS: a registered storage union is not evidence
 that an expression can return every arm in that union. The old covering-union
 lookup admitted unrelated Nil/other arms at if/case/rescue, inline-return and

@@ -29,6 +29,16 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+An already-selected source constructor retains its Def, symbol and defining
+arena when an omitted named-only default is appended to the ABI vector. Packed
+arguments cannot reopen source overload selection as an unnamed positional
+call. The existing initializer-versus-explicit-new priority guard still applies.
+DoD: constructor_default_new_identity_repro.sh compares original-first exact
+bytes for omitted/explicit String slice defaults, empty slices and allocator/
+source-new controls. Rollback is the bounded selected-target transport through
+default binding and final constructor matching. This does not repair initial
+source-new lookup failures, certify all constructor priorities or close S2.
+
 Control-flow and virtual-return joins consume only types supplied by their
 actual incoming values. An existing wider union descriptor cannot add possible
 values. The shared value-set join flattens nested unions, removes redundant

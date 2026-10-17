@@ -1,5 +1,24 @@
 # LANDMARKS
 
+Selected source-new defaults (2026-10-16): apply_default_args already selected
+the correct source String.new(Bytes, *, truncate_at_null = false), but final
+constructor matching interpreted its appended named default as an ordinary
+positional argument and selected a generated allocator. Retain that exact Def,
+symbol and defining arena across packing and explicit-new selection; preserve
+the existing initializer-versus-explicit-new guard. This is source selection
+continuity, not a String-specific implementation or a stdlib change.
+constructor_default_new_identity_repro.sh passes original-first with the exact
+String-only host io2177a (string2184); exact parent string2182 returns an empty
+String only for the nonempty omitted-keyword case. Explicit false/true, empty
+slices, a generated allocator and explicit named source-new controls pass.
+Scoped ROBUST for the retained-selection/default boundary. HIR SHA256
+69102dc64bd1878d64c44a6a0f273cd4a45ee5d39334c6dd0cae25a8b13970a7;
+host e4cf0de7fd30f4ec1c7d8e39113d5382c367b51f8b63fd89b8f8210ae041417b.
+Refresh after default binding, selected Def/arena transport or constructor
+priority changes. Initial custom source-new lookup failures survive in both
+parent and candidate; archived controls are separate open work. Fresh bootstrap
+and LavinMQ parity remain open.
+
 Flow-local union authority (2026-10-16): infer join arms from actual incoming
 values, not from any previously registered union that happens to cover them.
 The old lookup introduced Nil at the enclosing infer_safe_navigation if even
