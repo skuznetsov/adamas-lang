@@ -7025,6 +7025,8 @@ module Adamas::HIR
     @current_typeof_locals : Hash(String, TypeRef)?
     # Optional body context for local-type inference when resolving identifiers.
     @infer_body_context : Array(ExprId)?
+    # Per-frame marker for return estimates that consumed assignment-RHS local summaries.
+    @return_infer_unproven_local_reads : Array(Bool)
     @infer_callsite_return_stack : Set({UInt64, String?, Array(TypeRef), Array({String, TypeRef})})
     # Callsite return memo (Tarjan-style, scoped to one outermost inference
     # episode). Without it, the active-stack cycle guard alone explores every
@@ -7692,6 +7694,7 @@ module Adamas::HIR
       @current_def_node = nil
       @current_typeof_locals = nil
       @infer_body_context = nil
+      @return_infer_unproven_local_reads = [] of Bool
       @infer_callsite_return_stack = Set({UInt64, String?, Array(TypeRef), Array({String, TypeRef})}).new
       @infer_callsite_return_frames = [] of {UInt64, String?, Array(TypeRef), Array({String, TypeRef})}
       @infer_callsite_return_lows = [] of Int32
@@ -26163,21 +26166,36 @@ module Adamas::HIR
       @current_method = method_name
       @current_class = self_type_name if self_type_name
       @current_def_node = node
+      @return_infer_unproven_local_reads << false
       begin
-        with_arena(resolved_arena) do
+        inferred = with_arena(resolved_arena) do
           if extra_type_params.empty?
-            return infer_concrete_return_type_from_body_inner(body, self_type_name, method_name, resolved_arena, debug_infer)
-          end
-          return with_type_param_map(extra_type_params) do
             infer_concrete_return_type_from_body_inner(body, self_type_name, method_name, resolved_arena, debug_infer)
+          else
+            with_type_param_map(extra_type_params) do
+              infer_concrete_return_type_from_body_inner(body, self_type_name, method_name, resolved_arena, debug_infer)
+            end
           end
         end
+        return nil if @return_infer_unproven_local_reads.last? || false
+        inferred
       ensure
+        poisoned = @return_infer_unproven_local_reads.pop? || false
+        # A nested return estimate is part of the enclosing AST estimate. Keep
+        # the enclosing estimate unknown rather than dropping that child arm.
+        if poisoned && !@return_infer_unproven_local_reads.empty?
+          @return_infer_unproven_local_reads[@return_infer_unproven_local_reads.size - 1] = true
+        end
         @infer_body_context = old_body_context
         @current_method = old_method
         @current_class = old_class
         @current_def_node = old_def
       end
+    end
+
+    private def note_return_inference_unproven_local_read : Nil
+      index = @return_infer_unproven_local_reads.size - 1
+      @return_infer_unproven_local_reads[index] = true if index >= 0
     end
 
     private def infer_concrete_return_type_from_body_inner(
@@ -29210,7 +29228,20 @@ module Adamas::HIR
     end
 
 
+    # Keep the local-assignment summary as a conservative input during speculative
+    # return inference, regardless of which inference consumer requested it.
     private def infer_local_type_from_body(
+      body : Array(ExprId),
+      name : String,
+      self_type_name : String?,
+      visited : Set(String)? = nil,
+    ) : TypeRef?
+      inferred = infer_local_type_from_body_inner(body, name, self_type_name, visited)
+      note_return_inference_unproven_local_read if inferred
+      inferred
+    end
+
+    private def infer_local_type_from_body_inner(
       body : Array(ExprId),
       name : String,
       self_type_name : String?,

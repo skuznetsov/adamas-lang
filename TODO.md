@@ -1,5 +1,25 @@
 # Adamas Bootstrap TODO
 
+2026-10-17 SPECULATIVE LOCAL RETURN SUMMARIES: assignment-RHS summaries
+record possible assigned types without proving that the local is initialized on
+every path. AST return inference consumed that summary as an exact result,
+published Int32, and erased the possible Nil result of a lazy call. Mark the
+active return-estimation frame at the shared local-summary producer, including
+cache hits, and defer its result to demanded lowering. Nested uncertainty
+propagates to the active parent; ensure restores the frame and caller context.
+DoD: local_return_summary_contract_repro.sh matches eight original-first native
+outputs (bare/parenthesized lazy calls, assignments, branches, recursion, loop).
+Fresh S1 return3423 passes repository run3428; exact parent3338 prints 0 instead
+of 20 in run3429. Selected generic-annotation and Array payload neighbors pass
+run3430. No stdlib or application changes.
+- [x] Prevent assignment-RHS summaries from certifying a concrete return ABI.
+- [ ] Repair the distinct annotated-parameter/cache bypass for reassigned local
+  identifiers; a partial assigned-name scan is insufficient for nested writes.
+- [ ] Resolve pending block result types without borrowing a receiver's type
+  parameter aliases (the unchanged LavinMQ Hash#map frontier).
+- [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
+
+
 2026-10-17 SELECTED GENERIC RETURN ANNOTATIONS: owner specialization resolved
 an explicit generic annotation before a call selected its source Def. Later
 AST-only typeof and bare-member paths could consume that provisional family

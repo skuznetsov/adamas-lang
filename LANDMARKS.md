@@ -19906,3 +19906,36 @@ The nested typeof/index nullable-expression probe has four blank Bool outputs
 on both candidate3349 and parent3350, so it remains an independent open bug.
 This delta does not close general flow-sensitive return inference. Fresh S2,
 unchanged LavinMQ runtime/spec parity and bootstrap fixed point remain open.
+
+
+### Speculative local summaries cannot certify a return ABI (2026-10-17)
+The assignment-RHS collector summarizes possible writes; it does not prove
+initialization or reachability at a read. AST return estimation treated that
+summary as exact and published Int32 for a lazy call whose runtime result can
+be Nil. Mark successful summary consumption at the shared producer, after its
+cached and uncached paths. A marked return-estimation frame returns unknown;
+nested uncertainty propagates into the active parent. The frame is popped and
+caller body/method/class/Def context is restored in ensure. Ordinary local
+summary computation remains available for its other consumers.
+
+`python3 run_clean_portable_regression.py return3423_production_summary_taint_only
+return3428_repository_summary_contract regression_tests/local_return_summary_contract_repro.sh`
+passes eight original-first no-prelude native outputs: bare and parenthesized
+lazy calls, assignments on every path, initialization before a conditional,
+exhaustive and terminating branches, recursion and a zero-iteration loop.
+Exact parent3338 fails the same repository script in run3429 (0 instead of 20).
+Selected generic-annotation type assertions and Array payload checks also pass
+run3430. Two original-first nested-estimate/sibling invocation-order controls
+also pass run3431. Production src matches all 1919 files in the tested manifest.
+HIR SHA-256 0f22cf4bd011f9b7dd8c455368fc5b2e8bee9efa849bdf91190d0d14a8480f9e;
+host 7e0fabaaa33b7663fba905443a3686e8e70640734c5db378bc11ffbe7cba853e.
+
+Scoped source adversary ROBUST for marking cache hits and restoring nested
+frames. Refresh after local-summary consumers/caches, speculative return
+inference or demanded lowering changes; revert source and the regression
+together. Conservative deferral can reveal missing return-demand paths; it is
+not a complete flow analysis. The separate annotated-parameter/cache shortcut
+can still bypass local-write evidence, and a partial assignment scan is not a
+complete repair. Unchanged LavinMQ Hash#map block-result inference, fresh S2,
+runtime/spec parity and bootstrap fixed point remain open. No stdlib or
+application source was changed.
