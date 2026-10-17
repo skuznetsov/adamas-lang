@@ -110535,20 +110535,88 @@ module Adamas::HIR
 
     # Expand splat arguments in a call
     # *array becomes individual elements at compile time (if array is literal)
+    # Read the pointee from the pointer descriptor itself. The descriptor's
+    # type parameter is authoritative even when its rendered name is mangled.
+    private def out_pointee_type_for_param(param_type : TypeRef) : TypeRef?
+      # The unparameterized FFI Pointer is the source-level Void* spelling.
+      return TypeRef::VOID if param_type == TypeRef::POINTER
+
+      desc = @module.get_type_descriptor(param_type)
+      return nil unless desc && desc.kind == TypeKind::Pointer
+
+      desc.type_params.first?
+    end
+
     private def out_alloc_type_for_param(param_type : TypeRef) : TypeRef
-      if desc = @module.get_type_descriptor(param_type)
-        if desc.kind == TypeKind::Pointer
-          elem_type = pointer_element_type(desc.name)
-          return elem_type unless elem_type == TypeRef::VOID
-        end
+      out_pointee_type_for_param(param_type) || TypeRef::VOID
+    end
+
+    private def out_pointee_type_for_extern_arg(
+      extern_func : ExternFunction,
+      parameter_index : Int32,
+      node : Adamas::Compiler::Frontend::OutNode,
+    ) : TypeRef
+      call_name = if lib_name = extern_func.lib_name
+                    "#{lib_name}.#{extern_func.name}"
+                  else
+                    extern_func.name
+                  end
+
+      if extern_func.varargs && parameter_index >= extern_func.param_types.size
+        var_name = safe_slice_to_string(node.identifier) || "out argument"
+        raise LoweringError.new(
+          "can't use out at varargs position: declare the variable with `#{var_name} = uninitialized ...` and pass it with `pointerof(#{var_name})`",
+          node
+        )
       end
-      param_type == TypeRef::POINTER ? TypeRef::POINTER : param_type
+
+      parameter_type = extern_func.param_types[parameter_index]?
+      parameter_name = if name = extern_func.parameter_names[parameter_index]?
+                         name.empty? ? "##{parameter_index + 1}" : "'#{name}'"
+                       else
+                         "##{parameter_index + 1}"
+                       end
+      unless parameter_type
+        raise LoweringError.new(
+          "parameter #{parameter_name} of #{call_name} cannot be passed as 'out' because it is not a pointer",
+          node
+        )
+      end
+
+      pointee_type = out_pointee_type_for_param(parameter_type)
+      if pointee_type.nil?
+        raise LoweringError.new(
+          "parameter #{parameter_name} of #{call_name} cannot be passed as 'out' because it is not a pointer",
+          node
+        )
+      end
+      if pointee_type == TypeRef::VOID
+        raise LoweringError.new(
+          "can't use out with Void* (parameter #{parameter_name} of #{call_name} is Void*)",
+          node
+        )
+      end
+
+      pointee_type
+    end
+
+    private def out_pointee_compatible_with_ivar?(pointee_type : TypeRef, ivar_type : TypeRef) : Bool
+      return true if pointee_type == ivar_type
+
+      pointee_desc = @module.get_type_descriptor(pointee_type)
+      ivar_desc = @module.get_type_descriptor(ivar_type)
+      return false unless pointee_desc && ivar_desc
+      return false unless pointee_desc.kind == TypeKind::Class && ivar_desc.kind == TypeKind::Class
+
+      # A C function writing a derived object pointer into a base-typed ivar
+      # preserves the ivar's source-level assignability contract.
+      class_inherits_from?(pointee_desc.name, ivar_desc.name)
     end
 
     private def lower_out_arg(
       ctx : LoweringContext,
       node : Adamas::Compiler::Frontend::OutNode,
-      param_type : TypeRef,
+      pointee_type : TypeRef,
     ) : ValueId
       var_name = (safe_slice_to_string(node.identifier) || "")
 
@@ -110567,13 +110635,23 @@ module Adamas::HIR
         if self_id && (class_name = @current_class) && (ci = @class_info[class_name]?)
           # Ivar names may be stored with or without @ prefix
           if ivar_info = find_ivar_info(ci.ivars, ivar_name, var_name)
-            # Emit: self + ivar_offset (byte-level pointer arithmetic)
+            if ivar_info.type != TypeRef::VOID && !out_pointee_compatible_with_ivar?(pointee_type, ivar_info.type)
+              pointee_name = get_type_name_from_ref(pointee_type)
+              ivar_type_name = get_type_name_from_ref(ivar_info.type)
+              raise LoweringError.new(
+                "can't use out for #{var_name} of type #{ivar_type_name} with pointer to #{pointee_name}",
+                node
+              )
+            end
+            # Emit: self + ivar_offset (byte-level pointer arithmetic), retaining
+            # the declared pointee type on the FFI destination pointer.
             offset_lit = Literal.new(ctx.next_id, TypeRef::INT64, ivar_info.offset.to_i64)
             ctx.emit(offset_lit)
             ctx.register_type(offset_lit.id, TypeRef::INT64)
-            field_ptr = PointerAdd.new(ctx.next_id, TypeRef::POINTER, self_id, offset_lit.id, TypeRef::INT8)
+            field_type = pointer_type_ref_for_element(pointee_type)
+            field_ptr = PointerAdd.new(ctx.next_id, field_type, self_id, offset_lit.id, TypeRef::INT8)
             ctx.emit(field_ptr)
-            ctx.register_type(field_ptr.id, TypeRef::POINTER)
+            ctx.register_type(field_ptr.id, field_type)
             return field_ptr.id # Already a pointer — no AddressOf needed
           end
         end
@@ -110585,7 +110663,7 @@ module Adamas::HIR
         raise LoweringError.new("variable '#{var_name}' is already defined, out must be used to define a variable", node)
       end
 
-      alloc_type = out_alloc_type_for_param(param_type)
+      alloc_type = pointee_type
       alloc_type_desc = @module.get_type_descriptor(alloc_type)
       is_lib_out = !!(alloc_type_desc && alloc_type_desc.kind == TypeKind::Struct && @lib_structs.includes?(alloc_type_desc.name))
       if !is_lib_out && alloc_type_desc
@@ -110623,7 +110701,6 @@ module Adamas::HIR
       end
 
       result = [] of ValueId
-      param_types = extern_func.param_types
       old_arena = @arena
       begin
         arg_exprs.each_with_index do |arg_expr, idx|
@@ -110631,8 +110708,8 @@ module Adamas::HIR
           @arena = call_arena
           arg_node = @arena[arg_expr]
           if arg_node.is_a?(Adamas::Compiler::Frontend::OutNode)
-            expected_type = param_types[parameter_index]? || TypeRef::POINTER
-            result << lower_out_arg(ctx, arg_node, expected_type)
+            pointee_type = out_pointee_type_for_extern_arg(extern_func, parameter_index, arg_node)
+            result << lower_out_arg(ctx, arg_node, pointee_type)
           elsif arg_node.is_a?(Adamas::Compiler::Frontend::ProcLiteralNode)
             # Proc literal passed to C function — generate a standalone callback
             # function and pass its address as a raw function pointer.

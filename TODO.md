@@ -20278,10 +20278,16 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   captures and pointerof. Fresh exact-production slice2659 passes original-first
   out2672 and the named/splat interaction matrix out2675; exact parent slice2627
   crashes (out2671). Repeated out declarations reject; out _ remains disposable.
-- [ ] Validate FFI out pointer/non-Void formals, reject variadic out arguments,
-  and freeze pointee types. In particular, audit out @ivar against a mismatched
-  pointee width before returning its field address. Original semantic/lib.cr
-  checks this boundary; Adamas infer_out is still a stub. Escaping lib-struct
-  storage lifetime is a separate untested risk. Do not add stdlib workarounds.
+- [x] Validate fixed FFI out formals from their pointer descriptors; reject
+  non-pointers, Void* and variadic-tail out arguments, and reject known
+  incompatible @ivar pointee types before exposing field storage. Fresh exact
+  production host out_contract2681 passes eight original-first native/rejection
+  cases (out2733); exact parent accepts the scalar formal and emits an executable
+  (out2732). The seven-case out-local storage neighbor remains GREEN (out2736).
+- [ ] Freeze out-local pointee types against later incompatible assignments.
+  Audit ivar inference when its declaration/assignment becomes known after the
+  out call, and escaping lib-struct storage lifetime. The formal-validation
+  regression does not establish these separate contracts; infer_out is still
+  a stub. Do not add stdlib workarounds.
 - [ ] Run fresh pristine S2 and unchanged LavinMQ functional/upstream parity.
   These source-call S1 checks do not establish either acceptance criterion.

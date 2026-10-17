@@ -19582,3 +19582,29 @@ Refresh after extern signature recovery, argument normalization or call
 emission changes; revert the check and regression together. Named FFI argument
 normalization remains an independent open contract in TODO. This evidence does
 not establish fresh S2 acceptance or unchanged LavinMQ functional/test parity.
+
+
+### FFI out validates the declared destination before exposing storage (2026-10-17)
+The out path formerly fell back to generic Pointer for absent/non-pointer
+formals and accepted Void* and variadic-tail destinations. Read the pointee
+from the declared pointer descriptor, validate it at the flattened parameter
+index, and retain it on the destination pointer. For an already typed @ivar,
+reject an incompatible pointee before returning its field address. Named and
+literal tuple-splat arguments use the same boundary.
+
+ffi_out_formal_validation_repro.sh qualifies original Crystal first, then
+compares exact native stdout/empty stderr for primitive, lib-struct,
+named/splat and inferred-ivar positives. It requires source rejection without
+an executable for scalar, Void*, variadic-tail and incompatible-ivar cases.
+Every external C symbol is defined, so a linker failure cannot substitute for
+source validation. Exact parent out2732 accepts the scalar case (rc=0 with an
+executable); fresh exact-production host out_contract2681 passes out2733 and
+the seven-case out-local storage neighbor out2736. Scoped adversary ROBUST for
+these formal and known-ivar boundaries. Source manifest SHA-256 12028b453475c9195a7d40193b9b9b9803d210f0e8734d42f85de983dffa55b1;
+host 9569e9bf3ea4a789301e8fa79a85e6e9b015f4bb98f80000d9ae12acc90348b1.
+
+Refresh after extern argument normalization, pointer descriptor, ivar layout
+or out lowering changes; revert the source and regression together. Pointee
+freezing across later assignments, late ivar inference and escaping lib-struct
+storage remain open. This S1 evidence does not establish fresh S2 acceptance
+or unchanged LavinMQ functional/upstream parity.
