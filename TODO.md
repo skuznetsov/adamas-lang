@@ -1,5 +1,26 @@
 # Adamas Bootstrap TODO
 
+2026-10-18 DEFERRED CLASS-CONSTANT NEW: bare `new` during deferred class
+constant initialization always chose the synthesized allocator, even when a
+source class factory owned `new`. This bypassed its named argument contract
+and produced an object with the wrong payload. Match the existing explicit
+TypeLiteral new path: select the allocator only when no class-level new is
+declared in the owner ancestry; otherwise keep ordinary typed method lookup.
+DoD: deferred_class_new_dispatch_repro.py COMPILER matches pinned Crystal for
+three runtime controls and rejects the wrong String payload with exit 1 and
+no executable (atomic S1 lavin4511, runs4516/4522, including the repository
+runner). The exact parent lavin4492 returns
+a wrong byte for the deferred factory (run4518). Direct qualified new and the
+synthesized fallback remain covered. Refresh after deferred constant lowering,
+class-new lookup, named argument binding or allocator identity changes.
+- [x] Honor the declared factory and preserve allocator delegation/fallback.
+- [x] Preserve the explicit factory's strict named argument type rejection.
+- [ ] Qualify generic inherited explicit factories with named arguments.
+- [ ] Diagnose the separate Fiber#initialize closure/block target identity
+  exposed after Time::Span's former allocator mismatch (run4514); keep the
+  MIR ambiguity check strict. The wider generic annotation suite is not closed.
+- [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
+
 2026-10-18 DEMANDED UNRESOLVED FREE CALLS: missing-target closure could finish
 with a source-located unknown free call, then LLVM emitted an abort stub and
 returned compiler success. Diagnose absent declaration families after the final

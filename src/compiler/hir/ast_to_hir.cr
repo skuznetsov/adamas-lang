@@ -99735,8 +99735,10 @@ module Adamas::HIR
         if full_method_name.nil? && method_name == "new" && (current = @current_class)
           full_method_name = "#{current}.#{method_name}"
           static_class_name = current
-          prefer_allocator_new_call = true
-          constructor_arg_binding_name = resolve_method_with_inheritance(current, "initialize") || "#{current}#initialize"
+          unless class_method_declared_in_ancestry?(current, "new")
+            prefer_allocator_new_call = true
+            constructor_arg_binding_name = resolve_method_with_inheritance(current, "initialize") || "#{current}#initialize"
+          end
         end
         # Handle qualified calls like Int32.to_s that may appear as IdentifierNodes
         # (e.g., from macro expansion or type-literal printing).
