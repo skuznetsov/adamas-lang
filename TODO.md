@@ -1,5 +1,27 @@
 # Adamas Bootstrap TODO
 
+2026-10-18 INHERITED CLASS-METHOD SOURCE IDENTITY: a child-local typed miss
+stopped ancestor overload lookup, and selected ancestor bodies retained the
+ancestor receiver. Rebase the selected source Def onto the concrete class while
+preserving its arena, lexical namespace and parent type map. Distinct child and
+ancestor Defs can share a type suffix, so allocate a stable private body target
+from exact source identity instead of reusing an unrelated body. The local Def
+identity guard includes source path, namespace, complete span and source bytes;
+missing provenance fails closed. DoD:
+inherited_class_method_source_identity_repro.sh COMPILER passes original-first
+13 runtime controls and three strict rejection fixtures (atomic S1 lavin4586,
+run4592). The exact-parent collision control is RED in run4540; the aligned
+cross-file collision is RED on that parent in run4578 and passes run4590.
+Refresh after class lookup, body specialization, source provenance or generic
+owner mapping changes.
+- [x] Preserve inherited overloads, concrete self, named labels and block shape.
+- [x] Keep child and ancestor bodies distinct even at identical cross-file spans.
+- [x] Reject wrong known argument and block types without an executable.
+- [ ] Qualify macro-generated inherited Def collisions with registered generated
+  source provenance; missing source slices currently fail closed.
+- [ ] Qualify internal symbol size and fresh S2/S3/S4 fixed point after rebasing.
+- [ ] Verify unchanged LavinMQ runtime and upstream-spec parity.
+
 2026-10-18 NOMINAL ENUM SOURCE ARGUMENTS: named-call overload selection
 read only an enum value's integer HIR carrier, so an Int32 overload outranked
 the nominal enum overload. Recover only recorded enum provenance before source

@@ -1,3 +1,34 @@
+### Inherited class methods retain selected source and concrete self (2026-10-18)
+A child-local typed overload miss no longer suppresses compatible ancestor
+class methods. Materialize the selected ancestor Def for the concrete receiver,
+retaining its source arena, lexical namespace and concrete parent type mapping.
+A child Def with the same ABI suffix must keep its own body: derive a stable
+private target for the selected inherited source. The local alias guard compares
+actual registered source provenance, not just name and line/column spans, and
+never substitutes the incoming context for an existing target's missing arena.
+Global same_def_node? behavior is unchanged.
+
+`regression_tests/inherited_class_method_source_identity_repro.sh` passes all
+13 positive and three negative cases against pinned Crystal on atomic S1
+lavin4586 (run4592). Controls include generic/nongeneric inheritance, concrete
+self, source order, named-label collisions, lexical namespaces, and two required
+files whose unrelated Defs occupy identical line/column spans. The earlier
+parent is RED on same-suffix body selection (run4540) and the aligned cross-file
+collision (run4578); the latter passes the candidate in run4590. All 1919
+production source hashes match the tested manifest. HIR SHA-256
+20f2ac7d22698a4cea4c67916f50b2aadbe52fcb654ad4fdc27e8c5ad917eaf8;
+host 9251f83af408c969c4a30402651d0fb8b784aba3e3ddcaab23449b3f8d92d227.
+
+Scoped adversary ROBUST for the tested source dispatch contract: collisions and
+strict negative controls distinguish correct source ownership from permissive
+selection or accidental body reuse. Macro-generated inherited collisions with
+missing registered source paths/slices remain unqualified and fail closed;
+internal symbol size and fresh bootstrap determinism remain open. Refresh after
+class lookup, alias installation, source provenance or owner-map changes; revert
+source and regression together. This does not establish LavinMQ compilation,
+runtime/spec parity, fresh S2 or S3/S4 fixed point. No stdlib/application changes.
+
+
 ### Source named calls distinguish enum identity from its integer carrier (2026-10-18)
 Source named binding selected overloads and validated rebound arguments with
 ctx.type_of, which exposed only an enum value's integer HIR carrier. Use the

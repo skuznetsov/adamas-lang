@@ -66006,6 +66006,121 @@ module Adamas::HIR
       mapping
     end
 
+    # Rebase an inherited class-method body target onto the concrete receiver while
+    # keeping the selected ancestor Def as the authoritative source. The caller
+    # installs that Def, its arena, and its lexical namespace under the returned name.
+    private def inherited_class_method_body_target(
+      method_name : String,
+      concrete_owner : String,
+    ) : Tuple(String, String)?
+      parts = parse_method_name(method_name)
+      return nil unless parts.separator == '.'
+      return nil unless method = parts.method
+      return nil if parts.owner.empty?
+
+      matched_parent = get_parent_chain(concrete_owner).find do |parent|
+        strip_generic_args(parent) == strip_generic_args(parts.owner)
+      end
+      return nil unless matched_parent
+
+      # A selected concrete ancestor specialization must agree with the actual
+      # parent instance. Template-owned source names remain eligible and receive
+      # the concrete parent map at the call site.
+      selected_owner_info = generic_owner_info(parts.owner)
+      parent_owner_info = generic_owner_info(matched_parent)
+      if selected_owner_info && parent_owner_info &&
+         concrete_type_args?(selected_owner_info.args) && concrete_type_args?(parent_owner_info.args) &&
+         selected_owner_info.args != parent_owner_info.args
+        return nil
+      end
+
+      target = "#{concrete_owner}.#{method}"
+      if suffix = parts.suffix
+        target = "#{target}$#{suffix}"
+      end
+      {target, matched_parent}
+    end
+
+    # This check is local to inherited class-body alias installation. The
+    # global same_def_node? intentionally recognizes macro reparses by span;
+    # here distinct source arenas can contain unrelated Defs at identical spans.
+    private def same_inherited_class_method_def?(
+      left : Adamas::Compiler::Frontend::DefNode,
+      left_arena : Adamas::Compiler::Frontend::ArenaLike?,
+      left_namespace : String?,
+      right : Adamas::Compiler::Frontend::DefNode,
+      right_arena : Adamas::Compiler::Frontend::ArenaLike?,
+      right_namespace : String?,
+    ) : Bool
+      return false unless left_arena && right_arena && left_namespace && right_namespace
+      return false unless left_namespace == right_namespace
+      return true if left.same?(right)
+      return false unless left.name == right.name
+      left_path = source_path_for(left_arena)
+      right_path = source_path_for(right_arena)
+      return false unless left_path && right_path && left_path == right_path
+
+      left_span = left.span
+      right_span = right.span
+      return false unless left_span.start_line == right_span.start_line &&
+                          left_span.start_column == right_span.start_column &&
+                          left_span.end_line == right_span.end_line &&
+                          left_span.end_column == right_span.end_column &&
+                          left_span.start_offset == right_span.start_offset &&
+                          left_span.end_offset == right_span.end_offset
+
+      left_source = source_for_arena(left_arena)
+      right_source = source_for_arena(right_arena)
+      return false unless left_source && right_source
+      left_def_source = slice_source_for_span(left_span, left_source)
+      right_def_source = slice_source_for_span(right_span, right_source)
+      return false unless left_def_source && right_def_source
+      left_def_source == right_def_source
+    end
+
+    # Derive a deterministic internal target from selected source and lexical
+    # ownership. Never use object or arena IDs in emitted symbols.
+    private def inherited_class_method_collision_body_target(
+      method_name : String,
+      concrete_owner : String,
+      def_node : Adamas::Compiler::Frontend::DefNode,
+      source_path : String,
+      def_source : String,
+      matched_parent : String,
+      lexical_namespace : String,
+    ) : String
+      parts = parse_method_name(method_name)
+      span = def_node.span
+      identity_fields = [
+        parts.base,
+        concrete_owner,
+        matched_parent,
+        lexical_namespace,
+        source_path,
+        span.start_offset.to_s,
+        span.end_offset.to_s,
+        def_source,
+      ]
+      source_identity = String.build do |io|
+        identity_fields.each do |field|
+          io << field.bytesize.to_s
+          io << ':'
+          io << field
+        end
+      end
+      encoded_identity = String.build do |io|
+        source_identity.each_byte do |byte|
+          io << byte.to_s
+          io << '_'
+        end
+      end
+      target = "#{concrete_owner}.__adamas_inherited_#{encoded_identity}"
+      if suffix = parts.suffix
+        target = "#{target}$#{suffix}"
+      end
+      target
+    end
+
     private def specialize_method_owner_name(method_name : String, concrete_owner : String?) : String
       return method_name unless concrete_owner
       return method_name if concrete_owner.empty?
@@ -101516,10 +101631,24 @@ module Adamas::HIR
                   call_arg_types = expanded_types
                 end
               end
-              if entry = lookup_function_def_for_call(full_method_name, call_arg_types.size, has_block_call, call_arg_types, call_has_splat, call_has_named_args, call_named_arg_names)
+              selected_class_method_entry = lookup_function_def_for_call(
+                full_method_name, call_arg_types.size, has_block_call, call_arg_types,
+                call_has_splat, call_has_named_args, call_named_arg_names,
+              )
+              if selected_class_method_entry
                 if call_arg_types.all? { |t| t != TypeRef::VOID }
-                  full_method_name = specialize_method_owner_name(entry[0], class_name_str)
+                  full_method_name = specialize_method_owner_name(selected_class_method_entry[0], class_name_str)
                 end
+              elsif method_name != "new" && !call_has_splat && !call_has_named_args &&
+                    call_arg_types.size == call_args.size &&
+                    call_arg_types.all? { |t| t != TypeRef::VOID && !is_union_type?(t) && !unresolved_generic_return_type?(t) } &&
+                    class_method_declared_in_ancestry?(class_name_str, method_name)
+                actual_names = call_arg_types.map { |type| get_type_name_from_ref(type) }.join(", ")
+                block_suffix = has_block_call ? " with block" : ""
+                raise LoweringError.new(
+                  "no overload matches #{full_method_name} for argument types (#{actual_names})#{block_suffix}",
+                  node,
+                )
               end
               full_method_name = specialize_method_owner_name(full_method_name, class_name_str)
               static_class_name = method_owner(full_method_name) if full_method_name.includes?('.')
@@ -104223,6 +104352,101 @@ module Adamas::HIR
           end
         end
         entry_name = specialize_method_owner_name(entry_name, concrete_owner_name)
+        if entry_def && concrete_owner_name &&
+           (inherited_body_target = inherited_class_method_body_target(entry_name, concrete_owner_name))
+          inherited_entry_name = inherited_body_target[0]
+          matched_parent = inherited_body_target[1]
+          inherited_source_arena = selected_call_entry_arena ||
+                                   @function_def_arenas[entry_name]? ||
+                                   @function_def_arenas[strip_type_suffix(entry_name)]? ||
+                                   @arena
+          inherited_source_arena = resolve_arena_for_def(entry_def, inherited_source_arena)
+          inherited_namespace = function_namespace_override_for(entry_name, strip_type_suffix(entry_name)) || matched_parent
+          existing_inherited_def = @function_defs[inherited_entry_name]?
+          if existing_inherited_def
+            existing_arena = registered_arena_for_def(existing_inherited_def)
+            existing_namespace = function_namespace_override_for(
+              inherited_entry_name,
+              strip_type_suffix(inherited_entry_name),
+            )
+            unless same_inherited_class_method_def?(
+                     existing_inherited_def,
+                     existing_arena,
+                     existing_namespace,
+                     entry_def,
+                     inherited_source_arena,
+                     inherited_namespace,
+                   )
+              # Keep a distinct child or previously inherited Def in its own
+              # target; the selected ancestor body gets a stable private name.
+              inherited_source_path = source_path_for(inherited_source_arena)
+              inherited_source = source_for_arena(inherited_source_arena)
+              inherited_def_source = inherited_source.try do |source|
+                slice_source_for_span(entry_def.span, source)
+              end
+              unless inherited_source_path && !inherited_source_path.empty? &&
+                     inherited_def_source && !inherited_def_source.empty?
+                raise LoweringError.new(
+                  "cannot derive deterministic source identity for inherited class-method Def #{entry_name}",
+                  node,
+                )
+              end
+              inherited_entry_name = inherited_class_method_collision_body_target(
+                entry_name,
+                concrete_owner_name,
+                entry_def,
+                inherited_source_path,
+                inherited_def_source.not_nil!,
+                matched_parent,
+                inherited_namespace,
+              )
+              existing_inherited_def = @function_defs[inherited_entry_name]?
+              if existing_inherited_def
+                existing_arena = registered_arena_for_def(existing_inherited_def)
+                existing_namespace = function_namespace_override_for(
+                  inherited_entry_name,
+                  strip_type_suffix(inherited_entry_name),
+                )
+                unless same_inherited_class_method_def?(
+                         existing_inherited_def,
+                         existing_arena,
+                         existing_namespace,
+                         entry_def,
+                         inherited_source_arena,
+                         inherited_namespace,
+                       )
+                  raise LoweringError.new(
+                    "distinct inherited class-method Defs share body target #{inherited_entry_name}",
+                    node,
+                  )
+                end
+              end
+            end
+          end
+          unless existing_inherited_def
+            set_function_def_entry(inherited_entry_name, entry_def, false)
+          end
+          set_function_def_arena(inherited_entry_name, inherited_source_arena)
+          store_function_namespace_override(
+            inherited_entry_name,
+            strip_type_suffix(inherited_entry_name),
+            inherited_namespace,
+          )
+          if parent_info = generic_owner_info(matched_parent)
+            if parent_template = @generic_templates[parent_info.base]?
+              store_function_type_param_map(
+                inherited_entry_name,
+                strip_type_suffix(inherited_entry_name),
+                parent_info.map,
+                parent_template.type_params,
+                store_base: false,
+                authoritative_keys: parent_template.type_params,
+              )
+            end
+          end
+          entry_name = inherited_entry_name
+          selected_call_entry_arena = inherited_source_arena
+        end
         # Avoid self-recursive overload capture when another compatible overload exists.
         # This can happen in wrapper-style overloads (instance and class methods),
         # where selecting the current overload again can later be mis-lowered.
@@ -113510,6 +113734,30 @@ module Adamas::HIR
                  )
                 if debug_call_lookup
                   STDERR.puts "[CALL_LOOKUP_INHERITED_AFTER_LOCAL_MISS] func=#{func_name} target=#{inherited_lookup}"
+                end
+                return inherited_entry
+              end
+            end
+          end
+        end
+        if parts = method_parts
+          if parts.separator == '.' && (method = parts.method)
+            get_parent_chain(parts.owner).each do |parent|
+              inherited_lookup = "#{parent}.#{method}"
+              next if inherited_lookup == func_name
+              if inherited_entry = lookup_function_def_for_call(
+                   inherited_lookup,
+                   arg_count,
+                   has_block,
+                   arg_types,
+                   call_has_splat,
+                   call_has_named_args,
+                   named_arg_names,
+                   input.raw_positional_count,
+                   input.source_named_types,
+                 )
+                if debug_call_lookup
+                  STDERR.puts "[CALL_LOOKUP_INHERITED_CLASS_AFTER_LOCAL_MISS] func=#{func_name} target=#{inherited_lookup}"
                 end
                 return inherited_entry
               end
