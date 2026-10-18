@@ -1,5 +1,21 @@
 # Adamas Bootstrap TODO
 
+2026-10-18 MACRO SELF SOURCE RENDERING: structured macro arguments retained
+SelfNode in MacroNodeValue, but its serializer omitted that variant and emitted
+an empty string. A generated return annotation `: self` then consumed the next
+line as its type, leaving the factory body empty. Emit the original source
+spelling `self`; resolve its meaning only in generated source context. DoD:
+macro_self_source_rendering_repro.sh COMPILER passes six original-first runtime
+controls and two strict named-argument/type rejections (atomic S1 lavin4635,
+repository run4641; private run4637). Exact parent4610 aborts in three positive factories (run4629).
+Refresh after macro AST serialization, argument binding or generated-source
+parsing changes.
+- [x] Preserve self in direct and inherited generated factory annotations.
+- [x] Preserve explicit owner/return controls and strict argument rejection.
+- [ ] Qualify self in ivar default-value metadata and annotation arguments;
+  those separate converters are outside this source-splice contract.
+- [ ] Verify fresh bootstrap and unchanged LavinMQ runtime/spec parity.
+
 2026-10-18 EXPLICIT VOID GENERIC ARGUMENTS: ordinary generic call receivers,
 type references and static Type[...] owner construction conflated an explicitly
 written Void with failed typeof inference, changing Pointer(Void) into

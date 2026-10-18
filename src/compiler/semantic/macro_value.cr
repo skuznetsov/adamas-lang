@@ -1086,6 +1086,8 @@ module Adamas
           case node
           when Frontend::NilNode
             "nil"
+          when Frontend::SelfNode
+            "self"
           when Frontend::NumberNode
             String.new(node.value)
           when Frontend::StringNode

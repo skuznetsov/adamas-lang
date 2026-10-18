@@ -1,3 +1,31 @@
+### Macro Self arguments preserve their source spelling (2026-10-18)
+Macro arguments that are structured AST nodes retain their ExprId and arena in
+MacroNodeValue. Its source serializer omitted SelfNode, so `{{return_type}}`
+with an argument `self` expanded to nothing. A generated `def self.build(...) :`
+then consumed the following `new(value)` as a return annotation and had no body.
+Serialize this node as `self`, matching original Crystal's Syntax::ToS visitor;
+never substitute the macro/template owner's name.
+
+`regression_tests/macro_self_source_rendering_repro.sh` qualifies six positive
+native outputs and two exit-1/no-executable rejections against original Crystal.
+Atomic S1 lavin4635 passes the private original-first matrix (run4637) and the
+published repository runner (run4641). Exact
+parent4610 aborts for both inherited declaration orders and a direct-owner
+factory (run4629); explicit constructor, ordinary inherited new and explicit
+return controls pass on both. All 1919 published source hashes match the tested
+manifest. Macro value SHA-256
+efe3ae286119c5c8cc6dc1eb2f3a7329a611dcf95efa8f0c1528aaafbb9d3d5e;
+host 14991125f66d6ed73426a13bd3a2ca0c78206ac866b4b168e797c3554dde6c0a.
+
+Scoped source adversary ROBUST: this changes source rendering, leaving self
+binding to the generated context. Refresh after macro serialization, argument
+binding or generated-source parsing changes; revert source and regression
+together. Ivar default-value metadata and annotation arguments use separate
+converters and need original-first probes. Missing macro StringLiteral#to_i,
+fresh bootstrap and unchanged LavinMQ runtime/spec parity remain open. No stdlib
+or application source was changed.
+
+
 ### Explicit Void stays a generic argument, not an inference fallback (2026-10-18)
 Three generic-construction paths normalized every Void to Pointer(Void): an
 ordinary generic call receiver, lower_generic_type_ref, and static Type[...]
