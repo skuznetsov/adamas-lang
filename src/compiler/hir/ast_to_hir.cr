@@ -14159,6 +14159,30 @@ module Adamas::HIR
         target = @arena[member.target]
         if target.is_a?(Adamas::Compiler::Frontend::ConstantNode)
           record_constant_definition(class_name, (safe_slice_to_string(target.name) || ""), member.value, @arena)
+        elsif target.is_a?(Adamas::Compiler::Frontend::InstanceVarNode) && ivars && offset_ref
+          # Expanded class bodies carry the same ivar declarations and defaults
+          # as parsed class bodies. Retain the producing arena with the value;
+          # registering the generated accessor alone loses its storage type and
+          # makes its return type Void before allocation can initialize it.
+          ivar_name = safe_slice_to_string(target.name) || ""
+          value_node = @arena[member.value]
+          ivar_type = infer_type_from_class_ivar_assign(value_node)
+          owner_descriptor = @module.get_type_descriptor(type_ref_for_name(class_name))
+          owner_is_struct = @class_info[class_name]?.try(&.is_struct) ||
+                            owner_descriptor.try { |descriptor| descriptor.kind == TypeKind::Struct } ||
+                            false
+          owner_is_c_struct = @lib_structs.includes?(class_name)
+          needs_expr = !is_trivial_default(value_node)
+          offset_ref.value = register_or_refine_accessor_ivar(
+            ivars,
+            ivar_name,
+            ivar_type,
+            offset_ref.value,
+            needs_expr ? member.value : nil,
+            needs_expr ? @arena : nil,
+            owner_is_struct,
+            owner_is_c_struct,
+          )
         end
       when Adamas::Compiler::Frontend::CallNode
         callee = @arena[member.callee]

@@ -1,5 +1,26 @@
 # Adamas Bootstrap TODO
 
+2026-10-18 MACRO-EXPANDED IVAR ASSIGNMENTS: the expanded class-member scan
+handled constant assignments but discarded ordinary instance-variable
+assignments. Generated readers therefore lacked typed storage, and defaults
+became zeros. Register those assignments through the same accessor-ivar helper
+as parsed class assignments, retaining the producing arena for nontrivial
+defaults and preserving existing concrete declarations. DoD:
+expanded_class_ivar_defaults_repro.sh COMPILER matches pinned Crystal for two
+class/struct runtime cases (runs4470/4475); the exact parent prints ten zeros
+instead of 0701324118 (run4471). All 1919 production sources match atomic S1
+lavin4454. The composed S1 lavin4446 also passes both stdlib getter controls
+and both direct macro cases (run4472). This covers concrete literal assignment
+defaults; fresh bootstrap and unchanged LavinMQ parity remain open. Refresh
+after expanded-member scanning, ivar refinement, layout or arena changes.
+- [x] Preserve typed class/struct storage, literal defaults and sibling owners.
+- [x] Preserve existing Int64 declarations and Bool fields in runtime readback.
+- [ ] Repair the separate stdlib getter generated-method registration failure
+  on the atomic source base; the composed getter result does not close it.
+- [ ] Qualify macro-emitted typed declaration forms and nonliteral defaults;
+  their registration paths differ from this ordinary assignment branch.
+- [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
+
 2026-10-18 MACRO ARGUMENT SOURCE OWNERSHIP: cross-arena reparsing ranked
 unrelated source buffers by token shape and a name anchor. Matching offsets
 and AST kinds could silently transfer a different literal (987 became 123).
