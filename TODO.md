@@ -1,5 +1,24 @@
 # Adamas Bootstrap TODO
 
+2026-10-18 NOMINAL ENUM SOURCE ARGUMENTS: named-call overload selection
+read only an enum value's integer HIR carrier, so an Int32 overload outranked
+the nominal enum overload. Recover only recorded enum provenance before source
+selection and bound-argument validation. Remove the separate enum-backing
+acceptance and score bonus: raw integers and different enums are not enum
+actuals. Explicit Enum#value retains its integer type. DoD:
+enum_named_source_selection_repro.sh COMPILER matches pinned Crystal for nine
+runtime calls and two strict rejection fixtures (atomic S1 lavin4567, run4570).
+Exact parent lavin4515 prints IIIIIIINN instead of EEEEIIINN (run4572); the
+nominal enum/alias/module/integer dispatch neighbor passes run4573. Refresh
+after enum provenance, source named binding or overload compatibility changes.
+- [x] Preserve direct/local enum identity for positional and named source slots.
+- [x] Reject raw Int32 and cross-enum actuals without creating an executable.
+- [x] Preserve explicit .value integer dispatch and unrelated nominal aliases.
+- [ ] Diagnose the independent generated LavinMQ Logger severity producer:
+  unchanged full input still presents Int32 to Log::Entry (private run4565).
+- [ ] Qualify enum provenance through captured locals, defaults and union joins.
+- [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
+
 2026-10-18 CLASS MACRO-FOR LITERAL ITERABLES: the class-member expansion
 prepass extracted array elements but omitted TupleLiteralNode, so stdlib getter
 macros silently produced no methods. Use the same element conversion for both

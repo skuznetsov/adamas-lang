@@ -54209,12 +54209,8 @@ module Adamas::HIR
               arg_idx += 1
               next
             end
-            if enum_name = resolve_enum_name(param_resolved_name)
-              if enum_base_type(enum_name) == arg_type
-                arg_idx += 1
-                next
-              end
-            end
+            # Enum backing storage is not source-level compatibility; nominal enum actuals
+            # arrive here with their proven enum TypeRef from enum_tracked_type.
             if numeric_compatible?(arg_type, param_type)
               arg_idx += 1
               next
@@ -54651,13 +54647,7 @@ module Adamas::HIR
               end
             end
           else
-            if enum_name = resolve_enum_name(resolved_name)
-              if enum_base_type(enum_name) == arg_type
-                score += 4
-                arg_idx += 1
-                next
-              end
-            end
+            # Do not score an integer carrier as an enum actual.
             # Module-like type annotations (Enumerable, Indexable, etc.)
             # don't have concrete type refs. Give a score bonus when the
             # arg is a Tuple/Array passed to an Enumerable/Indexable param,
@@ -114254,8 +114244,12 @@ module Adamas::HIR
         named_values[label] = with_arena(call_arena) { lower_expr(ctx, arg.value) }
       end
       names = named_values.keys.sort
-      source_types = positional_values.map { |id| ctx.type_of(id) }
-      names.each { |name| source_types << ctx.type_of(named_values[name]) }
+      # Enum arguments use an integer carrier in HIR, but source overload
+      # selection must retain the proven nominal enum identity. The helper
+      # follows only explicit enum provenance; it does not infer enums from an
+      # Int32 value or change the emitted value representation.
+      source_types = positional_values.map { |id| enum_tracked_type(ctx, id) }
+      names.each { |name| source_types << enum_tracked_type(ctx, named_values[name]) }
       selected = lookup_function_def_for_call(
         func_name, source_types.size, has_block_call, source_types,
         false, true, names, positional_values.size, true,
@@ -114346,7 +114340,7 @@ module Adamas::HIR
       ensure
         ctx.restore_locals(saved_locals)
       end
-      bound_types = result.map { |value| ctx.type_of(value) }
+      bound_types = result.map { |value| enum_tracked_type(ctx, value) }
       unless params_compatible_with_args?(selected[1], bound_types, context)
         actual_names = bound_types.map { |type| get_type_name_from_ref(type) }.join(", ")
         raise LoweringError.new("no overload matches #{strip_type_suffix(func_name)} for bound argument types (#{actual_names})")

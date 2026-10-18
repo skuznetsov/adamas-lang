@@ -1,3 +1,32 @@
+### Source named calls distinguish enum identity from its integer carrier (2026-10-18)
+Source named binding selected overloads and validated rebound arguments with
+ctx.type_of, which exposed only an enum value's integer HIR carrier. Use the
+existing enum_tracked_type provenance helper at those two source boundaries.
+Compatibility and match scoring separately admitted an integer backing type
+as the enum; remove both admissions. No integer-to-enum conversion or ABI cast
+is introduced, and Enum#value remains an integer actual.
+
+`regression_tests/enum_named_source_selection_repro.sh` passes original-first
+runtime bytes EEEEIIINN and rejects raw Int32 and another enum with exit 1 and
+no executable on atomic S1 lavin4567 (run4570). Exact parent lavin4515 instead
+prints IIIIIIINN (run4572). The existing enum nominal/alias/module/underlying
+integer neighbor passes run4573. All 1919 production source hashes match the
+candidate manifest. HIR SHA-256
+f072116ddd3bd52e209970bc482c8f7072af502786c509853631f767474c9bd5;
+host edd1de4d26c0c762f34aed6e4bd4341f249e7faab33946d5b5deb4dca8bd0ea7.
+
+Scoped adversary ROBUST for direct/local source slots: integer and cross-enum
+rejections distinguish strict nominal admission from simply favoring enum
+names, and .value plus the nominal neighbor guard integer/alias behavior.
+Refresh after enum tracking, named source binding or compatibility/scoring
+changes; revert source and regression together. Captures, default-expression
+provenance and union joins need separate qualification. Unchanged full LavinMQ
+still has an independent generated Logger severity producer presenting Int32
+to Log::Entry (private run4565); this does not establish broker compilation,
+runtime/spec parity, fresh S2 or bootstrap fixed point. No stdlib or application
+source was changed.
+
+
 ### Nested statements own their newline delimiter scope (2026-10-17)
 Global delimiter depths made an outer call parenthesis join the next line in
 a nested Proc/if body. The parser read `left < right` followed by `-1` as
