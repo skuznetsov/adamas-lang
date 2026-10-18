@@ -73799,6 +73799,7 @@ module Adamas::HIR
         end
         raise "unmaterialized concrete module virtual targets after bounded repair: count=#{unresolved_fanout_targets} samples=#{samples.join(",")}"
       end
+      validate_unresolved_free_source_calls
       stop_after_flush_phase("final_missing", "ADAMAS_STOP_AFTER_HIR_FLUSH_FINAL_MISSING")
 
       # Repair truthiness checks that compare a bare non-nilable scalar against a
@@ -75116,6 +75117,35 @@ module Adamas::HIR
       return false if receiver_name.includes?('(')
       template = @generic_templates[receiver_name]? || return false
       !template.is_struct
+    end
+
+    # Source free functions may be declared below their caller. Check only
+    # after all pending, macro and missing-target passes have reached closure;
+    # code generation must not turn a demanded undefined call into an abort stub.
+    private def validate_unresolved_free_source_calls : Nil
+      @module.functions.each do |caller|
+        caller.blocks.each do |block|
+          block.instructions.each do |instruction|
+            call = instruction.as?(Call)
+            next unless call
+            next if call.has_receiver? || call.virtual
+            name = call.method_name
+            next if name.empty? || @module.has_function_with_body?(name)
+            next if backend_owned_runtime_intrinsic_call?(name)
+            base = strip_type_suffix(name)
+            next if has_method_separator?(base)
+            next unless location = caller.value_location(call.id)
+            # A known source family with an unmaterialized body has a separate
+            # lowering obligation. This check diagnoses absent declarations.
+            next if @function_defs.any? { |entry_name, _| strip_type_suffix(entry_name) == base }
+            next if @module.extern_functions.any? do |external|
+                      external.name == name || external.name == base ||
+                        external.real_name == name || external.real_name == base
+                    end
+            raise LoweringError.new("undefined method '#{base}' at #{location}")
+          end
+        end
+      end
     end
 
     # Lower any missing call targets that already appear in the HIR module.

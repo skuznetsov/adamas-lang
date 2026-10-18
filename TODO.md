@@ -1,5 +1,25 @@
 # Adamas Bootstrap TODO
 
+2026-10-18 DEMANDED UNRESOLVED FREE CALLS: missing-target closure could finish
+with a source-located unknown free call, then LLVM emitted an abort stub and
+returned compiler success. Diagnose absent declaration families after the final
+HIR pending/macro/missing-target closure, retaining explicit extern and backend
+intrinsic ownership. DoD: unresolved_free_source_calls_repro.sh COMPILER
+qualifies six accepted and three rejected cases against pinned Crystal; atomic
+S1 lavin4492 passes all nine (run4496). Exact parent lavin4454 accepts an unknown
+call and creates an executable (run4495). Typed and untyped unused free methods
+and unused instance/class methods remain accepted, as do forward ordinary
+definitions called directly or through a macro. Scope: unqualified nonvirtual
+demanded calls with no declaration family. Known-family overload misses, receiver
+calls and body-materialization failures remain separate obligations. Refresh
+after HIR call closure, source ownership, extern or intrinsic changes.
+- [x] Reject demanded undefined calls with exit 1 and no executable.
+- [x] Preserve forward definitions and undemanded source bodies.
+- [x] Reject use before a later macro-generated macro declaration.
+- [ ] Extend source-call admission checks to missing receiver targets and
+  known-family overload/body failures, preserving exact source call shape.
+- [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
+
 2026-10-18 MACRO-EXPANDED IVAR ASSIGNMENTS: the expanded class-member scan
 handled constant assignments but discarded ordinary instance-variable
 assignments. Generated readers therefore lacked typed storage, and defaults
