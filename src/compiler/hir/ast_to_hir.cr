@@ -33695,7 +33695,25 @@ module Adamas::HIR
       values = macro_for_iterable_values(node.iterable)
       STDERR.puts "[MACRO_FOR_CLASS] class=#{class_name} phase=values count=#{values ? values.size : -1}" if debug_macro_for_class
       bootstrap_trace_puts "[CLASS_FRONTIER] enum_macro_for_values count=#{values ? values.size : -1}" if trace_frontier_enum_macro_for
-      return unless values
+      unless values
+        # A failed iterable extraction is ambiguous: source identifiers and owner
+        # reflection may be intentionally deferred, but a concrete scalar macro
+        # value is already known to violate MacroFor's iterable contract.
+        if iterable_macro_value = macro_value_for_iterable_admission(node.iterable)
+          case iterable_macro_value
+          when Adamas::Compiler::Semantic::MacroNilValue,
+               Adamas::Compiler::Semantic::MacroBoolValue,
+               Adamas::Compiler::Semantic::MacroNumberValue,
+               Adamas::Compiler::Semantic::MacroStringValue,
+               Adamas::Compiler::Semantic::MacroSymbolValue
+            raise LoweringError.new(
+              "`for` expression must be an array, hash, tuple, named tuple or a range literal, not #{iterable_macro_value.class_name}:\n\n#{iterable_macro_value.to_macro_output}",
+              @arena[node.iterable]
+            )
+          end
+        end
+        return
+      end
 
       return if register_char_binary_primitive_macro_for?(class_name, iter_vars, values)
 
@@ -79032,7 +79050,8 @@ module Adamas::HIR
       end
 
       case node
-      when Adamas::Compiler::Frontend::ArrayLiteralNode
+      when Adamas::Compiler::Frontend::ArrayLiteralNode,
+           Adamas::Compiler::Frontend::TupleLiteralNode
         values = [] of Adamas::Compiler::Semantic::MacroValue
         node.elements.each do |elem_id|
           value = macro_value_for_expr(elem_id)
@@ -79176,6 +79195,29 @@ module Adamas::HIR
       when '{' then '}'
       when '<' then '>'
       when '|' then '|'
+      else
+        nil
+      end
+    end
+
+    private def macro_value_for_iterable_admission(expr_id : ExprId) : Adamas::Compiler::Semantic::MacroValue?
+      expr_node = @arena[expr_id]
+      case expr_node
+      when Adamas::Compiler::Frontend::MacroExpressionNode
+        macro_value_for_iterable_admission(expr_node.expression)
+      when Adamas::Compiler::Frontend::GroupingNode
+        macro_value_for_iterable_admission(expr_node.expression)
+      when Adamas::Compiler::Frontend::NilNode
+        Adamas::Compiler::Semantic::MacroNilValue.new
+      when Adamas::Compiler::Frontend::BoolNode,
+           Adamas::Compiler::Frontend::NumberNode,
+           Adamas::Compiler::Frontend::StringNode,
+           Adamas::Compiler::Frontend::SymbolNode
+        # Only direct literal nodes prove a concrete scalar here. The general
+        # macro evaluator also handles control flow and owner lookups; using its
+        # fallback branch on unknown conditions could reject a deferred
+        # iterable based on a branch that is not actually selected.
+        macro_value_for_expr(expr_id)
       else
         nil
       end

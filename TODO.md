@@ -1,5 +1,32 @@
 # Adamas Bootstrap TODO
 
+2026-10-18 CLASS MACRO-FOR LITERAL ITERABLES: the class-member expansion
+prepass extracted array elements but omitted TupleLiteralNode, so stdlib getter
+macros silently produced no methods. Use the same element conversion for both
+collection ASTs. Failed extraction also conflated an unknown deferred expression
+with an already known scalar: reject only direct scalar literals (including
+explicit nil and transparent AST wrappers), retaining unknown expressions for
+their existing resolution path. DoD: macro_for_literal_iterables_repro.sh
+COMPILER matches pinned Crystal for tuple/array getter runtime output and an
+empty typed array, and rejects Number, String, Bool and Nil with exit 1 and no
+executable (atomic S1 lavin4515, run4531). Exact parent lavin4511 creates a getter
+call stub and aborts on the tuple fixture (run4533); the tuple-only intermediate
+accepts a scalar iterable (run4501). Refresh after class-member macro expansion,
+literal iterable extraction or scalar macro evaluation changes.
+- [x] Generate tuple/array class members and preserve empty collection behavior.
+- [x] Reject proven scalar literals without evaluating unknown control flow.
+- [ ] Resolve owner-qualified macro iterable constants in their retained source
+  arena and lexical owner; qualify shadowing, source order and reopened owners.
+  The separate owner-qualified fixture is not admitted by the literal suite.
+- [ ] Audit the general macro evaluator's unknown If/Ternary condition fallback:
+  macro_value_for_expr can select an else branch without proving the condition.
+  The literal admission helper deliberately does not use that path, but literal
+  collection element conversion still does; qualify that boundary separately.
+- [ ] Qualify Char scalar rejection and grouped collection expansion. CharNode
+  is not classified by the admission helper, and the iterable extractor does
+  not unwrap GroupingNode. Neither is covered by the seven-case contract.
+- [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
+
 2026-10-18 DEFERRED CLASS-CONSTANT NEW: bare `new` during deferred class
 constant initialization always chose the synthesized allocator, even when a
 source class factory owned `new`. This bypassed its named argument contract
@@ -56,8 +83,8 @@ defaults; fresh bootstrap and unchanged LavinMQ parity remain open. Refresh
 after expanded-member scanning, ivar refinement, layout or arena changes.
 - [x] Preserve typed class/struct storage, literal defaults and sibling owners.
 - [x] Preserve existing Int64 declarations and Bool fields in runtime readback.
-- [ ] Repair the separate stdlib getter generated-method registration failure
-  on the atomic source base; the composed getter result does not close it.
+- [x] Repair direct tuple-based stdlib getter method registration on the atomic
+  source base (class macro-for literal iterable entry above, run4531).
 - [ ] Qualify macro-emitted typed declaration forms and nonliteral defaults;
   their registration paths differ from this ordinary assignment branch.
 - [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
