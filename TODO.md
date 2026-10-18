@@ -1,5 +1,18 @@
 # Adamas Bootstrap TODO
 
+2026-10-18 ORDINARY RAISE CALLS: the parser converted the overloadable method
+name `raise` into a dedicated RaiseNode, erasing named call shape and forcing
+exception control flow even for source overloads that return normally. Parse
+it through the ordinary identifier/call path and preserve all actual arguments.
+DoD: ordinary_call_boundaries_repro.sh matches Crystal on four runtime cases
+and rejects the wrong `pos` type with a source diagnostic (run4098). Covers
+statement, expression, zero-argument and nested parenthesized calls. Uses the
+typed source named-call selection and allocator identity repair above its base.
+- [x] Remove the parser-only hard-coded raise control flow.
+- [x] Preserve strict source type rejection for overloadable raise.
+- [ ] Qualify unparenthesized nested command calls and absolute root calls.
+- [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
+
 2026-10-18 SOURCE NAMED CALL AND ALLOCATOR IDENTITY: ordinary named calls
 rearranged actuals into ABI slots before source type selection, allowing wrong
 named types and selecting the wrong overload. Reuse typed source-shape matching

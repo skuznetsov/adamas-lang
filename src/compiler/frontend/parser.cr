@@ -708,12 +708,6 @@ module Adamas
             return parse_postfix_if_modifier(stmt)
           end
 
-          # Phase 29: Check for raise statement
-          if current_token.kind == Token::Kind::Raise
-            stmt = parse_raise
-            return parse_postfix_if_modifier(stmt)
-          end
-
           # Phase 10: yield as statement (removed)
           # Same rationale as super (Phase 39 below): yield is an expression
           # whose result can be chained, e.g. `yield(hash).object_id`.
@@ -4975,33 +4969,6 @@ module Adamas
           end
 
           {rescue_clauses, else_body, ensure_body}
-        end
-
-        # Phase 29: Parse raise statement
-        # Grammar: raise | raise <expression>
-        # Note: bare 'raise' (re-raise) is only valid in rescue blocks
-        private def parse_raise : ExprId
-          raise_token = current_token
-          advance
-          skip_trivia
-
-          # Bare raise with no value (raise without arguments, or raise followed by
-          # postfix modifier like `raise if cond`).  Match parse_return behavior.
-          token = current_token
-          if token.kind.in?(Token::Kind::Newline, Token::Kind::EOF, Token::Kind::End,
-               Token::Kind::Else, Token::Kind::Elsif, Token::Kind::Rescue,
-               Token::Kind::Ensure, Token::Kind::If, Token::Kind::Unless,
-               Token::Kind::While, Token::Kind::Until)
-            return @arena.add_typed(RaiseNode.new(raise_token.span, nil))
-          end
-
-          # Don't consume postfix if/unless as part of the value expression.
-          # `raise X if Y` must parse as `if Y then raise X end`, not `raise(X if Y)`.
-          value_expr = without_postfix_modifiers { parse_expression(0) }
-          return PREFIX_ERROR if value_expr.invalid?
-
-          raise_span = raise_token.span.cover(@arena[value_expr].span)
-          @arena.add_typed(RaiseNode.new(raise_span, value_expr))
         end
 
         # Phase 67: Parse with (context block)
@@ -10416,16 +10383,10 @@ module Adamas
               @arena.add_typed(IdentifierNode.new(token.span, identifier_slice))
             end
           when Token::Kind::Raise
-            # Allow raise in expression context (e.g., x || raise "error")
-            # In call-argument context, treat as identifier to allow usage as a variable/param name.
-            if @parsing_call_args > 0
-              identifier_slice = stable_identifier_token_slice(token)
-              advance
-              @arena.add_typed(IdentifierNode.new(token.span, identifier_slice))
-            else
-              stmt = parse_raise
-              parse_postfix_if_modifier(stmt)
-            end
+            # `raise` is an ordinary overloadable method name in Crystal. Keep
+            # its full call shape and let normal resolution determine its
+            # return type and control flow, including named arguments.
+            parse_identifier_like(token.span, stable_identifier_token_slice(token))
           when Token::Kind::Return
             # Allow return in expression contexts (e.g., x || return y)
             stmt = parse_return
