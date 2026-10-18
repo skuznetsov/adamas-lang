@@ -1,5 +1,26 @@
 # Adamas Bootstrap TODO
 
+2026-10-17 REACHABLE METHOD RETURN TAILS: unannotated module/instance lowering
+collected explicit Return types, then included lower_return's synthetic Nil as
+the body's last expression even though that path had terminated. Only include
+the final expression when the current path can fall through, using the existing
+sequential-lowering reachability predicate in both producers. DoD:
+reachable_method_return_tail_repro.sh qualifies eight original typeof results,
+checks eight module/instance HIR return types and matches eighteen native branch
+outputs, including real Nil and String fallthrough tails. Fresh S1 return3493
+passes repository run3510; exact parent parser3461 fails HIR run3503.
+- [x] Exclude synthetic tails after terminal returns without erasing reachable
+  Nil/String alternatives, including conditionals whose every branch returns.
+- [ ] Probe unresolved generic return annotations: the separate annotated-VOID
+  fallback in module/instance/def lowering still reads last_value after a Return;
+  it may consume the same synthetic Nil. This adjacent route is not qualified.
+- [ ] Qualify the separate C callback thunk fallthrough repair and grouped Proc
+  input conversion before claiming C callback ABI parity.
+- [ ] Reject the invalid standalone alias `alias T = ()`; positive zero-input
+  Proc forms work on the parent, but this original-rejected alias is accepted.
+- [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
+
+
 2026-10-17 UNNAMED C CALLBACK PARAMETER BOUNDARIES: the parser treated an
 unnamed C parameter as a bare Proc input list and consumed the comma before a
 following parenthesized callback. Lib recovery then discarded the callback and

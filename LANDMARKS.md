@@ -19972,3 +19972,34 @@ separate checks. Diagnostic Lavin run3460 restores all 179 LibCrypto members
 (previously 52) but exposes a separate grouped Proc input conversion bug and an
 unresolved generic-union hash return. No broker runtime/spec parity, fresh S2
 or bootstrap fixed point is established by these parser checks.
+
+
+### Only reachable method tails contribute an implicit result (2026-10-17)
+Unannotated module/instance lowering collected explicit Return terminators, then
+also joined the body's last value into its return type. lower_return leaves a
+synthetic Nil value after terminating the current path, so an Int32-only method
+incorrectly acquired Nil | Int32. Gate that final-expression contribution with
+the existing should_stop_sequential_lowering? predicate in both producers. Real
+reachable Nil and String tails remain alternatives; no ABI coercion is weakened.
+
+`python3 run_clean_portable_regression.py return3493_reachable_method_tail
+return3510_repository_terminal_tail regression_tests/reachable_method_return_tail_repro.sh`
+passes eight original-first typeof results, four HIR examples checking eight
+module/instance functions, and eighteen native branch outputs. Controls include
+explicit terminal returns, all-branches-return conditionals, and both sides of
+mixed return/fallthrough methods. Exact parent parser3461 fails the HIR contract
+in run3503; fresh candidate S1 builds and passes run3504 plus native run3507.
+All 1919 production src files match the tested return3493 manifest. HIR SHA-256
+06d89c6c6c51136b215e0f478305986d48d2c45ae82355c27e77a57f5e87a3e5;
+host b93b95a9af4421607fabc7f41e7b7e0d0f563bba4da035a9493b804a95ed22bf.
+
+Scoped adversary ROBUST for these unannotated producers excluding terminal
+synthetic tails while retaining reachable alternatives. The adjacent fallback
+for annotated methods whose return type stayed VOID still reads last_value
+without a reachability check in module/instance/def lowering; whether it consumes
+the same synthetic Nil needs a targeted unresolved-annotation probe. Refresh
+after reachability predicates, Return lowering or method result inference
+changes; revert source and regression together. This does not repair general
+NoReturn summaries or the separate C callback thunk fallthrough. No stdlib or
+application source was changed. Fresh S2, unchanged LavinMQ runtime/spec parity
+and bootstrap fixed point remain open.

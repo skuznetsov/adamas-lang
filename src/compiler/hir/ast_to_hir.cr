@@ -36113,10 +36113,13 @@ module Adamas::HIR
           end
         end
 
-        # Also consider the last expression
-        if (last_id = last_value)
-          t = ctx.type_of(last_id)
-          inferred_types << t unless t == TypeRef::VOID
+        # Only a fallthrough path contributes the body's final expression.
+        # lower_return may leave a synthetic Nil last_value after terminating the block.
+        if !should_stop_sequential_lowering?(ctx)
+          if (last_id = last_value)
+            t = ctx.type_of(last_id)
+            inferred_types << t unless t == TypeRef::VOID
+          end
         end
 
         if inferred_types.any?
@@ -44740,10 +44743,13 @@ module Adamas::HIR
           end
         end
 
-        # Also consider the last expression
-        if (last_id = last_value)
-          t = ctx.type_of(last_id)
-          inferred_types << t unless t == TypeRef::VOID
+        # Only a fallthrough path contributes the body's final expression.
+        # lower_return may leave a synthetic Nil last_value after terminating the block.
+        if !should_stop_sequential_lowering?(ctx)
+          if (last_id = last_value)
+            t = ctx.type_of(last_id)
+            inferred_types << t unless t == TypeRef::VOID
+          end
         end
 
         if inferred_types.any?
