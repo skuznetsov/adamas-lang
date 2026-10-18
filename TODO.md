@@ -1,5 +1,22 @@
 # Adamas Bootstrap TODO
 
+2026-10-17 STRING LITERAL MACRO STRINGIFY: MacroStringValue returned its raw
+contents, dropping the source quotes that Crystal's ASTNode#stringify preserves.
+Reuse the existing StringLiteral source renderer, retaining character-specific
+stringification and id behavior. DoD: macro_string_source_stringify_repro.sh
+qualifies two original programs and matches fourteen native comparisons for
+expression and macro-argument positions, empty strings, quotes, backslashes,
+newlines, Unicode and assignment. Fresh S1 macro3656 matches all production
+source files; parent proc3517 fails every comparison in run3665. Private core
+run3663 and repository-path run3666 pass.
+- [x] Preserve StringLiteral source quoting in stringify without changing id.
+- [ ] Repair the separate lexer/macro reparse escape inflation for a literal
+  interpolation marker passed as a macro argument. The original fifteen-case
+  packet macro3656 retains this failing case (run3660); the fourteen-case core
+  suite does not establish complete escape compatibility.
+- [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
+
+
 2026-10-17 GROUPED PROC INPUT TYPE CONVERSION: arrow annotations preserved
 parentheses around their entire input list when converting a type-name string
 back to TypeRefs. Two pointer formals became one input; an empty list became an

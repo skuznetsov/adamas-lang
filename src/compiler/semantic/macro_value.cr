@@ -491,8 +491,9 @@ module Adamas
           @value.inspect # Output with quotes
         end
 
+        # ASTNode#stringify returns a StringLiteral containing this source form.
         def stringify : String
-          @value
+          to_macro_output
         end
 
         def to_id : String
