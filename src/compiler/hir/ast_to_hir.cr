@@ -62171,6 +62171,10 @@ module Adamas::HIR
         # also parse as IdentifierNode. Lower them with ordinary name resolution;
         # limiting this to bare `new` silently leaves their globals uninitialized.
         needs_deferred = true if val_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
+        # Output macros may have no type until their expanded value is lowered.
+        if val_node.is_a?(Adamas::Compiler::Frontend::MacroExpressionNode) && val_node.output
+          needs_deferred = true
+        end
         if env_has?("DEBUG_DEFERRED_CONST")
           STDERR.puts "[DEFERRED_CONST] #{needs_deferred ? "Added" : "Skipped"} #{full_name} val_node=#{val_node.class.name}"
         end

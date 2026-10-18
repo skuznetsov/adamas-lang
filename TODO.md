@@ -1,5 +1,21 @@
 # Adamas Bootstrap TODO
 
+2026-10-18 OUTPUT MACRO CONSTANT INITIALIZERS: output-position
+MacroExpressionNode constants were not queued for source-owned deferred
+lowering, so cross-file consumers read unset constants. Queue output macros;
+ordinary expansion and expression lowering still determine the value and type.
+DoD: output_macro_constant_repro.sh qualifies the original first, then matches
+exact candidate stdout and clean stderr for both programs in run3693. This
+covers direct String/Number/Bool, grouping, required-file Hash consumption and
+four reads of a shared output-macro constant. All 1919 production source files
+match tested S1 lavin3670. Exact parent macro3665 fails run3686 with KeyError.
+- [x] Defer output-position MacroExpressionNode constant initializers.
+- [x] Add original-first direct and shared-consumer regression fixtures.
+- [x] Run repository regression with exact output and successful safe footers.
+- [ ] Route IfNode/CaseNode initializers through the existing deferred path:
+  run3688 LLVM has null globals with no stores, including an ordinary call.
+- [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
+
 2026-10-18 ESCAPED HASH IN QUOTED STRINGS: parent macro3656 retained surplus
 backslashes before escaped hashes and literal interpolation markers (run3674).
 Add the ordinary quoted-string escape rule used by Crystal: consume the slash
