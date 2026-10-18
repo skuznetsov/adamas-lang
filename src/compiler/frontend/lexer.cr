@@ -1417,6 +1417,10 @@ module Adamas
                 buffer.write_byte '\\'.ord.to_u8
               when '"'.ord.to_u8
                 buffer.write_byte '"'.ord.to_u8
+              when '#'.ord.to_u8
+                # Crystal treats \\# as an escape, so the following brace is
+                # literal text and must not start interpolation.
+                buffer.write_byte '#'.ord.to_u8
               when 'u'.ord.to_u8
                 # Phase 58: Unicode escapes \uXXXX or \u{XXXX}
                 advance(1)

@@ -1,5 +1,22 @@
 # Adamas Bootstrap TODO
 
+2026-10-18 ESCAPED HASH IN QUOTED STRINGS: parent macro3656 retained surplus
+backslashes before escaped hashes and literal interpolation markers (run3674).
+Add the ordinary quoted-string escape rule used by Crystal: consume the slash
+and emit the literal hash, retaining shared token-span and arena handling.
+DoD: escaped_hash_string_repro.sh qualifies two original programs, matches exact
+candidate output with clean stderr, and checks exactly two active HIR
+interpolations. Repository run3684 passes; all 1919 production sources match
+tested S1 macro3665. The full fifteen-case stringify packet passes private
+run3672. Percent literals and backticks need separate probes. Fresh S2 and
+LavinMQ parity remain open.
+- [x] Consume `\\#` as a literal hash in ordinary double-quoted strings.
+- [x] Add odd/even backslash, macro-argument, and HIR regression fixtures.
+- [x] Run `regression_tests/escaped_hash_string_repro.sh` original-first and
+  compare exact candidate output, clean stderr, and HIR in run3684.
+- [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
+
+
 2026-10-17 STRING LITERAL MACRO STRINGIFY: MacroStringValue returned its raw
 contents, dropping the source quotes that Crystal's ASTNode#stringify preserves.
 Reuse the existing StringLiteral source renderer, retaining character-specific
@@ -8,12 +25,12 @@ qualifies two original programs and matches fourteen native comparisons for
 expression and macro-argument positions, empty strings, quotes, backslashes,
 newlines, Unicode and assignment. Fresh S1 macro3656 matches all production
 source files; parent proc3517 fails every comparison in run3665. Private core
-run3663 and repository-path run3666 pass.
+run3663 and repository-path run3666 pass. The original fifteen-case packet
+macro3656 retains the escaped-marker failure (run3660); the fourteen-case core
+suite does not establish complete escape compatibility.
 - [x] Preserve StringLiteral source quoting in stringify without changing id.
-- [ ] Repair the separate lexer/macro reparse escape inflation for a literal
-  interpolation marker passed as a macro argument. The original fifteen-case
-  packet macro3656 retains this failing case (run3660); the fourteen-case core
-  suite does not establish complete escape compatibility.
+- [x] Resolve escaped-marker lexing discrepancy in the 2026-10-18 entry above;
+  repository DoD passes in run3684.
 - [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
 
 

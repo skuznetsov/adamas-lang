@@ -1,0 +1,5 @@
+escaped: literal #{name}
+odd: literal \#{name}
+even: literal \value
+active: literal value
+hash: #name

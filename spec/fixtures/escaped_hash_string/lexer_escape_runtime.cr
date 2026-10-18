@@ -1,0 +1,6 @@
+name = "value"
+puts "escaped: literal \#{name}"
+puts "odd: literal \\\#{name}"
+puts "even: literal \\#{name}"
+puts "active: literal #{name}"
+puts "hash: \#name"

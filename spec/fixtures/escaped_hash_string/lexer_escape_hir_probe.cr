@@ -1,0 +1,5 @@
+escaped_marker = "literal \#{name}"
+odd_backslash_escaped_marker = "literal \\\#{name}"
+escaped_hash_without_brace = "literal \#name"
+even_backslashes_then_interpolation = "literal \\#{1}"
+unescaped_interpolation = "literal #{1}"
