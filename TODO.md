@@ -1,5 +1,20 @@
 # Adamas Bootstrap TODO
 
+2026-10-18 CASE CONSTANT DEPENDENCIES: the deferred-initializer dependency
+visitor omitted CaseNode, so ARGV reads inside a case could run before ARGV's
+store. Visit its subject, every when/in condition and body, and else body using
+the existing source-owned traversal. DoD: deferred_case_constant_dependencies_repro.sh
+matches Crystal for both empty and nonempty ARGV, covering the subject, when
+condition, when body and else body. Exact parent S1 lavin3670 fails run3714
+with SIGSEGV; candidate lavin3710 passes private run3715 and repository run3716.
+All 1919 production source files and repository fixtures match tested hashes.
+The in-branch path has static child-coverage review, not runtime pattern parity.
+- [x] Include all CaseNode children in deferred constant dependency discovery.
+- [x] Add original-first two-ARGV regression and run it from the repository.
+- [ ] Verify initializer source order and unused-constant side effects; routing
+  additional IfNode/CaseNode roots requires those separate guards.
+- [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
+
 2026-10-18 OUTPUT MACRO CONSTANT INITIALIZERS: output-position
 MacroExpressionNode constants were not queued for source-owned deferred
 lowering, so cross-file consumers read unset constants. Queue output macros;

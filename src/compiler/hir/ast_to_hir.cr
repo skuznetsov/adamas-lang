@@ -61800,6 +61800,23 @@ module Adamas::HIR
         if else_body = node.else_body
           else_body.each { |child| collect_constant_dependencies(child, deps) }
         end
+      when Adamas::Compiler::Frontend::CaseNode
+        if value = node.value
+          collect_constant_dependencies(value, deps)
+        end
+        node.when_branches.each do |branch|
+          branch.conditions.each { |condition| collect_constant_dependencies(condition, deps) }
+          branch.body.each { |child| collect_constant_dependencies(child, deps) }
+        end
+        if in_branches = node.in_branches
+          in_branches.each do |branch|
+            branch.conditions.each { |condition| collect_constant_dependencies(condition, deps) }
+            branch.body.each { |child| collect_constant_dependencies(child, deps) }
+          end
+        end
+        if else_branch = node.else_branch
+          else_branch.each { |child| collect_constant_dependencies(child, deps) }
+        end
       when Adamas::Compiler::Frontend::BeginNode
         node.body.each { |child| collect_constant_dependencies(child, deps) }
         if rescue_clauses = node.rescue_clauses
