@@ -846,9 +846,7 @@ module Adamas
           when .string?
             MacroStringValue.new(Frontend.node_literal_string(node) || "")
           when .symbol?
-            # Strip leading colon: parser stores ":greet" but MacroSymbolValue expects "greet"
-            raw_sym = Frontend.node_literal_string(node) || ""
-            MacroSymbolValue.new(raw_sym.lchop(':'))
+            MacroSymbolValue.from_literal(Frontend.node_literal_string(node) || "")
           when .char?
             MacroCharValue.new(Frontend.node_literal_string(node) || "")
           when .bool?
@@ -941,8 +939,7 @@ module Adamas
               MacroStringValue.new(Frontend.node_literal_string(node) || "")
             end
           when .symbol?
-            raw_sym = Frontend.node_literal_string(node) || ""
-            MacroSymbolValue.new(raw_sym.lchop(':'))
+            MacroSymbolValue.from_literal(Frontend.node_literal_string(node) || "")
           when .char?
             MacroCharValue.new(Frontend.node_literal_string(node) || "")
           when .bool?

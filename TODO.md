@@ -1,5 +1,24 @@
 # Adamas Bootstrap TODO
 
+2026-10-18 SYMBOL LITERAL MACRO NAMES: frontend SymbolNode tokens retain their
+syntactic colon. HIR collection iteration and annotation conversion passed that
+colon into semantic names, producing declarations such as `def self.:north`
+and `fun :abs`; generated-source recovery then dropped the invalid declarations.
+Use a shared source-literal factory at all four AST conversion sites, retaining
+the semantic constructor for names created by macro operations. DoD: repository
+macro_symbol_literal_contract_repro.sh matches Crystal byte-for-byte for module
+methods and lib externs (run3763); semantic boundary spec passes two examples
+(run3764). All 1919 production sources match tested S1 lavin3739. The unchanged
+broader packet3737 remains RED on separate CLI-loop, lexer and annotation-arena
+faults; this entry does not claim complete macro compatibility.
+- [x] Normalize the source-token colon without changing semantic symbol names.
+- [x] Run original-first generated declaration and semantic name regressions.
+- [ ] Preserve source arena identity when consuming stored annotation ExprIds.
+- [ ] Route top-level CLI macro loops through semantic macro evaluation.
+- [ ] Qualify missing operator-symbol and quoted-symbol lexer forms with Crystal.
+- [ ] Reject generated parse errors instead of silently dropping declarations.
+- [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
+
 2026-10-18 CASE CONSTANT DEPENDENCIES: the deferred-initializer dependency
 visitor omitted CaseNode, so ARGV reads inside a case could run before ARGV's
 store. Visit its subject, every when/in condition and body, and else body using

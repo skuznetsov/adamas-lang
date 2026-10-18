@@ -636,6 +636,11 @@ module Adamas
         def initialize(@value : String)
         end
 
+        # AST tokens include a leading colon; semantic symbol names do not.
+        def self.from_literal(literal : String) : MacroSymbolValue
+          new(literal.lchop(':'))
+        end
+
         def to_macro_output : String
           ":#{@value}"
         end
@@ -1874,7 +1879,7 @@ module Adamas
           when .string?
             MacroStringValue.new(Frontend.node_literal_string(node) || "")
           when .symbol?
-            MacroSymbolValue.new(Frontend.node_literal_string(node) || "")
+            MacroSymbolValue.from_literal(Frontend.node_literal_string(node) || "")
           when .bool?
             MacroBoolValue.new(Frontend.node_literal_string(node) == "true")
           when Frontend::NodeKind::Nil

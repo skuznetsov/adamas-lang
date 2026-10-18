@@ -79184,7 +79184,7 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::StringNode
         Adamas::Compiler::Semantic::MacroStringValue.new((safe_slice_to_string(expr_node.value) || ""))
       when Adamas::Compiler::Frontend::SymbolNode
-        Adamas::Compiler::Semantic::MacroSymbolValue.new((safe_slice_to_string(expr_node.name) || ""))
+        Adamas::Compiler::Semantic::MacroSymbolValue.from_literal(safe_slice_to_string(expr_node.name) || "")
       when Adamas::Compiler::Frontend::NumberNode
         literal = number_literal_text_from_source(expr_node) || safe_slice_to_string(expr_node.value)
         if expr_node.kind.f32? || expr_node.kind.f64?
