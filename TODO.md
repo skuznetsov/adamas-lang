@@ -1,5 +1,24 @@
 # Adamas Bootstrap TODO
 
+2026-10-17 GROUPED PROC INPUT TYPE CONVERSION: arrow annotations preserved
+parentheses around their entire input list when converting a type-name string
+back to TypeRefs. Two pointer formals became one input; an empty list became an
+input named (). Share list-group stripping across the three arrow consumers,
+retain nested Proc grouping, and handle the exact empty list only after an
+arrow has been identified. Generic Proc(A, B, R) keeps its existing path.
+DoD: grouped_proc_input_types_repro.sh qualifies original syntax, passes six
+HIR examples and matches eight native results (repository run3523). Fresh S1
+proc3517 matches all 1919 production src files. Exact parent parser3461 fails
+three of four initial helper examples in run3513; candidate3474 passes run3514.
+- [x] Preserve grouped pointer, singleton, empty, union and nested Proc input
+  arity, including a nested Proc with a sibling argument.
+- [ ] Qualify ambiguous nested-arrow spellings with original Crystal before
+  extending the canonical nested-Proc grammar claim.
+- [ ] Qualify C callback thunk results and receiver capture independently; the
+  type-name conversion contract does not prove the complete C callback ABI.
+- [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
+
+
 2026-10-17 REACHABLE METHOD RETURN TAILS: unannotated module/instance lowering
 collected explicit Return types, then included lower_return's synthetic Nil as
 the body's last expression even though that path had terminated. Only include
@@ -14,8 +33,8 @@ passes repository run3510; exact parent parser3461 fails HIR run3503.
 - [ ] Probe unresolved generic return annotations: the separate annotated-VOID
   fallback in module/instance/def lowering still reads last_value after a Return;
   it may consume the same synthetic Nil. This adjacent route is not qualified.
-- [ ] Qualify the separate C callback thunk fallthrough repair and grouped Proc
-  input conversion before claiming C callback ABI parity.
+- [ ] Qualify the separate C callback thunk fallthrough repair and receiver
+  capture before claiming C callback ABI parity.
 - [ ] Reject the invalid standalone alias `alias T = ()`; positive zero-input
   Proc forms work on the parent, but this original-rejected alias is accepted.
 - [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
@@ -36,9 +55,9 @@ intermediate3453 fails the no-argument multiline callback return in run3463.
 - [x] Preserve named bare Proc syntax, mixed parameter names and multiline lists.
 - [ ] Make lib recovery report skipped declarations instead of silently losing
   them; the parent reproducer reports zero diagnostics despite data loss.
-- [ ] Probe zero-input and nested Proc annotation forms against original Crystal.
-- [ ] Repair the separate string-to-TypeRef conversion of grouped Proc inputs
-  and synthesized C callback fallthrough return before claiming callback ABI parity.
+- [x] Probe canonical zero-input and nested Proc forms against original Crystal.
+- [x] Repair the separate string-to-TypeRef conversion of grouped Proc inputs.
+- [ ] Qualify synthesized C callback fallthrough before claiming callback ABI parity.
 - [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
 
 

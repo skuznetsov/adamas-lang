@@ -64995,6 +64995,14 @@ module Adamas::HIR
       args
     end
 
+    # Split arrow Proc inputs after removing only grouping around the full list.
+    # The exact empty list is meaningful here because callers have already found an arrow.
+    private def split_proc_type_input_names(inputs_str : String) : Array(String)
+      stripped = strip_ascii_edge_whitespace(inputs_str)
+      return [] of String if stripped == "()"
+      split_proc_type_inputs(strip_fully_grouped_type_name(stripped))
+    end
+
     private def extract_proc_return_type_name(type_name : String) : String?
       stripped = type_name.strip
       if stripped.starts_with?("Proc(") && stripped.ends_with?(')')
@@ -65035,7 +65043,7 @@ module Adamas::HIR
           return [] of String if parts.empty?
           return ["Tuple(#{parts.join(", ")})"]
         end
-        return split_generic_type_args(left)
+        return split_proc_type_input_names(left)
       end
 
       nil
@@ -69401,7 +69409,7 @@ module Adamas::HIR
           end
         end
 
-        args = left.empty? ? [] of String : split_generic_type_args(left)
+        args = split_proc_type_input_names(left)
         ret_name = right.empty? ? "Nil" : right
         return args + [ret_name]
       end
@@ -69414,7 +69422,7 @@ module Adamas::HIR
           if arrow_index = find_top_level_arrow(inner)
             left = inner[0, arrow_index].strip
             right = inner[arrow_index + 2, inner.size - arrow_index - 2].strip
-            args = left.empty? ? [] of String : split_proc_type_inputs(left)
+            args = split_proc_type_input_names(left)
             ret_name = right.empty? ? "Nil" : right
             return args + [ret_name]
           end

@@ -20003,3 +20003,30 @@ changes; revert source and regression together. This does not repair general
 NoReturn summaries or the separate C callback thunk fallthrough. No stdlib or
 application source was changed. Fresh S2, unchanged LavinMQ runtime/spec parity
 and bootstrap fixed point remain open.
+
+
+### Grouped arrow Proc inputs retain their arity (2026-10-17)
+After parsing, type-name conversion split an arrow's left side while retaining
+parentheses around the complete input list. `(Void*, Void*) -> Int32` became one
+input instead of two; `() -> Nil` acquired an input named `()`. Three arrow
+consumers now share grouping removal and the exact empty-list rule. The existing
+grouping helper preserves nested Proc arrows; generic `Proc(...)` handling is
+unchanged. Empty grouping without an arrow is not admitted by this helper.
+
+`python3 run_clean_portable_regression.py proc3517_returntail_grouped_inputs
+proc3523_repository_grouped_inputs regression_tests/grouped_proc_input_types_repro.sh`
+passes original syntax qualification, six HIR helper examples and eight native
+results. Controls cover grouped pointers, singleton and zero-input arrows,
+generic Proc, a union input, a nested Proc and a nested Proc with a sibling.
+Exact parent parser3461 fails three of four initial helper examples in run3513;
+candidate3474 passes run3514. Fresh S1 proc3517 builds, and all 1919 production
+src files match its tested manifest. HIR SHA-256
+ab6ac2f854804de429d86bac78b2ccf89994c17caedca793766ff348cbe86ee5;
+host 3ada7ef4b1d81164fb18e2fd4b31bf63284c8472fa44b1496dbb92436d09ee8b.
+
+Scoped source adversary ROBUST for these canonical arrow/input and generic-Proc
+paths. Ambiguous nested-arrow spellings need an original syntax oracle before
+extending the claim. Refresh after Proc syntax/string conversion, grouping or
+TypeRef interning changes; revert source and regression together. This does not
+establish C callback thunk return/receiver semantics, fresh S2, unchanged LavinMQ
+runtime/spec parity or a bootstrap fixed point. No stdlib or application changes.
