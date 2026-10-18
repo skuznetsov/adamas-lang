@@ -102396,7 +102396,7 @@ module Adamas::HIR
           STDERR.puts "[SPLAT_TRACE_ARGS] #{@last_splat_context || "func=#{ctx.function.name}"} args=#{kinds.join(",")}"
         end
         args_result = if named_args = node.named_args
-                        reordered = reorder_named_args(ctx, call_args, named_args, method_name, arg_binding_full_method_name, has_block_call, call_arena)
+                        reordered = reorder_named_args(ctx, call_args, named_args, method_name, arg_binding_full_method_name, has_block_call, receiver_id, call_arena)
                         # An allocator consumes the selected initializer's
                         # slots, but its physical target remains the allocator.
                         if selected_binding = reordered[1]
@@ -114472,6 +114472,7 @@ module Adamas::HIR
       func_name : String,
       initial_entry : Tuple(String, Adamas::Compiler::Frontend::DefNode)?,
       has_block_call : Bool,
+      receiver_id : ValueId?,
       call_arena : Adamas::Compiler::Frontend::ArenaLike,
     ) : Tuple(Array(ValueId), Tuple(String, Adamas::Compiler::Frontend::DefNode), Bool)?
       return nil if has_block_call || named_args.empty?
@@ -114532,8 +114533,73 @@ module Adamas::HIR
       positional_index = 0
       named_only = false
       rest_packed = false
+      # Source defaults are declared in the selected Def's lexical owner, not
+      # in the caller currently lowering this call. Keep the source Def/Arena
+      # selection and all existing argument checks unchanged; only install the
+      # selected declaration context while evaluating its defaults.
+      source_method_name = method_short_from_name(selected[0])
+      source_method_is_class = class_method?(strip_type_suffix(selected[0]))
+      # The selected Def owner is the lexical context for its default AST, but
+      # an inherited class method's implicit self is the class named at the call.
+      source_receiver_class = if source_method_is_class &&
+                                 method_separator(func_name) == '.' &&
+                                 method_short_from_name(func_name) == source_method_name
+                                function_context_from_name(func_name)
+                              else
+                                context
+                              end
+      source_namespace = function_namespace_override_for(
+        selected[0], strip_type_suffix(selected[0]), func_name
+      ) || context
+      source_type_params = {} of String => String
+      if source_receiver = receiver_id
+        source_type_params = type_param_map_for_receiver_type(ctx.type_of(source_receiver))
+      end
+      if selected_type_params = function_type_param_map_for(
+           selected[0], strip_type_suffix(selected[0]), func_name
+         )
+        source_type_params = source_type_params.merge(selected_type_params)
+      end
+
       saved_locals = ctx.save_locals
+      saved_inline_caller_locals = @inline_caller_locals_stack.map { |locals| {locals, locals.dup} }
+      saved_current_class = @current_class
+      saved_current_method = @current_method
+      saved_current_method_is_class = @current_method_is_class
+      saved_namespace_override = @current_namespace_override
+      saved_type_param_map = @type_param_map
       begin
+        # Defaults execute in the selected declaration local environment.
+        # Identifier lowering can fall back to inline caller frames even after
+        # ctx locals are cleared, so temporarily clear each frame in place.
+        # Keeping the Hash objects and stack slots preserves inline-frame identity.
+        @inline_caller_locals_stack.each do |locals|
+          locals.clear
+        end
+        ctx.restore_locals({} of String => ValueId)
+        ctx.restore_block_parameter_bindings({} of String => ValueId)
+        @current_class = context
+        @current_method = source_method_name
+        @current_method_is_class = source_method_is_class
+        @current_namespace_override = source_namespace
+        @type_param_map = source_type_params
+        @subst_cache_gen &+= 1
+        # For ordinary methods the selected call's receiver is the source
+        # default's self. An allocator's `initialize` has no instance receiver
+        # before allocation, so retain its existing behavior.
+        if source_receiver = receiver_id
+          unless source_method_name == "initialize"
+            ctx.register_local("self", source_receiver)
+          end
+        elsif source_method_is_class && (source_class = source_receiver_class) && type_name_exists?(source_class)
+          # Keep lexical lookup on the selected Def owner above, while class
+          # method self follows the invocation class for inherited methods.
+          # Without this binding, emit_self can fall back to the caller's
+          # instance `self` from the enclosing HIR function.
+          self_literal = lower_type_literal_from_name(ctx, source_class)
+          ctx.mark_type_literal(self_literal)
+          ctx.register_local("self", self_literal)
+        end
         params.each do |param|
           next if param.is_block
           if named_only_separator?(param)
@@ -114589,6 +114655,20 @@ module Adamas::HIR
         end
       ensure
         ctx.restore_locals(saved_locals)
+        @inline_caller_locals_stack.clear
+        saved_inline_caller_locals.each do |locals, saved_values|
+          locals.clear
+          saved_values.each do |name, value|
+            locals[name] = value
+          end
+          @inline_caller_locals_stack << locals
+        end
+        @current_class = saved_current_class
+        @current_method = saved_current_method
+        @current_method_is_class = saved_current_method_is_class
+        @current_namespace_override = saved_namespace_override
+        @type_param_map = saved_type_param_map
+        @subst_cache_gen &+= 1
       end
       bound_types = result.map { |value| enum_tracked_type(ctx, value) }
       unless params_compatible_with_args?(selected[1], bound_types, context)
@@ -114606,6 +114686,7 @@ module Adamas::HIR
       method_name : String,
       full_method_name : String?,
       has_block_call : Bool,
+      receiver_id : ValueId?,
       call_arena : Adamas::Compiler::Frontend::ArenaLike,
     ) : Tuple(Array(ValueId), Tuple(String, Adamas::Compiler::Frontend::DefNode)?, Bool)
       # Get parameter names from function definition
@@ -114624,7 +114705,7 @@ module Adamas::HIR
         end
       end
       func_entry = lookup_function_def_for_call(func_name, positional_args.size + named_args.size, has_block_call, nil, false, !named_args.empty?, named_arg_names, raw_positional_count)
-      if bound = lower_source_named_args(ctx, positional_args, named_args, func_name, func_entry, has_block_call, call_arena)
+      if bound = lower_source_named_args(ctx, positional_args, named_args, func_name, func_entry, has_block_call, receiver_id, call_arena)
         return {bound[0], bound[1], bound[2]}
       end
       func_def = func_entry ? func_entry[1] : nil

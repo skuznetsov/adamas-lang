@@ -1,5 +1,24 @@
 # Adamas Bootstrap TODO
 
+2026-10-18 SOURCE NAMED DEFAULT CONTEXT: binding evaluated a selected Def's
+default AST in caller locals, inline frames and lexical namespace. Install the
+selected declaration's arena/namespace/type parameters and clear caller lookup
+frames while evaluating defaults; restore the original frames in ensure.
+Explicit actuals remain in caller context and preceding parameters remain
+visible to later defaults. For inherited class methods keep the declaration's
+lexical owner, but use the invocation class as default self. DoD:
+source_named_default_context_repro.sh COMPILER passes nine original-first byte
+comparisons plus one strict String-to-Int32 rejection (sealed S1 lavin4683,
+repository run4699). Parent4679 prints A instead of B for inherited default self
+(run4682); the fixed generic/alias neighbor passes run4698. Refresh after named
+binding, inline local lookup, default evaluation or inherited receiver changes.
+- [x] Preserve lexical constants, preceding params, instance self and caller state.
+- [x] Preserve concrete inherited class self through generic instances and aliases.
+- [x] Reject a wrong known named actual with exit 1 and no executable.
+- [ ] Qualify positional-only default paths, block defaults and generic type
+  parameter defaults against the same context contract.
+- [ ] Verify fresh S2/S3/S4 and unchanged LavinMQ runtime/spec parity.
+
 2026-10-18 MACRO SELF SOURCE RENDERING: structured macro arguments retained
 SelfNode in MacroNodeValue, but its serializer omitted that variant and emitted
 an empty string. A generated return annotation `: self` then consumed the next

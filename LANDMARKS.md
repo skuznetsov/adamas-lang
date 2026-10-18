@@ -20175,3 +20175,33 @@ collection changes; revert source and regression together. Symbol/MacroId
 conversion and raw-text condition collection need separate qualification. No
 stdlib or application source changed. Fresh S2, unchanged LavinMQ runtime/spec
 parity and bootstrap fixed point remain open.
+
+
+### Source named defaults keep declaration context and invocation self (2026-10-18)
+The selected Def/Arena already existed before default evaluation, but its AST
+was lowered with caller locals, inline caller frames, namespace and class state.
+Temporarily install the declaration context and its type parameters, clear caller
+lookup frames in place, then bind preceding parameters in order. Restore locals,
+block bindings, original inline Hash objects and compiler context in ensure.
+Actual argument expressions still execute in caller context. An inherited class
+method has two distinct owners here: its lexical namespace belongs to the Def,
+while default self belongs to the invocation class. An explicit receiver is
+preserved; allocator initialize retains its pre-allocation behavior.
+
+Fresh sealed S1 lavin4683 builds from 1919 pinned source files. The repository
+command `python3 run_clean_portable_regression.py lavin4683_default_inherited_receiver lavin4699_repository_default_generic_context regression_tests/source_named_default_context_repro.sh`
+passes nine original-first byte comparisons and a strict wrong named actual
+requiring exit 1, an identifying diagnostic and no executable. Controls include
+lexical constants, preceding params, instance self, caller-local/method
+collisions, inline lookup, class self, inherited class self, concrete generic
+receivers and aliases. Parent4679 is RED for inherited self (run4682); private
+run4698 independently qualifies the generic/alias neighbor. HIR SHA256
+c9f55deea9538a513e507231cc3c3e60ae0d7c17338a9dd41b1e9a6013e38cf1;
+host SHA256 2c09477bd39b1cd3827853b4280effbcc12b4c6a112e4a1286b21b70af7e652c.
+
+Scoped adversary ROBUST for these source named default paths. Refresh after
+default evaluation, named binding, inline lookup or inherited receiver changes;
+revert source and regression together. Positional-only defaults, block defaults
+and defaults involving generic type parameters need separate qualification. No
+stdlib/application changes, fresh S2, bootstrap fixed point or LavinMQ parity
+are established by this matrix.
