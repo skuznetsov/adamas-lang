@@ -1,5 +1,21 @@
 # Adamas Bootstrap TODO
 
+2026-10-18 EXPLICIT VOID GENERIC ARGUMENTS: ordinary generic call receivers,
+type references and static Type[...] owner construction conflated an explicitly
+written Void with failed typeof inference, changing Pointer(Void) into
+Pointer(Pointer(Void)) before intrinsic validation. Preserve explicit Void in
+all three paths; retain the existing Unknown/typeof fallback and strict pointer
+compatibility. DoD: explicit_void_generic_args_repro.sh COMPILER passes
+original-first owner/alias/static-index runtime controls and rejects a nested
+pointer passed to Pointer(Void), with exit 1 and no executable (atomic S1
+lavin4610, run4613). Exact private parent4550 prints BB instead of AB (run4606);
+the isolated fix passes run4607. Refresh after generic owner construction,
+typeof resolution or pointer type identity changes.
+- [x] Preserve explicit Void without adding a pointer layer or an ABI cast.
+- [x] Preserve alias and nested pointer distinctions and strict rejection.
+- [ ] Qualify Unknown and typeof-derived Void fallbacks separately.
+- [ ] Verify fresh S2/S3/S4 and unchanged LavinMQ runtime/spec parity.
+
 2026-10-18 INHERITED CLASS-METHOD SOURCE IDENTITY: a child-local typed miss
 stopped ancestor overload lookup, and selected ancestor bodies retained the
 ancestor receiver. Rebase the selected source Def onto the concrete class while

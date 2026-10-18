@@ -85099,11 +85099,10 @@ module Adamas::HIR
       base_name, lookup_base_name = resolve_generic_base_names(base_name)
 
       # Extract type arguments, substituting any type parameters
-      normalize_typeof_name = ->(type_name : String) : String {
-        # Keep unions in generic args (e.g. `Slice(Int32 | Pointer(UInt8))`),
-        # otherwise we lose specialization and end up with `Pointer(Void)`-based
-        # instantiations like `Indexable::ItemIterator(Pointer(Void), Pointer(Void))`.
-        if type_name == "Void" || type_name == "Unknown"
+      normalize_typeof_name = ->(type_name : String, from_typeof : Bool) : String {
+        # Keep unions in generic args and preserve an explicit Void type argument.
+        # Only a Void result from typeof uses the pointer fallback.
+        if type_name == "Unknown" || (from_typeof && type_name == "Void")
           "Pointer(Void)"
         else
           type_name
@@ -85140,6 +85139,7 @@ module Adamas::HIR
                      else
                        stringify_type_expr_for_typeof_resolution(arg_id) || "Unknown"
                      end
+          from_typeof = arg_node.is_a?(Adamas::Compiler::Frontend::TypeofNode) || arg_name.includes?("typeof(")
           arg_name = resolve_typeof_in_type_string(arg_name)
           # If typeof(yield ...) resolved to Pointer(Void), try __block_return__
           # from function_type_param_maps (set by callers with known block types).
@@ -85174,7 +85174,7 @@ module Adamas::HIR
               end
             end
           end
-          arg_name = normalize_typeof_name.call(arg_name)
+          arg_name = normalize_typeof_name.call(arg_name, from_typeof)
           arg_name = resolve_type_name_in_context(arg_name)
           arg_name = substitute_type_params_in_type_name(arg_name)
           normalize_tuple_literal_type_name(arg_name)
@@ -100935,10 +100935,10 @@ module Adamas::HIR
             base_name = resolve_path_like_name(generic_node.base_type)
             if base_name
               base_name, lookup_base_name = resolve_generic_base_names(base_name)
-              normalize_typeof_name = ->(type_name : String) : String {
-                # Keep unions in generic args (e.g. `Slice(Int32 | Pointer(UInt8))`)
-                # so we don't degrade specialization to `Pointer(Void)`.
-                if type_name == "Void" || type_name == "Unknown"
+              normalize_typeof_name = ->(type_name : String, preserve_explicit_void : Bool) : String {
+                # Keep unions and explicit Void generic arguments intact.
+                # Unknown and unresolved typeof(Void) retain the existing fallback.
+                if type_name == "Unknown" || (type_name == "Void" && !preserve_explicit_void)
                   "Pointer(Void)"
                 else
                   type_name
@@ -100948,15 +100948,17 @@ module Adamas::HIR
               type_args = with_typeof_local_bindings(ctx) do
                 generic_node.type_args.map do |arg_id|
                   arg_node = @arena[arg_id]
+                  raw_arg_name = stringify_type_expr_for_typeof_resolution(arg_id) || "Unknown"
+                  preserve_explicit_void = raw_arg_name == "Void" || raw_arg_name == "::Void"
                   arg_name = case arg_node
                              when Adamas::Compiler::Frontend::TypeofNode
                                inner = arg_node.args.first?
                                inner ? resolve_typeof_expr(inner) : "Pointer(Void)"
                              else
-                               stringify_type_expr_for_typeof_resolution(arg_id) || "Unknown"
+                               raw_arg_name
                              end
                   arg_name = resolve_typeof_in_type_string(arg_name)
-                  arg_name = normalize_typeof_name.call(arg_name)
+                  arg_name = normalize_typeof_name.call(arg_name, preserve_explicit_void)
                   arg_name = resolve_type_name_in_context(arg_name)
                   arg_name = substitute_type_params_in_type_name(arg_name)
                   normalize_tuple_literal_type_name(arg_name)
@@ -122043,8 +122045,8 @@ module Adamas::HIR
           base_name = resolve_path_like_name(obj_node.base_type)
           if base_name
             base_name, lookup_base_name = resolve_generic_base_names(base_name)
-            normalize_typeof_name = ->(type_name : String) : String {
-              if type_name == "Void" || type_name == "Unknown"
+            normalize_typeof_name = ->(type_name : String, preserve_explicit_void : Bool) : String {
+              if type_name == "Unknown" || (type_name == "Void" && !preserve_explicit_void)
                 "Pointer(Void)"
               else
                 type_name
@@ -122052,9 +122054,10 @@ module Adamas::HIR
             }
             type_args = with_typeof_local_bindings(ctx) do
               obj_node.type_args.map do |arg_id|
-                arg_name = stringify_type_expr_for_typeof_resolution(arg_id) || "Unknown"
-                arg_name = resolve_typeof_in_type_string(arg_name)
-                arg_name = normalize_typeof_name.call(arg_name)
+                raw_arg_name = stringify_type_expr_for_typeof_resolution(arg_id) || "Unknown"
+                preserve_explicit_void = raw_arg_name == "Void" || raw_arg_name == "::Void"
+                arg_name = resolve_typeof_in_type_string(raw_arg_name)
+                arg_name = normalize_typeof_name.call(arg_name, preserve_explicit_void)
                 arg_name = resolve_type_name_in_context(arg_name)
                 substitute_type_params_in_type_name(arg_name)
               end

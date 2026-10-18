@@ -1,3 +1,33 @@
+### Explicit Void stays a generic argument, not an inference fallback (2026-10-18)
+Three generic-construction paths normalized every Void to Pointer(Void): an
+ordinary generic call receiver, lower_generic_type_ref, and static Type[...]
+owner construction. This changed Pointer(Void).new into an allocation owned by
+Pointer(Pointer(Void)) before the MIR intrinsic saw it. Preserve a written Void
+(or ::Void) rather than adding a pointer layer. Keep existing unresolved
+Unknown/typeof fallbacks and strict argument compatibility; no intrinsic,
+representation, stdlib or application change is involved.
+
+`regression_tests/explicit_void_generic_args_repro.sh` passes original-first
+runtime bytes AB, A and AB for ordinary/alias/static-index construction and
+rejects an actual nested pointer passed to Pointer(Void), with exit 1 and no
+executable (atomic S1 lavin4610, run4613). The private parent4550 prints BB for
+the first control (run4606); its isolated successor passes all four fixtures in
+run4607. All 1919 production source hashes match the tested atomic manifest.
+HIR SHA-256 05e0e60e1bcafec757dd8215781312150bbacf46044bcd0ed9b33ce3fcd72536;
+host 33121973146a8078a7bbf27527121a0db93ea30cd46b5e4223ae98c7dbb90e33.
+
+Scoped source adversary ROBUST for these construction paths; dynamic scope is
+the three runtime controls and one strict rejection. Absolute ::Void and typeof
+variants are source-audited only.
+
+Refresh after generic owner construction, typeof resolution or pointer identity
+changes; revert source and regression together. Unknown/typeof fallback behavior
+and Pointer.null with the full stdlib are outside the empty-prelude contract.
+Fresh bootstrap and unchanged LavinMQ runtime/spec parity remain open. A pristine
+full build on this atomic source still rejects Log.for(HTTP::Client), run4617;
+the extended private candidate has a later independent default-context blocker.
+
+
 ### Inherited class methods retain selected source and concrete self (2026-10-18)
 A child-local typed overload miss no longer suppresses compatible ancestor
 class methods. Materialize the selected ancestor Def for the concrete receiver,
