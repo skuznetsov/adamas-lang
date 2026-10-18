@@ -136,6 +136,7 @@ module Adamas
       class MacroNumberValue < MacroValue
         getter value : Int64 | Float64
         getter source_literal : String?
+        @explicit_kind : String? = nil
 
         def self.from_literal(literal : String) : MacroNumberValue?
           normalized = literal.gsub("_", "")
@@ -205,7 +206,7 @@ module Adamas
           @value = value.to_i64
         end
 
-        def initialize(value : Int64, @source_literal : String? = nil)
+        def initialize(value : Int64, @source_literal : String? = nil, @explicit_kind : String? = nil)
           @value = value
         end
 
@@ -240,6 +241,10 @@ module Adamas
         # NumberLiteral kind as the lexer assigns it: the explicit suffix, else
         # f64 for floats, i32 for integers that fit Int32, i64 otherwise.
         def number_kind : String
+          if kind = @explicit_kind
+            return kind
+          end
+
           if (literal = @source_literal) && (suffix = MacroNumberValue.numeric_suffix(literal.gsub("_", "")))
             return suffix.lchop('_')
           end
@@ -519,6 +524,33 @@ module Adamas
               return MacroBoolValue.new(result)
             end
             super
+          when "to_i"
+            if named_args && !named_args.empty?
+              raise ArgumentError.new("no parameter named '#{named_args.keys.first}' for StringLiteral#to_i")
+            end
+            unless args.size <= 1
+              raise ArgumentError.new("wrong number of arguments for StringLiteral#to_i (given #{args.size}, expected 0..1)")
+            end
+
+            value = if base = args.first?
+                      unless base.is_a?(MacroNumberValue)
+                        raise ArgumentError.new("argument to StringLiteral#to_i must be a number, not #{base.class_name}")
+                      end
+                      begin
+                        @value.to_i64?(base.to_i.to_i32)
+                      rescue ex : ArgumentError
+                        raise ArgumentError.new("StringLiteral#to_i: #{ex.message}")
+                      end
+                    else
+                      @value.to_i64?
+                    end
+            unless value
+              raise ArgumentError.new("StringLiteral#to_i: #{@value} is not an integer")
+            end
+
+            # Crystal returns an i32 NumberLiteral even outside Int32's range.
+            # Its AST kind is independent of the unsuffixed decimal source.
+            MacroNumberValue.new(value, value.to_s, "i32")
           when "gsub"
             unless args.size == 2 && (named_args.nil? || named_args.empty?)
               raise ArgumentError.new("StringLiteral#gsub expects exactly two positional arguments")
@@ -624,7 +656,7 @@ module Adamas
           when "ord"
             MacroNumberValue.new(@value.empty? ? 0_i64 : @value[0].ord.to_i64)
           else
-            MacroNilValue.new
+            raise ArgumentError.new("undefined macro method '#{name}' for CharLiteral")
           end
         end
       end

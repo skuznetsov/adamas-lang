@@ -1673,6 +1673,10 @@ module Adamas
           block : Frontend::BlockNode,
           context : Context
         ) : MacroValue
+          if member == "to_i" && (receiver.class_name == "StringLiteral" || receiver.class_name == "MacroId")
+            raise ArgumentError.new("StringLiteral#to_i is not expected to be invoked with a block")
+          end
+
           case member
           when "map", "select", "reject"
             return evaluate_macro_block_map(receiver, member, block, context)
@@ -2457,7 +2461,9 @@ module Adamas
             if node.is_a?(Frontend::InstanceVarNode)
               evaluate_instance_var_expression(node, context)
             elsif node.is_a?(Frontend::MemberAccessNode)
-              evaluate_member_access_expression(node, context)
+              # Output uses the same AST-valued dispatch as assignments and chains.
+              # The legacy text fallback silently discarded literal receivers.
+              evaluate_member_access_to_macro_value(node, context).to_macro_output
             elsif node.is_a?(Frontend::PathNode)
               name = path_to_string(node)
               resolve_scoped_macro_value(name, context).try(&.to_macro_output) || name

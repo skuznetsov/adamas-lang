@@ -20917,3 +20917,17 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Complete fresh pristine S2, unchanged LavinMQ functional/upstream parity
   and bootstrap fixed point. Lavin3182 was interrupted with no final result;
   an interrupted compiler process is not an observed compile failure.
+
+
+### Typed macro string numeric conversion (2026-10-18)
+- [x] Implement StringLiteral#to_i positional/radix/error/block contracts and
+  retain the returned NumberLiteral i32 kind independently of rendered width.
+  Direct member output uses typed macro dispatch, and top-level AST MacroIf
+  retries unknown fast conditions with the typed evaluator before collecting
+  branches. Fresh S1 lavin4657 and repository run lavin4665 pass seven positive
+  byte-output cases and ten compile-rejection controls against original Crystal.
+- [ ] Qualify SymbolLiteral/MacroId conversion independently before extending
+  conversion claims. Audit raw-text macro conditions separately; this fix
+  covers the top-level AST collector and preserves its unknown fallback.
+- [ ] Continue fresh S2, unchanged LavinMQ runtime/upstream-spec parity and
+  bootstrap fixed point. Macro conversion regressions do not establish them.

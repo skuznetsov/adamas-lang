@@ -5250,6 +5250,19 @@ module Adamas
           collect_top_level_nodes(arena, arena_index, node.expression, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena, main_arenas: main_arenas)
         when Frontend::MacroIfNode
           condition = evaluate_macro_condition(arena, node.condition, flags)
+          if condition.nil?
+            dummy_program = Frontend::Program.new(arena, [] of Frontend::ExprId)
+            expander = Semantic::MacroExpander.new(
+              dummy_program, arena, flags,
+              recovery_mode: true,
+              macro_source: source,
+              macro_source_path: macro_origin_path
+            )
+            condition = expander.evaluate_condition_truthiness(
+              node.condition,
+              variables: {} of String => Semantic::MacroValue
+            )
+          end
           if env_enabled?("DEBUG_MACRO_EXPAND")
             bootstrap_trace_puts "[DEBUG_MACRO_EXPAND] MacroIfNode condition=#{condition.inspect}"
           end

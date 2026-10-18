@@ -20148,3 +20148,30 @@ extending the claim. Refresh after Proc syntax/string conversion, grouping or
 TypeRef interning changes; revert source and regression together. This does not
 establish C callback thunk return/receiver semantics, fresh S2, unchanged LavinMQ
 runtime/spec parity or a bootstrap fixed point. No stdlib or application changes.
+
+
+### Macro numeric values retain kind across output and conditions (2026-10-18)
+StringLiteral#to_i was absent from the typed macro interpreter. Its result must
+retain Crystal's explicit i32 AST kind even when unsuffixed decimal source is
+outside Int32. Direct member output also bypassed typed receiver dispatch, and
+the top-level AST MacroIf collector admitted both branches when its fast
+evaluator could not resolve a numeric kind comparison. Implement conversion
+with strict argument diagnostics, route member output through typed evaluation,
+and retry only unknown AST conditions with the existing typed evaluator.
+
+Fresh sealed S1 lavin4657 builds from all 1919 pinned source files. Both private
+run lavin4661 and repository command
+`python3 run_clean_portable_regression.py lavin4657_macro_condition_typed_fallback lavin4665_repository_macro_string_to_i regression_tests/macro_string_to_i_repro.sh`
+pass seven original-first positive byte comparisons and ten negative controls
+requiring exit 1, a method diagnostic and no executable. They cover decimal,
+explicit radix, sign/whitespace, regex chains, NumberLiteral kind/id and wide
+rendering; malformed text, overflow, bad type/arity/name/block/base, Char receiver
+and trailing junk remain rejected. Earlier lavin4651 is RED on the two branch
+controls. Host SHA256 cb1ee328676bca0859b5d90b4b4d5c2541808e8a7ae10474d1969283e549f09e.
+
+Scoped adversary ROBUST for this conversion path and its negative controls.
+Refresh after macro receiver dispatch, numeric representation or AST condition
+collection changes; revert source and regression together. Symbol/MacroId
+conversion and raw-text condition collection need separate qualification. No
+stdlib or application source changed. Fresh S2, unchanged LavinMQ runtime/spec
+parity and bootstrap fixed point remain open.
