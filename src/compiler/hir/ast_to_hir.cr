@@ -7986,6 +7986,7 @@ module Adamas::HIR
       @macro_generated_parameter_def_ids = Set(UInt64).new
       @macro_generated_parameter_sources = {} of {UInt64, UInt64} => String
       @macro_generated_sources_by_arena = {} of UInt64 => {Adamas::Compiler::Frontend::ArenaLike, Hash(Int32, String)}
+      @macro_primary_source_owners = {} of UInt64 => {Adamas::Compiler::Frontend::ArenaLike, String, Int32}
       @link_libraries = link_libraries || [] of String
       @last_splat_context = nil
       @type_literal_values = Set(ValueId).new
@@ -8221,6 +8222,7 @@ module Adamas::HIR
         @identity_tracker = Adamas::Compiler::Semantic::IdentityDryRunTracker.new
       end
       # --- End: explicit init for ALL remaining inline-default ivars ---
+      seed_macro_primary_source_owners(@main_arenas)
     end
 
     # Fresh self-hosted stage2 can miscompile the large constructor path and
@@ -8259,6 +8261,7 @@ module Adamas::HIR
       @macro_generated_parameter_def_ids = Set(UInt64).new
       @macro_generated_parameter_sources = {} of {UInt64, UInt64} => String
       @macro_generated_sources_by_arena = {} of UInt64 => {Adamas::Compiler::Frontend::ArenaLike, Hash(Int32, String)}
+      @macro_primary_source_owners = {} of UInt64 => {Adamas::Compiler::Frontend::ArenaLike, String, Int32}
     end
 
     def bootstrap_bind_stdlib_root(stdlib_root : String) : Nil
@@ -8285,6 +8288,7 @@ module Adamas::HIR
       @macro_generated_parameter_def_ids = Set(UInt64).new
       @macro_generated_parameter_sources = {} of {UInt64, UInt64} => String
       @macro_generated_sources_by_arena = {} of UInt64 => {Adamas::Compiler::Frontend::ArenaLike, Hash(Int32, String)}
+      @macro_primary_source_owners = {} of UInt64 => {Adamas::Compiler::Frontend::ArenaLike, String, Int32}
       @last_splat_context = nil
       @type_literal_values = Set(ValueId).new
       @constant_defs = Set(String).new
@@ -8306,6 +8310,7 @@ module Adamas::HIR
       @lazy_enum_searched = [] of String
       @lazy_enum_indexed_dirs = [] of String
       @lazy_enum_candidate_files = {} of String => Array(String)
+      seed_macro_primary_source_owners(@main_arenas)
       if env_has?("DEBUG_AST_TO_HIR_BIND")
         STDERR.puts "[AST_TO_HIR_BIND] module=#{@module.object_id} arena_main=#{@main_arenas.size} links=#{@link_libraries.size}"
       end
@@ -8382,6 +8387,7 @@ module Adamas::HIR
       key = arena_map_key(arena)
       @sources_by_arena[key] = source
       @line_counts_by_arena[key] = source.count('\n') + 1
+      remember_macro_primary_source_owner(arena, source)
       source
     end
 
@@ -15992,55 +15998,97 @@ module Adamas::HIR
       return ExprId.new(-1) if expr_id.invalid? || expr_id.index < 0 || expr_id.index >= source_arena.size
 
       source_node = source_arena[expr_id]
-      anchor = macro_arg_anchor_for_expr(expr_id, source_arena)
-      candidates = [] of String
-
-      if source = source_for_arena(source_arena)
-        if text = slice_source_for_expr_in_arena(expr_id, source_arena, source)
-          unless macro_arg_slice_suspicious?(source_node, text)
-            candidates << text unless text.empty?
-          end
+      generated_text = nil.as(String?)
+      if generated_entry = @macro_generated_sources_by_arena[arena_map_key(source_arena)]?
+        if generated_entry[0].same?(source_arena)
+          generated_text = generated_entry[1][expr_id.index]?
         end
       end
 
-      extras = extra_sources_for_arena(source_arena) || source_arena.extra_sources
-      extra_limit = 16
-      extras.reverse_each do |extra_source|
-        break if extra_limit <= 0
-        if text = slice_source_for_expr_in_arena(expr_id, source_arena, extra_source)
-          unless macro_arg_slice_suspicious?(source_node, text)
-            candidates << text unless text.empty?
-          end
+      primary_source = macro_arg_primary_source_for_expr(expr_id, source_arena)
+      owner_text = generated_text || primary_source
+      owner_slice = owner_text.try { |text| macro_arg_owned_source_slice(expr_id, source_arena, text) }
+      return ExprId.new(-1) unless owner_text && owner_slice
+
+      parse_macro_owned_expr_text_for_arena(owner_slice, source_node, target_arena)
+    end
+
+    private def seed_macro_primary_source_owners(
+      arenas : Array(Adamas::Compiler::Frontend::ArenaLike),
+    ) : Nil
+      arenas.each do |arena|
+        remember_macro_primary_source_owner(arena, source_for_arena(arena))
+      end
+    end
+
+    private def remember_macro_primary_source_owner(
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+      source : String?,
+    ) : Nil
+      return unless source
+      key = arena_map_key(arena)
+      if existing = @macro_primary_source_owners[key]?
+        unless existing[0].same?(arena)
+          @macro_primary_source_owners[key] = {arena, source, arena.size}
+          return
         end
-        extra_limit -= 1
+        return if existing[1] == source
+        # A changed source buffer cannot certify the old arena's node spans.
+        @macro_primary_source_owners[key] = {arena, source, -1}
+        return
       end
-      if fallback = fallback_macro_expr_text(source_node, source_arena)
-        candidates << fallback
+      @macro_primary_source_owners[key] = {arena, source, arena.size}
+    end
+
+    private def macro_arg_primary_source_for_expr(
+      expr_id : ExprId,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : String?
+      entry = @macro_primary_source_owners[arena_map_key(arena)]?
+      return nil unless entry && entry[0].same?(arena)
+      return nil if entry[2] <= expr_id.index
+      source = source_for_arena(arena)
+      return nil unless source && source == entry[1]
+      entry[1]
+    end
+
+    private def macro_arg_owned_source_slice(
+      expr_id : ExprId,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+      source : String,
+    ) : String?
+      return nil if expr_id.invalid? || expr_id.index < 0 || expr_id.index >= arena.size
+      span = arena[expr_id].span
+      return nil if span.start_offset < 0 || span.end_offset <= span.start_offset
+      return nil if span.end_offset > source.bytesize
+      source.byte_slice(span.start_offset, span.end_offset - span.start_offset)
+    end
+
+    private def parse_macro_owned_expr_text_for_arena(
+      text : String,
+      source_node : Adamas::Compiler::Frontend::TypedNode,
+      target_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : ExprId
+      return ExprId.new(-1) if text.strip.empty?
+
+      first_generated_index = target_arena.size
+      lexer = Adamas::Compiler::Frontend::Lexer.new(text)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer, target_arena, recovery_mode: true)
+      program = parser.parse_program
+      return ExprId.new(-1) unless parser.diagnostics.empty?
+      return ExprId.new(-1) unless program.roots.size == 1
+      root = program.roots.first?
+      return ExprId.new(-1) unless root
+      return ExprId.new(-1) unless Adamas::Compiler::Frontend.node_kind(target_arena[root]) == Adamas::Compiler::Frontend.node_kind(source_node)
+
+      index = first_generated_index
+      generated_sources = macro_generated_sources_for(target_arena)
+      while index < target_arena.size
+        generated_sources[index] = text
+        index += 1
       end
-      candidates.uniq!
-      return ExprId.new(-1) if candidates.empty?
-
-      best_id = ExprId.new(-1)
-      best_score = Int32::MIN
-
-      candidates.each do |text|
-        parsed_id = parse_macro_expr_text_for_arena(text, target_arena)
-        next if parsed_id.invalid?
-
-        parsed_node = target_arena[parsed_id]
-        score = 0
-        score += 2 if anchor && text.includes?(anchor)
-        score += 1 if macro_arg_nodes_compatible?(source_node, parsed_node)
-
-        if score > best_score
-          best_score = score
-          best_id = parsed_id
-          # Strong match: anchor preserved and node shape compatible.
-          return parsed_id if score >= 3
-        end
-      end
-
-      best_id
+      store_extra_source(target_arena, text)
+      root
     end
 
     private def fallback_macro_expr_text(
@@ -16133,36 +16181,6 @@ module Adamas::HIR
       end
     end
 
-    private def macro_arg_slice_suspicious?(
-      source_node : Adamas::Compiler::Frontend::TypedNode,
-      text : String,
-    ) : Bool
-      trimmed = text.strip
-      return true if trimmed.empty?
-
-      case Adamas::Compiler::Frontend.node_kind(source_node)
-      when Adamas::Compiler::Frontend::NodeKind::TypeDeclaration,
-           Adamas::Compiler::Frontend::NodeKind::Assign,
-           Adamas::Compiler::Frontend::NodeKind::Identifier,
-           Adamas::Compiler::Frontend::NodeKind::Constant,
-           Adamas::Compiler::Frontend::NodeKind::Path
-        return true if trimmed.includes?('\n') || trimmed.includes?('\r')
-      when Adamas::Compiler::Frontend::NodeKind::String
-        return true unless trimmed.starts_with?('"') && trimmed.ends_with?('"')
-      when Adamas::Compiler::Frontend::NodeKind::Char
-        return true unless trimmed.starts_with?('\'') && trimmed.ends_with?('\'')
-      end
-
-      if Adamas::Compiler::Frontend.node_kind(source_node) == Adamas::Compiler::Frontend::NodeKind::TypeDeclaration
-        lowered = " #{trimmed.downcase} "
-        return true if lowered.includes?(" getter ")
-        return true if lowered.includes?(" def ")
-        return true if lowered.includes?(" end ")
-      end
-
-      false
-    end
-
     private def fallback_macro_path_text(
       node : Adamas::Compiler::Frontend::PathNode,
       arena : Adamas::Compiler::Frontend::ArenaLike,
@@ -16181,120 +16199,6 @@ module Adamas::HIR
         "#{left}::#{right}"
       else
         right
-      end
-    end
-
-    private def parse_macro_expr_text_for_arena(
-      text : String,
-      target_arena : Adamas::Compiler::Frontend::ArenaLike,
-    ) : ExprId
-      trimmed = text.strip
-      return ExprId.new(-1) if trimmed.empty?
-
-      store_extra_source(target_arena, text)
-      lexer = Adamas::Compiler::Frontend::Lexer.new(text)
-      parser = Adamas::Compiler::Frontend::Parser.new(lexer, target_arena, recovery_mode: true)
-      program = parser.parse_program
-      return ExprId.new(-1) unless program.roots.size == 1
-      if root = program.roots.first?
-        node = target_arena[root]
-        return root unless node.is_a?(Adamas::Compiler::Frontend::NilNode)
-      end
-
-      # Fallback for typed macro args using keyword identifiers
-      # (e.g., `value : Int32` passed to `record`).
-      if text.includes?(':')
-        wrappers = [
-          {"getter #{text}", 0},
-          {"property #{text}", 0},
-          {"record __macro_tmp__, #{text}", 1},
-        ]
-        wrappers.each do |wrapper, arg_index|
-          store_extra_source(target_arena, wrapper)
-          wrapper_lexer = Adamas::Compiler::Frontend::Lexer.new(wrapper)
-          wrapper_parser = Adamas::Compiler::Frontend::Parser.new(wrapper_lexer, target_arena, recovery_mode: true)
-          wrapper_program = wrapper_parser.parse_program
-          next unless wrapper_program.roots.size == 1
-          next unless call_root = wrapper_program.roots.first?
-          call_node = target_arena[call_root]
-          next unless call_node.is_a?(Adamas::Compiler::Frontend::CallNode)
-
-          arg = call_node.args[arg_index]? || call_node.args.first?
-          next unless arg
-          arg_node = target_arena[arg]
-          if arg_node.is_a?(Adamas::Compiler::Frontend::TypeDeclarationNode) ||
-             arg_node.is_a?(Adamas::Compiler::Frontend::AssignNode)
-            return arg
-          end
-        end
-      end
-
-      ExprId.new(-1)
-    end
-
-    private def macro_arg_anchor_for_expr(
-      expr_id : ExprId,
-      arena : Adamas::Compiler::Frontend::ArenaLike,
-    ) : String?
-      return nil if expr_id.invalid? || expr_id.index < 0 || expr_id.index >= arena.size
-      node = arena[expr_id]
-
-      case Adamas::Compiler::Frontend.node_kind(node)
-      when Adamas::Compiler::Frontend::NodeKind::Identifier
-        identifier = node.unsafe_as(Adamas::Compiler::Frontend::IdentifierNode)
-        (safe_slice_to_string(identifier.name) || "")
-      when Adamas::Compiler::Frontend::NodeKind::Constant
-        constant = node.unsafe_as(Adamas::Compiler::Frontend::ConstantNode)
-        (safe_slice_to_string(constant.name) || "")
-      when Adamas::Compiler::Frontend::NodeKind::Path
-        path = node.unsafe_as(Adamas::Compiler::Frontend::PathNode)
-        with_arena(arena) do
-          resolve_path_like_name(expr_id) || collect_path_string(path)
-        end
-      when Adamas::Compiler::Frontend::NodeKind::TypeDeclaration
-        declaration = node.unsafe_as(Adamas::Compiler::Frontend::TypeDeclarationNode)
-        (safe_slice_to_string(declaration.name) || "")
-      when Adamas::Compiler::Frontend::NodeKind::Assign
-        assignment = node.unsafe_as(Adamas::Compiler::Frontend::AssignNode)
-        macro_arg_anchor_for_expr(assignment.target, arena)
-      when Adamas::Compiler::Frontend::NodeKind::InstanceVar
-        instance_var = node.unsafe_as(Adamas::Compiler::Frontend::InstanceVarNode)
-        (safe_slice_to_string(instance_var.name) || "")
-      else
-        nil
-      end
-    end
-
-    private def macro_arg_nodes_compatible?(source_node : AstNode, parsed_node : AstNode) : Bool
-      source_kind = Adamas::Compiler::Frontend.node_kind(source_node)
-      parsed_kind = Adamas::Compiler::Frontend.node_kind(parsed_node)
-      return true if source_kind == parsed_kind
-
-      case source_kind
-      when Adamas::Compiler::Frontend::NodeKind::Identifier,
-           Adamas::Compiler::Frontend::NodeKind::Constant,
-           Adamas::Compiler::Frontend::NodeKind::Path
-        parsed_kind == Adamas::Compiler::Frontend::NodeKind::Identifier ||
-          parsed_kind == Adamas::Compiler::Frontend::NodeKind::Constant ||
-          parsed_kind == Adamas::Compiler::Frontend::NodeKind::Path
-      when Adamas::Compiler::Frontend::NodeKind::String
-        parsed_kind == Adamas::Compiler::Frontend::NodeKind::String
-      when Adamas::Compiler::Frontend::NodeKind::Char
-        parsed_kind == Adamas::Compiler::Frontend::NodeKind::Char
-      when Adamas::Compiler::Frontend::NodeKind::Regex
-        parsed_kind == Adamas::Compiler::Frontend::NodeKind::Regex
-      when Adamas::Compiler::Frontend::NodeKind::Number
-        parsed_kind == Adamas::Compiler::Frontend::NodeKind::Number
-      when Adamas::Compiler::Frontend::NodeKind::Symbol
-        parsed_kind == Adamas::Compiler::Frontend::NodeKind::Symbol
-      when Adamas::Compiler::Frontend::NodeKind::TypeDeclaration
-        parsed_kind == Adamas::Compiler::Frontend::NodeKind::Assign ||
-          parsed_kind == Adamas::Compiler::Frontend::NodeKind::TypeDeclaration
-      when Adamas::Compiler::Frontend::NodeKind::Assign
-        parsed_kind == Adamas::Compiler::Frontend::NodeKind::Assign ||
-          parsed_kind == Adamas::Compiler::Frontend::NodeKind::TypeDeclaration
-      else
-        true
       end
     end
 

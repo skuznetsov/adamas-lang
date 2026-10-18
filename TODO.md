@@ -1,5 +1,26 @@
 # Adamas Bootstrap TODO
 
+2026-10-18 MACRO ARGUMENT SOURCE OWNERSHIP: cross-arena reparsing ranked
+unrelated source buffers by token shape and a name anchor. Matching offsets
+and AST kinds could silently transfer a different literal (987 became 123).
+Use the exact generated ExprId source, or an arena-retaining primary-source
+certificate bounded by the completed parse node count. Rebinding source bytes
+invalidates that certificate; newly reparsed descendants retain exact source
+ownership for subsequent transfers. DoD: six source-boundary examples pass on
+the atomic overlay and repository script (runs4426/4429); the exact parent
+fails three of those examples (run4427). The atomic S1 builds from the same
+1919 source files. This covers provenance and strict rejection, not getter runtime
+initialization: a separate composed getter test still prints 0000 instead of
+Crystal's 1122 (run4411). Unchanged LavinMQ on the private composed S1 passes
+its former generated Server getter boundary and reaches a separate File.open
+forwarded-block type loss (runs4381/4391).
+- [x] Replace source guessing with exact generated or certified primary ownership.
+- [x] Reject unowned appended nodes and source-rebound arenas.
+- [x] Preserve generated descendant ownership across repeated transfers.
+- [ ] Repair the independent generated getter initializer runtime discrepancy.
+- [ ] Repair forwarded File.open block argument inference without type fallbacks.
+- [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
+
 2026-10-18 MACRO CONTROL SCAN DEPTH: ordinary runtime blocks emitted by
 mutually exclusive macro branches accumulated in one parser depth counter.
 The extra depth consumed the enclosing macro terminator and following methods
