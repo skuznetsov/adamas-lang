@@ -1,5 +1,21 @@
 # Adamas Bootstrap TODO
 
+2026-10-18 MACRO CONTROL SCAN DEPTH: ordinary runtime blocks emitted by
+mutually exclusive macro branches accumulated in one parser depth counter.
+The extra depth consumed the enclosing macro terminator and following methods
+(including JSON::Serializable.included's siblings). Save regular block depth
+on macro-control entry, restore it for each alternative and on control exit,
+matching original Crystal's value-passed MacroState. DoD:
+macro_control_branch_depth_repro.sh has four failures before and four passing
+examples after (runs4331/4332); eighteen existing parser guards pass (run4333).
+The composed S1 lavin4309 matches Crystal on three runtime branch programs
+(run4313), and the unchanged LavinMQ input passes the JSON expansion boundary
+but reaches separate tuple-argument arena corruption (runs4314/4330).
+- [x] Isolate regular block depth across nested macro controls and alternatives.
+- [x] Preserve the enclosing terminator and following declarations.
+- [ ] Repair macro argument ownership during cross-arena transfer.
+- [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
+
 2026-10-18 CANONICAL BOTTOM VALUE UNIONS: the shared union constructor kept
 resolved root NoReturn as a runtime alternative, its recursion guard leaked
 when canonicalization changed the name, and non-recursive generic arguments

@@ -8778,6 +8778,17 @@ module Adamas
             previous_token.span.start_column == 1
         end
 
+        # A macro control body is scanned with a copy of its enclosing regular
+        # block depth, as in Crystal's MacroState. Blocks emitted by alternative
+        # branches must not accumulate in the enclosing macro definition.
+        private class MacroControlDepthFrame
+          getter block_depth : Int32
+          getter previous : MacroControlDepthFrame?
+
+          def initialize(@block_depth : Int32, @previous : MacroControlDepthFrame?)
+          end
+        end
+
         # Keep macro-body nesting state on a tiny dedicated heap object instead
         # of generic Array(Int32) boxes. The latter still drifts under self-hosted
         # stage2 in nested macro-control + def-header corridors.
@@ -8785,17 +8796,31 @@ module Adamas
           getter control_depth : Int32
           getter block_depth : Int32
 
+          @control_frame : MacroControlDepthFrame?
+
           def initialize
             @control_depth = 0
             @block_depth = 0
+            @control_frame = nil
           end
 
           def push_control : Nil
+            @control_frame = MacroControlDepthFrame.new(@block_depth, @control_frame)
             @control_depth += 1
           end
 
+          def reset_branch : Nil
+            if frame = @control_frame
+              @block_depth = frame.block_depth
+            end
+          end
+
           def pop_control : Nil
-            @control_depth -= 1 if @control_depth > 0
+            if frame = @control_frame
+              @block_depth = frame.block_depth
+              @control_frame = frame.previous
+              @control_depth -= 1
+            end
           end
 
           def push_block : Nil
@@ -8991,6 +9016,9 @@ module Adamas
                   next
                 end
 
+                if piece.kind.control_else? || piece.kind.control_else_if?
+                  depth_state.reset_branch
+                end
                 if effect == MACRO_EFFECT_PUSH
                   depth_state.push_control
                 elsif effect == MACRO_EFFECT_POP
