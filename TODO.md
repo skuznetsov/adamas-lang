@@ -1,5 +1,25 @@
 # Adamas Bootstrap TODO
 
+2026-10-18 SOURCE NAMED CALL AND ALLOCATOR IDENTITY: ordinary named calls
+rearranged actuals into ABI slots before source type selection, allowing wrong
+named types and selecting the wrong overload. Reuse typed source-shape matching
+before slot/default binding; evaluate actuals once in source order and defaults
+in the selected declaration's arena. Preserve that selection during allocator
+materialization. Synthesized allocator bodies must have a distinct physical
+identity when a source `.new` overload owns the same symbol: run4085's LLDB
+trace shows direct `.new` recursion, while the identity repair passes run4087.
+DoD: source_named_argument_admission_repro.sh matches Crystal on four runtime
+programs and five type rejections (run4089); includes explicit factories,
+generated constructors, generic owners, default evaluation order and overloads.
+All 1919 production sources match tested S1 lavin4086. This is a bounded
+no-block, no-double-splat, non-Symbol source named-call repair.
+- [x] Select the source declaration using actual named argument types.
+- [x] Preserve selected initializer demand and distinct generated body names.
+- [x] Reject wrong named, generic, default and constructor argument types.
+- [ ] Extend the same source contract to block calls, double splats and
+  contextual Symbol conversion; do not erase named shape to positional ABI.
+- [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
+
 2026-10-18 ADDRESS-TAKEN CONSTANT FACTS: MIR ConstantFoldingPass treated a
 literal's SSA storage as immutable even when AddressOf exposed it to writes.
 Exclude address-taken instruction IDs from both initial and newly folded

@@ -2884,6 +2884,9 @@ module Adamas::HIR
     # Cache allocator-related method names by class to reduce string churn in
     # generate_allocator / generate_allocator_overload hot paths.
     @allocator_new_name_cache : Hash(String, String) = {} of String => String
+    # Keep emitted allocator identities separate from source-defined `.new`
+    # overloads when both have the same runtime shape.
+    @allocator_generated_target_cache : Hash(String, String) = {} of String => String
     @allocator_init_name_cache : Hash(String, String) = {} of String => String
     @allocator_init_mangled_prefix_cache : Hash(String, String) = {} of String => String
     @allocator_instance_new_name_cache : Hash(String, String) = {} of String => String
@@ -8126,6 +8129,7 @@ module Adamas::HIR
       @yield_owner_compat_cache_module_version = -1
       # Allocator name caches
       @allocator_new_name_cache = {} of String => String
+      @allocator_generated_target_cache = {} of String => String
       @allocator_init_name_cache = {} of String => String
       @allocator_init_mangled_prefix_cache = {} of String => String
       @allocator_instance_new_name_cache = {} of String => String
@@ -40450,6 +40454,40 @@ module Adamas::HIR
       shape_suffix ? "#{overload_name}_#{shape_suffix}" : overload_name
     end
 
+    # Return the physical identity for a synthesized allocator body. Source
+    # overload lookup continues to use allocator_overload_name_for_call; only
+    # an exact registered source `.new` identity forces the generated body into
+    # a compiler-owned method namespace.
+    private def allocator_generated_target_name_for_call(
+      class_name : String,
+      call_arg_types : Array(TypeRef),
+      call_has_named_args : Bool = false,
+      call_has_block : Bool = false,
+      call_named_arg_names : Array(String)? = nil,
+    ) : String
+      source_name = allocator_overload_name_for_call(
+        class_name, call_arg_types, call_has_named_args, call_has_block, call_named_arg_names,
+      )
+      base_name = allocator_new_name_for(class_name)
+      return source_name if source_name == base_name
+      return source_name unless @function_defs.has_key?(source_name)
+      if cached = @allocator_generated_target_cache[source_name]?
+        return cached
+      end
+
+      suffix = source_name.byte_slice(base_name.bytesize) || ""
+      generated_base = "#{class_name}.__adamas_allocator_new"
+      candidate = "#{generated_base}#{suffix}"
+      index = 0
+      while @function_defs.has_key?(candidate) || @function_types.has_key?(candidate) || @module.has_function?(candidate)
+        index += 1
+        generated_base = "#{class_name}.__adamas_allocator_new_#{index}"
+        candidate = "#{generated_base}#{suffix}"
+      end
+      @allocator_generated_target_cache[source_name] = candidate
+      candidate
+    end
+
     # Encode the canonical source-level named shape into a generated symbol.
     # Length-prefixing keeps distinct names unambiguous even when they contain
     # adjacent text that could otherwise form the same concatenated spelling.
@@ -40706,6 +40744,7 @@ module Adamas::HIR
       call_block_node : Adamas::Compiler::Frontend::BlockNode? = nil,
       call_block_param_types : Array(TypeRef)? = nil,
       call_block_return_name : String? = nil,
+      selected_initializer : Bool = false,
     )
       allocator_stats_index, allocator_stats_start = begin_lower_method_allocator_stats
       begin
@@ -40774,7 +40813,7 @@ module Adamas::HIR
           # a base allocator here would hide its body before the source call
           # reaches overload resolution. Other initialize-backed call shapes
           # can still materialize their own typed allocator overloads.
-          generate_allocator_overload(class_name, class_info, call_arg_types, call_has_named_args, call_has_block, call_named_arg_names, call_block_node, call_block_param_types, call_block_return_name)
+          generate_allocator_overload(class_name, class_info, call_arg_types, call_has_named_args, call_has_block, call_named_arg_names, call_block_node, call_block_param_types, call_block_return_name, selected_initializer)
           return
         end
       end
@@ -40833,7 +40872,7 @@ module Adamas::HIR
               end
             end
           end
-          generate_allocator_overload(class_name, class_info, call_arg_types, call_has_named_args, call_has_block, call_named_arg_names, call_block_node, call_block_param_types, call_block_return_name)
+          generate_allocator_overload(class_name, class_info, call_arg_types, call_has_named_args, call_has_block, call_named_arg_names, call_block_node, call_block_param_types, call_block_return_name, selected_initializer)
           return
         end
       end
@@ -41345,7 +41384,7 @@ module Adamas::HIR
 
       set_function_state(func_name, FunctionLoweringState::Completed)
 
-      generate_allocator_overload(class_name, class_info, call_arg_types, call_has_named_args, call_has_block, call_named_arg_names, call_block_node, call_block_param_types, call_block_return_name)
+      generate_allocator_overload(class_name, class_info, call_arg_types, call_has_named_args, call_has_block, call_named_arg_names, call_block_node, call_block_param_types, call_block_return_name, selected_initializer)
       ensure
         finish_lower_method_allocator_stats(allocator_stats_index, allocator_stats_start)
       end
@@ -41441,6 +41480,7 @@ module Adamas::HIR
       call_block_node : Adamas::Compiler::Frontend::BlockNode? = nil,
       call_block_param_types : Array(TypeRef)? = nil,
       call_block_return_name : String? = nil,
+      selected_initializer : Bool = false,
     ) : Nil
       return unless call_arg_types
 
@@ -41493,7 +41533,11 @@ module Adamas::HIR
       # lowered as a plain call and incorrectly bind to a generic explicit overload
       # (for example `default_value : V`) instead of the initialize-backed allocator.
       # In that case, keep generating the allocator overload for this concrete shape.
-      if explicit_match = lookup_function_def_for_call(base_name, call_arg_types.size, call_has_block, call_arg_types, false, call_has_named_args, allocator_named_arg_names)
+      # A caller that has already bound its arguments to initialize owns that
+      # selection. Rediscovering an explicit .new here can suppress the chosen
+      # allocator body and leave the emitted call without a physical target.
+      explicit_match = selected_initializer ? nil : lookup_function_def_for_call(base_name, call_arg_types.size, call_has_block, call_arg_types, false, call_has_named_args, allocator_named_arg_names)
+      if explicit_match
         explicit_name, explicit_def = explicit_match
         allow_allocator_overload = allocator_initializer_precedes_explicit_new?(
           class_name, call_arg_types, explicit_name, explicit_def,
@@ -41540,14 +41584,21 @@ module Adamas::HIR
         return unless allow_allocator_overload
       end
 
-      overload_name = allocator_overload_name_for_call(
+      source_overload_name = allocator_overload_name_for_call(
         class_name,
         call_arg_types,
         call_has_named_args,
         call_has_block,
         allocator_named_arg_names,
       )
-      return if overload_name == base_name
+      return if source_overload_name == base_name
+      overload_name = allocator_generated_target_name_for_call(
+        class_name,
+        call_arg_types,
+        call_has_named_args,
+        call_has_block,
+        allocator_named_arg_names,
+      )
       return if @module.has_function_with_body?(overload_name)
 
       # When auto-allocator init params have a hard type mismatch with call args
@@ -42377,7 +42428,7 @@ module Adamas::HIR
       # Build args for the internal allocator: File.new(path, fd, mode, blocking, nil, nil)
       # The internal allocator expects: String, Int32, String, Bool, Nil, Nil
       internal_types = [TypeRef::STRING, TypeRef::INT32, TypeRef::STRING, TypeRef::BOOL, TypeRef::NIL, TypeRef::NIL]
-      internal_name = mangle_function_name("#{class_name}.new", internal_types)
+      internal_name = allocator_generated_target_name_for_call(class_name, internal_types)
 
       # Ensure the internal allocator exists
       generate_allocator_overload(class_name, class_info, internal_types)
@@ -42441,7 +42492,7 @@ module Adamas::HIR
 
       # Determine element type from class_name for correct type mapping
       internal_types = [TypeRef::POINTER, TypeRef::INT32, TypeRef::BOOL]
-      internal_name = mangle_function_name("#{class_name}.new", internal_types)
+      internal_name = allocator_generated_target_name_for_call(class_name, internal_types)
 
       # Ensure the internal 3-arg allocator exists
       generate_allocator_overload(class_name, class_info, internal_types)
@@ -97622,8 +97673,19 @@ module Adamas::HIR
             call_has_named_args = callsite_args.try(&.has_named_args) || false
             call_named_arg_names = callsite_args.try(&.named_arg_names)
             allocator_name = allocator_new_name_for(allocator_resolved_owner)
+            allocator_target = if call_arg_types
+                                 allocator_generated_target_name_for_call(
+                                   allocator_resolved_owner,
+                                   call_arg_types,
+                                   call_has_named_args,
+                                   call_has_block,
+                                   call_named_arg_names,
+                                 )
+                               else
+                                 allocator_name
+                               end
 
-            unless @module.has_function_with_body?(name) || @module.has_function_with_body?(allocator_name)
+            unless @module.has_function_with_body?(name) || @module.has_function_with_body?(allocator_name) || @module.has_function_with_body?(allocator_target)
               generate_allocator(
                 allocator_resolved_owner,
                 class_info,
@@ -97635,7 +97697,7 @@ module Adamas::HIR
               )
             end
 
-            if @module.has_function_with_body?(name) || @module.has_function_with_body?(allocator_name)
+            if @module.has_function_with_body?(name) || @module.has_function_with_body?(allocator_name) || @module.has_function_with_body?(allocator_target)
               kind = class_info.is_struct ? "zero_arg_struct_allocator" : "class_allocator"
               debug_hook("function.lookup.generated", "name=#{name} kind=#{kind} owner=#{allocator_resolved_owner}")
               return
@@ -102212,7 +102274,17 @@ module Adamas::HIR
         end
         args_result = if named_args = node.named_args
                         reordered = reorder_named_args(ctx, call_args, named_args, method_name, arg_binding_full_method_name, has_block_call, call_arena)
-                        source_named_entry = reordered[1]
+                        # An allocator consumes the selected initializer's
+                        # slots, but its physical target remains the allocator.
+                        if selected_binding = reordered[1]
+                          if method_name == "new" && method_short_from_name(selected_binding[0]) == "initialize"
+                            prefer_allocator_new_call = true
+                            constructor_arg_binding_name = strip_type_suffix(selected_binding[0])
+                            arg_binding_full_method_name = constructor_arg_binding_name
+                          else
+                            source_named_entry = selected_binding unless constructor_arg_binding_name
+                          end
+                        end
                         source_named_rest_packed = reordered[2]
                         reordered[0]
                       elsif has_splat
@@ -104534,9 +104606,10 @@ module Adamas::HIR
               call_named_arg_names: call_named_arg_names,
               call_block_node: alloc_block.try(&.[0]),
               call_block_param_types: alloc_block.try(&.[1]),
-              call_block_return_name: alloc_block.try(&.[2])
+              call_block_return_name: alloc_block.try(&.[2]),
+              selected_initializer: prefer_allocator_new_call,
             )
-            allocator_call_shape_target = allocator_overload_name_for_call(
+            allocator_call_shape_target = allocator_generated_target_name_for_call(
               class_name,
               arg_types,
               allocator_has_named_args,
@@ -109835,6 +109908,7 @@ module Adamas::HIR
           owner = method_owner_from_name(bfm)
           if info = @class_info[owner]?
             generate_allocator_overload(owner, info, vat, false, has_block_call)
+            vm = allocator_generated_target_name_for_call(owner, vat, false, has_block_call)
           end
         end
         unless @function_types.has_key?(vm) || @function_defs.has_key?(vm) || @module.has_function?(vm)
@@ -114149,7 +114223,7 @@ module Adamas::HIR
     # Bind the source rest segment before adding named/default suffix slots.
     # Every source expression is lowered once in source order. The selected Def
     # and the normalized ABI vector then travel together through call lowering.
-    private def lower_named_rest_args(
+    private def lower_source_named_args(
       ctx : LoweringContext,
       positional_args : Array(ExprId),
       named_args : Array(Adamas::Compiler::Frontend::NamedArgument),
@@ -114159,28 +114233,11 @@ module Adamas::HIR
       call_arena : Adamas::Compiler::Frontend::ArenaLike,
     ) : Tuple(Array(ValueId), Tuple(String, Adamas::Compiler::Frontend::DefNode), Bool)?
       return nil if has_block_call || named_args.empty?
-      initial_params = initial_entry ? function_param_infos(initial_entry[0], initial_entry[1]) : [] of DefParamInfo
-      has_rest_candidate = initial_params.any? { |param| param.is_splat && !param.is_double_splat && !named_only_separator?(param) }
-      unless has_rest_candidate
-        candidate_bases = [strip_type_suffix(func_name)]
-        parts = parse_method_name_compact(candidate_bases.first)
-        if parts.separator == '#' && (method = parts.method)
-          get_parent_chain(parts.owner).each { |owner| candidate_bases << "#{owner}##{method}" }
-        end
-        candidate_bases.each do |base|
-          function_def_overload_keys(base).each do |name|
-            next unless candidate = @function_defs[name]?
-            candidate_params = function_param_infos(name, candidate)
-            if candidate_params.any? { |param| param.is_splat && !param.is_double_splat && !named_only_separator?(param) } &&
-               !candidate_params.any?(&.is_double_splat)
-              has_rest_candidate = true
-              break
-            end
-          end
-          break if has_rest_candidate
-        end
-      end
-      return nil unless has_rest_candidate
+      # Source argument types must select the declaration before its named
+      # values and defaults are rearranged into ABI slots. The rest-only path
+      # already establishes this contract; ordinary named calls need it too.
+      return nil unless initial_entry
+      initial_params = function_param_infos(initial_entry[0], initial_entry[1])
       return nil if initial_params.any?(&.is_double_splat)
       # Symbol-to-enum conversion needs a contextual restriction. Preserve its
       # existing path until source overload matching carries that contract.
@@ -114201,8 +114258,25 @@ module Adamas::HIR
         func_name, source_types.size, has_block_call, source_types,
         false, true, names, positional_values.size, true,
       )
+      # initialize also contributes generated new overloads when the class
+      # declares explicit factories. Test that source signature with the same
+      # actual values; do not reject a valid allocator because a shape-only
+      # lookup happened to find an incompatible explicit factory first.
       unless selected
-        raise LoweringError.new("no overload of #{strip_type_suffix(func_name)} accepts these positional and named arguments")
+        base_name = strip_type_suffix(func_name)
+        if base_name.ends_with?(".new") || base_name.ends_with?("#new")
+          if owner = method_owner(base_name)
+            init_name = allocator_init_name_for(owner)
+            selected = lookup_function_def_for_call(
+              init_name, source_types.size, has_block_call, source_types,
+              false, true, names, positional_values.size, true,
+            )
+          end
+        end
+      end
+      unless selected
+        actual_names = source_types.map { |type| get_type_name_from_ref(type) }.join(", ")
+        raise LoweringError.new("no overload matches #{strip_type_suffix(func_name)} for argument types (#{actual_names}) and named arguments #{names.join(", ")}")
       end
 
       context = function_context_for_lookup_candidate(func_name, selected[0])
@@ -114256,7 +114330,9 @@ module Adamas::HIR
                   elsif (label = named_parameter_label(param)) && (id = named_values.delete(label))
                     id
                   elsif default = param.default_value
-                    with_arena(def_arena) { lower_expr(ctx, default) }
+                    restriction = param.type_annotation.try { |type_node| normalize_declared_type_name(type_node, context) }
+                    expected = restriction ? type_ref_for_name(restriction) : TypeRef::VOID
+                    lower_arg_with_expected_type(ctx, default, expected, restriction, context, def_arena)
                   else
                     raise LoweringError.new("missing argument #{param.name} for #{strip_type_suffix(func_name)}")
                   end
@@ -114267,6 +114343,11 @@ module Adamas::HIR
         end
       ensure
         ctx.restore_locals(saved_locals)
+      end
+      bound_types = result.map { |value| ctx.type_of(value) }
+      unless params_compatible_with_args?(selected[1], bound_types, context)
+        actual_names = bound_types.map { |type| get_type_name_from_ref(type) }.join(", ")
+        raise LoweringError.new("no overload matches #{strip_type_suffix(func_name)} for bound argument types (#{actual_names})")
       end
       {result, selected, rest_packed}
     end
@@ -114297,7 +114378,7 @@ module Adamas::HIR
         end
       end
       func_entry = lookup_function_def_for_call(func_name, positional_args.size + named_args.size, has_block_call, nil, false, !named_args.empty?, named_arg_names, raw_positional_count)
-      if bound = lower_named_rest_args(ctx, positional_args, named_args, func_name, func_entry, has_block_call, call_arena)
+      if bound = lower_source_named_args(ctx, positional_args, named_args, func_name, func_entry, has_block_call, call_arena)
         return {bound[0], bound[1], bound[2]}
       end
       func_def = func_entry ? func_entry[1] : nil
@@ -125751,7 +125832,7 @@ module Adamas::HIR
             full_method_name = explicit_new[0]
           else
             generate_allocator(class_name_str, class_info, zero_arg_types, force: true)
-            zero_arg_target = allocator_overload_name_for_call(class_name_str, zero_arg_types)
+            zero_arg_target = allocator_generated_target_name_for_call(class_name_str, zero_arg_types)
             if @module.has_function_with_body?(zero_arg_target)
               full_method_name = zero_arg_target
               generated_allocator_target = zero_arg_target
@@ -131000,7 +131081,7 @@ module Adamas::HIR
       # ambiguous beside the default-filled initializer wrappers.
       ctor_arg_types = [TypeRef::UINT64, TypeRef::UINT64]
       generate_allocator(hasher_class_name, hasher_info, ctor_arg_types, force: true)
-      ctor_name = allocator_overload_name_for_call(hasher_class_name, ctor_arg_types)
+      ctor_name = allocator_generated_target_name_for_call(hasher_class_name, ctor_arg_types)
       remember_callsite_arg_types(ctor_name, ctor_arg_types)
       lower_function_if_needed(ctor_name)
       hasher = Call.without_receiver(ctx.next_id, hasher_type, ctor_name, [zero_a.id, zero_b.id])
