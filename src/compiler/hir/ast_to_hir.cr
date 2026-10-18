@@ -134059,18 +134059,10 @@ module Adamas::HIR
           else
             @generic_param_resolution_in_progress << stable_resolve_key
             begin
-              ref = if !stable_resolve_key.empty? && union_type_name?(stable_resolve_key)
-                      union_key = type_cache_key(stable_resolve_key)
-                      if cached_union = @type_cache[union_key]?
-                        cached_union
-                      else
-                        provisional_union = @module.intern_type(TypeDescriptor.new(TypeKind::Union, stable_resolve_key))
-                        store_type_cache(union_key, provisional_union)
-                        provisional_union
-                      end
-                    else
-                      type_ref_for_name(stable_resolve_key)
-                    end
+              # Resolve complete arguments through the canonical constructor.
+              # Only the recursion branch above may publish a provisional union;
+              # ordinary generic arguments obey the same value-type join laws.
+              ref = type_ref_for_name(stable_resolve_key)
               if ref == TypeRef::VOID
                 stripped = stripped_param
                 allow_materialize = materializable_unknown_named_type?(stripped)
@@ -134471,14 +134463,24 @@ module Adamas::HIR
         return provisional
       end
 
-      @union_in_progress << normalized_name
+      # Keep the recursion key stable when canonicalization changes the name.
+      in_progress_name = normalized_name
+      @union_in_progress << in_progress_name
       begin
         # Canonicalize by TypeRef to avoid duplicate variants like Thread | Nil | Thread.
         variant_refs = resolved_variant_names.map { |vn| type_ref_for_name(vn) }
+        # NoReturn is bottom: it contributes no values when a returning arm
+        # exists. Resolve aliases and namespaces first, so a nominal type such
+        # as Shadow::NoReturn is retained. An all-bottom join stays NoReturn;
+        # it must not become the unresolved/void ABI sentinel.
+        has_returning_variant = variant_refs.any? do |ref|
+          @module.get_type_descriptor(ref).try(&.name) != "NoReturn"
+        end
         seen_refs = [] of TypeRef
         dedup_names = [] of String
         dedup_refs = [] of TypeRef
         variant_refs.each_with_index do |ref, idx|
+          next if has_returning_variant && @module.get_type_descriptor(ref).try(&.name) == "NoReturn"
           next if seen_refs.includes?(ref)
           seen_refs << ref
           dedup_refs << ref
@@ -134544,7 +134546,7 @@ module Adamas::HIR
 
         type_ref
       ensure
-        @union_in_progress.delete(normalized_name)
+        @union_in_progress.delete(in_progress_name)
       end
     end
 

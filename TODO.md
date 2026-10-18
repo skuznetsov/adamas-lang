@@ -1,5 +1,22 @@
 # Adamas Bootstrap TODO
 
+2026-10-18 CANONICAL BOTTOM VALUE UNIONS: the shared union constructor kept
+resolved root NoReturn as a runtime alternative, its recursion guard leaked
+when canonicalization changed the name, and non-recursive generic arguments
+bypassed that constructor with a provisional union. Drop only resolved root
+bottom when a returning arm exists, retain a stable recursion key, and route
+complete generic arguments through canonical construction. Preserve all-bottom
+joins and nominal Shadow::NoReturn. DoD: bottom_value_union_repro.sh matches
+Crystal on four runtime programs and two strict type rejections (run4168);
+noreturn_union_canonicalization_spec.cr passes five examples (run4169), and
+seventeen existing union/effect guards pass (run4170). All use exact atomic S1
+lavin4161. In the composed private compiler lavin4160, unchanged LavinMQ passes
+deferred constants and reaches a separate generated macro parse error (run4167).
+- [x] Canonicalize root bottom, repeated joins and nested generic arguments.
+- [x] Preserve ordinary and nominal union alternatives and strict rejection.
+- [ ] Diagnose the generated macro parse failure without accepting recovery.
+- [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
+
 2026-10-18 ORDINARY RAISE CALLS: the parser converted the overloadable method
 name `raise` into a dedicated RaiseNode, erasing named call shape and forcing
 exception control flow even for source overloads that return normally. Parse
