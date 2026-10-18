@@ -1,5 +1,22 @@
 # Adamas Bootstrap TODO
 
+2026-10-18 ADDRESS-TAKEN CONSTANT FACTS: MIR ConstantFoldingPass treated a
+literal's SSA storage as immutable even when AddressOf exposed it to writes.
+Exclude address-taken instruction IDs from both initial and newly folded
+constant facts, scanning all blocks before folding. DoD: original-first
+regression_tests/address_taken_constant_facts_repro.sh passes direct pointer
+stores and writes through a helper (run4057), including unrelated arithmetic.
+Exact parent S1 lavin3739 prints XC instead of BC for both (run4055); atomic
+candidate lavin4045 prints BC and matches all 1919 production source hashes.
+This establishes the constant-fact repair, not stable local storage identity.
+- [x] Prevent immutable folding of storage exposed by AddressOf.
+- [x] Run original-first runtime regression from the repository path.
+- [ ] Give mutable locals stable binding/storage identity: a copied pointer
+  still reads stale storage after a later local assignment (run4039).
+- [ ] Audit the separate constant-propagation and peephole fact maps against
+  address escapes before claiming all optimization paths are alias-safe.
+- [ ] Verify fresh pristine S2 and unchanged LavinMQ runtime/spec parity.
+
 2026-10-18 SYMBOL LITERAL MACRO NAMES: frontend SymbolNode tokens retain their
 syntactic colon. HIR collection iteration and annotation conversion passed that
 colon into semantic names, producing declarations such as `def self.:north`

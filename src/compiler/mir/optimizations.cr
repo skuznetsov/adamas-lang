@@ -404,6 +404,18 @@ module Adamas::MIR
     def run : Int32
       @folded = 0
 
+      # Values whose storage address escapes are mutable through aliases, even
+      # when their defining MIR instruction is a literal constant. Keep them
+      # out of the function-wide constant facts used by this pass.
+      address_taken_values = ::Set(ValueId).new
+      @function.blocks.each do |block|
+        block.instructions.each do |inst|
+          if address = inst.as?(AddressOf)
+            address_taken_values << address.operand
+          end
+        end
+      end
+
       # Build value → constant map (only numeric/bool constants for folding)
       constants = {} of ValueId => (Int64 | UInt64 | Float64 | Bool | Nil)
 
@@ -411,6 +423,7 @@ module Adamas::MIR
         block.instructions.each do |inst|
           case inst
           when Constant
+            next if address_taken_values.includes?(inst.id)
             case inst.type
             when TypeRef::FLOAT32, TypeRef::FLOAT64
               constants[inst.id] = inst.float_value
@@ -436,7 +449,7 @@ module Adamas::MIR
           if folded_inst
             new_instructions << folded_inst
             # Update constants map if we created a new constant
-            if folded_inst.is_a?(Constant)
+            if folded_inst.is_a?(Constant) && !address_taken_values.includes?(folded_inst.id)
               case folded_inst.type
               when TypeRef::FLOAT32, TypeRef::FLOAT64
                 constants[folded_inst.id] = folded_inst.float_value
