@@ -1,5 +1,16 @@
 # Adamas Bootstrap TODO
 
+2026-10-19 OPERATOR SYMBOL LONGEST MATCH: the less-than symbol arm stopped
+after <=, splitting :<=> into a symbol and a Greater token. Consume the final
+greater-than byte before returning the operator symbol. DoD:
+lexer_operator_symbol_match_repro.sh HOST passes three component examples for
+:<=>, adjacent shorter symbols, trailing assignment tokens and symbol AST/span
+identity. The exact parent fails two examples in run6142; isolated source6120
+passes run6139. The published three-example regression passes run6149 under
+pinned Crystal 1.21. Refresh after operator-symbol matching or symbol AST changes.
+- [x] Apply longest match to the complete comparison operator symbol.
+- [ ] Verify fresh bootstrap and unchanged LavinMQ runtime/spec parity.
+
 2026-10-19 PERCENT LITERAL LOOKAHEAD: failed percent-literal classification
 advanced over q/Q/r/w/i before discovering an absent or invalid delimiter.
 Modulo expressions therefore lost identifier bytes. Classify with read-only

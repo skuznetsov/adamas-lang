@@ -749,13 +749,16 @@ module Adamas
           ch = current_byte
           case ch
           when '<'.ord.to_u8
-            # :< :<<  :<=
+            # Match the longest operator symbol: :<=> before :<=, then :<<.
             advance(1)
             if @offset < @rope.size
               if current_byte == '<'.ord.to_u8
                 advance(1) # :<<
               elsif current_byte == '='.ord.to_u8
-                advance(1) # :<=
+                advance(1) # :<= or :<=>
+                if @offset < @rope.size && current_byte == '>'.ord.to_u8
+                  advance(1) # :<=>
+                end
               end
               # else just :<
             end
