@@ -1,5 +1,36 @@
 # Adamas Bootstrap TODO
 
+2026-10-19 SOURCE INTEGER AUTOCASTS AND NUMERIC MEMBERSHIP: source overload
+selection lacked Crystal's separate numeric retry, while an equal-width carrier
+fallback admitted signedness mismatches. Keep the ordinary source pass first;
+on a miss, accept only representable integer literals or runtime integers whose
+entire domain fits the selected restriction. Lower each actual once, then
+validate its runtime/source identity before emitting a cast. Primitive type
+objects exist before the prelude; enum carriers, Char and type objects are not
+integer values. Check known primitive membership before abstract/union TypeRefs
+collapse; numeric abstract restrictions never request a carrier conversion.
+DoD: source_integer_autocast_repro.sh COMPILER matches original Crystal for
+21 positive programs and 24 strict exit-1/diagnostic/no-executable rejections
+(sealed S1 lavin5096, frozen private run5098, repository run5103).
+Parent5047 rejects five valid literal controls (run5063); intermediate5079
+falsely accepts Char/abstract-signedness/namespaced-Int mismatches (run5091),
+which pass on the corrected source (run5093). The source-family rejection
+neighbor passes run5104. Refresh after source overload selection, literal
+classification, nominal provenance, primitive type lookup or numeric restriction
+changes.
+- [x] Preserve ordinary overload priority, numeric ambiguity and evaluation order.
+- [x] Validate literal bounds and complete runtime domains without ABI shortcuts.
+- [x] Preserve intrinsic primitive type objects and reject enum/type-object casts.
+- [x] Match Int/Float/Number source membership without admitting Char as Number.
+- [ ] Qualify named/splat/block autocasts, float conversions and Int128/UInt128
+  literal conversions with their own original-first binding and value proofs.
+- [ ] Repair independent metatype restriction bugs: qualified .class and runtime
+  values passed as metatypes reproduce on parent5047 (run5084).
+- [ ] Repair the selected [] return contract: pinned Socket passes the former
+  StaticArray(UInt16, 8).new(0) rejection, then sees Slice(UInt8) | UInt8 where
+  only Slice(UInt8) is valid (run5102); no executable or runtime claim.
+- [ ] Verify fresh bootstrap and unchanged LavinMQ runtime/spec parity.
+
 2026-10-18 OMITTED NAMED DEFAULT IN EMITTED ALLOCATOR SOURCE: the anonymous
 named-only separator carries is_splat=true, so the emitted allocator proof
 mistook it for a variadic formal and rejected a compatible initialize-backed

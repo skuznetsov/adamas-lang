@@ -53810,6 +53810,8 @@ module Adamas::HIR
     private def source_generic_restriction_match?(actual_name : String, declared_name : String) : Bool?
       actual_name = resolve_type_alias_chain(actual_name.lchop("::"), preserve_abstract_int: true)
       declared_name = resolve_type_alias_chain(declared_name.lchop("::"), preserve_abstract_int: true)
+      primitive_match = source_primitive_restriction_match?(actual_name, declared_name)
+      return primitive_match unless primitive_match.nil?
       if actual_name.includes?("->") && (arguments = proc_type_argument_names(actual_name))
         actual_name = "Proc(#{arguments.join(", ")})"
       end
@@ -54992,10 +54994,9 @@ module Adamas::HIR
     end
 
     private def numeric_compatible?(arg_type : TypeRef, param_type : TypeRef) : Bool
-      arg_bits = integer_bit_width(arg_type)
-      param_bits = integer_bit_width(param_type)
-      return false unless arg_bits && param_bits
-      arg_bits == param_bits
+      # Equal storage widths do not establish source compatibility. Numeric
+      # autocasts are admitted separately from literal values or source domains.
+      arg_type == param_type && (signed_integer_primitive?(arg_type) || unsigned_integer_type?(arg_type))
     end
 
     # Check if a type name represents a union of integer types
@@ -55024,27 +55025,49 @@ module Adamas::HIR
     INTEGER_TYPE_NAMES = {"Int8", "Int16", "Int32", "Int64", "Int128",
                           "UInt8", "UInt16", "UInt32", "UInt64", "UInt128"}
 
+    # Abstract numeric restrictions admit source members; they never request
+    # a cast to a different integer carrier with the same storage width.
     private def numeric_param_target_type(param_type_name : String, arg_type : TypeRef) : TypeRef?
-      bits = integer_bit_width(arg_type)
       case param_type_name
-      when "Int::Primitive", "Int::Signed"
-        return signed_integer_type_for_width(bits) if bits
+      when "Int::Signed"
+        return arg_type if signed_integer_primitive?(arg_type)
       when "Int::Unsigned"
-        return unsigned_integer_type_for_width(bits) if bits
-      end
-
-      short_name = last_namespace_component(param_type_name)
-      case short_name
-      when "Int"
-        return signed_integer_type_for_width(bits) if bits
-      when "UInt"
-        return unsigned_integer_type_for_width(bits) if bits
-      when "Float"
+        return arg_type if unsigned_integer_type?(arg_type)
+      when "Int::Primitive", "Int"
+        return arg_type if signed_integer_primitive?(arg_type) || unsigned_integer_type?(arg_type)
+      when "Float::Primitive", "Float"
         return arg_type if arg_type == TypeRef::FLOAT32 || arg_type == TypeRef::FLOAT64
-      when "Number"
-        return arg_type if numeric_primitive?(arg_type)
+      when "Number::Primitive", "Number"
+        return arg_type if signed_integer_primitive?(arg_type) || unsigned_integer_type?(arg_type) ||
+                           arg_type == TypeRef::FLOAT32 || arg_type == TypeRef::FLOAT64
       end
       nil
+    end
+
+    # Check fully known primitive restrictions before their union or abstract
+    # TypeRefs collapse to storage representatives. Unknown nonprimitive arms
+    # remain the responsibility of the ordinary nominal restriction matcher.
+    private def source_primitive_restriction_match?(actual_name : String, declared_name : String) : Bool?
+      actual_type = primitive_self_type(actual_name)
+      return nil unless actual_type
+      if members = source_restriction_union_members(declared_name)
+        undecided = false
+        members.each do |member|
+          resolved_member = resolve_type_alias_chain(member.strip, preserve_abstract_int: true)
+          matched = source_primitive_restriction_match?(actual_name, resolved_member)
+          return true if matched
+          undecided = true if matched.nil?
+        end
+        return undecided ? nil : false
+      end
+      return actual_name == declared_name if primitive_self_type(declared_name)
+      case declared_name
+      when "Int", "Int::Primitive", "Int::Signed", "Int::Unsigned",
+           "Float", "Float::Primitive", "Number", "Number::Primitive"
+        !numeric_param_target_type(declared_name, actual_type).nil?
+      else
+        nil
+      end
     end
 
     private def yield_receiver_base_name(receiver_type : TypeRef) : String?
@@ -61453,6 +61476,9 @@ module Adamas::HIR
 
     private def type_name_exists?(name : String) : Bool
       return false if name.unsafe_as(UInt64) == 0_u64
+      # Primitive source types exist before the prelude is loaded. Their
+      # identifiers denote type objects, never unresolved runtime locals.
+      return true if primitive_self_type(name)
       trace_type_exists = if filter = env_get("DEBUG_TYPE_EXISTS_TRACE")
                             filter == "*" || filter == name
                           else
@@ -101660,6 +101686,12 @@ module Adamas::HIR
                 full_method_name, call_arg_types.size, has_block_call, call_arg_types,
                 call_has_splat, call_has_named_args, call_named_arg_names,
               )
+              if selected_class_method_entry.nil? && !has_block_call && !call_has_splat && !call_has_named_args &&
+                 call_arg_types.all? { |type| type != TypeRef::VOID }
+                if numeric_entry = source_integer_autocast_entry(full_method_name, call_args, call_arg_types, call_arena)
+                  selected_class_method_entry = {numeric_entry[0], numeric_entry[1]}
+                end
+              end
               if selected_class_method_entry
                 if call_arg_types.all? { |t| t != TypeRef::VOID }
                   full_method_name = specialize_method_owner_name(selected_class_method_entry[0], class_name_str)
@@ -114347,6 +114379,114 @@ module Adamas::HIR
       alloc.id
     end
 
+    # Retry source lookup only after the ordinary types have no match. The
+    # converted vector is a source contract: changed literals fit the target
+    # range, and changed runtime integers have their entire domain preserved.
+    private def integer_literal_representable_as?(
+      node : Adamas::Compiler::Frontend::NumberNode,
+      target_type : TypeRef,
+    ) : Bool
+      return false if node.kind.f32? || node.kind.f64? || node.kind.i128? || node.kind.u128?
+      return false unless signed_integer_primitive?(target_type) || unsigned_integer_type?(target_type)
+      bits = integer_bit_width(target_type)
+      return false unless bits && bits <= 64
+      source_unsigned = node.kind.u8? || node.kind.u16? || node.kind.u32? || node.kind.u64?
+      target_unsigned = target_type == TypeRef::UINT8 || target_type == TypeRef::UINT16 ||
+                        target_type == TypeRef::UINT32 || target_type == TypeRef::UINT64
+      if target_unsigned
+        return false if !source_unsigned && node.parsed_int < 0
+        value = source_unsigned ? node.parsed_uint : node.parsed_int.to_u64
+        maximum = bits == 64 ? UInt64::MAX : (1_u64 << bits) - 1_u64
+        value <= maximum
+      elsif source_unsigned
+        maximum = bits == 64 ? Int64::MAX.to_u64 : (1_u64 << (bits - 1)) - 1_u64
+        node.parsed_uint <= maximum
+      else
+        minimum = bits == 64 ? Int64::MIN : -(1_i64 << (bits - 1))
+        maximum = bits == 64 ? Int64::MAX : (1_i64 << (bits - 1)) - 1_i64
+        minimum <= node.parsed_int && node.parsed_int <= maximum
+      end
+    end
+
+    # Runtime numeric autocasting is legal only when every source value fits.
+    # Char and enum storage are not integer source types.
+    private def source_integer_domain_subset?(source : TypeRef, target : TypeRef) : Bool
+      return false unless signed_integer_primitive?(source) || unsigned_integer_type?(source)
+      return false unless signed_integer_primitive?(target) || unsigned_integer_type?(target)
+      source_bits = integer_bit_width(source)
+      target_bits = integer_bit_width(target)
+      return false unless source_bits && target_bits
+      source_unsigned = unsigned_integer_type?(source)
+      target_unsigned = unsigned_integer_type?(target)
+      if source_unsigned == target_unsigned
+        source_bits <= target_bits
+      else
+        source_unsigned && source_bits < target_bits
+      end
+    end
+
+    private def source_integer_autocast_entry(
+      func_name : String,
+      positional_args : Array(ExprId),
+      arg_types : Array(TypeRef),
+      call_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Tuple(String, Adamas::Compiler::Frontend::DefNode, Array(TypeRef))?
+      return nil unless arg_types.any? { |type| signed_integer_primitive?(type) || unsigned_integer_type?(type) }
+      candidates = [] of Tuple(String, Adamas::Compiler::Frontend::DefNode, Array(TypeRef))
+      function_def_overload_keys(func_name).each do |candidate_name|
+        candidate_def = @function_defs[candidate_name]?
+        next unless candidate_def
+        # Keep source slots positional until named/splat/block autocasting has
+        # an equivalent binding contract. No ABI-only fallback is admitted.
+        params = function_param_infos(candidate_def)
+        next if params.any? { |param| param.is_splat || param.is_double_splat || param.is_block }
+        next unless return_def_accepts_positional?(candidate_def, positional_args.size)
+        next unless named_args_compatible_with_def?(candidate_def, [] of String, positional_args.size, positional_args.size)
+        context = function_context_for_lookup_candidate(func_name, candidate_name)
+        converted_types = arg_types.dup
+        changed = false
+        params.each_with_index do |param, index|
+          break if index >= positional_args.size
+          restriction_text = param.type_annotation
+          next unless restriction_text
+          restriction = normalize_declared_type_name(restriction_text, context, specialize_bare_generics: false)
+          target_type = type_ref_for_name(restriction)
+          next if target_type == arg_types[index]
+          arg_node = call_arena[positional_args[index]]
+          admitted = if arg_node.is_a?(Adamas::Compiler::Frontend::NumberNode)
+                       integer_literal_representable_as?(arg_node, target_type)
+                     else
+                       source_integer_domain_subset?(arg_types[index], target_type)
+                     end
+          next unless admitted
+          converted_types[index] = target_type
+          changed = true
+        end
+        next unless changed
+        next unless params_compatible_with_args?(candidate_def, converted_types, context)
+        next unless source_generic_argument_mismatch_for_def(candidate_def, converted_types, context).nil?
+        # The unchanged resolver must select this very declaration with the
+        # validated vector. This preserves owner/arity/default/type scoring.
+        selected = lookup_function_def_for_call(func_name, converted_types.size, false, converted_types)
+        next unless selected && selected[1].same?(candidate_def)
+        next if candidates.any? { |(_, existing, types)| existing.same?(candidate_def) && types == converted_types }
+        candidates << {selected[0], candidate_def, converted_types}
+      end
+      return nil if candidates.empty?
+      # Integer restrictions are nominally disjoint. Several representable
+      # numeric targets must remain ambiguous rather than using insertion order.
+      survivors = candidates.reject do |candidate|
+        candidates.any? do |other|
+          !other[1].same?(candidate[1]) &&
+            source_overload_restriction_precedence(func_name, other[0], other[1], candidate[0], candidate[1]) == 1
+        end
+      end
+      if survivors.size != 1
+        raise LoweringError.new("ambiguous call to #{func_name} with source integer autocasts")
+      end
+      survivors.first
+    end
+
     private def lower_args_with_expected_types(
       ctx : LoweringContext,
       positional_args : Array(ExprId),
@@ -114378,7 +114518,9 @@ module Adamas::HIR
       has_block_call : Bool,
       call_arena : Adamas::Compiler::Frontend::ArenaLike,
     ) : Array(ValueId)
-      func_name = full_method_name || method_name
+      # Expected-argument binding selects from the source family. An already
+      # mangled name can bypass compatibility checks in exact-symbol lookup.
+      func_name = strip_type_suffix(full_method_name || method_name)
       arg_types = positional_args.map do |arg_expr|
         arg_node = if arg_expr.index >= 0 && arg_expr.index < call_arena.size
                      call_arena[arg_expr]
@@ -114430,8 +114572,15 @@ module Adamas::HIR
         return lower_positional_args_until_dead(ctx, positional_args)
       end
       func_entry = lookup_function_def_for_call(func_name, positional_args.size, has_block_call, arg_types)
+      literal_types : Array(TypeRef)? = nil
+      if func_entry.nil? && !has_block_call
+        if literal_entry = source_integer_autocast_entry(func_name, positional_args, arg_types, call_arena)
+          func_entry = {literal_entry[0], literal_entry[1]}
+          literal_types = literal_entry[2]
+        end
+      end
       func_def = func_entry ? func_entry[1] : nil
-      func_context = func_entry ? function_context_from_name(func_entry[0]) : nil
+      func_context = func_entry ? function_context_for_lookup_candidate(func_name, func_entry[0]) : nil
       return lower_positional_args_until_dead(ctx, positional_args) if !func_def
 
       param_types = [] of TypeRef
@@ -114479,6 +114628,22 @@ module Adamas::HIR
           end
           if idx < param_types.size
             value_id = lower_arg_with_expected_type(ctx, arg_expr, param_types[idx], param_type_names[idx], func_context)
+            if validated_types = literal_types
+              target_type = validated_types[idx]
+              if arg_types[idx] != target_type && !control_flow_dead_block?(ctx, ctx.current_block)
+                # Pre-inference proposes a conversion; the emitted source value
+                # must prove its runtime type and preserve nominal provenance.
+                # A type object or enum carrier is never an integer argument.
+                if ctx.type_literal?(value_id) || ctx.type_of(value_id) != arg_types[idx] ||
+                   enum_tracked_type(ctx, value_id) != arg_types[idx]
+                  raise LoweringError.new("no overload matches #{func_name}: integer autocast requires a runtime #{get_type_name_from_ref(arg_types[idx])} value")
+                end
+                cast = Cast.new(ctx.next_id, target_type, value_id, target_type)
+                ctx.emit(cast)
+                ctx.register_type(cast.id, target_type)
+                value_id = cast.id
+              end
+            end
             result << value_id
             if env_get("DEBUG_CALL_ARGS")
               STDERR.puts "[CALL_ARGS_DONE] func=#{func_name} idx=#{idx} expr=#{arg_expr.index} value=#{value_id} type=#{ctx.type_of(value_id)}"

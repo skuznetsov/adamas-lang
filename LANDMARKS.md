@@ -1,3 +1,41 @@
+### Numeric admission uses source values and domains (2026-10-19)
+Crystal performs ordinary overload lookup before a numeric retry. Our source
+path lacked that retry and later treated equal integer storage widths as
+compatibility, so tightening source rejection exposed valid UInt16 literals
+while signedness mismatches remained possible. Retry the unchanged resolver
+only after the ordinary source family has no match, using either an exact
+literal range proof or inclusion of the entire runtime integer domain. Require
+the same selected source Def, preserve ambiguity and defaults, and lower each
+actual once in source order. Before a changed slot is cast, its emitted HIR
+value must have the inferred source type and may not be a type object or enum
+carrier. Primitive source type objects exist before the prelude. Known
+primitive restrictions are checked before union/abstract ABI collapse;
+Int::Signed/Unsigned and Int/Float/Number retain nominal source membership,
+and Number excludes Char. Named/splat/block numeric binding is not widened.
+
+Fresh sealed S1 lavin5096 passes source_integer_autocast_repro.sh against
+original Crystal: 21 native positives and 24 exit-1/type-diagnostic/no-executable
+controls in frozen private run5098 and published repository run5103. Parent5047
+is RED on five valid literal controls (run5063). The separate abstract numeric
+falsifier is RED on intermediate5079 and GREEN after the source-membership
+repair (runs5091/5093). The failed source-family neighbor passes run5104.
+All 1919 production source hashes match the tested seal. HIR SHA256
+8a37426bb1ca01ba241a65ce791011e9941d900d3fa140fc08fb94a63d608cee;
+host SHA256 68e9c061ba5a005d61b4b3aa04fb95c4deabc6dcdb1137c7ad33f57990e073ca.
+
+Scoped adversary ROBUST for the measured plain positional integer and known
+primitive-membership contract, including exact overload priority, ambiguity,
+range boundaries, runtime domains, argument side effects, type objects and enum
+storage. Unknown/nonprimitive union arms remain with the ordinary matcher.
+Qualified .class and runtime-as-metatype failures reproduce on exact parent5047
+(run5084); they are independent open bugs. Pinned Socket now passes the former
+StaticArray literal rejection and stops at a wrong Slice(UInt8) | UInt8 result
+(run5102). This is not a full-prelude non-regression or LavinMQ runtime
+certificate. Refresh after source selection, literal/domain classification,
+primitive lookup, nominal provenance or restriction matching changes; revert
+source and regressions together. Bootstrap, fixed point and unchanged LavinMQ
+runtime/spec parity remain open. No stdlib or application source changed.
+
 ### Emitted allocator proof preserves the named-only separator (2026-10-18)
 The AST/DefParamInfo representation marks anonymous `*` as a splat with no
 name or external name. The positional allocator's source validator rejected
