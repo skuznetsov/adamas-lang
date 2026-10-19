@@ -43,7 +43,7 @@ module Adamas
           case name
           when "nil?"
             # Missing AST values are nil-like, but false and empty values are not.
-            MacroBoolValue.new(is_a?(MacroNilValue))
+            MacroBoolValue.new(is_a?(MacroNilValue) || is_a?(MacroNilLiteralValue))
           when "==", "!="
             # ASTNode#== is structural equality: same node class, same contents.
             # Without this arm `{% if "a" == "a" %}` evaluated to nil (falsy).
@@ -93,6 +93,27 @@ module Adamas
       class MacroNilValue < MacroValue
         def to_macro_output : String
           ""
+        end
+
+        def truthy? : Bool
+          false
+        end
+
+        def class_name : String
+          "NilLiteral"
+        end
+
+        def type_name : String
+          "Nil"
+        end
+      end
+
+      # An explicit source NilLiteral is a value, not the legacy sentinel used
+      # for absent AST/reflection results. It must survive interpolation and
+      # collection/default binding with its source spelling and false truthiness.
+      class MacroNilLiteralValue < MacroValue
+        def to_macro_output : String
+          "nil"
         end
 
         def truthy? : Bool

@@ -853,7 +853,7 @@ module Adamas
             literal = Frontend.node_literal_string(node)
             MacroBoolValue.new(literal == "true")
           when Frontend::NodeKind::Nil
-            macro_nil_value
+            MacroNilLiteralValue.new
           when .identifier?, .constant?
             # A macro argument is an unevaluated AST node (original Crystal binds
             # the Path itself), so a bare type name must not become a TypeNode:
@@ -946,7 +946,7 @@ module Adamas
             literal = Frontend.node_literal_string(node)
             MacroBoolValue.new(literal == "true")
           when Frontend::NodeKind::Nil
-            macro_nil_value
+            MacroNilLiteralValue.new
           when .identifier?, .constant?
             name = Frontend.node_literal_string(node)
             if name && (macro_val = context.variables[name]?)

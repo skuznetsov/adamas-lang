@@ -1,5 +1,27 @@
 # Adamas Bootstrap TODO
 
+2026-10-19 EXPLICIT MACRO NIL LITERAL: explicit Nil AST nodes shared the legacy
+absent-result sentinel, whose output is intentionally empty. Interpolation,
+default arguments and collection values therefore lost the source token nil;
+stringify/id also returned empty source. Use a distinct MacroNilLiteralValue
+in both AST-to-value paths, retaining false truthiness, NilLiteral identity and
+nil? while rendering nil. Preserve absent declaration defaults as empty values.
+DoD: macro_nil_literal_source_repro.sh COMPILER passes five original-first
+native comparisons and two strict Int32-consumer rejections requiring exit 1,
+a Nil/type diagnostic and no executable (sealed S1 lavin5200, private run5204,
+repository run5207). Parent5172 is RED for explicit/default/collection nil and
+stringify/id (run5197). The full-prelude symbol neighbor is not closed: parent
+stops at raise(Nil), while candidate reaches PollDescriptor#take_ownership
+(runs5212/5211). Those different errors do not prove full-prelude non-regression.
+Refresh after macro value conversion, interpolation, reflection or default binding.
+- [x] Distinguish explicit nil source from an absent AST/reflection result.
+- [x] Retain nil? and false truthiness and reject Nil passed to Int32.
+- [ ] Audit remaining MacroNilValue sentinel producers and consumers with
+  original-first absent/explicit/reflection controls before widening this claim.
+- [ ] Repair macro overload retention, double_splat rendering and expression
+  parse-error propagation independently; do not substitute a Nil expression.
+- [ ] Verify fresh bootstrap and unchanged LavinMQ runtime/spec parity.
+
 2026-10-19 SELECTED INDEX RETURN DECLARATION CONTEXT: IndexNode selected the
 right [] target but queried its return without arity or the selected Def.
 Annotated subslice bodies delegating through []? could acquire the scalar

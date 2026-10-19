@@ -1,3 +1,28 @@
+### Explicit macro nil retains source identity (2026-10-19)
+Explicit Nil AST nodes were converted to MacroNilValue, the legacy sentinel for
+absent AST/reflection results. Its intentionally empty rendering erased nil in
+interpolation, macro defaults and collections, and broke stringify/id. A distinct
+MacroNilLiteralValue now renders nil, remains false in conditions and reports
+NilLiteral/Nil identity. Both AST conversion paths use it; nil? recognizes both
+explicit nil and the absent-result sentinel. Absent declaration defaults retain
+their empty rendering. No argument type restriction is weakened.
+
+Sealed S1 lavin5200 passes five original-first native comparisons and two strict
+Int32-consumer rejections in private run5204 and published run5207 using
+macro_nil_literal_source_repro.sh. The opposite controls require exit 1, a
+Nil/type diagnostic and no executable. Parent5172 is RED for explicit/default/
+collection nil and stringify/id in run5197. All 1919 production src hashes match
+manifest SHA256 1ae8b80521fe4acce1de208e6c4adc6e355580f17401a46d9387f064ab819927.
+Host SHA256 d1944a7d531c1e5acb3c3ab4ec3fcd5c8acebe03a19bfc730e1c3a54d2b843de.
+Scoped adversary ROBUST for explicit source nil versus absent declaration
+defaults. Other legacy sentinel/reflection producers still need separate oracles.
+The full-prelude symbol neighbor stops at raise(Nil) on parent and reaches
+PollDescriptor#take_ownership on candidate (runs5212/5211); this does not certify
+full-prelude non-regression. Refresh after macro value conversion, interpolation,
+reflection or default binding changes; revert source and regression together.
+No application/stdlib changes, LavinMQ executable/test parity, fresh bootstrap or
+fixed point are established by this matrix.
+
 ### Index return inference preserves the selected declaration context (2026-10-19)
 IndexNode resolved the correct [] overload, then lost its arity and selected Def
 when querying the result. An annotated subslice body delegating through []?
