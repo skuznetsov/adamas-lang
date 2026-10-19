@@ -1,5 +1,29 @@
 # Adamas Bootstrap TODO
 
+2026-10-18 FAILED SOURCE FAMILY SELECTION: a complete ordinary positional call
+could fail every source overload's type restrictions and then materialize a
+guessed exact mangle as an abort stub. Retain failed source-family lookup
+evidence even when the existing generic-specific classifier has no detailed
+mismatch. The final owner-aware rematch or source-locked generated allocator
+may still supersede the miss only through its existing compatibility check.
+DoD: source_family_miss_repro.sh COMPILER compares three positive cases against
+original Crystal and rejects four wrong-type calls with exit 1, a type diagnostic
+and no executable (sealed S1 lavin4989, private run4991 and repository run4996). Parent4970 falsely
+accepts top-level, instance and second-argument mismatches (run4990). Inherited
+class method neighbors pass 13 positive and 3 negative controls (run4994).
+Refresh after source overload selection, resolution memoization or fallback
+materialization changes.
+- [x] Preserve positional/default/named/splat/block and actual NoReturn controls.
+- [x] Fail closed for complete plain-positional source-family type mismatches.
+- [ ] Qualify incomplete argument vectors directly at the resolver boundary;
+  they are excluded from publishing this generic rejection evidence.
+- [ ] Repair full-prelude constructor/type provenance independently. The Set
+  admission neighbor cannot produce an executable on either parent or candidate
+  (runs4993/4992); the candidate reports an earlier Slice(UInt8).new Pointer
+  mismatch, while the parent stops at Slice(Proc).new. These two failures do not
+  establish full-prelude non-regression or constructor capability.
+- [ ] Verify fresh bootstrap and unchanged LavinMQ runtime/spec parity.
+
 2026-10-18 UNRESOLVED CONSTANT DECLARATION SCHEDULING: registration may revisit
 a constant before its type is known. The non-Void type shortcut did not apply,
 so each visit appended the same runtime initializer. Make pending scheduling

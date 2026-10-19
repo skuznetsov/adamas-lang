@@ -106118,10 +106118,17 @@ module Adamas::HIR
             end
           end
           actual_name, declared_name = source_rejection
-          raise LoweringError.new(
-            "no overload matches #{lookup_name}: expected argument restriction #{declared_name}, got #{actual_name}",
-            node,
-          )
+          if declared_name.empty?
+            raise LoweringError.new(
+              "no overload matches #{lookup_name} for argument types (#{actual_name})",
+              node,
+            )
+          else
+            raise LoweringError.new(
+              "no overload matches #{lookup_name}: expected argument restriction #{declared_name}, got #{actual_name}",
+              node,
+            )
+          end
         end
       end
       if m3e_input && has_named_args && m3e_input.named_names
@@ -113838,9 +113845,21 @@ module Adamas::HIR
             return block_entry
           end
         end
-        if source_rejections && saw_source_candidate && all_source_candidates_rejected
-          if rejection = source_rejection
+        if source_rejections && saw_source_candidate && source_rejections.empty? &&
+           arg_types && arg_types.size == arg_count &&
+           arg_types.none? { |type_ref| type_ref == TypeRef::VOID }
+          if all_source_candidates_rejected && (rejection = source_rejection)
             source_rejections << rejection
+          else
+            # A source candidate passed the call-shape filters, but no candidate
+            # was type-compatible. Preserve that failed family lookup so the
+            # caller cannot materialize a guessed exact mangle as an abort stub.
+            actual_names = if concrete_types = arg_types
+                             concrete_types.map { |type_ref| get_type_name_from_ref(type_ref) }
+                           else
+                             [] of String
+                           end
+            source_rejections << {actual_names.join(", "), ""}
           end
         end
         STDERR.puts "[CALL_LOOKUP_MISS] func=#{func_name}" if debug_call_lookup

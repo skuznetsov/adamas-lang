@@ -1,3 +1,37 @@
+### Failed complete source selection remains authoritative (2026-10-18)
+Source overload selection rejected ordinary wrong argument types, but its sidecar
+retained only generic-specific mismatch details. With no detailed record, later
+fallback emitted a guessed exact function as an abort stub and compilation
+returned success. Retain a generic failed-family record after shape-eligible
+source candidates exist, no candidate is selected, and every argument type is
+known. Require the full vector length and no Void entries. Named, splat and block
+calls retain their existing paths. Compatibility, scoring and type admission are
+unchanged; an owner-aware rematch still has to establish source compatibility
+before superseding a rejection. Cached selection misses re-run the existing
+resolver when a rejection sink is requested.
+
+Fresh sealed S1 lavin4989 passes the original-first private matrix (run4991):
+three positive cases cover call shapes and direct/nested NoReturn arguments;
+four negatives require exit 1, a type diagnostic and no executable. The published
+repository command `python3 run_clean_portable_regression.py lavin4989_plain_source_family_miss lavin4996_repository_source_family_miss regression_tests/source_family_miss_repro.sh`
+passes the same original-first matrix with all 1919 production src files matching
+the tested source manifest. Exact parent
+4970 falsely accepts three of those negatives (run4990). The existing inherited
+class identity regression passes all 13 positive and 3 negative controls
+(run4994), including local misses with valid ancestor overloads. HIR SHA256
+198dd6f55074149d748b645a54a42451f7fdaa6688c9682498a7974d528dadf1;
+host SHA256 8211514902fb2fe906427a776d48bfb510f40726a525dfdb4b7b94932e7e5838.
+
+Scoped adversary ROBUST for complete ordinary positional source misses and the
+tested inherited/call-shape neighbors. Incomplete argument vectors need a direct
+resolver probe. The full-prelude Set admission neighbor is blocked on both
+versions (runs4993/4992); the earlier candidate Slice(UInt8).new Pointer mismatch
+requires its own provenance investigation. These failed probes do not establish
+full-prelude non-regression. Refresh after source selection, memoization or
+fallback materialization changes; revert source and regression together. No
+stdlib or application changes. Fresh bootstrap, unchanged LavinMQ runtime/spec
+parity and fixed point remain open.
+
 ### Pending constant initializers use declaration identity (2026-10-18)
 Repeated registration of a nested constant with unresolved type appended the
 same initializer twice. Make pending queue insertion idempotent for the exact
