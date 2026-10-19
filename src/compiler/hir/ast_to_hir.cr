@@ -83556,6 +83556,13 @@ module Adamas::HIR
         return call.id
       end
 
+      # Unresolved uppercase source identifiers are constants, never implicit
+      # locals. All declared types, constants, and bound type parameters have
+      # already had their normal lookup opportunity above.
+      if name[0]?.try(&.uppercase?)
+        raise LoweringError.new("undefined constant #{name}", node)
+      end
+
       # Otherwise create a new local (first use)
       local = Local.new(ctx.next_id, TypeRef::VOID, name, ctx.current_scope)
       ctx.emit(local)

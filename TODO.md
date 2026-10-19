@@ -1,3 +1,18 @@
+2026-10-19 UNKNOWN CONSTANT IDENTIFIER: lower_identifier created an implicit
+Void local after an uppercase identifier failed all type, constant, and bound
+parameter lookups. Subsequent no-argument member access could emit a Void call
+and compile successfully. Reject the unresolved uppercase name before that
+local fallback. DoD: unknown_constant_identifier_repro.sh COMPILER matches five
+original-first controls and rejects ordinary missing constants with exit 1,
+the missing-name diagnostic, safe-run footers and no executable. Private 6466
+also covers reparsed verbatim source; its marker/parser prerequisites are not
+part of this narrow publication. Refresh after identifier or type-parameter
+lookup changes.
+- [x] Current-worktree qualification 6470 passes five original-first controls
+      and two missing-name rejections; exact host 6469, temporary caches removed.
+- [ ] Integrate and qualify verbatim source reparse prerequisites separately.
+- [ ] Verify fresh bootstrap and unchanged LavinMQ runtime/spec parity.
+
 2026-10-19 GENERATED ALLOCATOR PROOF REVISION: stale-call return repair
 changes only a HIR result annotation but advances the generated allocator's
 body revision, so its source-initializer proof is rejected as stale. Carry that
