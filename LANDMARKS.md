@@ -20435,3 +20435,29 @@ revert source and regression together. Positional-only defaults, block defaults
 and defaults involving generic type parameters need separate qualification. No
 stdlib/application changes, fresh S2, bootstrap fixed point or LavinMQ parity
 are established by this matrix.
+
+
+### Initial parser errors cannot become successful partial compilations (2026-10-19)
+The CLI retained parser diagnostics but allowed recovered roots into semantic/HIR
+processing and saved partial AST caches without diagnostics. Reject diagnostics
+from all initial translation units before later phases, and require a clean parse
+before cache production. A required-token expectation is authoritative: it emits
+its own diagnostic instead of going through generic recovery suppression.
+
+Fresh sealed S1 lavin5310 has the same production source bytes. Private run5321
+and the repository command
+`python3 run_clean_portable_regression.py lavin5310_required_keyword_diagnostic lavin5377_repository_initial_boundary regression_tests/initial_parser_diagnostic_boundary_repro.sh`
+pass two original-first native controls and seven strict parser rejections, then
+repeat all candidate cases. Each rejection requires exit 1, a syntax diagnostic
+and no executable. Valid parses save AST caches; invalid parses create no cache
+entries. The CLI cache loader is already disabled; no cache-hit behavior is
+claimed. Parent5220 false-accepts invalid sources in run5304; parser-only partial
+repair5305 still misses required EOF keywords in run5307.
+
+Scoped adversary ROBUST for this initial-diagnostic and cache-producer boundary.
+Refresh after translation-unit loading, required tokens, recovery or AST caching;
+revert source and regression together. Macro-expansion parser boundaries and
+recovery-suppressed errors need separate tests. Valid grammar gaps exposed by this
+guard remain compiler bugs to repair, not reasons to suppress diagnostics. Fresh
+S2, bootstrap fixed point and unchanged LavinMQ runtime/spec parity remain open.
+No stdlib or application source was changed.

@@ -1747,6 +1747,20 @@ module Adamas
           emit_timings(options, out_io, timings, total_start)
           return 1
         end
+        # A recovered prefix is not a successful translation unit. Preserve
+        # parser errors before any semantic/lowering path can consume its roots.
+        parser_errors = false
+        all_arenas.each do |unit|
+          unit.parse_diagnostics.each do |diagnostic|
+            err_io.puts Frontend::DiagnosticFormatter.format(unit.source, diagnostic)
+            parser_errors = true
+          end
+        end
+        if parser_errors
+          err_io.puts "error: compilation failed due to parser errors"
+          emit_timings(options, out_io, timings, total_start)
+          return 1
+        end
         if debug_profile
           timings["dbg_count_parse_arenas"] = all_arenas.size.to_f
           timings["dbg_count_parse_loaded_files"] = loaded_files.size.to_f
@@ -4578,7 +4592,9 @@ module Adamas
         end
 
         {% unless flag?(:bootstrap_fast) %}
-        if options.ast_cache && arena.is_a?(Frontend::AstArena)
+        # Cache hits carry no parser diagnostics. Only a successful parse may
+        # produce such a cache entry; the compiler fingerprint rejects old ones.
+        if options.ast_cache && parse_diagnostics.empty? && arena.is_a?(Frontend::AstArena)
           begin
             cache = LSP::AstCache.new(arena, exprs, lexer.string_pool)
             cache.save(abs_path)

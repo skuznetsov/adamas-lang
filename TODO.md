@@ -1,5 +1,23 @@
 # Adamas Bootstrap TODO
 
+2026-10-19 INITIAL PARSER DIAGNOSTIC BOUNDARY: recovered roots were consumed
+despite parser errors, and a partial AST could be saved without its diagnostics.
+Reject initial translation-unit diagnostics before semantic/HIR processing and
+save AST caches only after successful parsing. Required keyword expectations now
+emit an explicit diagnostic even when generic recovery suppresses EOF or other
+token kinds. DoD: initial_parser_diagnostic_boundary_repro.sh COMPILER passes
+two original-first native controls and seven strict parser rejections (exit 1,
+identified syntax error, no executable), then repeats the candidate phase.
+Valid parses save caches; invalid parses create zero cache entries. The CLI
+cache loader remains disabled; these checks cover cache production, not hits.
+Parent5220 false-accepts invalid sources (run5304); sealed5310 passes private
+run5321 and published run5377. Refresh after initial parsing, recovery, required
+tokens or AST cache changes. No grammar/type relaxation or stdlib/app edits.
+- [x] Preserve required-token errors and stop compilation on initial diagnostics.
+- [x] Prevent diagnostic-free cache entries from recovered partial syntax.
+- [ ] Audit recovery suppression and macro expansion parse diagnostics separately.
+- [ ] Verify fresh bootstrap and unchanged LavinMQ runtime/spec parity.
+
 2026-10-19 DIRECT MACRO NIL OUTPUT: the text expression visitor still rendered
 an explicit Nil node as empty source after the typed value conversion repair.
 Route that visitor through the same MacroNilLiteralValue renderer. A direct

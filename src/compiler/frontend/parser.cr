@@ -15965,7 +15965,9 @@ current_token.kind == Token::Kind::Identifier &&
                 STDERR.puts("unexpected EOF while expecting #{expected.inspect} (kind #{expected_kind}) context=#{@expect_context}")
                 STDERR.puts(caller[0, 3].join("\n"))
               end
-              emit_unexpected(token)
+              # A failed required-token expectation is authoritative even when
+              # generic recovery suppresses this token kind (including EOF).
+              @diagnostics << Diagnostic.new("Expected '#{expected}'", token.span)
             end
           else
             if token.kind == Token::Kind::Identifier && slice_eq?(token.slice, expected)
@@ -15975,7 +15977,9 @@ current_token.kind == Token::Kind::Identifier &&
                 STDERR.puts("unexpected EOF while expecting identifier #{expected.inspect} context=#{@expect_context}")
                 STDERR.puts(caller[0, 3].join("\n"))
               end
-              emit_unexpected(token)
+              # A failed required-token expectation is authoritative even when
+              # generic recovery suppresses this token kind (including EOF).
+              @diagnostics << Diagnostic.new("Expected '#{expected}'", token.span)
             end
           end
         end
