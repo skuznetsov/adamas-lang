@@ -21261,3 +21261,20 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Member annotation attachment/reflection semantics require separate
   qualification; retaining syntax does not establish that capability.
 - [ ] Continue unchanged LavinMQ runtime/spec parity and fresh bootstrap.
+
+
+### Represent generated scalar helpers as runtime calls (2026-10-19)
+- [x] Encode the 13 generated scalar-helper call sites as HIR ExternCall. They
+  target runtime definitions, not source methods; source-demand validation must
+  not infer ownership from the helper spelling. Existing argument/result types
+  and runtime ABI remain unchanged.
+- [x] Qualify the exact WT source snapshot lavin6290_scalar_bool_wt against
+  pinned Crystal 1.20.1: numeric and scalar-String positives, plus undefined
+  exact-helper and helper-prefix negatives, all pass in run 6291. No source-name
+  prefix exemption was added.
+- [ ] Qualify full-prelude WT after the independent macro-parser prerequisite.
+  Run 6293 fails parsing `constants[key] = member unless constants[key]` in
+  original stdlib enum.cr before lowering; the no-prelude ownership matrix
+  does not establish full LavinMQ or bootstrap compatibility.
+- [ ] Audit other compiler-created runtime calls by producer and target ABI,
+  preserving strict rejection of undefined user methods and receiver members.

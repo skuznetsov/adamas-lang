@@ -1,0 +1,1 @@
+__adamas_not_a_runtime_helper(1)

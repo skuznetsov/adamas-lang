@@ -1,0 +1,1 @@
+__adamas_leading_zeros_count_i32(1)

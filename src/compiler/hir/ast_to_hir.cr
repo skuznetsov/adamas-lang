@@ -124743,7 +124743,7 @@ module Adamas::HIR
           ctx.emit(unwrap)
           ctx.register_type(unwrap.id, TypeRef::INT32)
           # Call __adamas_int_to_string on the unwrapped value
-          call = Call.without_receiver(ctx.next_id, TypeRef::STRING, "__adamas_int_to_string", [unwrap.id])
+          call = ExternCall.new(ctx.next_id, TypeRef::STRING, "__adamas_int_to_string", [unwrap.id])
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::STRING)
           return call.id
@@ -124752,7 +124752,7 @@ module Adamas::HIR
           unwrap = UnionUnwrap.new(ctx.next_id, TypeRef::INT32, object_id, 0, false)
           ctx.emit(unwrap)
           ctx.register_type(unwrap.id, TypeRef::INT32)
-          call = Call.without_receiver(ctx.next_id, TypeRef::INT32, "__adamas_int_abs", [unwrap.id])
+          call = ExternCall.new(ctx.next_id, TypeRef::INT32, "__adamas_int_abs", [unwrap.id])
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::INT32)
           return call.id
@@ -124768,12 +124768,12 @@ module Adamas::HIR
       if receiver_type == TypeRef::INT32 && !(member_name == "to_s" && enum_carrier_receiver?(ctx, object_id, receiver_type))
         case member_name
         when "to_s"
-          call = Call.without_receiver(ctx.next_id, TypeRef::STRING, "__adamas_int_to_string", [object_id])
+          call = ExternCall.new(ctx.next_id, TypeRef::STRING, "__adamas_int_to_string", [object_id])
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::STRING)
           return call.id
         when "abs"
-          call = Call.without_receiver(ctx.next_id, TypeRef::INT32, "__adamas_int_abs", [object_id])
+          call = ExternCall.new(ctx.next_id, TypeRef::INT32, "__adamas_int_abs", [object_id])
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::INT32)
           return call.id
@@ -124795,7 +124795,7 @@ module Adamas::HIR
           ctx.register_type(cast.id, TypeRef::UINT64)
           return cast.id
         when "to_f", "to_f64"
-          call = Call.without_receiver(ctx.next_id, TypeRef::FLOAT64, "__adamas_int_to_f64", [object_id])
+          call = ExternCall.new(ctx.next_id, TypeRef::FLOAT64, "__adamas_int_to_f64", [object_id])
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::FLOAT64)
           return call.id
@@ -124803,12 +124803,12 @@ module Adamas::HIR
           # Inline intrinsic for Int32 — avoids abstract Int method which crashes
           # due to is_a?(Int::Signed) runtime check on raw integer values.
           # Implementation: bit-trick for next power of 2, clamped for signed int
-          call = Call.without_receiver(ctx.next_id, TypeRef::INT32, "__adamas_next_power_of_two_i32", [object_id])
+          call = ExternCall.new(ctx.next_id, TypeRef::INT32, "__adamas_next_power_of_two_i32", [object_id])
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::INT32)
           return call.id
         when "leading_zeros_count"
-          call = Call.without_receiver(ctx.next_id, TypeRef::INT32, "__adamas_leading_zeros_count_i32", [object_id])
+          call = ExternCall.new(ctx.next_id, TypeRef::INT32, "__adamas_leading_zeros_count_i32", [object_id])
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::INT32)
           return call.id
@@ -124818,7 +124818,7 @@ module Adamas::HIR
       elsif receiver_type == TypeRef::INT64
         case member_name
         when "to_s"
-          call = Call.without_receiver(ctx.next_id, TypeRef::STRING, "__adamas_int64_to_string", [object_id])
+          call = ExternCall.new(ctx.next_id, TypeRef::STRING, "__adamas_int64_to_string", [object_id])
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::STRING)
           return call.id
@@ -124858,18 +124858,18 @@ module Adamas::HIR
           if !@no_prelude
             # fall through to normal dispatch
           else
-          call = Call.without_receiver(ctx.next_id, TypeRef::STRING, "__adamas_f64_to_string", [object_id])
+          call = ExternCall.new(ctx.next_id, TypeRef::STRING, "__adamas_f64_to_string", [object_id])
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::STRING)
           return call.id
           end
         when "to_i", "to_i32"
-          call = Call.without_receiver(ctx.next_id, TypeRef::INT32, "__adamas_f64_to_i32", [object_id])
+          call = ExternCall.new(ctx.next_id, TypeRef::INT32, "__adamas_f64_to_i32", [object_id])
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::INT32)
           return call.id
         when "to_i64"
-          call = Call.without_receiver(ctx.next_id, TypeRef::INT64, "__adamas_f64_to_i64", [object_id])
+          call = ExternCall.new(ctx.next_id, TypeRef::INT64, "__adamas_f64_to_i64", [object_id])
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::INT64)
           return call.id
@@ -124877,7 +124877,7 @@ module Adamas::HIR
       elsif receiver_type == TypeRef::CHAR
         case member_name
         when "to_s"
-          call = Call.without_receiver(ctx.next_id, TypeRef::STRING, "__adamas_char_to_string", [object_id])
+          call = ExternCall.new(ctx.next_id, TypeRef::STRING, "__adamas_char_to_string", [object_id])
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::STRING)
           return call.id
@@ -124891,7 +124891,7 @@ module Adamas::HIR
       elsif receiver_type == TypeRef::BOOL
         case member_name
         when "to_s"
-          call = Call.without_receiver(ctx.next_id, TypeRef::STRING, "__adamas_bool_to_string", [object_id])
+          call = ExternCall.new(ctx.next_id, TypeRef::STRING, "__adamas_bool_to_string", [object_id])
           ctx.emit(call)
           ctx.register_type(call.id, TypeRef::STRING)
           return call.id
