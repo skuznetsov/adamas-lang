@@ -1,3 +1,14 @@
+2026-10-19 RUNTIME INTERPOLATION INSIDE MACRO STRINGS: preserve the `#{`
+source opener before recognizing the following embedded `{{` directive. Both
+string-token macro scanners previously claimed the runtime brace and could
+leave macro source inside generated interpolation. The four parser examples
+cover adjacent directives, ordinary interpolation, and escaped delimiters;
+original-first runtime coverage includes named/splat arguments and real Base64.
+- [x] Exact worktree parser/semantic specs: 47 examples, zero failures/errors.
+- [x] Sealed source red/green qualification and portable runtime regression.
+- [ ] Verify unchanged LavinMQ runtime/upstream-spec parity and fresh bootstrap.
+Refresh after string-token macro scanning or interpolation parsing changes.
+
 2026-10-19 STRUCTURED MACRO ARGUMENT SOURCE: render retained index, binary,
 range and ternary AST nodes recursively through MacroNodeValue's common source
 renderer. The previous literal-only fallback erased valid runtime expressions,

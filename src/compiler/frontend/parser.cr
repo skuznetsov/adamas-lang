@@ -15451,6 +15451,13 @@ current_token.kind == Token::Kind::Identifier &&
               i += 2
               next
             end
+            # The runtime interpolation opener owns its first brace. In
+            # `#{{{arg}}}`, the macro directive starts at the next brace,
+            # as in original Crystal's macro lexer.
+            if b == '#'.ord.to_u8 && source_slice.unsafe_fetch(i + 1) == '{'.ord.to_u8
+              i += 2
+              next
+            end
             if b == '{'.ord.to_u8
               nb = source_slice.unsafe_fetch(i + 1)
               return true if nb == '%'.ord.to_u8 || nb == '{'.ord.to_u8
@@ -15580,6 +15587,14 @@ current_token.kind == Token::Kind::Identifier &&
                 i += 3
                 next
               end
+            end
+
+            # Keep `#{` as runtime source before scanning for a nested
+            # macro directive. Otherwise `#{{{arg}}}` is misread as
+            # `#` followed by `{{ {arg }}` and falls back to raw text.
+            if b == '#'.ord.to_u8 && i + 1 < source_slice.size && source_slice.unsafe_fetch(i + 1) == '{'.ord.to_u8
+              i += 2
+              next
             end
 
             if b == '{'.ord.to_u8 && i + 1 < source_slice.size

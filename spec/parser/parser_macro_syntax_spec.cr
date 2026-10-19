@@ -1,7 +1,42 @@
 require "spec"
 
+require "../../src/compiler/frontend/lexer"
 require "../../src/compiler/frontend/ast"
 require "../../src/compiler/frontend/parser"
+
+private def macro_runtime_interpolation_body(source : String) : {Adamas::Compiler::Frontend::AstArena, Adamas::Compiler::Frontend::MacroLiteralNode}
+  parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
+  program = parser.parse_program
+  parser.diagnostics.should be_empty
+  program.roots.size.should eq(1)
+  arena = program.arena.as(Adamas::Compiler::Frontend::AstArena)
+  definition = arena[program.roots.first].as(Adamas::Compiler::Frontend::MacroDefNode)
+  {arena, arena[definition.body].as(Adamas::Compiler::Frontend::MacroLiteralNode)}
+end
+
+private def macro_runtime_interpolation_expression_names(arena : Adamas::Compiler::Frontend::AstArena, pieces : Array(Adamas::Compiler::Frontend::MacroPiece)) : Array(String)
+  pieces.compact_map do |piece|
+    next unless piece.kind == Adamas::Compiler::Frontend::MacroPiece::Kind::Expression
+    node = arena[piece.expr.not_nil!].as(Adamas::Compiler::Frontend::MacroExpressionNode)
+    String.new(arena[node.expression].as(Adamas::Compiler::Frontend::IdentifierNode).name)
+  end
+end
+
+private def macro_runtime_interpolation_text(pieces : Array(Adamas::Compiler::Frontend::MacroPiece)) : String
+  pieces.compact_map(&.text).join
+end
+
+private def macro_runtime_interpolation_embedded_expression(name : String) : String
+  "#" + "{{{" + name + "}}}"
+end
+
+private def macro_runtime_interpolation_runtime_expression(name : String) : String
+  "#" + "{" + name + "}"
+end
+
+private def macro_runtime_interpolation_escaped_expression(name : String) : String
+  "\\" + "{{" + name + "}}"
+end
 
 describe "Adamas::Compiler::Frontend::Parser" do
   describe "Macro syntax (parser-level)" do
@@ -138,5 +173,49 @@ describe "Adamas::Compiler::Frontend::Parser" do
       String.new(Adamas::Compiler::Frontend.node_def_name(protected_def).not_nil!).should eq("new_internal")
       Adamas::Compiler::Frontend.node_def_visibility(protected_def).should eq(Adamas::Compiler::Frontend::Visibility::Protected)
     end
+  end
+end
+
+describe "macro string runtime interpolation boundary" do
+  it "keeps a runtime interpolation opener beside an embedded macro argument" do
+    source = "macro capture(arg)\n  \"prefix " + macro_runtime_interpolation_embedded_expression("arg") + " suffix\"\nend\n"
+    arena, body = macro_runtime_interpolation_body(source)
+
+    macro_runtime_interpolation_expression_names(arena, body.pieces).should eq(["arg"])
+    text = macro_runtime_interpolation_text(body.pieces)
+    text.should contain("prefix ")
+    text.should contain("#" + "{")
+    text.count('#').should eq(1)
+  end
+
+  it "extracts adjacent macro expressions without stealing either runtime opener" do
+    source = "macro capture(left, right)\n  \"" +
+             macro_runtime_interpolation_embedded_expression("left") +
+             macro_runtime_interpolation_embedded_expression("right") +
+             "\"\nend\n"
+    arena, body = macro_runtime_interpolation_body(source)
+
+    macro_runtime_interpolation_expression_names(arena, body.pieces).should eq(["left", "right"])
+    macro_runtime_interpolation_text(body.pieces).count('#').should eq(2)
+  end
+
+  it "leaves ordinary runtime interpolation as macro text" do
+    source = "macro capture(arg)\n  \"ordinary " +
+             macro_runtime_interpolation_runtime_expression("arg") +
+             " interpolation\"\nend\n"
+    _, body = macro_runtime_interpolation_body(source)
+
+    body.pieces.select { |piece| piece.kind == Adamas::Compiler::Frontend::MacroPiece::Kind::Expression }.should be_empty
+    macro_runtime_interpolation_text(body.pieces).should contain(macro_runtime_interpolation_runtime_expression("arg"))
+  end
+
+  it "leaves escaped macro delimiters as text" do
+    source = "macro capture(arg)\n  \"escaped " +
+             macro_runtime_interpolation_escaped_expression("arg") +
+             "\"\nend\n"
+    _, body = macro_runtime_interpolation_body(source)
+
+    body.pieces.select { |piece| piece.kind == Adamas::Compiler::Frontend::MacroPiece::Kind::Expression }.should be_empty
+    macro_runtime_interpolation_text(body.pieces).should contain(macro_runtime_interpolation_escaped_expression("arg"))
   end
 end
