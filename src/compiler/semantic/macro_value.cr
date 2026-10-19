@@ -1168,6 +1168,22 @@ module Adamas
           sn_result
           when Frontend::PathNode
             node_identifier_name(node) || ""
+          # Macro arguments retain runtime AST rather than evaluating it.
+          # Render structural expression nodes here too, including nested call
+          # arguments; an absent literal payload must not erase their source.
+          when Frontend::IndexNode
+            object = stringify_node(@arena[node.object])
+            indexes = node.indexes.map { |index| stringify_node(@arena[index]) }
+            "#{object}[#{indexes.join(", ")}]"
+          when Frontend::BinaryNode
+            "#{stringify_node(@arena[node.left])} #{String.new(node.operator)} #{stringify_node(@arena[node.right])}"
+          when Frontend::RangeNode
+            begin_text = stringify_node(@arena[node.begin_expr])
+            end_text = stringify_node(@arena[node.end_expr])
+            operator = node.exclusive ? "..." : ".."
+            "#{begin_text}#{operator}#{end_text}"
+          when Frontend::TernaryNode
+            "#{stringify_node(@arena[node.condition])} ? #{stringify_node(@arena[node.true_branch])} : #{stringify_node(@arena[node.false_branch])}"
           when Frontend::MemberAccessNode
             object = stringify_node(@arena[node.object])
             member = intern_name(node.member)

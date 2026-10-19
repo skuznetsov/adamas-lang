@@ -1,3 +1,16 @@
+2026-10-19 STRUCTURED MACRO ARGUMENT SOURCE: render retained index, binary,
+range and ternary AST nodes recursively through MacroNodeValue's common source
+renderer. The previous literal-only fallback erased valid runtime expressions,
+including nested call arguments. Assignment-only source recovery is unchanged.
+- [x] Five direct renderer examples fail on the parent and pass on the repair;
+  the exact worktree parser/semantic specs pass all 47 examples.
+- [x] Original-first output and strict Nil/String-to-Int32 rejection regressions.
+- [ ] Close independently reproduced known-source positional arity admission;
+  erased arguments exposed that separate downstream fail-open path.
+- [ ] Audit other unsupported AST output forms before claiming complete rendering.
+- [ ] Verify unchanged LavinMQ runtime/upstream-spec parity and fresh bootstrap.
+Refresh after MacroNodeValue source rendering or retained AST representation changes.
+
 2026-10-19 MACRO DIRECTIVE OUTPUT BOUNDARY: macro-body `{% ... %}`
 expressions were incorrectly marked as output-enabled, and the AST cache lost
 that flag. Both expansion walkers could then emit statement values as source.

@@ -10,6 +10,17 @@ require "../../src/compiler/semantic/collectors/symbol_collector"
 
 include Adamas::Compiler
 
+private def macro_structured_argument_output_for_assignment_rhs(source : String) : String
+  parser = Frontend::Parser.new(Frontend::Lexer.new(source))
+  program = parser.parse_program
+  parser.diagnostics.should be_empty
+  arena = program.arena.as(Frontend::AstArena)
+  assignment_id = program.roots.find { |id| arena[id].is_a?(Frontend::AssignNode) }
+  assignment_id.should_not be_nil
+  assignment = arena[assignment_id.not_nil!].as(Frontend::AssignNode)
+  Semantic::MacroNodeValue.new(assignment.value, arena, program.string_pool).to_macro_output
+end
+
 private def expand_first_top_level_macro_text(source : String) : {String, Array(Adamas::Compiler::Semantic::Diagnostic)}
   lexer = Frontend::Lexer.new(source)
   parser = Frontend::Parser.new(lexer)
@@ -677,6 +688,31 @@ describe "Phase 87B-6: Macro Methods (.stringify, .id, .class_name)" do
 
       collector.diagnostics.select(&.level.error?).should be_empty
     end
+  end
+end
+
+describe "MacroNodeValue structured argument rendering" do
+  it "renders index expressions" do
+    macro_structured_argument_output_for_assignment_rhs("x = items[index]\n").should eq("items[index]")
+  end
+
+  it "renders binary expressions" do
+    macro_structured_argument_output_for_assignment_rhs("x = left + right\n").should eq("left + right")
+  end
+
+  it "renders inclusive and exclusive ranges" do
+    macro_structured_argument_output_for_assignment_rhs("x = first..last\n").should eq("first..last")
+    macro_structured_argument_output_for_assignment_rhs("x = first...last\n").should eq("first...last")
+  end
+
+  it "renders ternary expressions" do
+    macro_structured_argument_output_for_assignment_rhs("x = flag ? yes : no\n").should eq("flag ? yes : no")
+  end
+
+  it "recursively renders nested call arguments and grouped precedence" do
+    macro_structured_argument_output_for_assignment_rhs("x = wrap(items[index], left + (flag ? low...high : fallback))\n").should eq("wrap(items[index], left + (flag ? low...high : fallback))")
+    macro_structured_argument_output_for_assignment_rhs("x = left * (right + third)\n").should eq("left * (right + third)")
+    macro_structured_argument_output_for_assignment_rhs("x = (left + right) * third\n").should eq("(left + right) * third")
   end
 end
 
