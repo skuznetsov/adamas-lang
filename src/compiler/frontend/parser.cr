@@ -14137,6 +14137,9 @@ current_token.kind == Token::Kind::Identifier &&
               end
             end
             advance # skip )
+            # A cast owns its closing delimiter; macro argument source slices
+            # must reparse the complete expression in another arena.
+            type_end = previous_token.not_nil!
           else
             # Without parens: as Float32 or as Int32 | String
             target_type = parse_type_annotation

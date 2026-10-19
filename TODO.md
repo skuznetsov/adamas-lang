@@ -1,5 +1,21 @@
 # Adamas Bootstrap TODO
 
+2026-10-19 CAST SOURCE OWNERSHIP: parse_as_like consumed a closing parenthesis
+without including it in the AsNode / AsQuestionNode span. A deferred generic
+macro then copied incomplete source into another arena, losing the cast and
+sometimes substituting Nil. Include the owned delimiter, matching is_a? and
+responds_to? grammar. DoD: macro_cast_source_span_repro.sh COMPILER matches five
+original-first native controls and rejects String passed to the Int32 consumer
+with exit 1, identified call/String diagnostic and no executable. Private parent
+5658 fails four cast controls and loses String identity (run5690); parser-only
+isolated5684 passes private5703 and published5705. No type restriction, app or stdlib is changed.
+Refresh after cast grammar, expression spans or macro argument transfer changes.
+- [x] Retain the closing delimiter in both parenthesized cast AST spans.
+- [ ] Diagnose invalid macro expression expansions instead of lowering them to Nil.
+- [ ] Audit the no-prelude responds_to?(:+) discrepancy separately (run5682).
+- [ ] Render declared overload restrictions in baseline rejection diagnostics.
+- [ ] Verify fresh bootstrap and unchanged LavinMQ runtime/spec parity.
+
 2026-10-19 NAMED SUPER AST CACHE: SuperNode already retained named arguments
 in memory, but the cache omitted their labels and value references. Serialize
 and restore the existing metadata, collect its labels in the string table, and

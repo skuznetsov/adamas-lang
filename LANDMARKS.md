@@ -1,3 +1,25 @@
+### Cast source spans include their owned closing delimiter (2026-10-19)
+parse_as_like recorded its endpoint before consuming `)`, unlike neighboring
+is_a? and responds_to? parsers. The AsNode and AsQuestionNode thus owned invalid
+source when transferred by deferred macros across arenas. Move the endpoint
+to the consumed delimiter; no macro recovery fallback or type rule is widened.
+
+A generic-method macro oracle forces deferred argument reparsing. Parent5658
+fails four cast variants and reports Nil instead of the rejected String in
+run5690. The same source cohort with only the parser change passes run5691;
+parser-only isolated5684 on committed5523 passes five positives and the strict
+String-to-Int32 rejection in private5703 and published5705. The neighbor is_a? remains covered.
+The candidate rejection requires the selected call, actual String identity,
+exit 1 and no executable; the original additionally prints the declared Int32.
+Baseline expected-formal rendering remains an explicit separate diagnostic gap.
+Parser SHA256 879e38db5cd0b21b00df1a9efae2981ccdd0081e679a15c7375d44fcd603e358;
+host SHA256 c7d1d1e64ca5dc514d9e3a0326fd36df9b42d6e36946acedb6807a502f058115.
+Scoped adversary ROBUST for the measured cast/source boundary and semantic
+opposite control. Refresh after cast grammar, source spans or macro argument
+transfer changes; revert parser and regression together. Invalid expansion-to-Nil
+and unrelated responds_to? remain open. Fresh bootstrap and full LavinMQ parity
+are not established by these controls. Application and stdlib bytes are unchanged.
+
 ### Proc pointer captures share the call argument grammar (2026-10-19)
 The lexer represents &-> as AmpMinus followed by Greater. Bare command and
 parenthesized calls independently recognized that pair, while receiver command

@@ -1,0 +1,15 @@
+{
+  "is_a_neighbor.cr": "daad0f09a7526e20723521288444378c28ba8f2d47885f4f6b0d52704930d4b5",
+  "is_a_neighbor.expected": "559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd",
+  "nested_cast.cr": "dd0c6543abf815f7464fc0cffbcb6e6ae3a2d40abb4a1f23f0e9bf7159e350a2",
+  "nested_cast.expected": "559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd",
+  "nilable_cast.cr": "866c68229417e5f9af3255b2f0c5edd901f55e5ad46a698af011280a0976c204",
+  "nilable_cast.expected": "559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd",
+  "parenthesized_cast.cr": "97b12487d7b0218b3570a6e80346ebdfc34c593a778b496a6d675ed990721665",
+  "parenthesized_cast.expected": "559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd",
+  "parenthesized_receiver_cast.cr": "4297acb662c24d7a57382fa7bef2a0991466f2125d5885cdeb344cdff800e184",
+  "parenthesized_receiver_cast.expected": "559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd",
+  "reject_cast_argument_type.candidate.reject": "67c73bdb8342aaf0aa2d8a9768a13de9cbdc88a25c22b8b00c8953428023af3c",
+  "reject_cast_argument_type.cr": "8d332ba34cc7c1062f40d576129432ae2212d362eece5cac02c303219047cb14",
+  "reject_cast_argument_type.original.reject": "433a99137a5acfb1992d9ec8d6b7c136b5eb39c38b06dd4d7e448552687abc84"
+}
