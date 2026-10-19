@@ -1,3 +1,21 @@
+2026-10-19 MACRO DIRECTIVE OUTPUT BOUNDARY: macro-body `{% ... %}`
+expressions were incorrectly marked as output-enabled, and the AST cache lost
+that flag. Both expansion walkers could then emit statement values as source.
+Preserve the output/effect distinction in parsing and cache version 7; execute
+statement ASTs for effects without emission or unresolved-source fallback.
+DoD: macro_directive_output_cache_repro.sh HOST passes 18 component examples
+covering parsed/cached boundaries, assignments and exactly-once selected If/
+Unless effects. Published-WT run6622 passes all 18; adjacent expansion/error
+specs pass run6621 (32 examples before the extra eight control cases). Exact
+clean-HEAD private source6592 builds with pinned Crystal 1.21; six consumer
+controls pass run6604 while its parser/cache-only parent fails four in run6603.
+Scoped adversary: ROBUST for output suppression and effect/cache preservation.
+Refresh after macro statement dispatch, expression emission or AST-cache changes.
+- [x] Preserve the output flag across parsing, caching and both expansion walkers.
+- [ ] Qualify selected macro raise diagnostics separately; this does not prove
+      general macro statement coverage.
+- [ ] Verify fresh bootstrap and unchanged LavinMQ runtime/spec parity.
+
 2026-10-19 UNKNOWN CONSTANT IDENTIFIER: lower_identifier created an implicit
 Void local after an uppercase identifier failed all type, constant, and bound
 parameter lookups. Subsequent no-argument member access could emit a Void call

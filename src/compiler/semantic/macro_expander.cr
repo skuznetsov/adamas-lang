@@ -2022,6 +2022,75 @@ module Adamas
           end
         end
 
+        # Execute a compile-time macro statement without emitting its value.
+        # This is deliberately limited to statement structure already represented
+        # by the AST; ordinary expression emission keeps its existing path.
+        private def evaluate_macro_statement(expr_id : ExprId, context : Context) : Nil
+          node = node_for_expr?(expr_id)
+          return unless node
+
+          if node.is_a?(Frontend::MacroExpressionNode)
+            evaluate_macro_statement(node.expression, context)
+          elsif node.is_a?(Frontend::GroupingNode)
+            evaluate_macro_statement(node.expression, context)
+          elsif node.is_a?(Frontend::BeginNode)
+            node.body.each do |statement_id|
+              evaluate_macro_statement(statement_id, context)
+            end
+          elsif node.is_a?(Frontend::IfNode)
+            selected, branch_context = evaluate_condition(node.condition, context)
+            if selected
+              node.then_body.each do |statement_id|
+                evaluate_macro_statement(statement_id, branch_context)
+              end
+              return
+            end
+
+            if elsif_branches = node.elsifs
+              elsif_branches.each do |elsif_branch|
+                selected, branch_context = evaluate_condition(elsif_branch.condition, branch_context)
+                if selected
+                  elsif_branch.body.each do |statement_id|
+                    evaluate_macro_statement(statement_id, branch_context)
+                  end
+                  return
+                end
+              end
+            end
+
+            if else_body = node.else_body
+              else_body.each do |statement_id|
+                evaluate_macro_statement(statement_id, branch_context)
+              end
+            end
+          elsif node.is_a?(Frontend::UnlessNode)
+            condition, branch_context = evaluate_condition(node.condition, context)
+            branch = condition ? node.else_branch : node.then_branch
+            if branch
+              branch.each do |statement_id|
+                evaluate_macro_statement(statement_id, branch_context)
+              end
+            end
+          else
+            evaluate_expression(expr_id, context)
+          end
+          nil
+        end
+
+        # Keep output-enabled interpolation and statement-position macro
+        # pieces consistent in the top-level and nested control-range walkers.
+        # Nil means that the piece executed for effects and emits no text.
+        private def evaluate_macro_expression_piece(expr_id : ExprId, context : Context) : String?
+          if expression_node = node_for_expr?(expr_id)
+            if expression_node.is_a?(Frontend::MacroExpressionNode) && !expression_node.output
+              evaluate_macro_statement(expression_node.expression, context)
+              return nil
+            end
+          end
+
+          evaluate_expression(expr_id, context)
+        end
+
         private def evaluate_macro_body(body_id : ExprId, context : Context) : String
           debug_macro_body = !!ENV["DEBUG_MACRO_BODY_PHASE"]?
           STDERR.puts "[MACRO_BODY_PHASE] phase=enter body=#{body_id.index}" if debug_macro_body
@@ -2067,15 +2136,15 @@ module Adamas
                 index += 1
               when .expression?
                 STDERR.puts "[MACRO_BODY_PHASE] phase=expression idx=#{index}" if debug_macro_body
-                # {{ expr }} - evaluate and stringify
                 if expr_id = piece.expr
-                  value = evaluate_expression(expr_id, context)
-                  if value.empty? && context.preserve_unresolved_expressions?
-                    if raw = macro_piece_source(piece)
-                      value = raw
+                  if value = evaluate_macro_expression_piece(expr_id, context)
+                    if value.empty? && context.preserve_unresolved_expressions?
+                      if raw = macro_piece_source(piece)
+                        value = raw
+                      end
                     end
+                    str << value
                   end
-                  str << value
                 end
                 index += 1
               when .statement?
@@ -2342,8 +2411,13 @@ module Adamas
           node = node_for_expr?(expr_id)
           return "" unless node
 
-          # Unwrap MacroExpressionNode ({{ expr }}) to get inner expression
+          # Output expressions render their value; statement directives execute
+          # their AST for effects and never contribute generated source text.
           if node.is_a?(Frontend::MacroExpressionNode)
+            unless node.output
+              evaluate_macro_statement(node.expression, context)
+              return ""
+            end
             return evaluate_expression(node.expression, context)
           end
 
@@ -3475,8 +3549,9 @@ module Adamas
                 index += 1
               when .expression?
                 if expr_id = piece.expr
-                  value = evaluate_expression(expr_id, context)
-                  str << value
+                  if value = evaluate_macro_expression_piece(expr_id, context)
+                    str << value
+                  end
                 end
                 index += 1
               when .macro_var?

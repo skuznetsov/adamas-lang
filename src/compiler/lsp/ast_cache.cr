@@ -121,7 +121,7 @@ module Adamas
         MAGIC   = "CV2A"
         # Bump this version whenever the parser, AST format, or cache header changes
         # to invalidate all cached ASTs
-        VERSION = 6_u32
+        VERSION = 7_u32
 
         getter arena : Frontend::AstArena
         getter roots : Array(Frontend::ExprId)
@@ -1211,6 +1211,7 @@ module Adamas
             io.write_byte(AstNodeTag::MacroExpressionNode.value)
             write_span(io, macro_expr_node.span)
             write_expr_id(io, macro_expr_node.expression)
+            io.write_byte(macro_expr_node.output ? 1_u8 : 0_u8)
 
           when Frontend::NodeKind::MacroLiteral
             macro_lit_node = node.as(Frontend::MacroLiteralNode)
@@ -2055,7 +2056,8 @@ module Adamas
           when .macro_expression_node?
             span = read_span(io)
             expr = read_expr_id(io)
-            Frontend::MacroExpressionNode.new(span, expr)
+            output = io.read_byte.not_nil! == 1_u8
+            Frontend::MacroExpressionNode.new(span, expr, output)
 
           when .macro_literal_node?
             span = read_span(io)

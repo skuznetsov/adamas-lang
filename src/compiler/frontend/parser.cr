@@ -15766,7 +15766,7 @@ current_token.kind == Token::Kind::Identifier &&
             start_span = consume_macro_control_start
             return {MacroPiece.text("", start_token.span), MACRO_EFFECT_NONE, false} unless start_span
 
-            parsed = parse_macro_statement_expression(start_token, start_span, left_trim, true)
+            parsed = parse_macro_statement_expression(start_token, start_span, left_trim, false)
             piece = MacroPiece.expression(parsed[0], parsed[1], parsed[2], parsed[3])
             {piece, MACRO_EFFECT_NONE, parsed[4]}
           end
@@ -15775,8 +15775,8 @@ current_token.kind == Token::Kind::Identifier &&
         # Parses the body of a non-control `{% ... %}` after the opener has been
         # consumed: optional trim, one or more statements, and the closing `%}`.
         # Returns {MacroExpressionNode id, left_trim, right_trim, span, skip_whitespace}.
-        # `output` is false for a statement-position `{% expr %}` (evaluated for
-        # side effects only; never emits text), true for macro-body pieces.
+        # `{% expr %}` directives are evaluated for side effects only, including
+        # inside macro bodies. `{{ expr }}` uses the separate output-enabled path.
         private def parse_macro_statement_expression(start_token : Token, start_span : Span, left_trim : Bool, output : Bool) : {ExprId, Bool, Bool, Span, Bool}
           if macro_trim_token?(current_token)
             left_trim = true
