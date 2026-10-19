@@ -1,5 +1,21 @@
 # Adamas Bootstrap TODO
 
+2026-10-18 EXACT MODULE INCLUSION COMPATIBILITY: two argument compatibility
+fallbacks treated module membership as a substring relation. Every enum includes
+Enum, so an unrelated enum was admitted when the formal's namespace contained
+that string. Use the existing exact qualified transitive inclusion traversal in
+both positional admission and declared-type scoring. DoD:
+exact_module_inclusion_repro.sh COMPILER passes three original-first runtime
+controls and six strict type rejections (sealed S1 lavin5008, private run5010,
+repository run5013). Exact parent4989 falsely accepts the same-leaf namespace
+case (run5009); the nominal enum/module dispatch neighbor passes run5011.
+Refresh after inclusion collection, nominal type identity or compatibility changes.
+- [x] Reject raw, cross-enum, same-leaf and different-leaf enum mismatches.
+- [x] Preserve correct enum overloads and direct/transitive instance inclusions.
+- [ ] Audit other suffix-based nominal/module lookups with independent oracles;
+  these two fallback repairs do not establish all module restriction semantics.
+- [ ] Verify fresh bootstrap and unchanged LavinMQ runtime/spec parity.
+
 2026-10-18 FAILED SOURCE FAMILY SELECTION: a complete ordinary positional call
 could fail every source overload's type restrictions and then materialize a
 guessed exact mangle as an abort stub. Retain failed source-family lookup

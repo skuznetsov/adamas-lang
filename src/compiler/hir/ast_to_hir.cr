@@ -54269,7 +54269,7 @@ module Adamas::HIR
             if arg_desc
               arg_class = arg_desc.name
               param_base = strip_generic_args(param_type_name)
-              if @class_included_modules[arg_class]?.try(&.any? { |m| m.includes?(param_base) || param_base.includes?(last_namespace_component(m)) })
+              if class_includes_module_transitively?(arg_class, param_base)
                 arg_idx += 1
                 next
               end
@@ -54907,7 +54907,7 @@ module Adamas::HIR
         return 1 if class_inherits_from?(arg_name, resolved_name)
       end
 
-      if @class_included_modules[arg_name]?.try(&.any? { |m| m.includes?(resolved_base) || resolved_base.includes?(last_namespace_component(m)) })
+      if class_includes_module_transitively?(arg_name, resolved_base)
         return 1
       end
 

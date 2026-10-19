@@ -1,3 +1,29 @@
+### Module inclusion is an exact nominal relation (2026-10-18)
+Argument compatibility and declared-type scoring had two substring fallbacks
+over included module names. Enums implicitly include Enum; an unrelated enum
+therefore matched a formal such as FirstEnumNamespace::Code. Neither equal
+backing storage nor a common short name explains or justifies that admission.
+Both paths now use the existing qualified transitive inclusion traversal, with
+its owner/ancestor walk and cycle guards. Other compatibility rules are unchanged.
+
+Fresh sealed S1 lavin5008 passes three positive byte comparisons and six strict
+exit-1/type-diagnostic/no-executable controls against original Crystal in private
+run5010 and the published command
+`python3 run_clean_portable_regression.py lavin5008_exact_module_inclusion lavin5013_repository_exact_module_inclusion regression_tests/exact_module_inclusion_repro.sh`.
+Controls vary namespace spelling, enum leaf names and integer backing types,
+and preserve correct overloads plus direct/transitive instance inclusions.
+Exact parent4989 is RED on the same-leaf namespace mismatch (run5009); the
+existing nominal enum/module dispatch regression passes run5011. All 1919
+production source hashes match the tested seal. HIR SHA256
+f06d8e39c28cbb765a202cf7d880e80779f774f9c749f032c4dd542cc2f8d665;
+host SHA256 76b1a91b325e7bec6ba596b72b1eb827c477bf1a1996cac39021f83b38abbb65.
+
+Scoped adversary ROBUST for these two fallback paths and measured neighbors.
+Other suffix-based lookup, applied generic module restrictions, fresh bootstrap
+and unchanged LavinMQ runtime/spec parity remain separate obligations. Refresh
+after inclusion collection, nominal identity or compatibility changes; revert
+source and regression together. No stdlib or application source changed.
+
 ### Failed complete source selection remains authoritative (2026-10-18)
 Source overload selection rejected ordinary wrong argument types, but its sidecar
 retained only generic-specific mismatch details. With no detailed record, later
