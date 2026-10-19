@@ -51217,6 +51217,63 @@ module Adamas::HIR
       end
     end
 
+    # A return-type repair preserves the selected source initializer only when
+    # it changes result annotations and no other operation or operand. Transport
+    # an already-current allocator proof across that one owned mutation; never
+    # revive a proof invalidated by an earlier or intervening body change.
+    private def replace_repaired_result_type(
+      func : Function,
+      block : Block,
+      index : Int32,
+      replacement : Value,
+    ) : Nil
+      previous = block.instructions[index]
+      proof = @generated_allocator_sources[func.name]?
+      revision = func.body_revision
+      preserve_source = false
+      if proof && proof[0].same?(func) && proof[1] == revision &&
+         previous.id == replacement.id && previous.type != replacement.type
+        preserve_source = case previous
+                          when Call
+                            if call = replacement.as?(Call)
+                              previous.method_name == call.method_name &&
+                                previous.has_receiver? == call.has_receiver? &&
+                                previous.receiver_value == call.receiver_value &&
+                                previous.args == call.args &&
+                                previous.block == call.block &&
+                                previous.virtual == call.virtual
+                            else
+                              false
+                            end
+                          when Copy
+                            if copy = replacement.as?(Copy)
+                              previous.source == copy.source
+                            else
+                              false
+                            end
+                          when Local
+                            if local = replacement.as?(Local)
+                              previous.name == local.name &&
+                                previous.scope == local.scope &&
+                                previous.mutable == local.mutable
+                            else
+                              false
+                            end
+                          else
+                            false
+                          end
+      end
+      block.replace(index, replacement)
+      return unless proof && preserve_source
+      return unless func.body_revision == (revision &+ 1_u64)
+      return unless @generated_allocator_sources[func.name]? == proof
+      current = @module.function_by_name(func.name)
+      return unless current && current.same?(func)
+      @generated_allocator_sources[func.name] = {
+        func, func.body_revision, proof[2], proof[3], proof[4], proof[5],
+      }
+    end
+
     private def repair_stale_call_return_types : Nil
       repaired = 0
       propagated = 0
@@ -51269,7 +51326,7 @@ module Adamas::HIR
             # TODO(s2b-union-arg-abi): root cause is s2b mislowering a `Nil | UInt32`
             # argument followed by a `String` argument into the overloaded constructor;
             # this branch-split is a tactical avoidance, not the ABI fix.
-            block.replace(idx, new_call)
+            replace_repaired_result_type(func, block, idx, new_call)
             value_types[inst.id] = resolved_type
             repaired_value_types[inst.id] = resolved_type
             repaired += 1
@@ -51290,8 +51347,8 @@ module Adamas::HIR
               if idx > 0
                 if local = block.instructions[idx - 1].as?(Local)
                   if local.type != repaired_type
-                    block.replace(
-                      idx - 1,
+                    replace_repaired_result_type(
+                      func, block, idx - 1,
                       Local.new(
                         local.id,
                         repaired_type,
@@ -51303,8 +51360,8 @@ module Adamas::HIR
                   end
                 end
               end
-              block.replace(
-                idx,
+              replace_repaired_result_type(
+                func, block, idx,
                 Copy.new(inst.id, repaired_type, inst.source),
               )
               value_types[inst.id] = repaired_type

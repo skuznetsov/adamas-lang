@@ -1,3 +1,21 @@
+2026-10-19 GENERATED ALLOCATOR PROOF REVISION: stale-call return repair
+changes only a HIR result annotation but advances the generated allocator's
+body revision, so its source-initializer proof is rejected as stale. Carry that
+proof across one exact Call, Copy, or Local result-type replacement only when
+the same function and current proof are present, the ValueId and instruction
+shape are unchanged, and the body revision advances exactly once. DoD:
+generated_allocator_source_proof_repair_repro.sh passes a fresh proof check
+after direct Call repair while wrong argument shapes and a prior unrelated body
+mutation remain rejected. Private oracle 6196 passed both candidate examples
+and exposed the baseline stale-proof failure; constructor controls passed
+3 positive and 2 negative cases in 6185. The direct Call arm is covered;
+Copy and Local transport remain source-reviewed. Refresh after allocator proof
+validation or body-mutation semantics change.
+- [x] Current worktree qualification 6212: the safe regression passed 2 HIR
+      examples, including wrong argument shapes and unrelated-mutation rejection,
+      with pinned Crystal 1.21; temporary compile cache removed after execution.
+- [ ] Verify fresh bootstrap and unchanged LavinMQ runtime/spec parity.
+
 # Adamas Bootstrap TODO
 
 2026-10-19 OPERATOR SYMBOL LONGEST MATCH: the less-than symbol arm stopped
