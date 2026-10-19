@@ -2406,6 +2406,27 @@ module Adamas
           @last_token_kind != Token::Kind::Def
         end
 
+        private def percent_literal_opening_delimiter?(byte : UInt8) : Bool
+          byte == '('.ord.to_u8 || byte == '['.ord.to_u8 || byte == '{'.ord.to_u8 ||
+            byte == '<'.ord.to_u8 || byte == '|'.ord.to_u8
+        end
+
+        # Inspect the bytes after `%` before scan_percent_literal mutates the
+        # cursor. A failed classification must leave the type letter available
+        # to the ordinary modulo/identifier token path.
+        private def percent_literal_scan_candidate? : Bool
+          return false if @offset >= @byte_size
+
+          byte = current_byte
+          return true if percent_literal_opening_delimiter?(byte)
+          return false unless byte == 'q'.ord.to_u8 || byte == 'Q'.ord.to_u8 ||
+                              byte == 'r'.ord.to_u8 || byte == 'w'.ord.to_u8 ||
+                              byte == 'i'.ord.to_u8
+          return false if @offset + 1 >= @byte_size
+
+          percent_literal_opening_delimiter?(@bytes_ptr[@offset + 1])
+        end
+
         # Phase PERCENT_LITERALS: Get closing delimiter for opening delimiter
         private def closing_delimiter(open : UInt8) : UInt8
           case open
@@ -2420,8 +2441,9 @@ module Adamas
         # Phase PERCENT_LITERALS: Scan percent literal (%(), %w(), %i(), etc)
         # Returns Token or nil (if not a percent literal)
         private def scan_percent_literal(start_offset : Int32, start_line : Int32, start_column : Int32) : Token?
-          # Already consumed '%', peek next char
-          return nil if @offset >= @rope.size
+          # Classify with read-only lookahead first. If this is modulo followed
+          # by an identifier, return without changing offset, line, or column.
+          return nil unless percent_literal_scan_candidate?
 
           next_byte = current_byte
           literal_type = Token::Kind::String # default for %()
@@ -2446,7 +2468,7 @@ module Adamas
             advance # consume 'q' or 'Q'
             return nil if @offset >= @rope.size
             open_delim = current_byte
-            return nil unless open_delim.chr.in?('(', '[', '{', '<', '|')
+            return nil unless percent_literal_opening_delimiter?(open_delim)
             close_delim = closing_delimiter(open_delim)
             literal_type = Token::Kind::String
             advance # consume opening delimiter
@@ -2455,7 +2477,7 @@ module Adamas
             advance # consume 'r'
             return nil if @offset >= @rope.size
             open_delim = current_byte
-            return nil unless open_delim.chr.in?('(', '[', '{', '<', '|')
+            return nil unless percent_literal_opening_delimiter?(open_delim)
             close_delim = closing_delimiter(open_delim)
             advance # consume opening delimiter
 
@@ -2508,7 +2530,7 @@ module Adamas
             advance # consume 'w'
             return nil if @offset >= @rope.size
             open_delim = current_byte
-            return nil unless open_delim.chr.in?('(', '[', '{', '<', '|')
+            return nil unless percent_literal_opening_delimiter?(open_delim)
             close_delim = closing_delimiter(open_delim)
             array_literal = true
             literal_type = Token::Kind::LBracket # Will generate array tokens
@@ -2518,7 +2540,7 @@ module Adamas
             advance # consume 'i'
             return nil if @offset >= @rope.size
             open_delim = current_byte
-            return nil unless open_delim.chr.in?('(', '[', '{', '<', '|')
+            return nil unless percent_literal_opening_delimiter?(open_delim)
             close_delim = closing_delimiter(open_delim)
             array_literal = true
             literal_type = Token::Kind::LBracket # Will generate array tokens

@@ -1,5 +1,19 @@
 # Adamas Bootstrap TODO
 
+2026-10-19 PERCENT LITERAL LOOKAHEAD: failed percent-literal classification
+advanced over q/Q/r/w/i before discovering an absent or invalid delimiter.
+Modulo expressions therefore lost identifier bytes. Classify with read-only
+lookahead before changing the lexer cursor and share the delimiter predicate.
+DoD: lexer_percent_candidate_repro.sh HOST passes five component examples
+covering all 30 supported literal openers, modulo identifiers, EOF, newlines,
+UTF-8 byte offsets and binary AST identity. The exact parent fails four of
+these examples in private run6142; isolated source6120 passes run6139 and the
+published five-example regression passes run6147 under pinned Crystal 1.21.
+Refresh after percent syntax or lexer cursor tracking changes.
+- [x] Preserve the ordinary modulo path after failed literal lookahead.
+- [ ] Repair the preexisting identifier fast-path column tracking separately.
+- [ ] Verify fresh bootstrap and unchanged LavinMQ runtime/spec parity.
+
 2026-10-19 CAST SOURCE OWNERSHIP: parse_as_like consumed a closing parenthesis
 without including it in the AsNode / AsQuestionNode span. A deferred generic
 macro then copied incomplete source into another arena, losing the cast and
