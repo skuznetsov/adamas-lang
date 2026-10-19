@@ -1,3 +1,23 @@
+### Pending constant initializers use declaration identity (2026-10-18)
+Repeated registration of a nested constant with unresolved type appended the
+same initializer twice. Make pending queue insertion idempotent for the exact
+owner/name/source-arena/initializer ExprId; type inference is not evidence that
+a runtime initializer has or has not been scheduled.
+
+Parent4683 is RED on three original-qualified controls (run4966): AA|A and
+AABB|AB replace A|A and AB|AB. Isolated S1 lavin4970 passes the published
+constant_initializer_declaration_identity_repro.sh (run4971), including distinct
+owners and separate source arenas; existing-once run4973 also passes. All 1919
+published source hashes match that tested seal. HIR SHA-256
+43d389411315ef3d1ba0eb4a32aa5ba8e8a93f1ab8e8f424a7d902c4174459b9.
+Scoped adversary ROBUST for registration before the queue drains. Refresh after
+registration, arena ownership or queue lifecycle changes; revert source and
+regressions together. Generic owners, later registration after draining, source
+interleaving, unused constants, fresh bootstrap and LavinMQ parity remain open.
+The full-prelude Char/Bool neighbor hits the same Slice(Proc).new source-overload
+failure on parent and candidate (runs4976/4974).
+
+
 ### Macro Self arguments preserve their source spelling (2026-10-18)
 Macro arguments that are structured AST nodes retain their ExprId and arena in
 MacroNodeValue. Its source serializer omitted SelfNode, so `{{return_type}}`

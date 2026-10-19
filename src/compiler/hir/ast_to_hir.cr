@@ -62185,7 +62185,24 @@ module Adamas::HIR
         @arena = old_a2
         if needs_deferred
           owner = owner_name || "$"
-          @deferred_constant_inits << DeferredConstantInit.new(owner, name, value_id, arena)
+          # Registration and type inference may revisit a declaration whose
+          # type is still unresolved. Scheduling is keyed by declaration
+          # identity, independently of whether its type has been inferred.
+          already_scheduled = false
+          deferred_index = 0
+          while deferred_index < @deferred_constant_inits.size
+            deferred = @deferred_constant_inits.unsafe_fetch(deferred_index)
+            if deferred.owner == owner && deferred.name == name &&
+               deferred.arena.object_id == arena.object_id &&
+               deferred.value_id.index == value_id.index
+              already_scheduled = true
+              break
+            end
+            deferred_index += 1
+          end
+          unless already_scheduled
+            @deferred_constant_inits << DeferredConstantInit.new(owner, name, value_id, arena)
+          end
         end
       end
 

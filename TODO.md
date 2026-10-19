@@ -1,5 +1,26 @@
 # Adamas Bootstrap TODO
 
+2026-10-18 UNRESOLVED CONSTANT DECLARATION SCHEDULING: registration may revisit
+a constant before its type is known. The non-Void type shortcut did not apply,
+so each visit appended the same runtime initializer. Make pending scheduling
+idempotent for the exact owner/name/arena/initializer ExprId, independently of
+type inference. DoD: constant_initializer_declaration_identity_repro.sh COMPILER
+matches original Crystal for three empty-prelude runtime controls (isolated S1
+lavin4970, repository run4971). Parent4683 prints AA|A and AABB|AB instead of
+A|A and AB|AB (run4966). The existing constant_initializer_runs_once_repro.sh
+passes run4973. The full-prelude Char/Bool neighbor remains blocked by the same
+Slice(Proc).new overload error on parent and candidate (runs4974/4976).
+Refresh after constant registration, pending queue ownership or arena changes.
+- [x] Schedule a revisited nested declaration once while its type is unresolved.
+- [x] Preserve distinct lexical owners and declarations from separate arenas.
+- [ ] Qualify generic owners and registration after a pending queue is drained.
+- [ ] Fix the separate declaration-execution contract: side effects must retain
+  source interleaving and unused constants must not run initializers. The
+  original-first controls in private packet4963 remain open; queue deduplication
+  alone does not establish either property. Forward reads need the genuine
+  Crystal once runtime and a full-prelude oracle.
+- [ ] Verify fresh bootstrap and unchanged LavinMQ runtime/spec parity.
+
 2026-10-18 SOURCE NAMED DEFAULT CONTEXT: binding evaluated a selected Def's
 default AST in caller locals, inline frames and lexical namespace. Install the
 selected declaration's arena/namespace/type parameters and clear caller lookup
