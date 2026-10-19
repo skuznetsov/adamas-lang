@@ -3004,93 +3004,6 @@ module Adamas
           idx
         end
 
-        private def macro_fun_starts_block?(start_idx : Int32) : Bool
-          idx = skip_fun_header_trivia_index(start_idx + 1)
-          return false if idx >= @tokens.size
-
-          token = @tokens[idx]
-          if token.kind == Token::Kind::MacroExprStart
-            idx = skip_macro_expression_index(idx)
-          else
-            return false unless token.kind == Token::Kind::Identifier || is_keyword_identifier?(token)
-            idx += 1
-          end
-
-          loop do
-            idx = skip_fun_header_trivia_index(idx)
-            break unless idx < @tokens.size && @tokens[idx].kind == Token::Kind::ColonColon
-            idx += 1
-            idx = skip_fun_header_trivia_index(idx)
-            return false if idx >= @tokens.size
-            token = @tokens[idx]
-            return false unless token.kind == Token::Kind::Identifier || is_keyword_identifier?(token)
-            idx += 1
-          end
-
-          idx = skip_fun_header_trivia_index(idx)
-          if idx < @tokens.size && @tokens[idx].kind == Token::Kind::Eq
-            idx += 1
-            idx = skip_fun_header_trivia_index(idx)
-            return false if idx >= @tokens.size
-            token = @tokens[idx]
-            return false unless token.kind.in?(Token::Kind::Identifier, Token::Kind::String) || is_keyword_identifier?(token)
-            idx += 1
-          end
-
-          idx = skip_fun_header_trivia_index(idx)
-          return false unless idx < @tokens.size && @tokens[idx].kind == Token::Kind::LParen
-
-          paren_depth = 1
-          idx += 1
-          while idx < @tokens.size && paren_depth > 0
-            case @tokens[idx].kind
-            when Token::Kind::LParen
-              paren_depth += 1
-            when Token::Kind::RParen
-              paren_depth -= 1
-            end
-            idx += 1
-          end
-          return false if paren_depth > 0
-
-          idx = skip_fun_header_trivia_index(idx)
-          if idx < @tokens.size && @tokens[idx].kind == Token::Kind::Colon
-            idx += 1
-            paren_depth = 0
-            bracket_depth = 0
-            brace_depth = 0
-
-            while idx < @tokens.size
-              token = @tokens[idx]
-              case token.kind
-              when Token::Kind::LParen
-                paren_depth += 1
-              when Token::Kind::RParen
-                paren_depth -= 1 if paren_depth > 0
-              when Token::Kind::LBracket
-                bracket_depth += 1
-              when Token::Kind::RBracket
-                bracket_depth -= 1 if bracket_depth > 0
-              when Token::Kind::LBrace
-                brace_depth += 1
-              when Token::Kind::RBrace
-                brace_depth -= 1 if brace_depth > 0
-              when Token::Kind::Newline, Token::Kind::Semicolon
-                break if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0
-              end
-              idx += 1
-            end
-          end
-
-          idx = skip_fun_header_trivia_index(idx)
-          return false if idx >= @tokens.size
-          return false if macro_control_start_at?(idx)
-
-          token = @tokens[idx]
-          return false if token.kind.in?(Token::Kind::EOF, Token::Kind::End, Token::Kind::Rescue, Token::Kind::Ensure)
-          !definition_start_token?(token)
-        end
-
         private def parse_method_params
           @parsing_method_params = true
           params_b = ParameterBuffer.new(2)
@@ -8781,11 +8694,20 @@ module Adamas
         # A macro control body is scanned with a copy of its enclosing regular
         # block depth, as in Crystal's MacroState. Blocks emitted by alternative
         # branches must not accumulate in the enclosing macro definition.
+        private class MacroLibDepthFrame
+          getter block_depth : Int32
+          getter previous : MacroLibDepthFrame?
+
+          def initialize(@block_depth : Int32, @previous : MacroLibDepthFrame?)
+          end
+        end
+
         private class MacroControlDepthFrame
           getter block_depth : Int32
+          getter lib_frame : MacroLibDepthFrame?
           getter previous : MacroControlDepthFrame?
 
-          def initialize(@block_depth : Int32, @previous : MacroControlDepthFrame?)
+          def initialize(@block_depth : Int32, @lib_frame : MacroLibDepthFrame?, @previous : MacroControlDepthFrame?)
           end
         end
 
@@ -8797,27 +8719,31 @@ module Adamas
           getter block_depth : Int32
 
           @control_frame : MacroControlDepthFrame?
+          @lib_frame : MacroLibDepthFrame?
 
           def initialize
             @control_depth = 0
             @block_depth = 0
             @control_frame = nil
+            @lib_frame = nil
           end
 
           def push_control : Nil
-            @control_frame = MacroControlDepthFrame.new(@block_depth, @control_frame)
+            @control_frame = MacroControlDepthFrame.new(@block_depth, @lib_frame, @control_frame)
             @control_depth += 1
           end
 
           def reset_branch : Nil
             if frame = @control_frame
               @block_depth = frame.block_depth
+              @lib_frame = frame.lib_frame
             end
           end
 
           def pop_control : Nil
             if frame = @control_frame
               @block_depth = frame.block_depth
+              @lib_frame = frame.lib_frame
               @control_frame = frame.previous
               @control_depth -= 1
             end
@@ -8827,7 +8753,19 @@ module Adamas
             @block_depth += 1
           end
 
+          def push_lib : Nil
+            @block_depth += 1
+            @lib_frame = MacroLibDepthFrame.new(@block_depth, @lib_frame)
+          end
+
+          def inside_lib? : Bool
+            !@lib_frame.nil?
+          end
+
           def pop_block : Nil
+            if frame = @lib_frame
+              @lib_frame = frame.previous if frame.block_depth == @block_depth
+            end
             @block_depth -= 1 if @block_depth > 0
           end
         end
@@ -9100,14 +9038,19 @@ module Adamas
                 # After dot they are method names and must not alter macro text nesting.
                 depth_state.push_block unless keyword_member_after_dot
               when Token::Kind::Fun
-                if starts_statement && macro_fun_starts_block?(@index)
+                # Lib functions are declarations without a body/end; outside
+                # lib a fun definition owns an ordinary block. Grammar scope,
+                # rather than the following declaration's first token, decides.
+                if starts_statement && @lib_depth == 0 && !depth_state.inside_lib?
                   depth_state.push_block
                 end
+              when Token::Kind::Lib
+                depth_state.push_lib if starts_statement
               when Token::Kind::Def, Token::Kind::Class, Token::Kind::Module,
                    Token::Kind::Struct, Token::Kind::Enum,
                    Token::Kind::If, Token::Kind::Unless, Token::Kind::While,
                    Token::Kind::Until, Token::Kind::Case, Token::Kind::Select,
-                   Token::Kind::Lib, Token::Kind::Macro
+                   Token::Kind::Macro
                 # Abstract defs have no body/end; don't advance block depth for them.
                 if !abstract_def && starts_statement
                   depth_state.push_block

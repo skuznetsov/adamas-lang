@@ -20461,3 +20461,23 @@ recovery-suppressed errors need separate tests. Valid grammar gaps exposed by th
 guard remain compiler bugs to repair, not reasons to suppress diagnostics. Fresh
 S2, bootstrap fixed point and unchanged LavinMQ runtime/spec parity remain open.
 No stdlib or application source was changed.
+
+
+### Macro scanning uses declaration scope for fun bodies (2026-10-19)
+Next-token lookahead misclassified annotated C declarations as fun bodies and
+swallowed the rest of libm. Track the active lib's block depth, restore its frame
+across macro branches and pop it at the matching end. Lib fun has no body;
+top-level fun requires one, matching the original parser's scope distinction.
+
+Exact parent5310 fails the direct-lib, elsif and top-level-fun controls (run5322).
+Fresh sealed S1 lavin5323 passes four original-first native comparisons in private
+run5324 and repository run5384:
+`python3 run_clean_portable_regression.py lavin5323_macro_lib_fun_scope lavin5384_repository_lib_fun regression_tests/macro_lib_fun_scope_repro.sh`.
+All production src bytes equal the sealed source manifest. The full pristine
+probe5325 no longer reports math/libm; other parser and type failures remain.
+
+Scoped adversary ROBUST for these declaration/control scopes and native bodies.
+Refresh after macro scanners, lib/fun grammar or control branch restoration;
+revert source and regression together. Other generated declarations, fresh S2,
+bootstrap fixed point and unchanged LavinMQ runtime/spec parity remain open.
+No stdlib or application source was changed.

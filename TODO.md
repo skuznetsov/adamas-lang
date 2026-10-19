@@ -1,5 +1,19 @@
 # Adamas Bootstrap TODO
 
+2026-10-19 MACRO LIB/FUN SCOPE: macro body scanning guessed whether fun had
+a body from the next token. A C declaration followed by an annotation incorrectly
+opened a body, swallowing later declarations and producing a false EOF error.
+Track lib scope at the matching block depth, including macro control branches;
+lib fun declarations have no body and top-level fun definitions do. Remove the
+token-lookahead guess. DoD: macro_lib_fun_scope_repro.sh COMPILER passes four
+original-first native comparisons for annotated lib declarations, generated
+nested libs, top-level fun bodies and annotated macro elsif branches. Exact
+parent5310 is RED (run5322); sealed5323 passes private5324 and published5384.
+Refresh after macro block scanning, lib/fun grammar or control branch restoration.
+- [x] Restore lib scope rather than guessing from following declarations.
+- [ ] Qualify additional macro-generated declaration families separately.
+- [ ] Verify fresh bootstrap and unchanged LavinMQ runtime/spec parity.
+
 2026-10-19 INITIAL PARSER DIAGNOSTIC BOUNDARY: recovered roots were consumed
 despite parser errors, and a partial AST could be saved without its diagnostics.
 Reject initial translation-unit diagnostics before semantic/HIR processing and
