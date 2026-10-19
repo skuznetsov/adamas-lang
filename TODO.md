@@ -21166,3 +21166,13 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   covers the top-level AST collector and preserves its unknown fallback.
 - [ ] Continue fresh S2, unchanged LavinMQ runtime/upstream-spec parity and
   bootstrap fixed point. Macro conversion regressions do not establish them.
+
+
+### Enum member annotation syntax (2026-10-19)
+- [x] Parse annotations between enum members using the same AnnotationNode
+  body sequence already used for enum methods. Malformed annotations remain
+  parser errors. Fresh sealed S1 lavin5342 passes three original-first native
+  comparisons and two strict parser rejections (private5414).
+- [ ] Member annotation attachment/reflection semantics require separate
+  qualification; retaining syntax does not establish that capability.
+- [ ] Continue unchanged LavinMQ runtime/spec parity and fresh bootstrap.

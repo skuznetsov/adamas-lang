@@ -7646,6 +7646,18 @@ module Adamas
               next
             end
 
+            # Keep enum-body annotations as standalone body expressions, matching
+            # the sibling AnnotationNode representation used for enum methods.
+            # EnumMember remains unchanged; this preserves syntax without inventing
+            # member-annotation attachment semantics.
+            if is_annotation_start?(token)
+              annotation_expr = parse_annotation
+              return PREFIX_ERROR if annotation_expr.invalid?
+              method_body_indexes << annotation_expr.index
+              skip_statement_end
+              next
+            end
+
             # Phase 103G: Check if this is a method/macro definition
             if definition_start?
               # Parse method or other definition inside enum

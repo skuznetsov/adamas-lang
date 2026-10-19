@@ -1,0 +1,3 @@
+enum DanglingAnnotation
+  @[Marker
+end

@@ -20481,3 +20481,19 @@ Refresh after macro scanners, lib/fun grammar or control branch restoration;
 revert source and regression together. Other generated declarations, fresh S2,
 bootstrap fixed point and unchanged LavinMQ runtime/spec parity remain open.
 No stdlib or application source was changed.
+
+
+### Enum bodies retain annotation syntax (2026-10-19)
+The enum parser admitted members and definitions but had no annotation branch.
+Parse annotations into its existing body-expression sequence; do not alter
+EnumMember or claim member metadata attachment. Exact parent5323 rejects the
+original-qualified annotated enum (run5402). Fresh sealed S1 lavin5342 passes
+three native byte-output comparisons plus two rc1/no-executable malformed
+annotation controls in private5414 and repository5416:
+`python3 run_clean_portable_regression.py lavin5342_enum_member_annotation_syntax lavin5416_repository_enum regression_tests/enum_member_annotation_repro.sh`.
+
+Scoped adversary ROBUST for enum annotation syntax, adjacent methods and malformed
+annotation rejection. Refresh after enum body parsing or annotation retention
+changes; revert source and regression together. Member reflection, fresh S2,
+bootstrap fixed point and unchanged LavinMQ runtime/spec parity remain open.
+No stdlib or application source was changed.
