@@ -1,5 +1,40 @@
 # Adamas Bootstrap TODO
 
+2026-10-19 SELECTED INDEX RETURN DECLARATION CONTEXT: IndexNode selected the
+right [] target but queried its return without arity or the selected Def.
+Annotated subslice bodies delegating through []? could acquire the scalar
+sibling's type. Return annotations also inherited the caller's alias namespace
+and generic bindings instead of the selected declaration's source context.
+Both IndexNode paths now carry the selected Def only when its symbol equals
+the final emitted target. Resolve annotations in that Def's registered arena
+and lexical owner, restore ambient context on exit, and apply the exact
+selected specialization map after receiver/pending maps. Preserve the existing
+exact-or-base fallback and all argument restrictions; do not force return unions.
+DoD: index_selected_source_return_repro.sh COMPILER matches original Crystal
+for 15 native positives and six strict exit-1/type-diagnostic/no-executable
+negatives (sealed S1 lavin5172, private run5187, repository run5189).
+The numeric 21+24 and source-family 3+4 neighbors pass runs5190/5191.
+Parent5096 fails both nullable-query delegation controls (run5123); alias and
+module-generic collision controls distinguish the declaration-context and exact
+map-precedence repairs (runs5161/5162/5163/5167). Fresh unchanged LavinMQ still
+rejects deferred class-body self at Log.for(HTTP::Client), before executable
+emission (run5192). Refresh after IndexNode resolution, selected Def/arena,
+namespace, specialization maps or return cache changes.
+- [x] Preserve selected [] annotation, arity, declaration arena and lexical owner.
+- [x] Cover range/start-count/scalar, generic/inherited siblings and alias shadowing.
+- [x] Retain strict scalar/slice and same-name generic collision rejection.
+- [ ] Audit provenance and invalidation of specialization metadata keyed by
+  mangled name: set_function_def_entry can replace a Def/arena without clearing
+  function_type_param_maps. The included-module producer separately refuses a
+  different Def before storing its map. Add an original-first reopen/replacement
+  falsifier with the same emitted target, a different Def/arena and generic alias;
+  change ownership/invalidation only if that valid case proves stale metadata.
+  No user-source stale-map failure or global provenance repair is claimed here.
+- [ ] Repair macro overload retention and malformed expression-expansion error
+  propagation; never hide parse diagnostics as an ordinary Nil result.
+- [ ] Repair full LavinMQ deferred class-body self for Log.for(HTTP::Client).
+- [ ] Verify fresh bootstrap and unchanged LavinMQ runtime/spec parity.
+
 2026-10-19 SOURCE INTEGER AUTOCASTS AND NUMERIC MEMBERSHIP: source overload
 selection lacked Crystal's separate numeric retry, while an equal-width carrier
 fallback admitted signedness mismatches. Keep the ordinary source pass first;
@@ -26,9 +61,8 @@ changes.
   literal conversions with their own original-first binding and value proofs.
 - [ ] Repair independent metatype restriction bugs: qualified .class and runtime
   values passed as metatypes reproduce on parent5047 (run5084).
-- [ ] Repair the selected [] return contract: pinned Socket passes the former
-  StaticArray(UInt16, 8).new(0) rejection, then sees Slice(UInt8) | UInt8 where
-  only Slice(UInt8) is valid (run5102); no executable or runtime claim.
+- [x] Repair the selected [] return contract exposed by pinned Socket
+  (historical failure run5102; original-first repository regression run5127).
 - [ ] Verify fresh bootstrap and unchanged LavinMQ runtime/spec parity.
 
 2026-10-18 OMITTED NAMED DEFAULT IN EMITTED ALLOCATOR SOURCE: the anonymous

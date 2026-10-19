@@ -1,3 +1,42 @@
+### Index return inference preserves the selected declaration context (2026-10-19)
+IndexNode resolved the correct [] overload, then lost its arity and selected Def
+when querying the result. An annotated subslice body delegating through []?
+could merge the scalar sibling's type into Slice(T). Annotations additionally
+resolved aliases and generic names in the caller's ambient context: a caller's
+same-named alias or generic parameter could change an included/inherited
+method's declared result. Both range and ordinary index lowering now carry the
+selected source Def only when its symbol equals the final emitted call target.
+Annotation resolution uses that Def's registered arena and lexical namespace,
+isolates its specialization context, and restores ambient state on every exit.
+The exact selected map takes precedence over receiver and pending maps; the
+existing exact-or-base fallback remains. No return union is forcibly narrowed,
+and source argument restrictions are unchanged.
+
+Published index_selected_source_return_repro.sh passes 15 original-first native
+positives and six exit-1/type-diagnostic/no-executable negatives on sealed S1
+lavin5172 (frozen private run5187, repository run5189). Controls cover nullable
+query delegation, range/start-count/scalar, generic and inherited siblings,
+direct/qualified/module/inherited aliases, and colliding receiver generic names.
+Parent5096 fails the two reduced delegation programs (run5123). The alias
+context oracle passes after arena/owner isolation (run5162); the generic-module
+collision remains RED before selected-map precedence and becomes GREEN after
+it (runs5161/5163/5167). Numeric 21-positive/24-negative and source-family
+3-positive/4-negative neighbors pass runs5190/5191.
+
+All 1919 production source hashes match the tested seal; manifest SHA256
+bfa4110819f12db4cba5c59c50aed319b27a2338e56a236e10ed2c28d9882805.
+HIR SHA256 a08f2415e69ebfad5c1471a6b34fc165f70f9aca2d4340cd9b8e958f328d9353;
+host SHA256 b062a6841ad4dc5813cdb899f3e3dd6d2881f2c2629925fb1fa8a36648ab3c56.
+Scoped adversary ROBUST for the measured return-declaration boundary, including
+opposite scalar/slice and wrong generic-result rejections. Specialization maps
+remain keyed by emitted name: replacement-Def invalidation needs its own valid
+original-first falsifier before any global provenance claim. Fresh unchanged
+LavinMQ still exits 1 at Log.for(HTTP::Client) in deferred class-body self
+(run5192); no Adamas executable, runtime/spec parity or fresh bootstrap fixed
+point is claimed. Application and pinned stdlib hashes are unchanged. Refresh
+after IndexNode selection, Def/arena identity, namespace, specialization map or
+return-cache changes; revert the source and its regression together.
+
 ### Numeric admission uses source values and domains (2026-10-19)
 Crystal performs ordinary overload lookup before a numeric retry. Our source
 path lacked that retry and later treated equal integer storage widths as

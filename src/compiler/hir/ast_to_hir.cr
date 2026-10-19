@@ -67362,18 +67362,69 @@ module Adamas::HIR
       arena[body[0]].is_a?(Adamas::Compiler::Frontend::SelfNode)
     end
 
+    # Select the lexical namespace for a selected source Def. Empty owner
+    # strings are absence, not an authoritative context.
+    private def return_declaration_owner_for(mangled_name : String, base_name : String) : String?
+      owner = function_namespace_override_for(mangled_name, base_name)
+      return owner if owner && !owner.empty?
+
+      owner = function_context_from_name(mangled_name)
+      return owner if owner && !owner.empty?
+
+      owner = function_context_from_name(base_name)
+      return owner if owner && !owner.empty?
+
+      owner = method_owner(base_name)
+      return owner unless owner.empty?
+
+      owner = method_owner(mangled_name)
+      return owner unless owner.empty?
+
+      nil
+    end
+
     private def resolve_return_type_from_def(
       mangled_method_name : String,
       base_method_name : String,
       receiver_type : TypeRef?,
       call_arg_count : Int32? = nil,
       selected_def : Adamas::Compiler::Frontend::DefNode? = nil,
+      declaration_context_established : Bool = false,
     ) : TypeRef?
       normalized_mangled = normalize_compiler_collection_method_name(mangled_method_name)
       normalized_base = normalize_compiler_collection_method_name(base_method_name)
       func_def = selected_def ||
                  lookup_function_def_for_return(normalized_mangled, normalized_base, call_arg_count)
       return nil if !func_def
+
+      unless declaration_context_established
+        # Resolve the selected declaration in its own source arena, lexical
+        # namespace, and exact specialization map. In particular, do not let
+        # a caller's same-named alias or generic binding color this annotation.
+        declaration_arena = registered_arena_for_def(func_def) || resolve_arena_for_def(func_def, @arena)
+        declaration_owner = return_declaration_owner_for(normalized_mangled, normalized_base)
+        declaration_type_param_map = function_type_param_map_for_name(normalized_mangled) || EMPTY_DEFERRED_TYPE_PARAM_SNAPSHOT
+        old_class = @current_class
+        @current_class = declaration_owner
+        begin
+          return with_arena(declaration_arena) do
+            with_namespace_override_or_clear(declaration_owner) do
+              with_isolated_type_param_map(declaration_type_param_map) do
+                resolve_return_type_from_def(
+                  normalized_mangled,
+                  normalized_base,
+                  receiver_type,
+                  call_arg_count,
+                  func_def,
+                  true,
+                )
+              end
+            end
+          end
+        ensure
+          @current_class = old_class
+        end
+      end
 
       return_type_slice = func_def.return_type
       return nil unless return_type_slice
@@ -67399,10 +67450,7 @@ module Adamas::HIR
         return nil
       end
 
-      owner_override = method_owner(normalized_base)
-      if owner_override.empty?
-        owner_override = method_owner(normalized_mangled)
-      end
+      owner_override = return_declaration_owner_for(normalized_mangled, normalized_base) || ""
 
       if cached = @function_types[mangled_method_name]? || @function_types[base_method_name]? ||
                   @function_types[normalized_mangled]? || @function_types[normalized_base]?
@@ -67444,6 +67492,7 @@ module Adamas::HIR
       end
 
       param_map = function_type_param_map_for(normalized_mangled, normalized_base)
+      selected_param_map = function_type_param_map_for_name(normalized_mangled)
       receiver_map = type_param_map_for_receiver_name(normalized_base)
       if receiver_map.empty?
         receiver_map = type_param_map_for_receiver_name(normalized_mangled)
@@ -67482,6 +67531,9 @@ module Adamas::HIR
         merged.merge!(pending) unless pending.empty?
       elsif pending = @pending_type_param_maps[normalized_base]?
         merged.merge!(pending) unless pending.empty?
+      end
+      if selected_param_map && !selected_param_map.empty?
+        merged.merge!(selected_param_map)
       end
 
       if merged.empty?
@@ -122578,7 +122630,13 @@ module Adamas::HIR
             end
           end
           call_target_name = prefer_primary_call_target(method_name, primary_mangled_name, arg_types)
-          return_type = get_function_return_type(call_target_name)
+          selected_index_entry = lookup_function_def_for_call(base_method_name, arg_types.size, false, arg_types)
+          selected_index_def = if selected_index_entry && selected_index_entry[0] == call_target_name
+                                    selected_index_entry[1]
+                                  else
+                                    nil
+                                  end
+          return_type = get_function_return_type(call_target_name, arg_types.size, selected_index_def)
           if return_type == TypeRef::VOID
             return_type = force_lower_pending_index_return_type(call_target_name, primary_mangled_name)
           end
@@ -122590,10 +122648,7 @@ module Adamas::HIR
               owner_type_for_return = owner_ref unless owner_ref == TypeRef::VOID
             end
           end
-          inferred_return = resolve_return_type_from_def(primary_mangled_name, base_method_name, owner_type_for_return)
-          if inferred_return.nil? && call_target_name != primary_mangled_name
-            inferred_return = resolve_return_type_from_def(call_target_name, base_method_name, owner_type_for_return)
-          end
+          inferred_return = resolve_return_type_from_def(call_target_name, base_method_name, owner_type_for_return, arg_types.size, selected_index_def)
           if inferred_return && inferred_return != TypeRef::VOID
             if return_type == TypeRef::VOID || return_type == TypeRef::POINTER
               return_type = inferred_return
@@ -123040,7 +123095,13 @@ module Adamas::HIR
           lookup_name = lookup_hit ? lookup_hit[0] : "nil"
           STDERR.puts "[INDEX_CALL] recv=#{recv_name} arg_types=#{arg_type_names} resolved=#{method_name} primary=#{primary_mangled_name} target=#{call_target_name} lookup=#{lookup_name} span=#{span.start_line}:#{span.start_column}-#{span.end_line}:#{span.end_column}"
         end
-        return_type = get_function_return_type(call_target_name)
+        selected_index_entry = lookup_function_def_for_call(base_method_name, arg_types.size, false, arg_types)
+        selected_index_def = if selected_index_entry && selected_index_entry[0] == call_target_name
+                                  selected_index_entry[1]
+                                else
+                                  nil
+                                end
+        return_type = get_function_return_type(call_target_name, arg_types.size, selected_index_def)
         if return_type == TypeRef::VOID
           return_type = force_lower_pending_index_return_type(call_target_name, primary_mangled_name)
         end
@@ -123052,10 +123113,7 @@ module Adamas::HIR
             owner_type_for_return = owner_ref unless owner_ref == TypeRef::VOID
           end
         end
-        inferred_return = resolve_return_type_from_def(primary_mangled_name, base_method_name, owner_type_for_return)
-        if inferred_return.nil? && call_target_name != primary_mangled_name
-          inferred_return = resolve_return_type_from_def(call_target_name, base_method_name, owner_type_for_return)
-        end
+        inferred_return = resolve_return_type_from_def(call_target_name, base_method_name, owner_type_for_return, arg_types.size, selected_index_def)
         if inferred_return && inferred_return != TypeRef::VOID
           if return_type == TypeRef::VOID || return_type == TypeRef::POINTER
             return_type = inferred_return
