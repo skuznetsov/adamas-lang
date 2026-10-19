@@ -55,7 +55,7 @@ COMPILE_MAX_MEM_MB="${MACRO_LITERAL_RENDERING_COMPILE_MAX_MEM_MB:-8192}"
 RUN_TIMEOUT_SEC="${MACRO_LITERAL_RENDERING_RUN_TIMEOUT_SEC:-5}"
 RUN_MAX_MEM_MB="${MACRO_LITERAL_RENDERING_RUN_MAX_MEM_MB:-512}"
 RUNS_ROOT="${MACRO_LITERAL_RENDERING_RUNS_ROOT:-${TMPDIR:-/tmp}/adamas_macro_literal_rendering}"
-POSITIVE_CASES=(explicit_nil_argument default_nil_argument nil_macro_api literal_nil_collection absent_declaration_default)
+POSITIVE_CASES=(explicit_nil_argument default_nil_argument nil_macro_api literal_nil_collection absent_declaration_default direct_nil_output)
 NEGATIVE_CASES=(reject_explicit_nil_as_integer reject_default_nil_as_integer)
 mkdir -p "$RUNS_ROOT"
 WORK="$(mktemp -d "$RUNS_ROOT/run.XXXXXX")"

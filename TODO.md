@@ -1,5 +1,19 @@
 # Adamas Bootstrap TODO
 
+2026-10-19 DIRECT MACRO NIL OUTPUT: the text expression visitor still rendered
+an explicit Nil node as empty source after the typed value conversion repair.
+Route that visitor through the same MacroNilLiteralValue renderer. A direct
+{{ nil }} inside an argument list must retain the Nil value; erasure produced
+a different native result on the exact parent5200 (run5219).
+DoD: macro_nil_literal_source_repro.sh COMPILER passes six original-first
+native positives and two strict exit-1/Nil-diagnostic/no-executable Int32
+rejections on sealed S1 lavin5220 (private run5221, published run5222).
+Absent declaration defaults still render empty. Refresh after text expression
+output or typed macro-value conversion changes.
+- [x] Unify direct explicit nil output with argument/default/collection rendering.
+- [ ] Audit remaining sentinel paths and expression expansion diagnostics.
+- [ ] Verify fresh bootstrap and unchanged LavinMQ runtime/spec parity.
+
 2026-10-19 EXPLICIT MACRO NIL LITERAL: explicit Nil AST nodes shared the legacy
 absent-result sentinel, whose output is intentionally empty. Interpolation,
 default arguments and collection values therefore lost the source token nil;

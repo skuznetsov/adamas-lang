@@ -1,3 +1,21 @@
+### Direct nil interpolation uses the canonical literal renderer (2026-10-19)
+The text expression visitor independently returned empty source for a Nil AST
+node. The preceding typed-value fix therefore did not cover direct {{ nil }}.
+The visitor now delegates to typed evaluation and the canonical literal output.
+An original-first argument-list oracle distinguishes an actual nil from erased
+source: parent5200 emits the wrong byte in run5219, while sealed S1 lavin5220
+passes all six native positives and both strict Int32 type rejections in private
+run5221 and published run5222. Absent declaration defaults remain empty.
+
+All 1919 source hashes match manifest SHA256 12bab89adb14cfa79d03edc11449fb1ce22360d660bff592c23e1bf557ca8f4a.
+Host SHA256 4e2306ad522d4853c3296a5d9f2b5f5a08be7633596e2242a72a7f95a5bd4e33.
+Scoped adversary ROBUST for direct/argument/default/collection nil output,
+reflection absence and explicit/defaulted Nil-to-Int32 rejection. This does not
+close other legacy sentinel producers or macro expression parse-error handling.
+Refresh after expression output or typed macro-value conversion changes; revert
+source and regression together. Application/stdlib sources, full LavinMQ parity
+and fresh bootstrap remain outside this certificate.
+
 ### Explicit macro nil retains source identity (2026-10-19)
 Explicit Nil AST nodes were converted to MacroNilValue, the legacy sentinel for
 absent AST/reflection results. Its intentionally empty rendering erased nil in

@@ -2454,8 +2454,8 @@ module Adamas
             # Boolean: true/false
             Frontend.node_literal_string(node) || ""
           when Frontend::NodeKind::Nil
-            # Nil literal
-            ""
+            # Literal output and parameter/default output share source identity.
+            evaluate_to_macro_value(expr_id, context).to_macro_output
           else
             # Additional support for type-reflection and simple member chains
             if node.is_a?(Frontend::InstanceVarNode)
