@@ -1,3 +1,22 @@
+### Proc pointer captures share the call argument grammar (2026-10-19)
+The lexer represents &-> as AmpMinus followed by Greater. Bare command and
+parenthesized calls independently recognized that pair, while receiver command
+calls did not. One helper now constructs the same nested proc/capture nodes in
+all three paths, retaining the ordinary wrapping-subtraction path.
+
+The unchanged production parent5342 fails the original-qualified receiver
+command control (run5439). Isolated sealed S1 lavin5426 passes four byte-exact
+native controls and one strict wrong-Proc-input rejection in private run5433.
+Published proc_pointer_block_argument_repro.sh keeps the original-first phase,
+identified type failure, exit 1 and no-executable requirements. Source manifest
+SHA256 4ac1fee8368ff3337830fbc2d7dd7be9021ef44c458065d918b420193a4f9629;
+host SHA256 56913079c85a81112e47e5d911ad36bd268ffb2d9df29bc610cab3ee8ec48996.
+Repository run5448 also passes with the exact Walker#accept / Int32 / Int64
+negative diagnostic identity. Scoped adversary ROBUST for call syntax equivalence and the wrong-Proc opposite control.
+Refresh after call argument grammar, proc pointer AST or block lowering changes;
+revert source and regression together. Fresh bootstrap, full LavinMQ executable
+and runtime/spec parity remain open. Application and stdlib sources are unchanged.
+
 ### Direct nil interpolation uses the canonical literal renderer (2026-10-19)
 The text expression visitor independently returned empty source for a Nil AST
 node. The preceding typed-value fix therefore did not cover direct {{ nil }}.

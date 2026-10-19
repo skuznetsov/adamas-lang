@@ -1,5 +1,18 @@
 # Adamas Bootstrap TODO
 
+2026-10-19 PROC POINTER BLOCK ARGUMENT GRAMMAR: receiver command calls omitted
+&-> although bare and parenthesized calls implemented independent copies of it.
+Use one parser for the lexer pair AmpMinus/Greater across all three forms;
+ordinary wrapping subtraction remains an expression. DoD:
+proc_pointer_block_argument_repro.sh COMPILER matches four original-first native
+controls and rejects the wrong Proc input type with exit 1, its identified type
+diagnostic and no executable. Exact production parent5342 fails the receiver
+command control (run5439); isolated sealed5426 passes private5433 and repository5448 with an exact
+Walker#accept / Int32 / Int64 diagnostic identity. No call type rule is widened.
+Refresh after call argument grammar, proc pointer construction or block lowering.
+- [x] Share proc pointer block parsing across receiver, bare and parenthesized calls.
+- [ ] Verify fresh bootstrap and unchanged LavinMQ runtime/spec parity.
+
 2026-10-19 MACRO LIB/FUN SCOPE: macro body scanning guessed whether fun had
 a body from the next token. A C declaration followed by an annotation incorrectly
 opened a body, swallowing later declarations and producing a false EOF error.

@@ -9592,41 +9592,8 @@ module Adamas
                 unadvance
                 arg = without_postfix_modifiers { parse_op_assign }
               end
-            elsif current_token.kind == Token::Kind::AmpMinus
-              # Phase 103K: Handle &-> (proc pointer passed as block argument)
-              # Lexer tokenizes &-> as AmpMinus (&-) + Greater (>)
-              amp_minus_token = current_token
-              advance
-              if current_token.kind == Token::Kind::Greater
-                # This is &->target - proc pointer passed as block
-                advance
-                skip_trivia
-                target = parse_expression(UNARY_PRECEDENCE)
-                if target.invalid?
-                  @parsing_call_args -= 1
-                  return PREFIX_ERROR
-                end
-                # Create proc pointer node: ->target
-                arrow_slice = "->".to_slice
-                proc_span = Span.new(
-                  amp_minus_token.span.start_offset + 1, # Skip the & to get to -
-                  @arena[target].span.end_offset,
-                  amp_minus_token.span.start_line,
-                  @arena[target].span.end_line,
-                  amp_minus_token.span.start_column + 1,
-                  @arena[target].span.end_column
-                )
-                proc_pointer = @arena.add_typed(UnaryNode.new(proc_span, arrow_slice, target))
-                # Wrap with &: &(->target)
-                amp_slice = "&".to_slice
-                arg_span = amp_minus_token.span.cover(@arena[target].span)
-                arg = @arena.add_typed(UnaryNode.new(arg_span, amp_slice, proc_pointer))
-              else
-                # Should not happen since we check for Greater in prefix check
-                # But if it does, parse as expression
-                unadvance
-                arg = without_postfix_modifiers { parse_op_assign }
-              end
+            elsif proc_pointer_block_argument_start?
+              arg = parse_proc_pointer_block_argument
             elsif current_token.kind == Token::Kind::Star || current_token.kind == Token::Kind::StarStar
               # Splat arguments
               star_token = current_token
@@ -12691,42 +12658,13 @@ module Adamas
                 args_b << arg_expr
                 pushed = true
               elsif current_token.kind == Token::Kind::AmpMinus
-                # Phase 103K: Check if this is &-> (proc pointer as block)
-                # Lexer tokenizes &-> as AmpMinus (&-) + Greater (>)
-                amp_minus_token = current_token
-                advance
-                if current_token.kind == Token::Kind::Greater
-                  # This is &->target - proc pointer passed as block
-                  greater_token = current_token
-                  advance
-                  skip_trivia
-                  target = parse_expression(UNARY_PRECEDENCE)
-                  if target.invalid?
-                    emit_unexpected(current_token)
-                    return PREFIX_ERROR
-                  end
-                  # Create proc pointer node: ->target (use "->" as the operator)
-                  # The span should cover from the "-" in AmpMinus to the target
-                  arrow_slice = "->".to_slice
-                  proc_span = Span.new(
-                    amp_minus_token.span.start_offset + 1, # Skip the & to get to -
-                    @arena[target].span.end_offset,
-                    amp_minus_token.span.start_line,
-                    amp_minus_token.span.end_line,
-                    amp_minus_token.span.start_column + 1,
-                    @arena[target].span.end_column
-                  )
-                  proc_pointer = @arena.add_typed(UnaryNode.new(proc_span, arrow_slice, target))
-                  # Wrap with &: &(->target)
-                  amp_slice = "&".to_slice
-                  arg_span = amp_minus_token.span.cover(@arena[target].span)
-                  arg_expr = @arena.add_typed(UnaryNode.new(arg_span, amp_slice, proc_pointer))
+                if proc_pointer_block_argument_start?
+                  arg_expr = parse_proc_pointer_block_argument
+                  return PREFIX_ERROR if arg_expr.invalid?
                   have_arg_expr = true
                   args_b << arg_expr
                   pushed = true
                 else
-                  # Just &- (wrapping unary minus as block), rewind and parse normally
-                  unadvance
                   @no_type_declaration += 1
                   arg_expr = with_pointer_suffix { parse_expression(0) }
                   have_arg_expr = true
@@ -13506,6 +13444,8 @@ current_token.kind == Token::Kind::Identifier &&
                       @index = saved_index
                       break
                     end
+                  elsif proc_pointer_block_argument_start?
+                    arg = parse_proc_pointer_block_argument
                   elsif current_token.kind == Token::Kind::AmpDot
                     # &.method with no parentheses
                     amp_token = current_token
@@ -16995,6 +16935,34 @@ current_token.kind == Token::Kind::Identifier &&
           else
             nil
           end
+        end
+
+        private def proc_pointer_block_argument_start? : Bool
+          current_token.kind == Token::Kind::AmpMinus && peek_token(1).kind == Token::Kind::Greater
+        end
+
+        # The lexer splits &-> into &- and >. All call argument forms must
+        # produce the same capture of a proc pointer, including receiver calls.
+        private def parse_proc_pointer_block_argument : ExprId
+          amp_minus_token = current_token
+          advance
+          advance
+          skip_trivia
+          target = parse_expression(UNARY_PRECEDENCE)
+          return PREFIX_ERROR if target.invalid?
+
+          target_span = @arena[target].span
+          proc_span = Span.new(
+            amp_minus_token.span.start_offset + 1,
+            target_span.end_offset,
+            amp_minus_token.span.start_line,
+            target_span.end_line,
+            amp_minus_token.span.start_column + 1,
+            target_span.end_column
+          )
+          proc_pointer = @arena.add_typed(UnaryNode.new(proc_span, "->".to_slice, target))
+          arg_span = amp_minus_token.span.cover(target_span)
+          @arena.add_typed(UnaryNode.new(arg_span, "&".to_slice, proc_pointer))
         end
 
         private def terminal_call_block_argument?(expr_id : ExprId) : Bool
