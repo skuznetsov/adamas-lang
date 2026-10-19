@@ -13768,7 +13768,12 @@ current_token.kind == Token::Kind::Identifier &&
           token.kind == Token::Kind::LParen
         end
 
-        private def call_without_parens_disallowed?(token : Token) : Bool
+        private def call_without_parens_disallowed?(token : Token, allow_unary_prefix : Bool = false) : Bool
+          if allow_unary_prefix && token.kind.in?(Token::Kind::Plus, Token::Kind::Minus)
+            next_tok = peek_token(1)
+            return next_tok.kind == Token::Kind::Newline ||
+                   next_tok.span.start_offset > token.span.end_offset
+          end
           if token.kind == Token::Kind::Star || token.kind == Token::Kind::StarStar
             next_tok = peek_token(1)
             return true if next_tok.kind == Token::Kind::Whitespace
@@ -17248,13 +17253,9 @@ current_token.kind == Token::Kind::Identifier &&
           args_after = [] of ExprId
           loop do
             skip_whitespace_and_optional_newlines
-            # Stop if we reached setter syntax
-            break if current_token.kind == Token::Kind::Eq
-
-            break if current_token.kind.in?(Token::Kind::RParen, Token::Kind::RBracket, Token::Kind::RBrace,
-                       Token::Kind::Comma, Token::Kind::Do, Token::Kind::LBrace,
-                       Token::Kind::End, Token::Kind::EOF, Token::Kind::Newline,
-                       Token::Kind::MacroExprEnd)
+            # Operators and postfix conditions belong to the enclosing expression.
+            # Signed adjacent operands remain valid arguments, as in `&.add -1`.
+            break if call_without_parens_disallowed?(current_token, allow_unary_prefix: true)
 
             arg_expr = parse_op_assign
             break if arg_expr.invalid?

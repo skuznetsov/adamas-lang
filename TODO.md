@@ -1,3 +1,15 @@
+2026-10-19 BLOCK SHORTHAND EXPRESSION BOUNDARY: the fallback no-parentheses
+argument loop consumed outer operators and postfix conditions after `&.method`.
+Use the shared argument-admission guard there, with an explicit option retaining
+adjacent unary +/- arguments. Existing guard callers keep their prior behavior.
+- [x] Six new boundary examples fail on the parent and pass on the repair;
+  all nine focused and 17 existing shorthand parser examples pass.
+- [x] Original-first runtime output matches for nil fallback, comparisons, the
+  LavinMQ named tuple shape and numeric/variable unary signs; strict Nil remains
+  rejected. The portable regression has no application or stdlib changes.
+- [ ] Verify full unchanged LavinMQ runtime/upstream-spec parity and bootstrap.
+Refresh after no-parentheses argument admission or block-shorthand parsing changes.
+
 2026-10-19 RUNTIME INTERPOLATION INSIDE MACRO STRINGS: preserve the `#{`
 source opener before recognizing the following embedded `{{` directive. Both
 string-token macro scanners previously claimed the runtime brace and could
