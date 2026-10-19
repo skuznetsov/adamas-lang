@@ -20516,3 +20516,21 @@ annotation rejection. Refresh after enum body parsing or annotation retention
 changes; revert source and regression together. Member reflection, fresh S2,
 bootstrap fixed point and unchanged LavinMQ runtime/spec parity remain open.
 No stdlib or application source was changed.
+
+
+### Named super arguments survive the AST-cache boundary (2026-10-19)
+The cache omitted existing SuperNode.named_args from both string collection and
+serialization. Preserve their labels, value references and spans; reject old
+schema entries by bumping version 5 to 6. No parser/type admission rule changes.
+Exact parent5426 compiles the direct cache probe but loses the named arguments
+(run5524, exit 1). Isolated source5523 passes the same roundtrip (run5525), and
+published regression_tests/super_named_ast_cache_repro.sh passes (run5529) under
+pinned original Crystal 1.21 with all native executions through run_safe.sh.
+
+Scoped adversary ROBUST for the cache API: the regression checks shared value
+identity, nonzero name/value spans, nil versus explicitly empty arguments, and
+rejection of the preceding schema. Production source equals sealed5523. Refresh
+after SuperNode, string-table or cache-format changes; revert source and tests
+together. The CLI cache loader is still disabled, so CLI hits, Adamas self-hosted
+cache behavior, fresh bootstrap and unchanged LavinMQ runtime/spec parity remain
+open. No stdlib or application source was changed.

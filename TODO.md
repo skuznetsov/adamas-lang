@@ -1,5 +1,18 @@
 # Adamas Bootstrap TODO
 
+2026-10-19 NAMED SUPER AST CACHE: SuperNode already retained named arguments
+in memory, but the cache omitted their labels and value references. Serialize
+and restore the existing metadata, collect its labels in the string table, and
+bump the schema from 5 to 6 so old entries cannot silently lose arguments. DoD:
+ORIGINAL_CRYSTAL_BIN=HOST regression_tests/super_named_ast_cache_repro.sh passes
+old-format rejection, shared value identity, source spans, and absent versus
+explicit-empty argument controls. Exact landed parent fails the named roundtrip
+(run5524); isolated source5523 and published test5529 pass under pinned original
+Crystal 1.21. Refresh after SuperNode or cache schema/string-table changes.
+- [x] Preserve named super arguments at the AST-cache boundary.
+- [ ] Verify CLI cache hits if its disabled loader is enabled in future.
+- [ ] Verify fresh bootstrap and unchanged LavinMQ runtime/spec parity.
+
 2026-10-19 PROC POINTER BLOCK ARGUMENT GRAMMAR: receiver command calls omitted
 &-> although bare and parenthesized calls implemented independent copies of it.
 Use one parser for the lexer pair AmpMinus/Greater across all three forms;

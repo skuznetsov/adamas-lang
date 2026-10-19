@@ -121,7 +121,7 @@ module Adamas
         MAGIC   = "CV2A"
         # Bump this version whenever the parser, AST format, or cache header changes
         # to invalidate all cached ASTs
-        VERSION = 5_u32
+        VERSION = 6_u32
 
         getter arena : Frontend::AstArena
         getter roots : Array(Frontend::ExprId)
@@ -391,6 +391,11 @@ module Adamas
           when Frontend::NodeKind::Call
             call_node = node.as(Frontend::CallNode)
             call_node.named_args.try &.each do |arg|
+              yield String.new(arg.name)
+            end
+          when Frontend::NodeKind::Super
+            super_node = node.as(Frontend::SuperNode)
+            super_node.named_args.try &.each do |arg|
               yield String.new(arg.name)
             end
           when Frontend::NodeKind::HashLiteral
@@ -1091,6 +1096,7 @@ module Adamas
             io.write_byte(AstNodeTag::SuperNode.value)
             write_span(io, super_node.span)
             write_optional_expr_id_array(io, super_node.args)
+            write_named_args(io, super_node.named_args, string_table)
 
           when Frontend::NodeKind::PreviousDef
             prev_node = node.as(Frontend::PreviousDefNode)
@@ -1951,7 +1957,8 @@ module Adamas
           when .super_node?
             span = read_span(io)
             args = read_optional_expr_id_array(io)
-            Frontend::SuperNode.new(span, args)
+            named_args = read_named_args(io, strings, pool)
+            Frontend::SuperNode.new(span, args, named_args)
 
           when .previous_def_node?
             span = read_span(io)
