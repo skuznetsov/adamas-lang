@@ -1,3 +1,33 @@
+### Emitted allocator proof preserves the named-only separator (2026-10-18)
+The AST/DefParamInfo representation marks anonymous `*` as a splat with no
+name or external name. The positional allocator's source validator rejected
+all splat flags, so its separate named-only test could not distinguish a
+separator from a variadic argument. Admit the separator, still reject real
+splats/blocks, and validate positional count plus required named arguments
+against the exact selected source Def/arena. The exact function object, body
+revision and original call vector remain prerequisites. Type and generic
+argument compatibility retain their existing rules.
+
+Sealed S1 lavin5047 passes four byte-exact positives and four strict source
+rejections against original Crystal in private run5049 and published run5056.
+The same source-family guard neighbor passes run5052. Parent5008 rejects all
+four valid controls (run5048); diagnostic run5045 establishes that the failing
+Slice wrapper had the same function, body revision and args, and passed both
+source-shape/type checks before the remaining splat-flag veto. All 1919
+production source hashes match the tested seal. HIR SHA256
+6a09f926b1c5a564fe9fe95107f6c38ad93acc8f49481c4104813ce09e0db458;
+host SHA256 1e6fd59f8fb2f3ad5f69dc1ace24f87f6e23da2a9ca5d0a95d383db8bfd093a2.
+
+Scoped adversary ROBUST for emitted positional source proofs: missing required
+named arguments, excess positionals, wrong scalar and wrong applied generic
+arguments still exit 1 without an executable. Deferred fieldless classes and
+extra-position calls without a shape-eligible factory remain open in5039.
+The pinned full-prelude Socket probe now stops at StaticArray(UInt16, 8).new
+(Int32), after the former Slice.new error (run5051); this is no runtime or
+full-prelude non-regression certificate. Refresh after parameter shape, source
+proof production/consumption, selected arena, or allocator body invalidation;
+revert source and regression together. Bootstrap and LavinMQ parity are open.
+
 ### Module inclusion is an exact nominal relation (2026-10-18)
 Argument compatibility and declared-type scoring had two substring fallbacks
 over included module names. Enums implicitly include Enum; an unrelated enum

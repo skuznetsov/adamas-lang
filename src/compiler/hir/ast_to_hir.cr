@@ -42245,7 +42245,13 @@ module Adamas::HIR
       source_def, source_arena, context = proof[2], proof[3], proof[4]
       with_arena(source_arena) do
         params = function_param_infos(source_def)
-        return false if params.any? { |param| param.is_splat || param.is_double_splat || param.is_block || named_only_separator?(param) }
+        return false if params.any? { |param| (param.is_splat && !named_only_separator?(param)) || param.is_double_splat || param.is_block }
+        # A positional allocator may omit defaulted named-only formals. Validate
+        # the original source shape rather than rejecting its separator token.
+        return false unless return_def_accepts_positional?(source_def, arg_types.size)
+        return false unless named_args_compatible_with_def?(
+          source_def, [] of String, arg_types.size, arg_types.size,
+        )
         return false if def_contains_yield?(source_def, source_arena)
         params_compatible_with_args?(source_def, arg_types, context, params) &&
           source_generic_argument_mismatch_for_def(source_def, arg_types, context).nil?

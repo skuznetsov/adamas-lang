@@ -1,5 +1,27 @@
 # Adamas Bootstrap TODO
 
+2026-10-18 OMITTED NAMED DEFAULT IN EMITTED ALLOCATOR SOURCE: the anonymous
+named-only separator carries is_splat=true, so the emitted allocator proof
+mistook it for a variadic formal and rejected a compatible initialize-backed
+call after an explicit factory miss. Distinguish the separator from real
+splats, then check the selected declaration's positional limit and required
+named formals before its unchanged type/generic restrictions. DoD:
+generated_allocator_omitted_named_source_repro.sh COMPILER matches original
+Crystal for four runtime controls and four exit-1/diagnostic/no-executable
+rejections (sealed S1 lavin5047, private run5049, repository run5056). Exact
+parent5008 rejects all four valid controls (run5048). The failed-family source
+neighbor passes run5052. Refresh after allocator source proof, parameter shape,
+selected arena or body invalidation changes.
+- [x] Admit omitted defaulted named formals in an exact emitted wrapper.
+- [x] Retain required named, extra positional, wrong scalar and generic rejection.
+- [ ] Repair first-call source admission for deferred fieldless classes and
+  extra positional calls without a shape-eligible explicit factory; private
+  packet5039 retains both parent/candidate failures, outside this proof path.
+- [ ] Repair the independent full-prelude constructor/literal frontier: the
+  pinned Socket probe passes the former Slice.new point but now rejects
+  StaticArray(UInt16, 8).new(Int32) (run5051); no executable/parity claim.
+- [ ] Verify fresh bootstrap and unchanged LavinMQ runtime/spec parity.
+
 2026-10-18 EXACT MODULE INCLUSION COMPATIBILITY: two argument compatibility
 fallbacks treated module membership as a substring relation. Every enum includes
 Enum, so an unrelated enum was admitted when the formal's namespace contained
