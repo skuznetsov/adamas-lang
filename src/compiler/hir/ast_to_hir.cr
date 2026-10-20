@@ -47,6 +47,10 @@ module Adamas::HIR
     getter module : Adamas::HIR::Module
     getter arena : Adamas::Compiler::Frontend::ArenaLike
 
+    # A source `: self` annotation belongs to this exact lowered function,
+    # independently of ambient state changed while lowering nested methods.
+    property source_self_return_type : TypeRef? = nil
+
     # Current block being built
     property current_block : BlockId
     property current_source_location : SourceLocation?
@@ -44285,6 +44289,8 @@ module Adamas::HIR
         STDERR.flush
       end
       ctx = LoweringContext.new(func, @module, @arena)
+      source_return_name = readable_explicit_return_type_name || explicit_return_type_for_registration(node, @arena)
+      ctx.source_self_return_type = return_type if source_return_name == "self"
 
       # Add implicit 'self' binding.
       # Instance methods receive a runtime self parameter.
@@ -44715,6 +44721,9 @@ module Adamas::HIR
 
       if constraint = abstract_return_constraint
         return_type = finalize_abstract_numeric_return(ctx, constraint, last_value)
+      end
+      unless should_stop_sequential_lowering?(ctx)
+        validate_source_self_return!(ctx, last_value)
       end
       # Coerce return value to match declared return type if needed.
       # This handles cases like returning {nil, 0} (Tuple(Nil, Int32))
@@ -67545,6 +67554,14 @@ module Adamas::HIR
       if return_type_name == "self"
         if receiver_type && receiver_type != TypeRef::VOID
           return receiver_type
+        end
+        # The emitted specialization owns `self`; its inherited source owner
+        # owns only lexical names. Static calls have no receiver ValueId, so
+        # recover the receiver from the exact runtime body symbol instead of
+        # resolving `self` through the declaration namespace.
+        if runtime_owner = method_owner(normalized_base)
+          runtime_self = type_ref_for_name(runtime_owner)
+          return runtime_self unless runtime_self == TypeRef::VOID
         end
       end
 
@@ -92966,6 +92983,32 @@ module Adamas::HIR
       @active_early_exit_contexts.pop? if active.same?(ectx)
     end
 
+    # Return annotations constrain source values. The general coercer is an
+    # ABI adapter and must never serve as admission for a `self` contract.
+    private def validate_source_self_return!(ctx : LoweringContext, value_id : ValueId?) : Nil
+      return unless target_type = ctx.source_self_return_type
+      actual_type = value_id ? ctx.type_of(value_id) : TypeRef::NIL
+      type_value = value_id ? ctx.type_literal?(value_id) : false
+      admitted = !type_value && source_self_return_type_admits?(actual_type, target_type)
+      return if admitted
+
+      actual_name = get_type_name_from_ref(actual_type)
+      actual_name += ".class" if type_value
+      raise LoweringError.new("method #{ctx.function.name} must return #{get_type_name_from_ref(target_type)} but it is returning #{actual_name}")
+    end
+
+    private def source_self_return_type_admits?(actual_type : TypeRef, target_type : TypeRef) : Bool
+      return false if actual_type == TypeRef::VOID || target_type == TypeRef::VOID
+      return true if actual_type == target_type
+      target_name = get_type_name_from_ref(target_type)
+      return true if class_union_upcast_compatible?(actual_type, target_name)
+      actual_name = get_type_name_from_ref(actual_type)
+      actual_info = @class_info[actual_name]?
+      target_info = @class_info[target_name]?
+      return false unless actual_info && target_info && !actual_info.is_struct && !target_info.is_struct
+      class_inherits_from?(actual_name, target_name)
+    end
+
     private def lower_return(ctx : LoweringContext, node : Adamas::Compiler::Frontend::ReturnNode) : ValueId
       value_id = if val = node.value
                    lower_expr(ctx, val)
@@ -93032,6 +93075,7 @@ module Adamas::HIR
       # Coerce return value to match declared return type if needed.
       # This handles cases like returning {nil, 0} (Tuple(Nil, Int32))
       # from a function with return type {Int32?, Int32?} (Tuple(Int32|Nil, Int32|Nil)).
+      validate_source_self_return!(ctx, value_id) unless should_stop_sequential_lowering?(ctx)
       ret_type = @current_def_return_type == TypeRef::VOID ? ctx.function.return_type : @current_def_return_type
       if value_id.nil?
         value_id = nil_return_value_for(ctx, ret_type)
@@ -98682,6 +98726,13 @@ module Adamas::HIR
       end
 
       target_name = resolved_target_name
+      # A class-method body keeps the requested runtime receiver even when a
+      # zero-argument property path discovers it through an ancestor. The source
+      # Def still owns lexical names; completion belongs to the emitted wrapper.
+      inherited_class_body_target = if requested_parts.is_class &&
+                                       requested_parts.method == target_parts.method
+                                      inherited_class_method_body_target(target_name, requested_parts.owner)
+                                    end
       shape_keyed_block_specialization = requested_shape_keyed_block_specialization?(name, target_name)
       # Per-shape block specialization (see shape_keyed_block_target):
       # emit the concrete-shape `_block` specialization as a DISTINCT function
@@ -98693,7 +98744,7 @@ module Adamas::HIR
       materialized_name = materialization_symbol_binding_state_key(
         name,
         target_name,
-        materialize_requested_instance_wrapper,
+        materialize_requested_instance_wrapper || !inherited_class_body_target.nil?,
         shape_keyed_block_specialization
       )
       # Top-level defs are emitted under the requested callsite specialization
@@ -98987,6 +99038,13 @@ module Adamas::HIR
             method = resolved_parts.method
             namespace_override = function_namespace_override_for(target_name, base_target_name, name)
             target_for_lower = name == target_name ? target_name : name
+            if inherited_target = inherited_class_body_target
+              owner = requested_parts.owner
+              namespace_override ||= inherited_target[1]
+              if parent_info = generic_owner_info(inherited_target[1])
+                extra_type_params = extra_type_params ? extra_type_params.merge(parent_info.map) : parent_info.map.dup
+              end
+            end
             # For .new on classes/structs, use generate_allocator (not lower_method)
             # This ensures correct init_params from the initialize method are used.
             # If an explicit new overload exists but does NOT match this callsite,

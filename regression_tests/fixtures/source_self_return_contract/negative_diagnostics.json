@@ -1,0 +1,42 @@
+{
+  "bare_return_negative": [
+    "BareReturnChild",
+    "Nil"
+  ],
+  "early_bad_return_negative": [
+    "EarlyReturnChild",
+    "EarlyReturnOther"
+  ],
+  "explicit_nil_negative": [
+    "InheritedSelfChild",
+    "Nil"
+  ],
+  "explicit_other_negative": [
+    "InheritedSelfChild",
+    "InheritedSelfOther"
+  ],
+  "implicit_nil_negative": [
+    "InheritedSelfChild",
+    "Nil"
+  ],
+  "implicit_other_negative": [
+    "InheritedSelfChild",
+    "InheritedSelfOther"
+  ],
+  "nil_union_negative": [
+    "NilUnionChild",
+    "Nil"
+  ],
+  "other_union_negative": [
+    "OtherUnionChild",
+    "OtherUnionOther"
+  ],
+  "type_value_negative": [
+    "InheritedSelfChild",
+    ".class"
+  ],
+  "zero_arity_unrelated_negative": [
+    "ZeroArityChild",
+    "ZeroArityOther"
+  ]
+}

@@ -1,3 +1,16 @@
+2026-10-19 SOURCE SELF RETURN CONTRACT AND INHERITED CLASS RECEIVER:
+keep the source `: self` obligation on the exact lowering context and validate
+implicit/explicit source values before ABI coercion. Static inherited calls use
+the requested runtime receiver while retaining the declaration's lexical owner
+and generic map; the materialization cache belongs to the emitted child wrapper.
+- [x] Original-first portable compile regression: ten valid and ten invalid
+  bodies match Crystal, including warmed ancestor/two-sibling order, zero-arg
+  calls, lexical constants, generic parents, nested lowering and NoReturn.
+- [x] Existing inherited-class runtime controls: 13 positive outputs and three
+  negative source type/block cases match Crystal (sealed run lavin7109).
+- [ ] Verify unchanged LavinMQ runtime/upstream-spec parity and fresh bootstrap.
+Refresh after return admission, inherited method lookup or wrapper-cache changes.
+
 2026-10-19 BLOCK SHORTHAND EXPRESSION BOUNDARY: the fallback no-parentheses
 argument loop consumed outer operators and postfix conditions after `&.method`.
 Use the shared argument-admission guard there, with an explicit option retaining
