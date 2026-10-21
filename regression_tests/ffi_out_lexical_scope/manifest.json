@@ -1,0 +1,33 @@
+{
+  "purpose": "Portable source lexical declaration-scope regression; original-first compile-only 3-positive/5-negative matrix.",
+  "origin_packet": "lavin10772_ffi_out_lexical_declaration_scope_oracle",
+  "fixture_bytes_preserved": true,
+  "fixture_sha256": {
+    "fixtures/block_declaration_does_not_escape.cr": "d9780cd611096d1063c51e419751d7726f80805faae9570d4c898908b46ccbfb",
+    "fixtures/condition_out_visible_in_both_arms.cr": "405813b7349a2df4258b0e90dcdb07f4ea0006072a393ccca5113e591593332e",
+    "fixtures/nested_block_rejects_outer_out_name.candidate.reject": "d0672b24f32eb58b9614a12dc5c1964e5bd8c64cd2639e8a8dd1580cdbbd7cc3",
+    "fixtures/nested_block_rejects_outer_out_name.cr": "dc59bc4d6f608fcefa81a44687f412f087351d9304e1308f651c740b88008050",
+    "fixtures/nested_block_rejects_outer_out_name.original.reject": "d0672b24f32eb58b9614a12dc5c1964e5bd8c64cd2639e8a8dd1580cdbbd7cc3",
+    "fixtures/reject_preexisting.candidate.reject": "91483941c63d34575ca868a759e11f6abc80fa9946e68450ece3c91365b95cb2",
+    "fixtures/reject_preexisting.cr": "b312e63d799bd27c73a33aa968e9c46796f3432c87d1db615b3991542e1028f7",
+    "fixtures/reject_preexisting.original.reject": "91483941c63d34575ca868a759e11f6abc80fa9946e68450ece3c91365b95cb2",
+    "fixtures/reject_repeated.candidate.reject": "91483941c63d34575ca868a759e11f6abc80fa9946e68450ece3c91365b95cb2",
+    "fixtures/reject_repeated.cr": "9aae6649fed6b6df0a3ef4dcc0ece792a9ae578fed4d00e8ec15e28111853125",
+    "fixtures/reject_repeated.original.reject": "91483941c63d34575ca868a759e11f6abc80fa9946e68450ece3c91365b95cb2",
+    "fixtures/repeated_out_inside_one_block.candidate.reject": "bc7f60a33d1e145a36c9a1f6799e33094e90ffc939f77dc9238d6374e36f61b8",
+    "fixtures/repeated_out_inside_one_block.cr": "2d0cb91aa82deb44699b83812d5a02a9d5259f322546ddc8a52024d4d6bd6ebb",
+    "fixtures/repeated_out_inside_one_block.original.reject": "bc7f60a33d1e145a36c9a1f6799e33094e90ffc939f77dc9238d6374e36f61b8",
+    "fixtures/sibling_block_declarations_are_isolated.cr": "34531998733d3ba33a306314f816b76dc958af88afbfd16f2e9a668dd770fca7",
+    "fixtures/sibling_dynamic_branches_reject_duplicate.candidate.reject": "87835d3153e81c6ed50345ba20108cc33a0438751b46126c7325e0215a6581cc",
+    "fixtures/sibling_dynamic_branches_reject_duplicate.cr": "7e805e08fdfc5c02fc4071b99591da86259fb9b25570f007b92b5b6422ac610c",
+    "fixtures/sibling_dynamic_branches_reject_duplicate.original.reject": "87835d3153e81c6ed50345ba20108cc33a0438751b46126c7325e0215a6581cc"
+  },
+  "production_candidate": "lavin11009_ffi_out_lexical_frames_commit",
+  "portability_delta": "Only original compiler and stdlib path defaults become configurable repository defaults; execution predicates and fixtures are unchanged.",
+  "source_model": "Crystal MainVisitor meta-vars persist across branch snapshots, while block visitors copy declaration maps. The Adamas declaration tracker must restore matching lexical owners across inlining.",
+  "limitations": [
+    "No claim of exception-handler or instance-variable out parity.",
+    "No callback ABI or C function runtime verification.",
+    "This manifest indexes expected checks; it is not a native test result."
+  ]
+}

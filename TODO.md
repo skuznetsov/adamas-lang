@@ -21704,3 +21704,10 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Full prelude remains RED: composed run10936 exposes Proc-typed sig at
   LibC._exit(sig), before conversion. Fix specialized Proc.new block input
   inference rather than bypassing the C parameter check.
+
+
+### FFI out lexical declaration frames (2026-10-21)
+- [x] Keep source declaration names independent from branch-local SSA snapshots.
+- [x] Isolate inline callee declarations, restore caller frames for yielded blocks, and discard block-local declarations.
+- [x] Original-first lexical-scope matrix: 3 positive and 5 negative cases pass on sealed11009 (run11012); portable regression added.
+- [ ] Audit exception-handler meta-vars and instance-variable out arguments separately; this matrix does not cover them.

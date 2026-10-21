@@ -57,6 +57,8 @@ module Adamas::HIR
 
     # Variable name → ValueId mapping per scope
     @locals : Hash(String, ValueId)
+    # Source declaration scope is independent of branch-local value flow.
+    @local_declaration_scopes : Array(Set(String))
     @self_id : ValueId?
     @debug_local_ids : Hash(String, ValueId)
 
@@ -170,6 +172,7 @@ module Adamas::HIR
       @current_block = @function.entry_block
       @current_source_location = nil
       @locals = {} of String => ValueId
+      @local_declaration_scopes = [Set(String).new]
       @self_id = nil
       @debug_local_ids = {} of String => ValueId
       @scope_stack = [@function.scopes[0].id] # Function scope
@@ -472,9 +475,40 @@ module Adamas::HIR
       @function.next_value_id
     end
 
+    # Lexical name declarations survive branch-local value restoration. A
+    # nested block pushes a child frame, so its new names do not escape.
+    def local_declared?(name : String) : Bool
+      @local_declaration_scopes.any? { |scope| scope.includes?(name) }
+    end
+
+    def push_local_declaration_scope : Nil
+      @local_declaration_scopes << Set(String).new
+    end
+
+    def pop_local_declaration_scope : Nil
+      raise "cannot pop the function declaration scope" if @local_declaration_scopes.size <= 1
+      @local_declaration_scopes.pop
+      nil
+    end
+
+    def save_local_declaration_scopes : Array(Set(String))
+      @local_declaration_scopes.map { |scope| scope.dup }
+    end
+
+    def restore_local_declaration_scopes(scopes : Array(Set(String))) : Nil
+      @local_declaration_scopes = scopes.map { |scope| scope.dup }
+      nil
+    end
+
+    def reset_local_declaration_scopes : Nil
+      @local_declaration_scopes = [Set(String).new]
+      nil
+    end
+
     # Register local variable
     def register_local(name : String, value_id : ValueId)
       @locals[name] = value_id
+      @local_declaration_scopes.last.add(name)
       if @block_parameter_bindings.has_key?(name)
         @block_parameter_bindings[name] = value_id
       end
@@ -7234,6 +7268,9 @@ module Adamas::HIR
     # While inlining yield-functions, we must preserve caller locals for the block body.
     # Otherwise callee locals (especially `self`) can leak into the caller and break ivar access.
     @inline_caller_locals_stack : Array(Hash(String, ValueId)) = [] of Hash(String, ValueId)
+    # Declaration frames are lexical, so inline callee names must not leak into
+    # the caller and yielded blocks must temporarily recover the caller frames.
+    @inline_caller_local_declaration_scopes_stack : Array(Array(Set(String))) = [] of Array(Set(String))
     # Function ids aligned with @inline_caller_locals_stack entries.
     @inline_caller_function_id_stack : Array(FunctionId) = [] of FunctionId
     # Preserve caller class/method so block bodies resolve unqualified calls in caller scope.
@@ -7955,6 +7992,7 @@ module Adamas::HIR
       # explicitly because stage2 can leave those defaults as null on AstToHir.
       @inline_arenas = nil
       @inline_caller_locals_stack = [] of Hash(String, ValueId)
+      @inline_caller_local_declaration_scopes_stack = [] of Array(Set(String))
       @inline_caller_function_id_stack = [] of FunctionId
       @inline_caller_class_stack = [] of String?
       @inline_caller_method_stack = [] of String?
@@ -92370,6 +92408,13 @@ module Adamas::HIR
       @inline_caller_locals_stack.unsafe_fetch(normalized_index)
     end
 
+    private def inline_caller_local_declaration_scopes_at?(index : Int32) : Array(Set(String))?
+      size = @inline_caller_local_declaration_scopes_stack.size
+      normalized_index = index < 0 ? index + size : index
+      return nil unless 0 <= normalized_index < size
+      @inline_caller_local_declaration_scopes_stack.unsafe_fetch(normalized_index)
+    end
+
     private def snapshot_active_inline_caller_locals(
       ctx : LoweringContext,
       caller_locals_index : Int32,
@@ -112821,7 +112866,7 @@ module Adamas::HIR
 
       # `out x` declares a local. Reusing a visible binding would silently
       # change its source type and storage; Crystal requires pointerof(x) instead.
-      if var_name != "_" && ctx.lookup_local(var_name)
+      if var_name != "_" && ctx.local_declared?(var_name)
         raise LoweringError.new("variable '#{var_name}' is already defined, out must be used to define a variable", node)
       end
 
@@ -122403,8 +122448,11 @@ module Adamas::HIR
 
       # Isolate callee locals from caller locals, but keep caller locals available for block bodies.
       caller_locals = ctx.save_locals.locals
+      caller_local_declaration_scopes = ctx.save_local_declaration_scopes
       callee_local_names = inline_callee_local_names(func_def, callee_arena)
       @inline_caller_locals_stack << caller_locals
+      @inline_caller_local_declaration_scopes_stack << caller_local_declaration_scopes
+      ctx.reset_local_declaration_scopes
       @inline_caller_function_id_stack << ctx.function.id
       @inline_callee_local_names_stack << callee_local_names
       @inline_callee_local_names_frame_stack << (@inline_caller_locals_stack.size - 1)
@@ -122878,6 +122926,7 @@ module Adamas::HIR
           end
         end
         restored_caller_locals = @inline_caller_locals_stack.pop?
+        restored_caller_local_declaration_scopes = @inline_caller_local_declaration_scopes_stack.pop?
         @inline_caller_function_id_stack.pop?
         @inline_callee_local_names_stack.pop?
         @inline_callee_local_names_frame_stack.pop?
@@ -122890,6 +122939,9 @@ module Adamas::HIR
         # continuation sees values produced by the inlined yield body/return merge.
         if restored_caller_locals
           ctx.restore_locals(restored_caller_locals)
+        end
+        if restored_caller_local_declaration_scopes
+          ctx.restore_local_declaration_scopes(restored_caller_local_declaration_scopes)
         end
       end
     end
@@ -123044,6 +123096,7 @@ module Adamas::HIR
       yield_node : Adamas::Compiler::Frontend::YieldNode,
       block : Adamas::Compiler::Frontend::BlockNode,
     ) : ValueId
+      saved_local_declaration_scopes = ctx.save_local_declaration_scopes
       @inline_yield_block_body_depth += 1
       pushed_override = false
 
@@ -123224,6 +123277,12 @@ module Adamas::HIR
         # Use the typed stack accessor here; generated stage2 can mis-specialize
         # nullable Array#[]? and return Nil for a live caller frame.
         caller_locals = inline_caller_locals_at?(caller_locals_index)
+        if caller_locals && !cross_function_owner
+          if caller_declaration_scopes = inline_caller_local_declaration_scopes_at?(caller_locals_index)
+            ctx.restore_local_declaration_scopes(caller_declaration_scopes)
+          end
+        end
+        ctx.push_local_declaration_scope
         result = if caller_locals
                    use_stack_caller_locals = !cross_function_owner
                    if cross_function_owner
@@ -123577,6 +123636,7 @@ module Adamas::HIR
 
         result
       ensure
+        ctx.restore_local_declaration_scopes(saved_local_declaration_scopes)
         @inline_yield_return_override_stack.pop? if pushed_override
         @inline_yield_block_body_depth -= 1
       end
@@ -129078,6 +129138,7 @@ module Adamas::HIR
       node : Adamas::Compiler::Frontend::BlockNode,
       param_types : Array(TypeRef)? = nil,
     ) : BlockId
+      local_declaration_scope_pushed = false
       cache_key = block_lowering_key_for(ctx.function.id, node, param_types)
       if cached = @block_lowering_cache[cache_key]?
         return cached
@@ -129155,6 +129216,8 @@ module Adamas::HIR
       @inline_yield_return_override_stack = [] of InlineReturnOverride
 
       ctx.push_scope(ScopeKind::Closure)
+      ctx.push_local_declaration_scope
+      local_declaration_scope_pushed = true
       closure_scope = ctx.current_scope
       body_block = ctx.create_block
       @block_lowering_in_progress[cache_key] = body_block
@@ -129199,6 +129262,8 @@ module Adamas::HIR
       # Lower body
       last_value = lower_body(ctx, node.body)
       ctx.pop_scope
+      ctx.pop_local_declaration_scope
+      local_declaration_scope_pushed = false
 
       @block_captures[body_block] = compute_block_captures(ctx, closure_scope, saved_locals.locals, assigned_vars)
 
@@ -129229,6 +129294,7 @@ module Adamas::HIR
       @block_lowering_cache[cache_key] = body_block
       body_block
     ensure
+      ctx.pop_local_declaration_scope if local_declaration_scope_pushed
       @arena = saved_arena_for_block if saved_arena_for_block
       @block_lowering_in_progress.delete(cache_key)
     end
@@ -129238,6 +129304,7 @@ module Adamas::HIR
       proc_expr : ExprId,
       param_types : Array(TypeRef)? = nil,
     ) : Tuple(BlockId, ValueId)
+      local_declaration_scope_pushed = false
       @inline_yield_proc_depth += 1
       proc_node = @arena[proc_expr]
       if env_get("DEBUG_BLOCK_PARAMS") && proc_node.is_a?(Adamas::Compiler::Frontend::ProcLiteralNode) == false
@@ -129258,6 +129325,8 @@ module Adamas::HIR
       @current_typeof_local_names = old_typeof_local_names ? old_typeof_local_names.dup : old_typeof_local_names
 
       ctx.push_scope(ScopeKind::Closure)
+      ctx.push_local_declaration_scope
+      local_declaration_scope_pushed = true
       closure_scope = ctx.current_scope
       body_block = ctx.create_block
       ctx.current_block = body_block
@@ -129315,6 +129384,7 @@ module Adamas::HIR
       @current_typeof_local_names = old_typeof_local_names
       {body_block, proc_id}
     ensure
+      ctx.pop_local_declaration_scope if local_declaration_scope_pushed
       @inline_yield_proc_depth -= 1
     end
 

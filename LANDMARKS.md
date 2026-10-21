@@ -21175,3 +21175,37 @@ Evidence: OUT/lavin109{03,07,10,15,16,36} under
 /Users/sergey/Projects/Adamas/sol_help_20261012. Refresh after source restriction,
 conversion selection, union tags, Cast lowering or extern argument changes.
 Rollback the HIR delta and both associated regression directories together.
+
+
+### FFI out declarations have lexical owners independent from SSA flow (2026-10-21)
+The out redeclaration check used lookup_local, but branch SSA snapshots discard
+names that Crystal retains in the function visitor's meta-vars. Conversely,
+reusing one declaration map across inline callees and yielded blocks leaks
+block-local names into unrelated owners. Track all registered declaration names
+in lexical frames, retain the function frame across ordinary branches, and
+isolate child block frames. Inlining resets the callee frame and temporarily
+restores the caller's frame when lowering its yielded block. Preserve the
+existing cross-function SSA ownership boundary.
+
+Run10942 qualifies the repaired inline frames against the earlier private
+branch tracker; run11007 composes both on the later frontier. Run11012 qualifies
+the exact committed da854477 source plus the complete delta (sealed11009):
+pinned Crystal 1.20.1 and Adamas both pass 3 positive and 5 negative cases.
+The portable packet preserves all fixture bytes and rejection predicates.
+Sibling blocks may redeclare their own local, but sibling dynamic branches and
+nested blocks still reject collisions with an existing outer name. Scoped
+adversary ROBUST for this matrix. Inputs were frozen before/after execution.
+
+DoD: regression_tests/ffi_out_lexical_scope_repro.sh <candidate>, with the pinned
+original compiler and source paths configured, must pass all eight cases.
+Evidence: OUT/lavin110{09,10,11,12,13} under
+/Users/sergey/Projects/Adamas/sol_help_20261012. Host SHA256 is
+3ff11de609b96b7b843e4e85ebaba457ecb46d89abbc6678a462064f9e52cb16.
+
+This does not certify exception-handler meta-vars, instance-variable out,
+callback ABI, full prelude, bootstrap or LavinMQ. Fresh full LavinMQ run11004
+on the later private frontier fails earlier, in the parser (spawn named args,
+parenthesized raise expressions and super splats). Do not infer a compiled
+application percentage from focused regressions. Refresh after declaration,
+branch snapshot, block lowering or inlining changes. Revert this HIR delta and
+the ffi_out_lexical_scope regression together.
