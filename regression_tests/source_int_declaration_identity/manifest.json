@@ -1,0 +1,22 @@
+{
+  "README.md": "49baded8632606e65cf0ecf53dfb98e7997c9adf1c9b732ba6427fcb74132ed8",
+  "fixtures/abstract_signed_width.cr": "fcbaacc995b22025cd83c4e6d041585d2a4525c192fa2b6778806257f1c79609",
+  "fixtures/abstract_signed_width.expected": "f67ab10ad4e4c53121b6a5fe4da9c10ddee905b978d3788d2723d7bfacbe28a9",
+  "fixtures/abstract_then_exact.cr": "84f16e193b842b1a80445efe94c20a150288cf9a1df8014cd97a7145884a7723",
+  "fixtures/abstract_then_exact.expected": "df7e70e5021544f4834bbee64a9e3789febc4be81470df629cad6ddb03320a5c",
+  "fixtures/abstract_unsigned_width.cr": "5c719871d0698d490e850ccf5204e81a5675c77fba7d65253e92135a17c27f6f",
+  "fixtures/abstract_unsigned_width.expected": "333e0a1e27815d0ceee55c473fe3dc93d56c63e3bee2b3b4aee8eed6d70191a3",
+  "fixtures/alias_abstract_identity.cr": "0c8a412e487ddee629d6edd8b6e166f0cacffc2dece739c7bcc100eaf81118af",
+  "fixtures/alias_abstract_identity.expected": "6b23c0d5f35d1b11f9b683f0b0a617355deb11277d91ae091d399c655b87940d",
+  "fixtures/exact_then_abstract.cr": "8dd47eea934ad1e9be6564fdd9d1f5c308143e54f496f6a7f902a1f244f5eb52",
+  "fixtures/exact_then_abstract.expected": "559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd",
+  "fixtures/instance_method_identity.cr": "581aa6c07ff73d846e42246cc2c537020a3b0a48b0361c45a12010737ba22a92",
+  "fixtures/instance_method_identity.expected": "3f39d5c348e5b79d06e842c114e6cc571583bbf44e4b0ebfda1a01ec05745d43",
+  "fixtures/live_numeric_instances.cr": "e0549d7c6bbb6c825e35b5b37395e7f2d7ea1c904eee35c132c95754a5318493",
+  "fixtures/live_numeric_instances.expected": "0897d33232eb2e78fec8e78069f93a71409bb276817677f162cbe8e04c443e6f",
+  "fixtures/qualified_alias_identity.cr": "69f6e3e21a1beca15f28a6e2aedb50b5db9d3c5579eaac9782be75be0b5836ff",
+  "fixtures/qualified_alias_identity.expected": "a9f51566bd6705f7ea6ad54bb9deb449f795582d6529a0e22207b8981233ec58",
+  "fixtures/reject_nonnumeric_argument.cr": "e62ca709463f12893383f1532b9b0c6ea0609273948bdcbdd52e0b522fa4fc5d",
+  "fixtures/reject_nonnumeric_argument.reject": "a4144c4b5e64a89c057934f7c743f57c25bb9407af53747d25edce13e54a4bb1",
+  "run_original_first.py": "9735736e3cfd781159edd778d0b655b18466b572f365320a4b4b5b129a7fd9c1"
+}

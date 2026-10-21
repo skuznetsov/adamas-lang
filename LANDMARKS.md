@@ -21112,3 +21112,31 @@ open. Evidence: OUT/lavin106{33,47,48,50,52,55,57,59} receipts/logs under
 /Users/sergey/Projects/Adamas/sol_help_20261012 (plus runs10661/10663). Refresh after constructor source
 registration, arena provenance, default binding or allocator recovery changes.
 Revert the HIR change and constructor_source_arity regression together.
+
+
+### Source restriction identity survives a shared physical TypeRef (2026-10-21)
+The C-binding fallback represents abstract Int with Int32 storage. Building a
+source declaration key solely from that TypeRef made an Int overload overwrite
+the independent Int32 declaration before source overload selection. Derive the
+abstract restriction component from the parameter annotation in its own arena,
+resolve aliases while preserving abstract Int, and leave physical call argument
+TypeRefs unchanged. The declaration key and the eventual ABI instance are
+different identities; neither authorizes replacing the selected source body.
+
+Sealed10722 and pinned Crystal 1.20.1 pass nine original-first cases in run10962:
+both declaration orders, alias chains, qualified aliases, instance methods,
+full-width signed/unsigned values, multiple live instances and a nonnumeric
+semantic rejection. Scoped adversary ROBUST for these tested identities and
+widths. The separate C-Bool checks remain unchanged in packet10721; the full
+eleven-case matrix passes on composed10925 in run10939 after its FFI fixes.
+This commit alone does not claim the independent FFI gap closed.
+
+Eight registration/lowering sites now pass the parameter arena explicitly.
+Other default-arena callers remain an audit obligation, as do constructor family
+order and broader source/ABI identity collisions. Full prelude remains RED on
+the later composed frontier: run10936 locates Proc-typed sig in the signal Proc
+initializer before LibC._exit validation. Do not bypass that diagnostic.
+Evidence is in OUT/lavin109{39,60,62} under
+/Users/sergey/Projects/Adamas/sol_help_20261012. Refresh after declaration
+registration, alias normalization, mangling or parameter-arena changes. Revert
+the HIR delta and source_int_declaration_identity regression together.

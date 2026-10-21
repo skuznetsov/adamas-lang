@@ -21667,3 +21667,21 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   Two proposed controls were refuted by the original compiler in run10650.
 - [ ] Full prelude, full regressions, S1-to-S2, unchanged LavinMQ runtime/spec
   parity and a fresh S3/S4 fixed point remain open.
+
+
+### Preserve source Int declaration identity across ABI normalization (2026-10-21)
+- [x] Keep abstract Int distinct from concrete Int32 in source declaration keys,
+  including aliases and arena-owned parameter annotations. Actual call argument
+  TypeRefs and source restriction checks retain their existing roles.
+- [x] Sealed10722 and Crystal 1.20.1 pass nine original-first identity controls
+  in run10962 (eight exact-output positives, one semantic rejection). The
+  composed10925 also passes all eleven original packet10721 cases in run10939,
+  including two selected-body C-argument rejections qualified by the FFI fixes.
+- [ ] Audit remaining function_full_name_for_def callers that use the default
+  parameter arena; this change threads explicit provenance through eight sites.
+- [ ] Complete arbitrary-arity constructor family selection. Candidate10883
+  fails both earlier one-argument adversaries and a two-argument priority case
+  in run10926; it is not integrated.
+- [ ] Full prelude, full regressions, bootstrap and unchanged LavinMQ parity
+  remain open. Composed prelude run10936 rejects Proc-typed signal parameter sig
+  at LibC._exit(sig); do not weaken the fixed C argument contract.

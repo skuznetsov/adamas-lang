@@ -33044,7 +33044,7 @@ module Adamas::HIR
                          end
         has_block = contains_yield
       end
-      full_name = function_full_name_for_def(base_name, param_types, effective_member.params, has_block)
+      full_name = function_full_name_for_def(base_name, param_types, effective_member.params, has_block, member_arena)
       if env_has?("DEBUG_FORALL_REG") && type_name.starts_with?("Slice(") && method_name == "=="
         STDERR.puts "[FORALL_REG] full_name=#{full_name} base=#{base_name}"
       end
@@ -33058,14 +33058,14 @@ module Adamas::HIR
         base_owner = strip_generic_args(type_name)
         if base_owner != type_name
           alias_base = "#{base_owner}.#{method_name}"
-          alias_full_name = function_full_name_for_def(alias_base, param_types, member.params, has_block)
+          alias_full_name = function_full_name_for_def(alias_base, param_types, member.params, has_block, member_arena)
         end
       end
       previous_enum_return_name = @function_enum_return_names[full_name]? ||
                                   @function_enum_return_names[base_name]?
       if (existing_def = @function_defs[full_name]?) && !same_def_node?(existing_def, effective_member)
         previous_base = "#{base_name}_previous"
-        previous_full = function_full_name_for_def(previous_base, param_types, effective_member.params, has_block)
+        previous_full = function_full_name_for_def(previous_base, param_types, effective_member.params, has_block, member_arena)
         copy_explicit_return_contract(full_name, previous_full)
         if prev_return = @function_types[full_name]?
           register_function_type(previous_full, prev_return)
@@ -35013,7 +35013,7 @@ module Adamas::HIR
               if !has_block
                 has_block = contains_yield
               end
-              full_method_name = function_full_name_for_def(base_name, param_types, effective_member.params, has_block)
+              full_method_name = function_full_name_for_def(base_name, param_types, effective_member.params, has_block, member_arena)
               bootstrap_trace_puts "[CLASS_FRONTIER] nested_module_def_after_full_name #{full_method_name}" if trace_nested_float_def
               replace_explicit_return = record_explicit_return_contract(
                 full_method_name,
@@ -37586,7 +37586,7 @@ module Adamas::HIR
               has_block = true if contains_yield_value
               STDERR.puts "[REG_METHOD_PHASE] class=#{class_name} method=#{method_name} phase=after_yield contains=#{contains_yield_value ? 1 : 0} has_block=#{has_block ? 1 : 0}" if trace_method_phase
               full_name = if has_params
-                            function_full_name_for_def(base_name, method_param_types, params_storage, has_block)
+                            function_full_name_for_def(base_name, method_param_types, params_storage, has_block, member_arena)
                           else
                             function_full_name_for_def(base_name, method_param_types, nil, has_block)
                           end
@@ -37603,7 +37603,7 @@ module Adamas::HIR
                 if base_owner != class_name
                   alias_base = "#{base_owner}.#{method_name}"
                   alias_full_name = if has_params
-                                      function_full_name_for_def(alias_base, method_param_types, params_storage, has_block)
+                                      function_full_name_for_def(alias_base, method_param_types, params_storage, has_block, member_arena)
                                     else
                                       function_full_name_for_def(alias_base, method_param_types, nil, has_block)
                                     end
@@ -47155,7 +47155,10 @@ module Adamas::HIR
       split_union_type_name(desc.name).any? { |variant| variant.starts_with?("Pointer") }
     end
 
-    private def mangle_type_param_suffix(param_types : Array(TypeRef)) : String
+    private def mangle_type_param_suffix(
+      param_types : Array(TypeRef),
+      source_restriction_names : Array(String?)? = nil,
+    ) : String
       String.build do |suffix|
         i = 0
         first = true
@@ -47164,7 +47167,9 @@ module Adamas::HIR
           if type_ref != TypeRef::VOID
             suffix << "_" unless first
             descriptor = @module.get_type_descriptor(type_ref)
-            if descriptor && descriptor.kind == TypeKind::Proc && !descriptor.type_params.empty?
+            if restriction_name = source_restriction_names.try(&.[i]?)
+              suffix << restriction_name
+            elsif descriptor && descriptor.kind == TypeKind::Proc && !descriptor.type_params.empty?
               suffix << generic_param_type_name_from_ref(type_ref)
             else
               suffix << type_name_for_mangling(type_ref)
@@ -47189,6 +47194,7 @@ module Adamas::HIR
       param_types : Array(TypeRef),
       has_block : Bool = false,
       has_named_only : Bool = false,
+      source_restriction_names : Array(String?)? = nil,
     ) : String
       return "" unless v2_string_readable?(base_name)
       if dollar = ascii_byte_index(base_name, '$'.ord.to_u8)
@@ -47197,7 +47203,7 @@ module Adamas::HIR
       # Filter out VOID types (untyped parameters don't provide overload info)
       # with a scalar loop: this path runs while generated stage2 is still
       # registering templates, before block-backed Array helpers are reliable.
-      suffix = mangle_type_param_suffix(param_types)
+      suffix = mangle_type_param_suffix(param_types, source_restriction_names)
       if has_block
         suffix = suffix.empty? ? "block" : "#{suffix}_block"
       end
@@ -47215,6 +47221,7 @@ module Adamas::HIR
       param_types : Array(TypeRef),
       params : Array(Adamas::Compiler::Frontend::Parameter)?,
       has_block : Bool,
+      parameter_arena : Adamas::Compiler::Frontend::ArenaLike = @arena,
     ) : String
       if params
         i = 0
@@ -47237,6 +47244,7 @@ module Adamas::HIR
       has_splat = false
       has_double_splat = false
       named_only_names = [] of String
+      source_restriction_names : Array(String?)? = nil
       has_untyped = param_types.any? { |t| t == TypeRef::VOID }
       i = 0
       buf = params.to_unsafe
@@ -47259,11 +47267,27 @@ module Adamas::HIR
         end
         param_count += 1
         typed_param_count += 1 unless param_types[param_count - 1]? == TypeRef::VOID
+        # The C-binding storage fallback maps Int to Int32. It must not make
+        # two distinct source restrictions overwrite the same declaration.
+        # Only the declaration key changes; call instances retain their actual
+        # argument TypeRefs and the existing source restriction checks.
+        if param_types[param_count - 1]? == TypeRef::INT32
+          if source_annotation = parameter_type_annotation_string(param, parameter_arena)
+            owner = method_owner_from_name(base_name)
+            context = owner.empty? || owner == base_name ? nil : owner
+            declared_name = normalize_declared_type_name(source_annotation, context, specialize_bare_generics: false)
+            declared_name = resolve_type_alias_chain(declared_name.lchop("::"), preserve_abstract_int: true)
+            if declared_name == "Int"
+              source_restriction_names ||= Array(String?).new(param_types.size, nil)
+              source_restriction_names[param_count - 1] = declared_name
+            end
+          end
+        end
         has_splat = true if param.is_splat
         has_double_splat = true if param.is_double_splat
       end
 
-      full_name = mangle_function_name(base_name, param_types, has_block, has_named_only)
+      full_name = mangle_function_name(base_name, param_types, has_block, has_named_only, source_restriction_names)
       if has_double_splat
         full_name = full_name.includes?('$') ? "#{full_name}_double_splat" : "#{base_name}$double_splat"
       elsif has_splat
@@ -95962,7 +95986,7 @@ module Adamas::HIR
         has_block = def_contains_yield?(def_node, def_arena)
       end
 
-      mangled = function_full_name_for_def(base_name, param_types, def_node.params, has_block)
+      mangled = function_full_name_for_def(base_name, param_types, def_node.params, has_block, def_arena)
       return requested_name if mangled.empty?
       return requested_name if mangled == base_name
       mangled
@@ -99231,7 +99255,7 @@ module Adamas::HIR
                                      end
               canonical_param_types << canonical_param_type
             end
-            canonical_name = function_full_name_for_def(name_parts.base, canonical_param_types, resolved_func_def.params, has_block_param)
+            canonical_name = function_full_name_for_def(name_parts.base, canonical_param_types, resolved_func_def.params, has_block_param, arena)
             target_name = canonical_name unless canonical_name.empty?
           end
         end
