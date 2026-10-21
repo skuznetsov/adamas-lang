@@ -1,0 +1,2 @@
+struct BadChild < Exception
+end

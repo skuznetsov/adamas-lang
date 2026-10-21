@@ -1,0 +1,2 @@
+class BadChild < Value
+end

@@ -1,0 +1,2 @@
+class GlobChild < GlobParent
+end

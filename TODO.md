@@ -21577,3 +21577,16 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Compiler-predeclared parent metadata and the separate early alias pass need
   their own repairs. Full prelude, full regression suite, S1-to-S2, unchanged
   LavinMQ parity, and fresh S3/S4 fixed point remain open.
+
+
+### Retain compiler-predeclared superclass metadata (2026-10-21)
+- [x] Model the exact class/struct kind and intrinsic abstractness of types that
+  original Crystal Program initializes before source loading, including Exception
+  and Regex. Preserve intrinsic abstract roots through source reopenings.
+- [x] Reject specialized primitive and Enum parents with strict kind diagnostics.
+- [x] Original Crystal 1.20.1 and sealed10422 pass 17 exact-output positives and
+  seven semantic negatives (run10424), including byte-sorted glob traversal,
+  files-before-directories, recursive directory order, and require-once controls.
+- [ ] Full prelude reaches Index.new(-1, 0) and stops at constructor literal
+  autocast (run10425). Full regression suite, S1-to-S2, unchanged LavinMQ parity,
+  and fresh bootstrap remain open.

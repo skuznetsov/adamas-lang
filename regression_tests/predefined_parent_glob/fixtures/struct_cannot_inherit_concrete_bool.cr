@@ -1,0 +1,2 @@
+struct BadChild < Bool
+end

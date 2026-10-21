@@ -36366,6 +36366,22 @@ module Adamas::HIR
       !frame.is_struct || frame.node.is_abstract == true
     end
 
+    # Original Crystal installs these NonGenericClassType declarations in
+    # Program#initialize before it reads source. Their kind and abstractness
+    # remain authoritative when source later reopens the same type.
+    private def predefined_class_metadata(name : String) : Tuple(Bool, Bool)?
+      case name
+      when "Object"
+        {false, true}
+      when "Reference", "String", "Regex", "Exception"
+        {false, false}
+      when "Value", "Struct", "Number", "Int", "Float", "Enum"
+        {true, true}
+      else
+        nil
+      end
+    end
+
     # An existing name alone does not establish a legal superclass. Use the
     # registered declaration kind or the exact active enclosing declaration;
     # inventories and type-name cache hits cannot authorize inheritance.
@@ -36378,18 +36394,32 @@ module Adamas::HIR
       if child_name == parent_name
         raise LoweringError.new("can't make class or struct '#{child_name}' inherit itself", node)
       end
+      # These specialized builtin types are not ClassType declarations in
+      # original Crystal and cannot authorize an explicit superclass.
+      case parent_name
+      when "Enum"
+        raise LoweringError.new("can't inherit Enum. Use the enum keyword to define enums", node)
+      when "Nil", "Bool", "Char", "Symbol",
+           "Int8", "Int16", "Int32", "Int64", "Int128",
+           "UInt8", "UInt16", "UInt32", "UInt64", "UInt128",
+           "Float32", "Float64"
+        raise LoweringError.new("#{parent_name} is not a class, it's a struct", node)
+      end
       parent_base = split_generic_base_and_args(parent_name).try(&.base) || parent_name
+      predefined = predefined_class_metadata(parent_name)
       parent_is_struct : Bool? = nil
       parent_is_abstract = false
       if parent_info = @class_info[parent_name]?
         parent_is_struct = parent_info.is_struct
-        parent_is_abstract = @abstract_class_names.includes?(parent_name)
+        parent_is_abstract = @abstract_class_names.includes?(parent_name) || (predefined.try(&.[1]) == true)
       elsif template = @generic_templates[parent_name]? || @generic_templates[parent_base]?
         parent_is_struct = template.is_struct
         parent_is_abstract = template.node.is_abstract == true
       elsif frame = active_enclosing_parent_declaration(child_name, parent_name)
         parent_is_struct = frame.is_struct
         parent_is_abstract = frame.node.is_abstract == true
+      elsif predefined
+        parent_is_struct, parent_is_abstract = predefined
       elsif @module_defs.has_key?(parent_name) || @module.is_lib?(parent_name)
         raise LoweringError.new("#{parent_name} is not a class and cannot be a superclass", node)
       elsif enum_info = @enum_info
@@ -36445,7 +36475,7 @@ module Adamas::HIR
       # These compiler-known roots exist without a source declaration. Do not
       # use the pre-scan name inventory here: it also contains future source
       # declarations and aliases.
-      parent_name == "Object" || !builtin_hierarchy_parent(parent_name).nil?
+      !predefined_class_metadata(parent_name).nil? || !builtin_hierarchy_parent(parent_name).nil?
     end
 
     private def pop_active_class_declaration_frame(frame : ActiveClassDeclarationFrame) : Nil

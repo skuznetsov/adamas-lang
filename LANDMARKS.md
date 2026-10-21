@@ -20935,3 +20935,28 @@ and OUT/lavin10447_source_order_macro_fallback.frozen_inputs.receipt.json under
 Refresh after require traversal, declaration registration, macro expansion, or
 arena ownership changes. Revert code and its regression fixtures together.
 Unchanged LavinMQ runtime/spec parity and fresh S3/S4 equality remain open.
+
+
+### Predeclared superclass kind and abstractness are source-independent (2026-10-21)
+Original Crystal Program#initialize installs exact intrinsic type declarations
+before reading source (program.cr:155-258). Exception and Regex therefore do not
+need an earlier source class declaration to be legal parents. Abstract value
+roots remain abstract even when their stdlib source reopening omits abstract.
+Inventory membership is still not evidence for arbitrary future source names.
+
+Carry exact intrinsic kind/abstractness for Object, Reference, String, Regex,
+Exception, Value, Struct, Number, Int, Float, and Enum into superclass validation.
+Reject Enum explicit inheritance and specialized primitive parents as original
+Crystal does. Do not authorize future lookalikes or weaken kind checks.
+Original-first run10424: 17 positives and seven strict semantic negatives pass
+on sealed10422. The packet also checks byte-sorted glob ordering, files before
+subdirectories, recursive directory byte order, and require-once behavior. The
+existing glob traversal needed no production change. Scoped adversary ROBUST
+for these exercised intrinsic declaration and glob-order boundaries.
+The unchanged prelude now reaches constructor numeric autocast; it is not a
+successful prelude build. Full regression suite, S1-to-S2, unchanged LavinMQ
+parity, and fresh S3/S4 equality remain open. Evidence: OUT/
+lavin10424_predefined_parent_glob_qualified_candidate.frozen_inputs.receipt.json
+under /Users/sergey/Projects/Adamas/sol_help_20261012. Refresh after intrinsic
+type creation, parent validation, or source reopening changes. Roll back the
+metadata and its regression suite together.
