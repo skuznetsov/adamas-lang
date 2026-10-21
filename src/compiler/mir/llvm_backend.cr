@@ -7470,10 +7470,14 @@ module Adamas::MIR
       emit_raw "@.ulong_fmt_no_nl = private constant [4 x i8] c\"%lu\\00\"\n"
       emit_raw "@.float_fmt_no_nl = private constant [3 x i8] c\"%g\\00\"\n"
       emit_raw "@.float_fmt = private constant [4 x i8] c\"%g\\0A\\00\"\n"
-      # bool_to_string constants: Crystal String structs in prelude mode, C strings in no-prelude mode
+      # Bool conversion returns Crystal String objects; direct no-prelude writers keep raw bytes.
       if @no_prelude
+        # Keep raw bytes for direct print helpers and a Crystal String object for String consumers.
         emit_raw "@.str.true = private constant [5 x i8] c\"true\\00\", align 1\n"
         emit_raw "@.str.false = private constant [6 x i8] c\"false\\00\", align 1\n"
+        np_str_tid = TypeRef::STRING.id.to_i32
+        emit_raw "@.bool.true.string = private unnamed_addr constant { i32, i32, i32, [5 x i8] } { i32 #{np_str_tid}, i32 4, i32 4, [5 x i8] c\"true\\00\" }, align 8\n"
+        emit_raw "@.bool.false.string = private unnamed_addr constant { i32, i32, i32, [6 x i8] } { i32 #{np_str_tid}, i32 5, i32 5, [6 x i8] c\"false\\00\" }, align 8\n"
       else
         emit_raw "@.str.true.data = private constant { i64, i32, i32, i32, [5 x i8] } { i64 9223372036854775807, i32 #{@string_type_id}, i32 4, i32 4, [5 x i8] c\"true\\00\" }, align 8\n"
         emit_raw "@.str.true = private unnamed_addr alias i8, getelementptr inbounds (i8, ptr @.str.true.data, i64 8)\n"
@@ -9943,9 +9947,17 @@ module Adamas::MIR
       emit_raw "entry:\n"
       emit_raw "  br i1 %val, label %is_true, label %is_false\n"
       emit_raw "is_true:\n"
-      emit_raw "  ret ptr @.str.true\n"
+      if @no_prelude
+        emit_raw "  ret ptr @.bool.true.string\n"
+      else
+        emit_raw "  ret ptr @.str.true\n"
+      end
       emit_raw "is_false:\n"
-      emit_raw "  ret ptr @.str.false\n"
+      if @no_prelude
+        emit_raw "  ret ptr @.bool.false.string\n"
+      else
+        emit_raw "  ret ptr @.str.false\n"
+      end
       emit_raw "}\n\n"
 
       # ── char_to_string: Char (i32 codepoint) → Crystal String ──

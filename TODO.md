@@ -21635,3 +21635,16 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] The fresh prelude probe run10587 still stops at the known File constructor
   selection error. Full regressions, S1-to-S2, unchanged LavinMQ runtime/spec
   parity and fresh S3/S4 fixed point remain open.
+
+
+### Return String objects from no-prelude Bool conversion (2026-10-21)
+- [x] Separate raw direct-output bytes from Bool#to_s String objects. Converted
+  values now carry the builtin String header, byte count and character count.
+- [x] Original Crystal 1.20.1 and sealed10606 pass both strict original-first
+  programs in run10608: runtime headers match literals for the exercised
+  String producers, and content/size/interpolation/mixed output match exactly.
+  Parent10581 fails the content discriminator with status 11 in run10605.
+- [ ] Qualify full prelude and any other late-emitted String producers
+  separately. The existing prelude File constructor blocker remains open.
+- [ ] Complete unchanged LavinMQ runtime/spec parity, full regressions and a
+  fresh bootstrap fixed point. These two no-prelude programs do not prove them.

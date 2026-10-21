@@ -21041,3 +21041,30 @@ runtime/spec parity is claimed. Evidence: OUT/lavin1058{4,5,6,7}*.frozen_inputs
 receipts under /Users/sergey/Projects/Adamas/sol_help_20261012. Refresh after
 source method registration, receiver identity, inheritance, closure validation
 or HIR-to-MIR intrinsic handling changes. Revert the code and regression together.
+
+
+### No-prelude Bool conversion preserves String object layout (2026-10-21)
+The builtin Bool-to-String helper returned the same raw C-string globals used
+by direct Bool print/puts. String consumers then read text bytes as object
+headers and lengths. Return separate String objects with the builtin String
+type id and both lengths; preserve raw bytes for direct writers. The existing
+full-prelude representation is unchanged.
+
+The suspected type-id disagreement is absent in the exercised producers:
+ordinary no-prelude literals use TypeRef::STRING.id, as do runtime helpers
+emitted before emit_string_constants sets @string_type_id to the later mode
+sentinel zero. The new Bool globals use the same builtin id. The regression
+compares actual runtime headers to literal headers instead of hardcoding ids.
+
+Parent10581 passes integer/character/concat/interpolation header controls but
+fails Bool content with status 11 in run10605. Original Crystal 1.20.1 and
+sealed10606 pass both original-first programs in run10608, including true and
+false through a function parameter and the exact 42-byte mixed writer output.
+Sources, runtime, toolchain and oracle inputs stayed frozen. Scoped adversary
+ROBUST for the exercised no-prelude representation. Other late-emitted String
+producers and full-prelude behavior need their own probes; no complete suite,
+bootstrap or LavinMQ parity claim follows. Evidence: OUT/lavin10605* and
+OUT/lavin10608*.frozen_inputs.receipt.json under
+/Users/sergey/Projects/Adamas/sol_help_20261012. Refresh after String layout,
+runtime-helper emission order, builtin type-id or direct Bool writer changes.
+Revert backend changes and this regression together.
