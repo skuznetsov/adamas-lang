@@ -1,0 +1,1 @@
+(?i)(?=.*(?:no overload matches|cannot call|expected argument|must be))(?=.*\bother\b)(?=.*\bBool\b)(?=.*\bUInt8\b)

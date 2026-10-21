@@ -21457,8 +21457,12 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   Crystal 1.20.1 and sealed Adamas 9516 (run9538); adjacent generated-ivar HIR
   guard passes (run9527). Clean parent 9360 falsely rejects the untyped Nil
   parameter (runs9508/9510 and final-fixture run9539).
-- [ ] Cover process_threaded_macro_branch_in_class with an original-qualified
-  discriminator before adding its missing generated-source recording.
-  Parameter-name fallback is statically bounded; a raw-name-loss runtime
-  discriminator remains useful. Refresh bootstrap and unchanged LavinMQ parity
-  separately; this source-identity regression does not establish them.
+- [x] Record the exact wrapped source before registering definitions from
+  process_threaded_macro_branch_in_class. The untyped-default discriminator
+  passes on original Crystal and fails on parent9516 (run9567); fixed9524 passes
+  the complete repository matrix of eight outputs and five strict rejections
+  (run9572), including overlapping spans in two threaded branch expansions.
+- [ ] Audit other expansion reparse producers, including SymbolCollector, for
+  the same source-ownership boundary. Parameter-name fallback is statically
+  bounded; a raw-name-loss runtime discriminator remains useful. Refresh
+  bootstrap and unchanged LavinMQ parity separately.

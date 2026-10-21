@@ -34294,9 +34294,11 @@ module Adamas::HIR
       output = expander.expand_top_level_text(body_id, owner_type: owner_type, scope: owner_type.try(&.scope))
       return true if output.strip.empty?
 
-      expanded_id = expander.reparse_output(wrap_class_body_macro_output(output), body_id)
+      expanded_source = wrap_class_body_macro_output(output)
+      expanded_id = expander.reparse_output(expanded_source, body_id)
       return true if expanded_id.invalid?
 
+      remember_macro_generated_parameter_sources(expanded_id, @arena, expanded_source)
       expanded_node = @arena[expanded_id]
       return true unless expanded_node.is_a?(Adamas::Compiler::Frontend::ClassNode)
 

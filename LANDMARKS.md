@@ -20681,7 +20681,31 @@ Scoped adversary ROBUST for the tested module/class begin paths: overlap and
 wrong-type probes distinguish source ownership from weakened type admission.
 Refresh after expansion reparsing, Parameter lifetime/identity, annotation/name
 recovery or arena reset changes; revert source and regression together. The
-threaded class macro-branch reparse also lacks producer recording and needs its
-own original-qualified probe. Missing-name recovery has source/static coverage.
+threaded class macro-branch producer is qualified separately below.
+Missing-name recovery has source/static coverage.
 Fresh bootstrap and unchanged LavinMQ runtime/upstream-spec parity remain open.
 No application or stdlib source was changed.
+
+
+### Threaded class macro branches retain parameter source ownership (2026-10-21)
+The selected local-variable macro branch reparsed a wrapped class body without
+recording that buffer before definition registration. A generated untyped Nil
+parameter consequently borrowed String from the ordinary-source comment.
+Reuse the existing arena/Parameter identity map at this producer; branch
+selection, parameter tokens and type admission are unchanged.
+
+Pinned Crystal qualifies the discriminator and parent9516 rejects it (run9567).
+Sealed9524 passes the complete repository regression: eight exact outputs and
+five rc1/no-binary semantic rejections, all original-first (run9572). Two threaded
+expansions with overlapping parameter spans and wrong-type calls guard against
+arena-wide source substitution and weakened type admission. Production HIR is
+byte-identical to sealed9524; the regression bytes match packet9571.
+
+Evidence: /Users/sergey/Projects/Adamas/sol_help_20261012/OUT/
+lavin9567_threaded_untyped_source_parent.frozen_inputs.receipt.json and
+lavin9572_threaded_parameter_repository_final.frozen_inputs.receipt.json.
+Scoped adversary ROBUST for this producer. Refresh after branch reparsing,
+parameter identity/lifetime or raw-slice recovery changes; revert the producer
+change and fixtures together. Other reparse producers, fresh bootstrap and
+unchanged LavinMQ runtime/upstream-spec parity remain open. No application or
+stdlib source was changed.
