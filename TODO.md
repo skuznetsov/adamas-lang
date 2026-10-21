@@ -1,3 +1,14 @@
+2026-10-21 PROC ARROW POINTER PRECEDENCE: resolve a complete A* -> B*
+annotation as a Proc before interpreting a trailing star as an outer pointer.
+Apply the same precedence to ordinary and generic-bound annotations.
+- [x] Clean parent aborts in a Pointer(Proc)#call stub for ordinary and generic
+  arrows (9310); the isolated two-hunk repair passes three native controls and
+  strict Pointer(Proc)-where-Proc rejection against Crystal 1.20.1 (9313).
+- [ ] Repair the independent Proc-to-C callback representation path: the clean
+  C callback wrapper still bus-errors (9293). Ordinary Proc#call is qualified.
+- [ ] Verify unchanged LavinMQ runtime/upstream-spec parity and fresh bootstrap.
+Refresh after annotation resolution, Proc parsing or generic binding changes.
+
 2026-10-21 IMPLICIT-IVAR PARAMETER SOURCE BOUNDARY: stop an unbraced Proc
 input-list scan at a following @parameter. Otherwise a later sibling arrow
 changes the preceding ivar's recovered Int32 annotation into a Proc annotation.

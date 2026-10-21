@@ -24113,7 +24113,7 @@ module Adamas::HIR
         end
         return canonical_bound_type_ref(parts.join(" | "))
       end
-      if name.ends_with?('*')
+      if name.ends_with?('*') && proc_type_argument_names(name).nil?
         inner = name[0, name.bytesize - 1].strip
         inner_ref = bound_annotation_type_ref(inner, owner_name, bindings) || annotation_type_ref(inner, owner_name)
         return nil if inner_ref == TypeRef::VOID
@@ -24197,7 +24197,7 @@ module Adamas::HIR
       if trace_annotation
         STDERR.puts "[ANNOT_TRACE] phase=normalized raw=#{type_name.inspect} owner=#{owner_name || "(nil)"} absolute=#{absolute_annotation ? 1 : 0} normalized=#{resolved_name.inspect} current=#{@current_class || "(nil)"}"
       end
-      if resolved_name.ends_with?('*')
+      if resolved_name.ends_with?('*') && proc_type_argument_names(resolved_name).nil?
         pointer_depth = 0
         base = resolved_name
         while base.ends_with?('*')

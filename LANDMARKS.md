@@ -1,3 +1,26 @@
+### Complete Proc arrows precede trailing pointer syntax (2026-10-21)
+Both ordinary and generic-bound annotation resolvers peeled the final star from
+A* -> B* before parsing the complete Proc arrow. This produced an outer
+Pointer(Proc(...)) and later attempted Pointer(Proc)#call. Consult the existing
+Proc parser before taking either pointer-suffix branch; explicit Pointer(Proc)
+syntax retains its distinct type and storage.
+
+Frozen original-first run9310 confirms clean-parent ordinary and generic calls
+abort in Pointer(Proc)#call stubs. Isolated source9274 builds successfully and
+passes portable proc_arrow_pointer_annotation_repro.sh in run9313: ordinary
+and generic pointer input/result calls, invocation through an actual Proc slot,
+and strict rejection of an outer pointer where a Proc is required (exit 1,
+first semantic diagnostic, no executable). All native runs use run_safe.sh.
+Source manifest SHA256
+47f96b443c3a7e6a8661c69a5a913420f3199b0ef2c01e0b9be7b1e6dc79d6cd;
+host SHA256 5ba16d9eda29945a4747e84701d3718b02f558a621f07944e4f91f233829c0c4.
+Scoped adversary ROBUST for annotation precedence and Proc/Pointer(Proc)
+separation. This does not establish C callback conversion: the clean source's
+C wrapper compiles but bus-errors in run9293, a separate open representation
+bug. No stdlib or application changes. Fresh bootstrap and pristine LavinMQ
+runtime/upstream parity remain open. Refresh after annotation resolution,
+Proc parsing or generic binding changes; revert source and regression together.
+
 ### Implicit-ivar parameters delimit recovered source annotations (2026-10-21)
 source_ivar_param_shape_from_source used the generic comma splitter, whose
 Proc-arrow lookahead crossed the next @parameter. A signature such as
