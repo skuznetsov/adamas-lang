@@ -1,0 +1,9 @@
+class FirstRegisteredParent
+end
+class SecondRegisteredParent
+end
+class ReopenedWithDifferentParent < FirstRegisteredParent
+end
+class ReopenedWithDifferentParent < SecondRegisteredParent
+end
+

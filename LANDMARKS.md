@@ -20900,3 +20900,38 @@ identity and generated cross-arena declarations are not covered by this verdict.
 Refresh after class registration, superclass resolution, generic template kind
 or arena ownership changes; revert the frame/validation and regression together.
 Unchanged LavinMQ runtime/spec parity and fresh S3/S4 bootstrap remain open.
+
+
+### Source-order superclass authority replaces dependency postorder (2026-10-21)
+The earlier active-enclosing-parent result covered its fixtures, but its statement
+that forward parents still fail was too broad. Later original-first counterexamples
+showed that pre-scan inventories could authorize future parent names. Whole-file
+dependency postorder also visited required children before parent declarations
+that Crystal had already seen at the require. A separate module prepass could
+likewise move qualified classes before an earlier plain class.
+
+Source-order ParsedUnit slices retain the original arena/ExprIds and a reference
+to the complete file for unique diagnostic and semantic consumption. Handler-free
+top-level begin nodes expose their original ordered children. Class and module
+registration share one ordered stream. Explicit parents use exact registered
+declarations, generic templates, or active enclosing declarations, never the
+all-source inventory. Reopenings retain canonical superclass identity. Exact
+self-aliases are identities; real alias cycles provide no parent authority.
+
+Top-level macro-for iterable forms that the raw-text path does not recognize now
+use the existing semantic expander, with the call-owned source node and arena,
+strict generated diagnostics, and an owned parsed expansion. This prevents silently
+dropping generated declarations needed by the same ordered registration stream.
+
+Original Crystal 1.20.1 and sealed10380 pass the 31 source-order controls in
+run10382 (22 exact-output positives, nine primary semantic rc1/no-executable
+negatives), and six inherited-behavior macro controls in run10447. Scoped adversary:
+ROBUST for these exercised require, arena, parent, reopening, and generated-node
+boundaries. Predeclared builtin metadata, the early top-level alias prepass, full
+prelude, full regressions, and bootstrap are separate open obligations.
+Evidence: OUT/lavin10382_source_order_full_contract.frozen_inputs.receipt.json
+and OUT/lavin10447_source_order_macro_fallback.frozen_inputs.receipt.json under
+/Users/sergey/Projects/Adamas/sol_help_20261012.
+Refresh after require traversal, declaration registration, macro expansion, or
+arena ownership changes. Revert code and its regression fixtures together.
+Unchanged LavinMQ runtime/spec parity and fresh S3/S4 equality remain open.

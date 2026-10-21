@@ -21561,3 +21561,19 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   (run10196); investigate that declaration-order path. Inherited struct field
   layout and superclass aliases/reopenings need separate controls.
 - [ ] Unchanged LavinMQ runtime/spec parity and fresh bootstrap remain open.
+
+
+### Preserve source-ordered superclass authority (2026-10-21)
+- [x] Visit required files at their source require, retaining prior declarations,
+  original node/arena ownership, and one complete unit for semantic diagnostics.
+- [x] Keep transparent top-level begin children and class/module registration in
+  source order. Check parents against registered declarations, canonical aliases,
+  or exact active enclosing declarations; retain strict future-parent rejection.
+- [x] Expand unsupported top-level macro-for iterables with the existing semantic
+  expander and retain its diagnostics and generated source ownership.
+- [x] Original Crystal 1.20.1 and sealed10380 pass 22 exact-output positives and
+  nine strict semantic rejection controls (run10382), plus six inherited-behavior
+  macro controls (run10447).
+- [ ] Compiler-predeclared parent metadata and the separate early alias pass need
+  their own repairs. Full prelude, full regression suite, S1-to-S2, unchanged
+  LavinMQ parity, and fresh S3/S4 fixed point remain open.

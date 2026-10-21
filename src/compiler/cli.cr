@@ -134,13 +134,17 @@ module Adamas
         getter path : String
         getter source : String
         getter parse_diagnostics : Array(Frontend::Diagnostic)
+        # Source-order slices share the original arena and complete parse unit.
+        # Semantic reparsing and parser diagnostics still consume one whole file.
+        getter source_unit : ParsedUnit?
 
         def initialize(
           @arena : Frontend::AstArena,
           @roots : Array(Frontend::ExprId),
           @path : String,
           @source : String,
-          @parse_diagnostics : Array(Frontend::Diagnostic) = [] of Frontend::Diagnostic
+          @parse_diagnostics : Array(Frontend::Diagnostic) = [] of Frontend::Diagnostic,
+          @source_unit : ParsedUnit? = nil,
         )
         end
       end
@@ -1750,7 +1754,10 @@ module Adamas
         # A recovered prefix is not a successful translation unit. Preserve
         # parser errors before any semantic/lowering path can consume its roots.
         parser_errors = false
-        all_arenas.each do |unit|
+        diagnostic_arenas = Set(UInt64).new
+        all_arenas.each do |slice|
+          unit = slice.source_unit || slice
+          next unless diagnostic_arenas.add?(unit.arena.object_id.to_u64)
           unit.parse_diagnostics.each do |diagnostic|
             err_io.puts Frontend::DiagnosticFormatter.format(unit.source, diagnostic)
             parser_errors = true
@@ -2039,6 +2046,12 @@ module Adamas
         def_nodes = [] of Tuple(Frontend::DefNode, Frontend::ArenaLike)
         class_nodes = [] of Tuple(Frontend::ClassNode, Frontend::ArenaLike)
         module_nodes = [] of Tuple(Frontend::ModuleNode, Frontend::ArenaLike)
+        # Preserve declaration order across both node kinds. Qualified class
+        # declarations use ModuleNode scaffolds and must not leap ahead of an
+        # earlier ClassNode that declares their superclass. The kind/index
+        # pairs refer to the existing node/arena inventories without copying
+        # AST nodes or merging their concrete node types.
+        ordered_type_nodes = [] of Tuple(Frontend::NodeKind, Int32)
         enum_nodes = [] of Tuple(Frontend::EnumNode, Frontend::ArenaLike)
         macro_nodes = [] of MacroEntry
         alias_nodes = [] of Tuple(Frontend::AliasNode, Frontend::ArenaLike)
@@ -2091,7 +2104,8 @@ module Adamas
               0,
               true,
               paths_by_arena,
-              main_arenas: main_arenas
+              main_arenas: main_arenas,
+              ordered_type_nodes: ordered_type_nodes
               )
               expr_i += 1
             end
@@ -2444,82 +2458,76 @@ module Adamas
         end
         bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_scoped_macro_prescan"; STDERR.flush
 
-        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_before_log_modules modules=#{module_nodes.size}"; STDERR.flush
         log(options, out_io, "    Modules: #{module_nodes.size}")
-        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_log_modules modules=#{module_nodes.size}"; STDERR.flush
+        log(options, out_io, "    Classes: #{class_nodes.size}")
         module_count = module_nodes.size
-        stage2_debug("[STAGE2_DEBUG] module register start count=#{module_count}", err_io)
+        class_count = class_nodes.size
+        stage2_debug("[STAGE2_DEBUG] source-ordered type register start count=#{ordered_type_nodes.size}", err_io)
         reg_type_profile = BootstrapEnv.enabled?("ADAMAS_REG_TYPE_PROFILE")
-        i = 0
-        while i < module_count
-          bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_module_before_fetch idx=#{i}"; STDERR.flush
-          n, a = module_nodes.unsafe_fetch(i)
-          module_path = paths_by_arena[a.object_id.to_u64]? || "(unknown)"
-          bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_module_after_fetch idx=#{i} path=#{module_path}"; STDERR.flush
-          if i < 3 || (i % 50 == 0) || i == module_count - 1
-            stage2_debug("[STAGE2_DEBUG] module register idx=#{i + 1}/#{module_count}", err_io)
+        module_reg_ms = 0.0
+        class_reg_ms = 0.0
+        type_i = 0
+        while type_i < ordered_type_nodes.size
+          kind, i = ordered_type_nodes.unsafe_fetch(type_i)
+          case kind
+          when Frontend::NodeKind::Module
+            n, a = module_nodes.unsafe_fetch(i)
+            bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_module_before_fetch idx=#{i}"; STDERR.flush
+            module_path = paths_by_arena[a.object_id.to_u64]? || "(unknown)"
+            bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_module_after_fetch idx=#{i} path=#{module_path}"; STDERR.flush
+            if i < 3 || (i % 50 == 0) || i == module_count - 1
+              stage2_debug("[STAGE2_DEBUG] module register idx=#{i + 1}/#{module_count}", err_io)
+            end
+            hir_converter.arena = a
+            bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_module_before_name idx=#{i}"; STDERR.flush
+            module_name = String.new(n.name)
+            bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_module_after_name idx=#{i} name=#{module_name}"; STDERR.flush
+            if options.progress && env_enabled?("ADAMAS_PROGRESS_MODULE_NAMES")
+              bootstrap_trace_puts "\n    Module #{i + 1}/#{module_nodes.size}: #{module_name}"
+            end
+            reg_t0 = Time.instant if reg_type_profile || debug_profile
+            bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_module_before_register idx=#{i}"; STDERR.flush
+            hir_converter.register_module(n)
+            bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_module_after_register idx=#{i}"; STDERR.flush
+            if reg_type_profile || debug_profile
+              ms = (Time.instant - reg_t0.not_nil!).total_milliseconds
+              module_reg_ms += ms
+              bootstrap_trace_puts "[REG_TYPE] module #{module_name} #{ms.round(1)}ms" if reg_type_profile && ms > 5.0
+            end
+            if options.progress && (i % 10 == 0 || i == module_nodes.size - 1)
+              STDERR.print "\r    Registered module #{i + 1}/#{module_nodes.size}"
+            end
+          when Frontend::NodeKind::Class
+            n, a = class_nodes.unsafe_fetch(i)
+            if i < 3 || (i % 50 == 0) || i == class_count - 1
+              stage2_debug("[STAGE2_DEBUG] class register idx=#{i + 1}/#{class_count}", err_io)
+            end
+            class_path = paths_by_arena[a.object_id.to_u64]? || "(unknown)"
+            trace_single_class_state("pass1_class_before_register", class_path, a, n)
+            hir_converter.arena = a
+            reg_t0 = Time.instant if reg_type_profile || debug_profile
+            hir_converter.register_class(n)
+            if reg_type_profile || debug_profile
+              ms = (Time.instant - reg_t0.not_nil!).total_milliseconds
+              class_reg_ms += ms
+              bootstrap_trace_puts "[REG_TYPE] class #{String.new(n.name)} #{ms.round(1)}ms" if reg_type_profile && ms > 5.0
+            end
+            STDERR.print "\r    Registered class #{i+1}/#{class_nodes.size}" if options.progress && (i % 10 == 0 || i == class_nodes.size - 1)
+          else
+            raise "invalid class/module registration kind: #{kind}"
           end
-          hir_converter.arena = a
-          bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_module_before_name idx=#{i}"; STDERR.flush
-          module_name = String.new(n.name)
-          bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_module_after_name idx=#{i} name=#{module_name}"; STDERR.flush
-          if options.progress && env_enabled?("ADAMAS_PROGRESS_MODULE_NAMES")
-            bootstrap_trace_puts "\n    Module #{i + 1}/#{module_nodes.size}: #{module_name}"
-          end
-          reg_t0 = Time.instant if reg_type_profile
-          bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_module_before_register idx=#{i}"; STDERR.flush
-          hir_converter.register_module(n)
-          bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_module_after_register idx=#{i}"; STDERR.flush
-          if reg_type_profile
-            ms = (Time.instant - reg_t0.not_nil!).total_milliseconds
-            bootstrap_trace_puts "[REG_TYPE] module #{module_name} #{ms.round(1)}ms" if ms > 5.0
-          end
-          if options.progress && (i % 10 == 0 || i == module_nodes.size - 1)
-            STDERR.print "\r    Registered module #{i + 1}/#{module_nodes.size}"
-          end
-          i += 1
+          type_i += 1
         end
         bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_module_loop"; STDERR.flush
-        stage2_debug("[STAGE2_DEBUG] module register done", err_io)
-        if debug_profile
-          timings["dbg_ms_hir_reg_modules"] = (Time.instant - hir_phase_start.not_nil!).total_milliseconds
-          hir_phase_start = Time.instant
-        end
-        if const_map_trace
-          bootstrap_trace_puts "[CONST_MAP] phase=module_register_done literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
-        end
-        bootstrap_trace_puts if options.progress
-        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_before_log_classes classes=#{class_nodes.size}"; STDERR.flush
-        log(options, out_io, "    Classes: #{class_nodes.size}")
-        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_log_classes classes=#{class_nodes.size}"; STDERR.flush
-        class_count = class_nodes.size
-        stage2_debug("[STAGE2_DEBUG] class register start count=#{class_count}", err_io)
-        i = 0
-        while i < class_count
-          n, a = class_nodes.unsafe_fetch(i)
-          if i < 3 || (i % 50 == 0) || i == class_count - 1
-            stage2_debug("[STAGE2_DEBUG] class register idx=#{i + 1}/#{class_count}", err_io)
-          end
-          class_path = paths_by_arena[a.object_id.to_u64]? || "(unknown)"
-          trace_single_class_state("pass1_class_before_register", class_path, a, n)
-          hir_converter.arena = a
-          reg_t0 = Time.instant if reg_type_profile
-          hir_converter.register_class(n)
-          if reg_type_profile
-            ms = (Time.instant - reg_t0.not_nil!).total_milliseconds
-            bootstrap_trace_puts "[REG_TYPE] class #{String.new(n.name)} #{ms.round(1)}ms" if ms > 5.0
-          end
-          STDERR.print "\r    Registered class #{i+1}/#{class_nodes.size}" if options.progress && (i % 10 == 0 || i == class_nodes.size - 1)
-          i += 1
-        end
         bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_class_loop"; STDERR.flush
-        stage2_debug("[STAGE2_DEBUG] class register done", err_io)
+        stage2_debug("[STAGE2_DEBUG] source-ordered type register done", err_io)
         if debug_profile
-          timings["dbg_ms_hir_reg_classes"] = (Time.instant - hir_phase_start.not_nil!).total_milliseconds
+          timings["dbg_ms_hir_reg_modules"] = module_reg_ms
+          timings["dbg_ms_hir_reg_classes"] = class_reg_ms
           hir_phase_start = Time.instant
         end
         if const_map_trace
-          bootstrap_trace_puts "[CONST_MAP] phase=class_register_done literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
+          bootstrap_trace_puts "[CONST_MAP] phase=class_module_register_done literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
         end
         bootstrap_trace_puts if options.progress
 
@@ -4520,14 +4528,15 @@ module Adamas
         end
 
         bootstrap_trace_puts "[S2_PARSE] processing requires"; STDERR.flush
-        # Process requires first
         base_dir = safe_dirname(abs_path)
         requires = [] of String
-        # V2 stage2: require scanning is isolated into its own helper to shrink
-        # the live recursive frame in parse_file_recursive before self-hosted
-        # bootstraps walk large prelude graphs.
-        scan_requires_from_exprs(arena, exprs, source, base_dir, input_base_dir, options, out_io, requires)
-        parse_required_files(requires, 0, results, loaded, input_file, input_base_dir, options, out_io)
+        source_unit = ParsedUnit.new(arena, exprs, abs_path, source, parse_diagnostics)
+        # A required file is visited at its require, after earlier declarations
+        # in this file. Whole-file dependency postorder reverses that authority.
+        tail_roots = parse_source_ordered_requires(
+          source_unit, results, loaded, input_file, input_base_dir,
+          options, out_io, requires,
+        )
         if @parse_trace
           bootstrap_trace_puts "[REQSCAN_DONE] #{abs_path} reqs=#{requires.size}"
         end
@@ -4584,7 +4593,7 @@ module Adamas
           end
         end
 
-        results << ParsedUnit.new(arena, exprs, abs_path, source, parse_diagnostics)
+        results << ParsedUnit.new(arena, tail_roots, abs_path, source, source_unit: source_unit)
         debug_cli_root_block_state("parse_file_recursive_after_append", arena, exprs)
         trace_parsed_class_state("parse_file_recursive_after_append", abs_path, arena, exprs)
         if debug_parse
@@ -4838,6 +4847,58 @@ module Adamas
           end
           expr_i += 1
         end
+      end
+
+      # Preserve root order without copying AST nodes across parser arenas.
+      # Each slice contains original ExprIds; the complete unit remains available
+      # for diagnostics and the optional semantic/shadow paths.
+      private def parse_source_ordered_requires(
+        unit : ParsedUnit,
+        results : Array(ParsedUnit),
+        loaded : Set(String),
+        input_file : String,
+        input_base_dir : String,
+        options : Options,
+        out_io : IO,
+        requires : Array(String),
+      ) : Array(Frontend::ExprId)
+        pending = [] of Frontend::ExprId
+        base_dir = safe_dirname(unit.path)
+        roots = source_ordered_require_roots(unit.roots, unit.arena)
+        root_i = 0
+        while root_i < roots.size
+          expr_id = roots.unsafe_fetch(root_i)
+          node_requires = [] of String
+          process_require_node(unit.arena, expr_id, unit.source, base_dir, input_base_dir, options, out_io, node_requires)
+          unless node_requires.empty?
+            unless pending.empty?
+              results << ParsedUnit.new(unit.arena, pending, unit.path, unit.source, source_unit: unit)
+              pending = [] of Frontend::ExprId
+            end
+            requires.concat(node_requires)
+            parse_required_files(node_requires, 0, results, loaded, input_file, input_base_dir, options, out_io)
+          end
+          pending << expr_id
+          root_i += 1
+        end
+        pending
+      end
+
+      # A handler-free begin adds no top-level scope or control effect. Its
+      # original children must reach declaration collection and require traversal
+      # in the same order. Retain the complete AST for diagnostics/semantic paths.
+      private def source_ordered_require_roots(roots : Array(Frontend::ExprId), arena : Frontend::AstArena) : Array(Frontend::ExprId)
+        flattened : Array(Frontend::ExprId)? = nil
+        roots.each_with_index do |expr_id, index|
+          node = arena[expr_id]
+          if node.is_a?(Frontend::BeginNode) && node.rescue_clauses.nil? && node.else_body.nil? && node.ensure_body.nil?
+            flattened ||= roots[0...index]
+            flattened.not_nil!.concat(source_ordered_require_roots(node.body, arena))
+          elsif flattened
+            flattened << expr_id
+          end
+        end
+        flattened || roots
       end
 
       private def parse_required_files(
@@ -5172,7 +5233,8 @@ module Adamas
         depth : Int32 = 0,
         collect_main_exprs : Bool = true,
         paths_by_arena : Hash(UInt64, String)? = nil,
-        main_arenas : Array(Frontend::ArenaLike)? = nil
+        main_arenas : Array(Frontend::ArenaLike)? = nil,
+        ordered_type_nodes : Array(Tuple(Frontend::NodeKind, Int32))? = nil
       ) : Nil
         return if depth > 4
         packed_arena_index = ensure_main_arena_index(arena, main_arenas) || arena_index
@@ -5219,10 +5281,12 @@ module Adamas
           top_level_type_names.add(name)
           top_level_class_kinds[name] = node.is_struct == true
           class_nodes << {node, arena}
+          ordered_type_nodes << {Frontend::NodeKind::Class, class_nodes.size - 1} if ordered_type_nodes
           pending_annotations.clear
         when Frontend::ModuleNode
           top_level_type_names.add(String.new(node.name))
           module_nodes << {node, arena}
+          ordered_type_nodes << {Frontend::NodeKind::Module, module_nodes.size - 1} if ordered_type_nodes
           pending_annotations.clear
         when Frontend::EnumNode
           top_level_type_names.add(String.new(node.name))
@@ -5252,7 +5316,7 @@ module Adamas
         when Frontend::MacroExpressionNode
           # Statement-position `{% expr %}` (output=false) is compile-time only; it emits no runtime code.
           if node.output
-            collect_top_level_nodes(arena, arena_index, node.expression, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena, main_arenas: main_arenas)
+            collect_top_level_nodes(arena, arena_index, node.expression, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena, main_arenas: main_arenas, ordered_type_nodes: ordered_type_nodes)
           elsif collect_main_exprs && macro_statement_may_raise?(arena, node.expression)
             # A top-level `{% raise ... %}` must still abort compilation. Lowering
             # a statement macro runs its compile-time effects and emits only nil,
@@ -5263,7 +5327,7 @@ module Adamas
           unless node.expression.null_ptr? || node.expression.invalid?
             validate_top_level_visibility_modifier!(node, arena[node.expression], arena)
           end
-          collect_top_level_nodes(arena, arena_index, node.expression, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena, main_arenas: main_arenas)
+          collect_top_level_nodes(arena, arena_index, node.expression, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena, main_arenas: main_arenas, ordered_type_nodes: ordered_type_nodes)
         when Frontend::MacroIfNode
           condition = evaluate_macro_condition(arena, node.condition, flags)
           if condition.nil?
@@ -5289,10 +5353,10 @@ module Adamas
           # MacroLiteralNode which the collector will expand correctly.
           unless condition.nil?
             if condition == true
-              collect_top_level_nodes(arena, arena_index, node.then_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena, main_arenas: main_arenas)
+              collect_top_level_nodes(arena, arena_index, node.then_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena, main_arenas: main_arenas, ordered_type_nodes: ordered_type_nodes)
             else
               if else_body = node.else_body
-                collect_top_level_nodes(arena, arena_index, else_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena, main_arenas: main_arenas)
+                collect_top_level_nodes(arena, arena_index, else_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena, main_arenas: main_arenas, ordered_type_nodes: ordered_type_nodes)
               end
             end
             return  # Skip raw-text and fallback paths
@@ -5331,7 +5395,7 @@ module Adamas
                       end
                     end
                     program.roots.each do |inner_id|
-                      collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, sanitized, macro_origin_path, depth + 1, collect_main_exprs && !valid_roots.nil?, paths_by_arena, main_arenas: main_arenas)
+                      collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, sanitized, macro_origin_path, depth + 1, collect_main_exprs && !valid_roots.nil?, paths_by_arena, main_arenas: main_arenas, ordered_type_nodes: ordered_type_nodes)
                     end
                     return
                   end
@@ -5362,7 +5426,7 @@ module Adamas
                     end
                   end
                   program.roots.each do |inner_id|
-                    collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, sanitized, macro_origin_path, depth + 1, collect_main_exprs && !valid_roots.nil?, paths_by_arena, main_arenas: main_arenas)
+                    collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, sanitized, macro_origin_path, depth + 1, collect_main_exprs && !valid_roots.nil?, paths_by_arena, main_arenas: main_arenas, ordered_type_nodes: ordered_type_nodes)
                   end
                 end
               end
@@ -5380,15 +5444,15 @@ module Adamas
               then_node = arena[node.then_body]
               bootstrap_trace_puts "[DEBUG_MACRO_EXPAND] MacroIfNode then_body type=#{then_node.class}"
             end
-            collect_top_level_nodes(arena, arena_index, node.then_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena, main_arenas: main_arenas)
+            collect_top_level_nodes(arena, arena_index, node.then_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena, main_arenas: main_arenas, ordered_type_nodes: ordered_type_nodes)
           elsif condition == false
             if else_body = node.else_body
-              collect_top_level_nodes(arena, arena_index, else_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena, main_arenas: main_arenas)
+              collect_top_level_nodes(arena, arena_index, else_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena, main_arenas: main_arenas, ordered_type_nodes: ordered_type_nodes)
             end
           else
-            collect_top_level_nodes(arena, arena_index, node.then_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena, main_arenas: main_arenas)
+            collect_top_level_nodes(arena, arena_index, node.then_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena, main_arenas: main_arenas, ordered_type_nodes: ordered_type_nodes)
             if else_body = node.else_body
-              collect_top_level_nodes(arena, arena_index, else_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena, main_arenas: main_arenas)
+              collect_top_level_nodes(arena, arena_index, else_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena, main_arenas: main_arenas, ordered_type_nodes: ordered_type_nodes)
             end
           end
         when Frontend::MacroLiteralNode
@@ -5414,7 +5478,7 @@ module Adamas
                     end
                   end
                   program.roots.each do |inner_id|
-                    collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, exp_source, macro_origin_path, depth + 1, collect_main_exprs && !valid_roots.nil?, paths_by_arena, main_arenas: main_arenas)
+                    collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, exp_source, macro_origin_path, depth + 1, collect_main_exprs && !valid_roots.nil?, paths_by_arena, main_arenas: main_arenas, ordered_type_nodes: ordered_type_nodes)
                   end
                   return
                 end
@@ -5435,7 +5499,7 @@ module Adamas
                     end
                   end
                   program.roots.each do |inner_id|
-                    collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, exp_source, macro_origin_path, depth + 1, collect_main_exprs, paths_by_arena, main_arenas: main_arenas)
+                    collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, exp_source, macro_origin_path, depth + 1, collect_main_exprs, paths_by_arena, main_arenas: main_arenas, ordered_type_nodes: ordered_type_nodes)
                   end
                 end
               end
@@ -5455,13 +5519,13 @@ module Adamas
                   end
                 end
                 program.roots.each do |inner_id|
-                  collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, sanitized, macro_origin_path, depth + 1, collect_main_exprs && !valid_roots.nil?, paths_by_arena, main_arenas: main_arenas)
+                  collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, sanitized, macro_origin_path, depth + 1, collect_main_exprs && !valid_roots.nil?, paths_by_arena, main_arenas: main_arenas, ordered_type_nodes: ordered_type_nodes)
                 end
               end
             end
           end
         when Frontend::MacroForNode
-          expand_top_level_macro_for(node, arena, arena_index, source, macro_origin_path, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, depth, paths_by_arena, collect_main_exprs: collect_main_exprs, main_arenas: main_arenas)
+          expand_top_level_macro_for(expr_id, node, arena, arena_index, source, macro_origin_path, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, depth, paths_by_arena, collect_main_exprs: collect_main_exprs, main_arenas: main_arenas, ordered_type_nodes: ordered_type_nodes)
         when Frontend::AssignNode
           target = arena[node.target]
           constant_target = target.is_a?(Frontend::ConstantNode) ||
@@ -5578,6 +5642,7 @@ module Adamas
 
       # Expand a top-level {% for %} macro loop (e.g., in primitives.cr)
       private def expand_top_level_macro_for(
+        expr_id : Frontend::ExprId,
         node : Frontend::MacroForNode,
         arena : Frontend::ArenaLike,
         arena_index : Int32,
@@ -5601,7 +5666,8 @@ module Adamas
         depth : Int32,
         paths_by_arena : Hash(UInt64, String)? = nil,
         collect_main_exprs : Bool = true,
-        main_arenas : Array(Frontend::ArenaLike)? = nil
+        main_arenas : Array(Frontend::ArenaLike)? = nil,
+        ordered_type_nodes : Array(Tuple(Frontend::NodeKind, Int32))? = nil
       ) : Nil
         return if depth > 3
 
@@ -5613,29 +5679,44 @@ module Adamas
         body_text = extract_span_text(body_node.span, source)
         return unless body_text
 
-        # Resolve iterable to list of string values
+        # Preserve the established raw-text handling for word lists and tracked
+        # macro variables. Other iterable forms use the semantic expander so
+        # array/range/collection expressions and interpolation share one evaluator.
         values = resolve_top_level_macro_iterable(arena, node.iterable, source)
-        return unless values
+        expanded = if values
+                     if env_enabled?("DEBUG_MACRO_FOR")
+                       bootstrap_trace_puts "[DEBUG_MACRO_FOR] expand_top_level_macro_for: var=#{iter_vars.first} values=#{values.size} body_size=#{body_text.size}"
+                     end
 
-        if env_enabled?("DEBUG_MACRO_FOR")
-          bootstrap_trace_puts "[DEBUG_MACRO_FOR] expand_top_level_macro_for: var=#{iter_vars.first} values=#{values.size} body_size=#{body_text.size}"
-        end
-
-        # Expand body for each value
-        expanded = String.build do |io|
-          values.each do |value|
-            text = body_text
-            if iter_vars.size == 1
-              var_name = iter_vars[0]
-              text = text.gsub("{{#{var_name}.id}}", value)
-              text = text.gsub("{{ #{var_name}.id }}", value)
-              text = text.gsub("{{#{var_name}}}", value)
-              text = text.gsub("{{ #{var_name} }}", value)
-            end
-            io << text
-            io << "\n"
-          end
-        end
+                     String.build do |io|
+                       values.each do |value|
+                         text = body_text
+                         if iter_vars.size == 1
+                           var_name = iter_vars[0]
+                           text = text.gsub("{{#{var_name}.id}}", value)
+                           text = text.gsub("{{ #{var_name}.id }}", value)
+                           text = text.gsub("{{#{var_name}}}", value)
+                           text = text.gsub("{{ #{var_name} }}", value)
+                         end
+                         io << text
+                         io << "\n"
+                       end
+                     end
+                   else
+                     dummy_program = Frontend::Program.new(arena, [] of Frontend::ExprId)
+                     expander = Semantic::MacroExpander.new(
+                       dummy_program, arena, flags,
+                       recovery_mode: true,
+                       macro_source: source,
+                       macro_source_path: macro_origin_path
+                     )
+                     text = expander.expand_top_level_text(expr_id)
+                     if diagnostic = expander.diagnostics.find { |entry| entry.level == Semantic::DiagnosticLevel::Error }
+                       formatted = Semantic::DiagnosticFormatter.format(source, diagnostic)
+                       raise HIR::LoweringError.new("invalid generated macro expansion:\n#{formatted}")
+                     end
+                     text
+                   end
 
         return if expanded.strip.empty?
 
@@ -5649,7 +5730,7 @@ module Adamas
             end
           end
           program.roots.each do |inner_id|
-            collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, exp_source, macro_origin_path, depth + 1, collect_main_exprs, paths_by_arena, main_arenas: main_arenas)
+            collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, exp_source, macro_origin_path, depth + 1, collect_main_exprs, paths_by_arena, main_arenas: main_arenas, ordered_type_nodes: ordered_type_nodes)
           end
         end
       end
@@ -7674,7 +7755,10 @@ module Adamas
       private def active_semantic_units(units : Array(ParsedUnit)) : Array(ParsedUnit)
         flags = compilation_flags
         active_units = [] of ParsedUnit
-        units.each do |unit|
+        seen_arenas = Set(UInt64).new
+        units.each do |slice|
+          unit = slice.source_unit || slice
+          next unless seen_arenas.add?(unit.arena.object_id.to_u64)
           next if skip_file_directive?(unit.source, flags)
           active_units << unit
         end

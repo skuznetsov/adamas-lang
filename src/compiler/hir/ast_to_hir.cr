@@ -36409,6 +36409,45 @@ module Adamas::HIR
       end
     end
 
+    # Resolve only aliases that are already registered under their exact
+    # canonical key. Superclass authority must not depend on the broader
+    # suffix/inventory fallbacks used by ordinary type lookup.
+    private def resolve_registered_superclass_alias(name : String) : String?
+      current = name
+      seen = Set(String).new
+      while target = @type_aliases[current]?
+        # Class registration uses exact self-aliases as canonical identities.
+        return current if target == current
+        return nil if seen.includes?(current)
+        seen << current
+        current = target
+      end
+      current
+    end
+
+    # Source inventories support forward references in method bodies, but they
+    # do not prove that an explicit superclass declaration has already been
+    # registered. Keep this check on the class-registration path so ordinary
+    # type lookup retains its existing forward-reference behavior.
+    private def explicit_superclass_declared?(
+      child_name : String,
+      parent_name : String,
+      child_is_struct : Bool,
+      child_is_union : Bool,
+    ) : Bool
+      return true if @class_info.has_key?(parent_name)
+      return true if @generic_templates.has_key?(parent_name)
+      if generic = split_generic_base_and_args(parent_name)
+        return true if @generic_templates.has_key?(generic.base)
+      end
+      return true if active_enclosing_class_parent?(child_name, parent_name, child_is_struct, child_is_union)
+
+      # These compiler-known roots exist without a source declaration. Do not
+      # use the pre-scan name inventory here: it also contains future source
+      # declarations and aliases.
+      parent_name == "Object" || !builtin_hierarchy_parent(parent_name).nil?
+    end
+
     private def pop_active_class_declaration_frame(frame : ActiveClassDeclarationFrame) : Nil
       popped = @active_class_declaration_frames.pop?
       unless popped && popped.node.same?(frame.node) && popped.arena.same?(frame.arena) &&
@@ -36804,42 +36843,64 @@ module Adamas::HIR
         offset = existing_info.size
       end
 
-      # Inheritance: copy parent ivars first (to preserve layout)
-      # Only do this for new class definitions, not reopened classes
+      # An explicit superclass is authorized only by a source declaration that
+      # has already been registered, an exact active enclosing declaration, or
+      # a compiler-known builtin root. Pre-scan inventories are for ordinary
+      # forward type references and must not authorize inheritance.
       parent_name : String? = nil
-      if !existing_info && (super_name_slice = node.super_name) && safe_slice_to_string(super_name_slice)
-        raw_parent = (safe_slice_to_string(super_name_slice) || "")
-        if filter = env_get("DEBUG_CLASS_PARENT_TRACE")
-          if filter == "*" || class_name.includes?(filter) || raw_parent.includes?(filter)
-            STDERR.puts "[CLASS_PARENT_TRACE] phase=before class=#{class_name} raw_parent=#{raw_parent}"
+      if super_name_slice = node.super_name
+        if raw_parent = safe_slice_to_string(super_name_slice)
+          if filter = env_get("DEBUG_CLASS_PARENT_TRACE")
+            if filter == "*" || class_name.includes?(filter) || raw_parent.includes?(filter)
+              STDERR.puts "[CLASS_PARENT_TRACE] phase=before class=#{class_name} raw_parent=#{raw_parent}"
+            end
           end
-        end
-        old_class = @current_class
-        @current_class = class_name
-        parent_name = resolve_type_name_in_context(raw_parent)
-        @current_class = old_class
-        if resolved_parent = parent_name
+          old_class = @current_class
+          @current_class = class_name
+          resolved_parent = resolve_type_name_in_context(raw_parent)
+          @current_class = old_class
+          unless resolved_parent
+            raise LoweringError.new("undefined constant #{raw_parent}", node)
+          end
+          resolved_parent = resolve_registered_superclass_alias(resolved_parent)
+          unless resolved_parent
+            raise LoweringError.new("undefined constant #{raw_parent}", node)
+          end
           validate_explicit_superclass_kind(node, class_name, resolved_parent, is_struct)
-          # A resolved spelling is not proof that its superclass was declared.
-          # Reject missing simple paths before layout can retain a phantom owner.
-          if materializable_unknown_named_type?(resolved_parent) && !type_name_exists?(resolved_parent) &&
-             !active_enclosing_class_parent?(class_name, resolved_parent, is_struct, node.is_union == true)
+          unless explicit_superclass_declared?(class_name, resolved_parent, is_struct, node.is_union == true)
             raise LoweringError.new("undefined constant #{resolved_parent}", node)
           end
-          parent_name = materialize_generic_parent_for_layout(resolved_parent)
-        end
-        if filter = env_get("DEBUG_CLASS_PARENT_TRACE")
-          if filter == "*" || class_name.includes?(filter) || raw_parent.includes?(filter)
-            STDERR.puts "[CLASS_PARENT_TRACE] phase=after class=#{class_name} raw_parent=#{raw_parent} resolved=#{parent_name || "nil"}"
+
+          if existing_info
+            existing_parent = existing_info.parent_name || builtin_parent_for(class_name, is_struct)
+            if existing_parent
+              existing_parent = resolve_registered_superclass_alias(existing_parent)
+            end
+            unless existing_parent == resolved_parent
+              raise LoweringError.new("superclass mismatch: #{class_name} was declared with #{existing_parent || "no superclass"} and cannot be reopened with #{resolved_parent}", node)
+            end
+            parent_name = existing_info.parent_name
+            if parent_name
+              parent_name = resolve_registered_superclass_alias(parent_name)
+            end
+          else
+            parent_name = materialize_generic_parent_for_layout(resolved_parent)
+            if parent_info = @class_info[parent_name]?
+              # Copy all ivars from parent, preserving their offsets
+              parent_info.ivars.each do |parent_ivar|
+                ivars << parent_ivar.dup
+              end
+              # Start child ivars after parent ivars
+              offset = parent_info.size
+            end
           end
-        end
-        if parent_info = @class_info[parent_name]?
-          # Copy all ivars from parent, preserving their offsets
-          parent_info.ivars.each do |parent_ivar|
-            ivars << parent_ivar.dup
+          if filter = env_get("DEBUG_CLASS_PARENT_TRACE")
+            if filter == "*" || class_name.includes?(filter) || raw_parent.includes?(filter)
+              STDERR.puts "[CLASS_PARENT_TRACE] phase=after class=#{class_name} raw_parent=#{raw_parent} resolved=#{parent_name || resolved_parent}"
+            end
           end
-          # Start child ivars after parent ivars
-          offset = parent_info.size
+        else
+          raise LoweringError.new("invalid superclass name", node)
         end
       elsif existing_info
         parent_name = existing_info.parent_name

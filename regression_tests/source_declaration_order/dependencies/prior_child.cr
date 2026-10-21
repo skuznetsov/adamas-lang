@@ -1,0 +1,2 @@
+class PriorChild < PriorParent
+end
