@@ -21011,3 +21011,33 @@ and OUT/lavin10518_existing_numeric_source_guards.frozen_inputs.receipt.json und
 typing, numeric admission, allocator selection, or arena ownership changes.
 Roll back the HIR change and its regression together. Full prelude, full
 regressions, S1-to-S2, unchanged LavinMQ parity, and fresh S3/S4 equality remain open.
+
+
+### Concrete metaclass identity and source-side authority survive call lowering (2026-10-21)
+Removing a compile-time receiver previously discarded a type-valued local's
+concrete owner; inherited method lookup could then specialize the body using
+the ancestor. Separately, the final unresolved-call check skipped all receiver
+and virtual calls, allowing a demanded absent qualified method to reach codegen.
+
+Retain concrete metaclass ownership through lookup and inherited specialization.
+At HIR closure, check absent qualified method families on the exact class or
+instance side, including inheritance, generic templates and included methods.
+Only matching externs or operation-specific backend intrinsic shapes escape
+source-family lookup; a virtual flag grants no declaration authority.
+
+Original Crystal 1.20.1 and sealed10581 pass 38 controls in runs10584-10586:
+27 exact-output positives and 11 semantic rc1/no-executable negatives. The
+qualified matrix separates ordinary instances from type-valued receivers,
+checks both class/instance direction mistakes, and retains abstract operator
+and generic virtual source calls. Existing forward/unused free calls and
+inherited class method controls retain their behavior. Scoped adversary ROBUST
+for these exercised source-owner/family boundaries, not full overload parity.
+
+Physical bodies still bypass the final missing-name guard. A sole-overload
+fallback can incorrectly manufacture one; repair that source admission point
+separately. Prelude run10587 still reaches the existing File.open constructor
+failure. No successful full prelude, full suite, bootstrap, or Adamas LavinMQ
+runtime/spec parity is claimed. Evidence: OUT/lavin1058{4,5,6,7}*.frozen_inputs
+receipts under /Users/sergey/Projects/Adamas/sol_help_20261012. Refresh after
+source method registration, receiver identity, inheritance, closure validation
+or HIR-to-MIR intrinsic handling changes. Revert the code and regression together.

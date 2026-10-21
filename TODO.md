@@ -21619,3 +21619,19 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Union, block, named, and splat allocation shapes need separate coverage.
   Full prelude, full regressions, S1-to-S2, unchanged LavinMQ runtime/spec parity,
   and fresh S3/S4 fixed point remain open.
+
+
+### Preserve qualified source-call ownership and declaration authority (2026-10-21)
+- [x] Retain a type-valued receiver's concrete owner when removing its runtime
+  receiver, so inherited class methods specialize for the actual metaclass.
+- [x] Diagnose demanded absent qualified source families after HIR closure;
+  preserve the class/instance side, inheritance, generic templates and includes.
+  Runtime virtual dispatch alone cannot authorize a missing source method.
+- [x] Original Crystal 1.20.1 and sealed10581 pass 13 qualified-call cases in
+  run10584, nine existing free-call controls in run10585, and 16 inherited
+  class-method controls in run10586 (27 positives and 11 semantic negatives).
+- [ ] Guard the separate sole-overload fallback before it fabricates a body;
+  source-family existence alone does not prove arity/restriction compatibility.
+- [ ] The fresh prelude probe run10587 still stops at the known File constructor
+  selection error. Full regressions, S1-to-S2, unchanged LavinMQ runtime/spec
+  parity and fresh S3/S4 fixed point remain open.

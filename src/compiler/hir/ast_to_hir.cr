@@ -76018,24 +76018,316 @@ module Adamas::HIR
       !template.is_struct
     end
 
-    # Source free functions may be declared below their caller. Check only
-    # after all pending, macro and missing-target passes have reached closure;
-    # code generation must not turn a demanded undefined call into an abort stub.
+    private def append_qualified_method_owner_candidate(candidates : Array(String), owner_name : String) : Nil
+      return if owner_name.empty?
+      candidates << owner_name unless candidates.includes?(owner_name)
+
+      normalized = normalize_method_owner_name(owner_name)
+      unless normalized.empty? || candidates.includes?(normalized)
+        candidates << normalized
+      end
+
+      if generic = split_generic_base_and_args(normalized)
+        base = normalize_method_owner_name(generic.base)
+        candidates << base unless base.empty? || candidates.includes?(base)
+      end
+    end
+
+    private def qualified_method_owner_candidates(owner_name : String) : Array(String)
+      candidates = [] of String
+      append_qualified_method_owner_candidate(candidates, owner_name)
+      normalized = normalize_method_owner_name(owner_name)
+      get_ancestor_chain(normalized).each do |ancestor|
+        append_qualified_method_owner_candidate(candidates, ancestor)
+      end
+      if template_owner = primitive_template_owner(owner_name)
+        append_qualified_method_owner_candidate(candidates, template_owner)
+      end
+      candidates
+    end
+
+    private def source_method_family_at_owner?(owner_name : String, method_name : String, separator : Char) : Bool
+      owners = [] of String
+      append_qualified_method_owner_candidate(owners, owner_name)
+      owners.each do |owner|
+        base_name = "#{owner}#{separator}#{method_name}"
+        return true if @function_defs.has_key?(base_name) ||
+                       @function_types.has_key?(base_name) ||
+                       has_function_base?(base_name) ||
+                       (separator == '.' && @class_accessor_entries.has_key?(base_name))
+        overloads = function_def_overloads(base_name)
+        return true if overloads.any? do |full_name|
+          parts = parse_method_name_compact(strip_type_suffix(full_name))
+          parts.separator == separator && parts.method == method_name
+        end
+      end
+      false
+    end
+
+    private def source_generic_template_method_family?(owner_name : String, method_name : String, separator : Char) : Bool
+      template_bases = [] of String
+      append_qualified_method_owner_candidate(template_bases, owner_name)
+      template_bases.each do |candidate_base|
+        template_base = if generic = split_generic_base_and_args(candidate_base)
+                          generic.base
+                        else
+                          candidate_base
+                        end
+        template_base = resolve_generic_template_base(template_base)
+        templates = [] of GenericClassTemplate
+        if template = @generic_templates[template_base]?
+          templates << template
+        end
+        if reopenings = @generic_reopenings[template_base]?
+          reopenings.each { |template| templates << template }
+        end
+        templates.each do |template|
+          body = template.node.body
+          next unless body
+          defined_instance, defined_class = collect_defined_method_full_names(
+            template.name,
+            body,
+            template.arena,
+          )
+          definitions = separator == '#' ? defined_instance : defined_class
+          definitions.each do |full_name|
+            parts = parse_method_name_compact(strip_type_suffix(full_name))
+            return true if parts.separator == separator && parts.method == method_name
+          end
+        end
+      end
+      false
+    end
+
+    private def source_included_instance_method_family?(owner_name : String, method_name : String) : Bool
+      queue = [] of String
+      owner_base = strip_generic_args(owner_name)
+      if included = @class_included_modules[owner_name]?
+        included.each { |mod| queue << mod }
+      end
+      if owner_base != owner_name
+        if included = @class_included_modules[owner_base]?
+          included.each { |mod| queue << mod }
+        end
+      end
+
+      visited = Set(String).new
+      while mod = queue.shift?
+        next if visited.includes?(mod)
+        visited.add(mod)
+        if source_method_family_at_owner?(mod, method_name, '#')
+          return true
+        end
+        if find_module_def_recursive(mod, method_name, -1, Set(String).new)
+          return true
+        end
+        mod_base = strip_generic_args(mod)
+        if included = @class_included_modules[mod]?
+          included.each { |submod| queue << submod }
+        end
+        if mod_base != mod
+          if included = @class_included_modules[mod_base]?
+            included.each { |submod| queue << submod }
+          end
+        end
+      end
+      false
+    end
+
+    private def qualified_source_method_family_exists?(owner_name : String, method_name : String, separator : Char) : Bool
+      candidates = qualified_method_owner_candidates(owner_name)
+      if separator == '#'
+        return true if rta_owner_has_instance_method_name?(owner_name, method_name)
+        candidates.each do |candidate|
+          return true if source_method_family_at_owner?(candidate, method_name, '#')
+          return true if source_generic_template_method_family?(candidate, method_name, '#')
+          return true if source_included_instance_method_family?(candidate, method_name)
+        end
+        return false
+      end
+
+      return true if separator == '.' && resolve_class_method_with_inheritance(owner_name, method_name)
+      return false unless separator == '.'
+      candidates.each do |candidate|
+        return true if source_method_family_at_owner?(candidate, method_name, '.')
+        return true if source_generic_template_method_family?(candidate, method_name, '.')
+      end
+      false
+    end
+
+    private def qualified_source_call_family_exists?(parts : MethodNamePartsCompact) : Bool
+      separator = parts.separator || return false
+      method_name = parts.method || return false
+      return true if qualified_source_method_family_exists?(parts.owner, method_name, separator)
+
+      # MIR strips this compiler-generated tag only when there is no exact
+      # function target, then looks up the source method on the same side.
+      if method_name.ends_with?("_super")
+        underlying_method = method_name[0, method_name.size - 6]
+        return qualified_source_method_family_exists?(parts.owner, underlying_method, separator)
+      end
+      false
+    end
+
+    private def hir_value_type_for_qualified_call_argument?(call : Call, index : Int32, value_types : Hash(ValueId, TypeRef)) : Bool
+      return false if index < 0 || index >= call.args.size
+      type = value_types[call.args[index]]? || return false
+      type != TypeRef::VOID
+    end
+
+    private def backend_owned_atomic_ops_call?(name : String, call : Call, value_types : Hash(ValueId, TypeRef)) : Bool
+      owner = ""
+      method = ""
+      if name.starts_with?("Atomic::Ops.")
+        owner = "Atomic::Ops"
+        method = name["Atomic::Ops.".size..]
+      elsif name.starts_with?("Atomic$CCOps$D")
+        owner = "Atomic::Ops"
+        method = name["Atomic$CCOps$D".size..]
+      else
+        return false
+      end
+      return false if call.has_receiver?
+      method = method.byte_slice(0, method.index('$') || method.bytesize)
+      # Keep this shape aligned with Crystal's Atomic::Ops primitive
+      # declarations and the operands consumed by HIR-to-MIR lowering.
+      required_args = case method
+                      when "atomicrmw" then 5
+                      when "cmpxchg"  then 5
+                      when "load"     then 3
+                      when "store"    then 4
+                      when "fence"    then 2
+                      else                 return false
+                      end
+      return false unless call.args.size == required_args
+      arg_index = 0
+      while arg_index < required_args
+        return false unless hir_value_type_for_qualified_call_argument?(call, arg_index, value_types)
+        arg_index += 1
+      end
+
+      case method
+      when "atomicrmw"
+        call.type != TypeRef::VOID
+      when "cmpxchg"
+        call.type != TypeRef::VOID
+      when "load"
+        call.type != TypeRef::VOID
+      when "store"
+        call.type == TypeRef::VOID || call.type == TypeRef::NIL
+      when "fence"
+        call.type == TypeRef::VOID || call.type == TypeRef::NIL
+      else
+        false
+      end
+    end
+
+    # Intrinsic escapes mirror the actual HIR-to-MIR handlers. Each exception
+    # requires the recognized operation and the receiver/argument shape that
+    # reaches that handler; spelling a method name alone grants no authority.
+    private def backend_owned_qualified_intrinsic_call?(call : Call, name : String, parts : MethodNamePartsCompact, value_types : Hash(ValueId, TypeRef)) : Bool
+      return true if backend_owned_atomic_ops_call?(name, call, value_types)
+      return false unless separator = parts.separator
+      method_name = parts.method || return false
+
+      receiver_desc : TypeDescriptor? = nil
+      if call.has_receiver?
+        if receiver_type = value_types[call.receiver_value]?
+          receiver_desc = @module.get_type_descriptor(receiver_type)
+        end
+      end
+
+      if separator == '#' && call.has_receiver? && receiver_desc
+        if receiver_desc.kind == TypeKind::Union && call.args.empty?
+          target = method_name.rstrip('!')
+          return true if target == "to_i" || target == "to_i8" || target == "to_i16" ||
+                         target == "to_i32" || target == "to_i64" || target == "to_i128" ||
+                         target == "to_u" || target == "to_u8" || target == "to_u16" ||
+                         target == "to_u32" || target == "to_u64" || target == "to_u128"
+        end
+
+        if method_name == "unsafe_as" || method_name == "Hunsafe_as"
+          return true if call.args.empty? && receiver_desc.kind != TypeKind::Module
+        end
+
+        receiver_name = normalize_method_owner_name(receiver_desc.name)
+        owner_name = normalize_method_owner_name(parts.owner)
+        receiver_base = strip_generic_args(receiver_name)
+        owner_base = strip_generic_args(owner_name)
+        atomic_methods = {"get", "Hget", "set", "Hset", "swap", "Hswap", "compare_and_set", "Hcompare_and_set"}
+        if atomic_methods.includes?(method_name) && receiver_base == "Atomic" && owner_base == "Atomic" &&
+           (receiver_desc.kind == TypeKind::Struct || receiver_desc.kind == TypeKind::Class)
+          arg_shape_matches = case method_name
+                              when "get", "Hget"
+                                (call.args.empty? || call.args.size == 1) && call.type != TypeRef::VOID
+                              when "set", "Hset", "swap", "Hswap"
+                                (call.args.size == 1 || call.args.size == 2) &&
+                                  (method_name == "set" || method_name == "Hset" || call.type != TypeRef::VOID)
+                              when "compare_and_set", "Hcompare_and_set"
+                                (call.args.size == 2 || call.args.size == 4) && call.type != TypeRef::VOID
+                              else
+                                false
+                              end
+          return true if arg_shape_matches
+        end
+
+        is_proc = receiver_desc.kind == TypeKind::Proc || receiver_desc.name == "Proc" || receiver_desc.name.starts_with?("Proc(")
+        if is_proc
+          case method_name
+          when "pointer", "closure_data", "closure?"
+            return true if call.args.empty?
+          when "call"
+            param_count = receiver_desc.type_params.size - 1
+            return true if param_count >= 0 && call.args.size == param_count
+          end
+        end
+      end
+      false
+    end
+
+    # Source calls may be declared below their caller. Check only after all
+    # pending, macro and missing-target passes have reached closure; codegen
+    # must not turn a demanded undefined qualified/free call into an abort stub.
     private def validate_unresolved_free_source_calls : Nil
       @module.functions.each do |caller|
+        value_types = Hash(ValueId, TypeRef).new
+        caller.params.each { |param| value_types[param.id] = param.type }
+        caller.blocks.each do |block|
+          block.instructions.each { |instruction| value_types[instruction.id] = instruction.type }
+        end
+
         caller.blocks.each do |block|
           block.instructions.each do |instruction|
             call = instruction.as?(Call)
             next unless call
-            next if call.has_receiver? || call.virtual
+            # `virtual` controls runtime dispatch only. It never grants source
+            # authority: abstract and concrete calls pass through the same
+            # owner/side declaration check below.
             name = call.method_name
             next if name.empty? || @module.has_function_with_body?(name)
-            next if backend_owned_runtime_intrinsic_call?(name)
             base = strip_type_suffix(name)
-            next if has_method_separator?(base)
+            parts = parse_method_name_compact(base)
+
+            if separator = parts.separator
+              method_name = parts.method || ""
+              next if method_name.empty?
+              next if backend_owned_qualified_intrinsic_call?(call, name, parts, value_types)
+              next if qualified_source_call_family_exists?(parts)
+              next if @module.extern_functions.any? do |external|
+                        external.name == name || external.name == base ||
+                          external.real_name == name || external.real_name == base
+                      end
+              next unless location = caller.value_location(call.id)
+              raise LoweringError.new("undefined method '#{method_name}' for #{parts.owner} at #{location}")
+            end
+
+            # Unqualified receiver calls retain the existing resolver authority;
+            # this guard only closes source names with an explicit owner/side.
+            next if call.has_receiver?
+            next if backend_owned_runtime_intrinsic_call?(name)
             next unless location = caller.value_location(call.id)
-            # A known source family with an unmaterialized body has a separate
-            # lowering obligation. This check diagnoses absent declarations.
+            # A known free source family with an unmaterialized body has a
+            # separate lowering obligation. Diagnose only absent declarations.
             next if @function_defs.any? { |entry_name, _| strip_type_suffix(entry_name) == base }
             next if @module.extern_functions.any? do |external|
                       external.name == name || external.name == base ||
@@ -101500,6 +101792,9 @@ module Adamas::HIR
           # Check if it's a class/module method call (ClassName.new() or Module.method())
           # Can be ConstantNode, IdentifierNode starting with uppercase, GenericNode, or macro expression.
           class_name_str : String? = nil
+          # Keep a type-valued local's concrete owner after its compile-time
+          # receiver is removed from the runtime argument list.
+          type_literal_receiver_owner : String? = nil
           path_receiver_class_name = ""
           path_receiver_class_name_found = false
           constant_receiver = false
@@ -102808,6 +103103,7 @@ module Adamas::HIR
                   STDERR.puts "[CLASS_MATCH] method=#{method_name}, receiver_id=#{receiver_type.id}, name=#{name}"
                 end
                 if receiver_is_type_literal
+                  type_literal_receiver_owner = name
                   if method_name == "new"
                     full_method_name = "#{name}.#{method_name}"
                     static_class_name = name
@@ -102911,6 +103207,7 @@ module Adamas::HIR
                     STDERR.puts "[TYPEDESC_FALLBACK] type_name=#{type_name} method=#{method_name} literal=#{receiver_is_type_literal} module=#{receiver_is_module}"
                   end
                   if receiver_is_type_literal
+                    type_literal_receiver_owner = type_name
                     full_method_name = resolve_class_method_with_inheritance(type_name, method_name) || "#{type_name}.#{method_name}"
                     static_class_name = method_owner(full_method_name)
                     if !@function_defs.has_key?(full_method_name) &&
@@ -105255,7 +105552,7 @@ module Adamas::HIR
         if has_block_call
           block_proc_expected_return_type = expected_nil_block_return_type_for_def(entry_name, entry_def)
         end
-        concrete_owner_name = class_name_str
+        concrete_owner_name = class_name_str || type_literal_receiver_owner
         if concrete_owner_name.nil? && receiver_id && ctx.type_literal?(receiver_id)
           receiver_type_name = get_type_name_from_ref(ctx.type_of(receiver_id))
           unless receiver_type_name.empty? || receiver_type_name == "Void" || receiver_type_name == "Unknown"
