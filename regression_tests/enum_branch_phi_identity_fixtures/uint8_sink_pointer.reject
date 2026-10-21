@@ -1,0 +1,1 @@
+^error:\s*(?:no overload matches sink_byte for argument types \(Pointer\(UInt8\)\)|(?:expected )?argument(?: #1)? to ['\"]?sink_byte['\"]? (?:to be|must be) UInt8, not Pointer\(UInt8\)|argument .+ of ['\"]?sink_byte['\"]? must be UInt8, not Pointer\(UInt8\))(?:[;,.].*)?$

@@ -1,0 +1,1 @@
+^error:\s*(?:no overload matches sink_byte for argument types \(OtherFlags\)|(?:expected )?argument(?: #1)? to ['\"]?sink_byte['\"]? (?:to be|must be) UInt8, not OtherFlags|argument .+ of ['\"]?sink_byte['\"]? must be UInt8, not OtherFlags)(?:[;,.].*)?$
