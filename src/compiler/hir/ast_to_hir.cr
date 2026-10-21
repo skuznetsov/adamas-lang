@@ -54059,6 +54059,114 @@ module Adamas::HIR
       nil
     end
 
+    # For the allocator's recovery certificate, simple fully known source
+    # types can also prove an ordinary nominal mismatch. The broader source
+    # matcher intentionally returns undecided for these nongeneric pairs; do
+    # not turn missing or structural type information into rejection evidence.
+    private def allocator_simple_source_argument_mismatch_for_def(
+      def_node : Adamas::Compiler::Frontend::DefNode,
+      arg_types : Array(TypeRef),
+      context : String?,
+    ) : Tuple(String, String)?
+      return nil if arg_types.empty? || arg_types.any? { |type_ref| type_ref == TypeRef::VOID }
+      params = method_forall_call_param_infos(def_node, arg_types, function_param_infos(def_node))
+      return nil if params.any? { |param| param.is_splat || param.is_double_splat || named_only_separator?(param) }
+
+      simple_known_type = ->(name : String) {
+        name = resolve_type_alias_chain(name.strip.lchop("::"), preserve_abstract_int: true)
+        name.matches?(/\A[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*\z/) &&
+          (known_type_name?(name) || builtin_alias_target?(name) || LIBC_TYPE_ALIASES.has_key?(name))
+      }
+
+      arg_index = 0
+      params.each do |param|
+        next if param.is_block
+        break if arg_index >= arg_types.size
+        if restriction_text = param.type_annotation
+          declared_name = normalize_declared_type_name(restriction_text, context)
+          actual_name = generic_param_type_name_from_ref(arg_types[arg_index])
+          if simple_known_type.call(actual_name) && simple_known_type.call(declared_name)
+            actual_name = resolve_type_alias_chain(actual_name.strip.lchop("::"), preserve_abstract_int: true)
+            declared_name = resolve_type_alias_chain(declared_name.strip.lchop("::"), preserve_abstract_int: true)
+            # Numeric overload conversion rules have separate literal and ABI
+            # handling. Leave numeric-to-numeric pairs to ordinary resolution.
+            unless numeric_primitive_class_name?(actual_name) && numeric_primitive_class_name?(declared_name)
+              if source_generic_argument_matches?(actual_name, declared_name) == false
+                return {actual_name, declared_name}
+              end
+            end
+          end
+        end
+        arg_index += 1
+      end
+      nil
+    end
+
+    # A positional automatic allocator may recover a unique source initializer
+    # after ordinary overload resolution misses. Do not let that recovery revive
+    # an initializer whose complete source candidate set has already been
+    # contradicted by the concrete argument types. Missing registration or any
+    # unsupported candidate shape leaves the decision to the existing allocator.
+    private def allocator_source_contract_mismatch_for_call(
+      init_base_name : String,
+      callsite_types : Array(TypeRef),
+    ) : Tuple(String, String, String)?
+      return nil if callsite_types.empty? || callsite_types.any? { |type| type == TypeRef::VOID || is_union_type?(type) }
+      owner = function_context_from_name(init_base_name)
+      return nil unless owner
+      owner_base = strip_generic_args(owner)
+      return nil if @class_included_modules.has_key?(owner) || @class_included_modules.has_key?(owner_base)
+
+      lookup_base = init_base_name
+      overloads = function_def_overloads(lookup_base)
+      if overloads.empty? && lookup_base.starts_with?("::")
+        lookup_base = lookup_base.lchop("::")
+        overloads = function_def_overloads(lookup_base)
+      end
+      return nil if overloads.empty?
+
+      candidate_names = overloads.dup
+      function_type_keys_for_base(lookup_base).each do |type_key|
+        return nil unless @function_defs.has_key?(type_key)
+        candidate_names << type_key unless candidate_names.includes?(type_key)
+      end
+
+      viable_count = 0
+      observed_mismatch = nil.as(Tuple(String, String, String)?)
+      candidate_names.each do |candidate_name|
+        candidate_def = @function_defs[candidate_name]?
+        return nil unless candidate_def
+        candidate_arena = @function_def_arenas[candidate_name]?
+        return nil unless candidate_arena
+        candidate_context = function_context_for_lookup_candidate(lookup_base, candidate_name)
+        return nil unless candidate_context
+
+        check = with_arena(candidate_arena) do
+          stats = function_param_stats(candidate_name, candidate_def)
+          param_count, required, has_splat, has_double_splat, skip =
+            effective_arity_stats_for_call(stats, false)
+          arity = callsite_types.size
+          if skip || arity < required || (arity > param_count && !has_splat && !has_double_splat)
+            {false, false, false, nil.as(Tuple(String, String)?)}
+          elsif stats.has_block || stats.has_named_only || has_splat || has_double_splat
+            {true, false, true, nil.as(Tuple(String, String)?)}
+          else
+            compatible = params_compatible_with_args?(candidate_def, callsite_types, candidate_context)
+            mismatch = source_generic_argument_mismatch_for_def(candidate_def, callsite_types, candidate_context) ||
+              allocator_simple_source_argument_mismatch_for_def(candidate_def, callsite_types, candidate_context)
+            {true, compatible, mismatch.nil?, mismatch}
+          end
+        end
+        next unless check[0]
+        viable_count += 1
+        return nil if check[1] || check[2] || check[3].nil?
+        actual_name, declared_name = check[3].not_nil!
+        observed_mismatch ||= {actual_name, declared_name, candidate_name}
+      end
+      return nil if viable_count == 0
+      observed_mismatch
+    end
+
     private def params_compatible_with_args?(
       def_node : Adamas::Compiler::Frontend::DefNode,
       arg_types : Array(TypeRef),
@@ -101927,6 +102035,16 @@ module Adamas::HIR
                   prefer_allocator_new_call = true
                   constructor_arg_binding_name = resolve_method_with_inheritance(class_name_str, "initialize") ||
                                                  "#{class_name_str}#initialize"
+                  if !call_has_named_args && !call_has_splat && !has_block_call &&
+                     call_arg_types.size == call_args.size
+                    if mismatch = allocator_source_contract_mismatch_for_call(constructor_arg_binding_name, call_arg_types)
+                      actual_names = call_arg_types.map { |type| get_type_name_from_ref(type) }.join(", ")
+                      raise LoweringError.new(
+                        "no overload matches #{class_name_str}.new for argument types (#{actual_names}); #{mismatch[2]} expects #{mismatch[1]}, not #{mismatch[0]}",
+                        node,
+                      )
+                    end
+                  end
                 end
                 # Named-arg constructor calls need reorder_named_args/apply_default_args
                 # before the overload shape is known. Generating allocator overloads

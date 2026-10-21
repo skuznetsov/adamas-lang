@@ -1,3 +1,14 @@
+### Reject contradicted initializer contracts before allocator recovery (2026-10-21)
+- [x] Prevent positional automatic allocator recovery from reviving an initializer
+  when every viable owner-local source candidate has a concrete argument mismatch.
+  Require complete DefNode/arena metadata; retain ordinary resolution for unknown
+  relations, includes, named/block/splat shapes, and numeric conversion decisions.
+- [x] Qualify the isolated clean source with pinned Crystal: six byte-exact
+  runtime positives and two strict semantic negatives pass in frozen run9362.
+  Run9357 confirms the prior source falsely accepts the wrong Proc callback.
+- [ ] Extend constructor contract coverage to unsupported source/call shapes.
+  Pristine LavinMQ runtime/upstream parity and fresh bootstrap remain open.
+
 2026-10-21 PROC ARROW POINTER PRECEDENCE: resolve a complete A* -> B*
 annotation as a Proc before interpreting a trailing star as an outer pointer.
 Apply the same precedence to ordinary and generic-bound annotations.

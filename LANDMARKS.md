@@ -1,3 +1,28 @@
+### Automatic allocator recovery must preserve initializer source contracts (2026-10-21)
+Ordinary overload rejection could fall through to a generated allocator that
+recovered a source initializer without honoring its rejected argument contract.
+Require a complete owner-local candidate and arena inventory before producing a
+rejection certificate. Reject recovery only when every arity-viable supported
+candidate has a concrete mismatch. Distinguish fully known nominal mismatches
+from unknown generic/structural relations; preserve ordinary numeric conversion,
+includes, named/block/splat forms and explicit new handling.
+
+Frozen run9357 first qualifies all original cases and then reproduces the old
+wrong-Proc false acceptance. The isolated clean source9360 builds and passes the
+portable allocator_source_contract_repro.sh in run9362: six byte-exact runtime
+positives (ivar/Proc ordering, overload order, defaults, inheritance, named calls,
+and generic initialization) and two semantic negatives (wrong Proc input and
+ordinary String/Int32 mismatch), exit 1 with the primary type diagnostic and no
+executable. Source manifest SHA256
+278d1fbbb4062fa01a9d1657375966947d76956261e770a8b4ca1e53667329be;
+host SHA256 b2c08cde1c37c0316431779bff0ab73ab5bcfcbbcf1b077efb256f67709c411e.
+Scoped adversary ROBUST for supported positional automatic recovery: a compatible
+candidate prevents rejection, and opposite nominal/Proc inputs are rejected.
+Unknown/unsupported shapes remain separate obligations, as do pristine LavinMQ
+runtime/upstream parity and a fresh bootstrap fixed point. No application or
+stdlib edits. Refresh after overload inventory, arena ownership, annotation or
+allocator recovery changes; revert source and regression together.
+
 ### Complete Proc arrows precede trailing pointer syntax (2026-10-21)
 Both ordinary and generic-bound annotation resolvers peeled the final star from
 A* -> B* before parsing the complete Proc arrow. This produced an outer
