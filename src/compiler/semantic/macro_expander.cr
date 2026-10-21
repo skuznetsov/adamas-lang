@@ -2418,7 +2418,14 @@ module Adamas
               evaluate_macro_statement(node.expression, context)
               return ""
             end
-            return evaluate_expression(node.expression, context)
+            rendered = evaluate_expression(node.expression, context)
+            # A yielded AST is one source expression even when its body contains
+            # several statements. Match Crystal's output MacroExpression boundary;
+            # do not change yield values used by macro statement evaluation.
+            if node_for_expr?(node.expression).is_a?(Frontend::YieldNode) && !rendered.empty?
+              return "begin\n#{rendered}\nend"
+            end
+            return rendered
           end
 
           if node.is_a?(Frontend::GroupingNode)

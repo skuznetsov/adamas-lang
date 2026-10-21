@@ -1,3 +1,24 @@
+### Direct output macro yield retains its expression boundary (2026-10-21)
+The text expander emitted a multi-statement yielded AST without grouping. In
+generated `value = {{yield}}` source, the first statement became the assigned
+value and the final statement escaped the assignment. Group direct output
+YieldNode source in begin/end, matching Crystal's macro interpreter; retain
+statement macro values and non-yield output paths.
+
+The clean c3250ab9 parent fails the generated-assignment control in frozen run
+9112 after all original cases pass. The exact isolated repair passes the same
+original-first portable macro_yield_expression_grouping_repro.sh in run9111:
+five byte-exact runtime cases and one Bool/Int32 semantic rejection, exit 1 and
+no executable. Assignment chains, argument placement, statement yield and
+single/empty bodies are covered. Source manifest SHA256
+bcee94092ff794202c0c40ede78c53a5d948598384cb3273e8e3beaeb013b5b4;
+host SHA256 cc3277a65b0bba250f407dfd36be48fa5ab1bc8632fb09946cbf9c92c083d67c.
+Scoped adversary ROBUST for the tested expression boundary and opposite type
+control. Refresh after macro emission, yield rendering or generated-source
+parsing changes; revert source and regression together. Additional yield
+arguments/declaration positions, fresh bootstrap and pristine LavinMQ runtime/
+upstream-spec parity remain open. Application and stdlib sources are unchanged.
+
 ### Cast source spans include their owned closing delimiter (2026-10-19)
 parse_as_like recorded its endpoint before consuming `)`, unlike neighboring
 is_a? and responds_to? parsers. The AsNode and AsQuestionNode thus owned invalid

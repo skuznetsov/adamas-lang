@@ -1,3 +1,14 @@
+2026-10-21 MACRO YIELD EXPRESSION GROUPING: retain the yielded AST as one
+expression when an output macro interpolation embeds it in generated source.
+Match Crystal's direct output-yield begin/end boundary; leave macro statement
+values and non-yield output unchanged. Type admission remains strict.
+- [x] Clean-parent original-first repro fails on generated assignment (9112).
+- [x] The isolated one-hunk repair and portable regression match five runtime
+  cases and reject the wrong final expression type against Crystal 1.20.1 (9111).
+- [ ] Qualify additional yield-argument and declaration-position contexts.
+- [ ] Verify unchanged LavinMQ runtime/upstream-spec parity and fresh bootstrap.
+Refresh after output macro emission, yield AST rendering or source parsing changes.
+
 2026-10-21 HOMOGENEOUS ENUM LOCAL JOINS: preserve the common nominal enum
 identity in merge_branch_locals, including existing locals assigned by unless.
 Reuse the all-incoming identity proof before choosing the phi type, then carry
