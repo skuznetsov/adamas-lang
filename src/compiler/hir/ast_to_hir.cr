@@ -89370,6 +89370,9 @@ module Adamas::HIR
         if then_type != else_type
           var_type = union_type_for_values(then_type, else_type)
         end
+        if enum_type = common_enum_merge_type(ctx, [then_val, else_val])
+          var_type = enum_type
+        end
 
         if var_type == TypeRef::VOID || var_type == TypeRef::NIL
           ctx.register_local(var_name, then_val)
@@ -89383,6 +89386,7 @@ module Adamas::HIR
         merge_phi.add_incoming(then_block, coerced_then_val)
         merge_phi.add_incoming(else_block, coerced_else_val)
         ctx.emit(merge_phi)
+        track_common_enum_merge(ctx, merge_phi.id, [coerced_then_val, coerced_else_val])
         ctx.register_local(var_name, merge_phi.id)
       end
     end

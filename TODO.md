@@ -1,3 +1,16 @@
+2026-10-21 HOMOGENEOUS ENUM LOCAL JOINS: preserve the common nominal enum
+identity in merge_branch_locals, including existing locals assigned by unless.
+Reuse the all-incoming identity proof before choosing the phi type, then carry
+that identity onto the emitted phi. Integer carriers alone are not proof.
+- [x] Clean-parent original-first reproducer rejects the valid unless join.
+- [x] The isolated two-hunk repair and checked-in regression pass seven runtime
+  cases and six strict rejection cases against pinned Crystal (sealed 9059).
+- [ ] Preserve heterogeneous enum union identity independently: a sibling-enum
+  ternary is still reported as its UInt8 carrier but remains strictly rejected
+  by a nominal enum sink. Do not treat that diagnostic as union-type parity.
+- [ ] Verify unchanged LavinMQ runtime/upstream-spec parity and fresh bootstrap.
+Refresh after enum tracking, branch-local coercion, or phi construction changes.
+
 2026-10-21 C CALLBACK LITERAL FUNCTION IDENTITY: each direct callback literal
 needs a fresh module function even when the C callee and formal index coincide.
 The fixed name reused one Function and appended the second body's parameters;
