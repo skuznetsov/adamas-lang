@@ -280,5 +280,54 @@ describe "Adamas::Compiler::Frontend::Parser" do
       right = arena[path.as(Adamas::Compiler::Frontend::PathNode).right.not_nil!]
       String.new(Adamas::Compiler::Frontend.node_literal(right).not_nil!).should eq("Bar")
     end
+
+    it "parses a command call with an adjacent absolute path argument" do
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new("Foo ::Bar"))
+      program = parser.parse_program
+
+      parser.diagnostics.should be_empty
+      program.roots.size.should eq(1)
+      arena = program.arena
+      call = arena[program.roots.first].as(Adamas::Compiler::Frontend::CallNode)
+      call.args.size.should eq(1)
+      callee = arena[call.callee].as(Adamas::Compiler::Frontend::IdentifierNode)
+      String.new(callee.name).should eq("Foo")
+      path = arena[call.args.first].as(Adamas::Compiler::Frontend::PathNode)
+      path.left.should be_nil
+      right = arena[path.right].as(Adamas::Compiler::Frontend::IdentifierNode)
+      String.new(right.name).should eq("Bar")
+    end
+
+    it "keeps member access within an absolute command argument" do
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new("target ::Root::Type.new"))
+      program = parser.parse_program
+
+      parser.diagnostics.should be_empty
+      arena = program.arena
+      call = arena[program.roots.first].as(Adamas::Compiler::Frontend::CallNode)
+      member = arena[call.args.first].as(Adamas::Compiler::Frontend::MemberAccessNode)
+      String.new(member.member).should eq("new")
+      path = arena[member.object].as(Adamas::Compiler::Frontend::PathNode)
+      String.new(arena[path.right].as(Adamas::Compiler::Frontend::IdentifierNode).name).should eq("Type")
+      root = arena[path.left.not_nil!].as(Adamas::Compiler::Frontend::PathNode)
+      root.left.should be_nil
+      String.new(arena[root.right].as(Adamas::Compiler::Frontend::IdentifierNode).name).should eq("Root")
+    end
+
+    it "parses raise with an absolute exception argument as a command call" do
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new("raise ::File::Error"))
+      program = parser.parse_program
+
+      parser.diagnostics.should be_empty
+      arena = program.arena
+      call = arena[program.roots.first].as(Adamas::Compiler::Frontend::CallNode)
+      String.new(arena[call.callee].as(Adamas::Compiler::Frontend::IdentifierNode).name).should eq("raise")
+      call.args.size.should eq(1)
+      path = arena[call.args.first].as(Adamas::Compiler::Frontend::PathNode)
+      String.new(arena[path.right].as(Adamas::Compiler::Frontend::IdentifierNode).name).should eq("Error")
+      root = arena[path.left.not_nil!].as(Adamas::Compiler::Frontend::PathNode)
+      root.left.should be_nil
+      String.new(arena[root.right].as(Adamas::Compiler::Frontend::IdentifierNode).name).should eq("File")
+    end
   end
 end

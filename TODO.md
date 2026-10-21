@@ -21360,3 +21360,17 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   does not establish full LavinMQ or bootstrap compatibility.
 - [ ] Audit other compiler-created runtime calls by producer and target ABI,
   preserving strict rejection of undefined user methods and receiver members.
+
+
+### Parse absolute paths as command-call arguments (2026-10-20)
+- [x] Preserve command whitespace before `::` so `target ::Root::Type.new`
+  and `raise ::File::Error` keep the absolute path inside the argument.
+  A separator followed by ASCII whitespace remains an ordinary path boundary:
+  `Foo :: Bar` is a path, while `Foo ::Bar` is a command call. This follows
+  Crystal's post-separator whitespace discriminator without name-specific rules.
+- [x] Add direct AST regressions and a safe runner. The path suite passes
+  14 examples with no failures/errors; a seven-case frozen AST oracle also
+  passes. Reverting just the post-separator discriminator reproduces the
+  spaced-path regression (8558); the corrected WT path suite passes (8563).
+  Scope: parser ASTs. Runtime semantics, LavinMQ parity and bootstrap remain
+  separate verification obligations.

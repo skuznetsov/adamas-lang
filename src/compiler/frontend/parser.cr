@@ -9409,6 +9409,19 @@ module Adamas
         private def try_parse_call_args_without_parens(callee_span : Span, callee_slice : Slice(UInt8), allow_parenthesized_argument : Bool = false) : ExprId
           debug { "try_parse_call_args_without_parens: callee=#{String.new(callee_slice)}, current_token=#{current_token.kind}" }
           trace_call_args_depth("noparen-enter")
+
+          # Match Crystal's command-argument boundary: `::` starts an absolute-path
+          # argument only when the next source character is not ASCII whitespace.
+          # Span.end_offset is exclusive; at EOF there is no following character,
+          # matching Crystal's null current_char (which is not ASCII whitespace).
+          if current_token.kind == Token::Kind::ColonColon
+            next_byte_offset = current_token.span.end_offset
+            if next_byte_offset >= 0 &&
+               next_byte_offset < @source.bytesize &&
+               @source.byte_at(next_byte_offset).unsafe_chr.ascii_whitespace?
+              return PREFIX_ERROR
+            end
+          end
           # Inside brace literals (named tuples) a trailing colon usually starts a key/value entry,
           # not a named argument label. Bail out early in that shape.
           if @brace_depth > 0 && current_token.kind == Token::Kind::Colon
@@ -9442,8 +9455,6 @@ module Adamas
             # Note: 'in' is already allowed as identifier (see Identifier case in parse_prefix)
             return PREFIX_ERROR unless next_comes_colon_space?
           when Token::Kind::Newline, Token::Kind::EOF
-            return PREFIX_ERROR
-          when Token::Kind::ColonColon
             return PREFIX_ERROR
             # Phase 103H: Arithmetic operators (Plus, Minus, Star) need special handling
             # They can be unary (no space after) or binary (space after)
@@ -13868,14 +13879,12 @@ current_token.kind == Token::Kind::Identifier &&
           elsif next_tok.span.start_line > last_span.end_line
             space_consumed = true
           end
-          # Do not treat immediately-following member/path separators as
-          # implicit whitespace. Without this guard, identifiers followed
-          # directly by '.' or '::' could be misclassified as command calls
-          # (no-paren invocations) and lead to spurious diagnostics in type
-          # expressions like typeof(Enumerable.element_type ...).
+          # A dot remains postfix member access when source spacing made
+          # space_consumed true. A :: after command whitespace starts an
+          # absolute-path argument, as in `raise ::File::Error`.
           if space_consumed &&
-             ((next_tok.kind == Token::Kind::Operator && slice_eq?(next_tok.slice, ".")) ||
-             next_tok.kind == Token::Kind::ColonColon)
+             next_tok.kind == Token::Kind::Operator &&
+             slice_eq?(next_tok.slice, ".")
             space_consumed = false
           end
           skip_trivia
