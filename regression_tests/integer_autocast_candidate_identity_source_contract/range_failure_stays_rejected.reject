@@ -1,0 +1,1 @@
+(?:expected argument.*integer_identity_range.*Int8.*(?:Int32|128)|no overload matches integer_identity_range.*Int32)

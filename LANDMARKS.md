@@ -20795,3 +20795,38 @@ the rendering result does not certify it. Refresh these claims after macro
 AST storage, rendering, alias binding or namespace-resolution changes; revert
 the helper and its regression together. Unchanged LavinMQ runtime/spec parity
 and fresh S3/S4 bootstrap remain unverified.
+
+
+### Source integer conversions deduplicate identical declarations (2026-10-21)
+The source integer fallback enumerates bare and specialized overload lookup
+keys. Both can resolve to the same selected symbol and Def object with the
+same converted argument types. The candidate list previously counted both,
+then skipped their pairwise precedence comparison because the Def objects
+were identical. A class with only initialize(Int64) therefore rejected new(65)
+as ambiguous. A diagnostic-only trace independently observed the identical
+symbol, Def identity and target vector twice (run10109).
+
+Deduplicate that complete candidate identity at collection. Distinct symbols,
+declaration objects or converted types remain separate; admission, integer
+ranges and overload precedence are unchanged. This repairs the candidate
+inventory rather than accepting an ambiguous call or changing library code.
+
+Pinned Crystal 1.20.1 and clean sealed10116 pass three exact-output programs
+(class method, instance method and sole initializer) and two strict rc1 /
+no-executable semantic rejections (genuine overload ambiguity and range
+failure), portable run10130. Parent10080 fails only the initializer in the
+same five fixtures (run10117). Existing source-integer 21P/24N and super-
+numeric 18 checks also pass (runs10127/10128). The legacy integer negatives
+use fragments in the full log and do not establish primary-error matching.
+Source manifest SHA256
+44b9c8228c8b42fdb4b7591444bc883f30cada9645b3390b9255fca82ad481ae;
+host SHA256 4dfb0ce327aa5f2376ea1257fad23dba658f10118cb42e6203114fedca78667a.
+Evidence: /Users/sergey/Projects/Adamas/sol_help_20261012/OUT/
+lavin10130_integer_candidate_portable_fixed.frozen_inputs.receipt.json.
+
+Scoped adversary ROBUST for identical candidate collection and the tested
+ambiguity/range guards. This does not close pending constructor factory
+selection, generic type identity, unchanged LavinMQ runtime/spec parity or
+fresh S3/S4 bootstrap. Refresh after overload identity, source autocast,
+TypeRef equality or candidate precedence changes; revert the collection hunk
+and regression together.

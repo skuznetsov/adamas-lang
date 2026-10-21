@@ -21516,3 +21516,20 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   still open. This rendering fix does not establish general name binding.
 - [ ] Resolve the current unchanged-LavinMQ read_bytes(UInt64) -> Void frontier,
   then complete runtime/spec parity and fresh bootstrap qualification.
+
+
+### Preserve source integer candidate identity (2026-10-21)
+- [x] Count an identical source integer conversion once when bare and
+  specialized lookup keys select the same declaration. Keep distinct selected
+  symbols, declaration objects and converted type vectors separate.
+- [x] Original Crystal and clean sealed10116 pass the portable original-first
+  integer_autocast_candidate_identity_source_contract_repro.sh: three exact
+  programs and two strict semantic rejections (run10130). Parent10080 rejects
+  the sole Int64 initializer as ambiguous (run10117); distinct overloads and
+  out-of-range conversions remain rejected.
+- [x] Existing source-integer 21 positive / 24 negative checks (run10127) and
+  super-numeric 18 checks (run10128) pass. The older integer matrix uses
+  fragment checks; the new regression and super suite check primary errors.
+- [ ] Continue unresolved constructor selection and canonical generic-argument
+  binding work separately. Unchanged LavinMQ runtime/spec parity and fresh
+  bootstrap remain open.

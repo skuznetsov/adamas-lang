@@ -1,0 +1,1 @@
+ambiguous.*(?:integer_identity_ambiguous|implicit cast|Int8)

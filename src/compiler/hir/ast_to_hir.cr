@@ -115077,7 +115077,16 @@ module Adamas::HIR
                               candidate_name, candidate_def,
                             )
                           end
-        candidates << candidate_entry if candidate_entry
+        if candidate_entry
+          # Bare and specialized lookup keys can select the same declaration.
+          # Count its identical conversion once; distinct targets stay separate.
+          duplicate = candidates.any? do |existing|
+            existing[0] == candidate_entry[0] &&
+              existing[1].same?(candidate_entry[1]) &&
+              existing[2] == candidate_entry[2]
+          end
+          candidates << candidate_entry unless duplicate
+        end
       end
       return nil if candidates.empty?
       # Integer restrictions are nominally disjoint. Several representable
