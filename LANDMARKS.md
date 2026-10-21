@@ -20830,3 +20830,37 @@ selection, generic type identity, unchanged LavinMQ runtime/spec parity or
 fresh S3/S4 bootstrap. Refresh after overload identity, source autocast,
 TypeRef equality or candidate precedence changes; revert the collection hunk
 and regression together.
+
+
+### Transparent class begin registration (2026-10-21)
+Class registration scanned only immediate body nodes. A handler-free BeginNode,
+including a macro expansion container, therefore hid nested declarations from
+the class inventory even though those declarations were later consumed. On a
+clean parent, a macro-nested record and a plain begin containing a record,
+alias, constant and class method compile to programs that abort at runtime.
+The corresponding direct nested record and wrong-type rejection are controls.
+
+Use a registration view that recursively visits only handler-free BeginNode
+bodies at class discovery/registration sites. Retain original ExprIds and their
+owning arena, do not rewrite the AST, preserve order and the raw generic-template
+body-size metric, and leave rescue/else/ensure containers opaque. This changes
+the declaration inventory rather than adding runtime/library workarounds.
+
+Original Crystal 1.20.1 and clean sealed10151 pass exact AA/AA/ABCD output and
+one strict rc1/no-executable wrong-type rejection in portable run10155.
+Parent10116 fails only the two begin-container positives in run10154.
+Source manifest SHA256
+c1186560e95809c047760871d1cfdffb84e7ea198993450c2ddeb4dfad45c848;
+host SHA256 9cc3e859cdff9cb9316b2489e53a81aecd10e746af036b123b93f085c1e8cbb5.
+Evidence: /Users/sergey/Projects/Adamas/sol_help_20261012/OUT/
+lavin10155_class_begin_clean_fixed_probe.frozen_inputs.receipt.json.
+
+Scoped static adversary ROBUST for the exercised class-registration scope:
+the view preserves child visibility nodes, declaration order and arena identity.
+Module bodies and all auxiliary generic scans are not covered by this verdict.
+Claim scope is transparent declaration registration. Existing missing-method
+false acceptance and generic reopened-alias body materialization remain open.
+Unchanged LavinMQ runtime/spec parity and fresh S3/S4 bootstrap remain open.
+Refresh after class registration, BeginNode/macro expansion, visibility,
+generic-template identity or arena ownership changes; revert the registration
+view and its regression together.

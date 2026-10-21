@@ -21533,3 +21533,15 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Continue unresolved constructor selection and canonical generic-argument
   binding work separately. Unchanged LavinMQ runtime/spec parity and fresh
   bootstrap remain open.
+
+
+### Register class declarations inside transparent begin containers (2026-10-21)
+- [x] Traverse handler-free BeginNode bodies during class declaration discovery
+  and registration, preserving original ExprIds, owning arenas and source order.
+  Keep rescue/else/ensure containers opaque and preserve raw generic body metrics.
+- [x] Pinned Crystal and clean sealed10151 pass three exact-output controls and
+  one strict wrong-type rejection (run10155). Parent10116 aborts the macro-nested
+  record and plain-begin programs on the same original-first fixtures (run10154).
+- [ ] Continue generic reopened-alias method materialization and missing-method
+  rejection independently; those pre-existing defects are outside this fix.
+- [ ] Unchanged LavinMQ runtime/spec parity and fresh bootstrap remain open.

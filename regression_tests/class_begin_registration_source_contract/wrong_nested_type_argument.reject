@@ -1,0 +1,1 @@
+(?:expected argument #1 to 'consume_begin_inner' to be BeginArgumentOuter::Inner, not Bool|no overload matches consume_begin_inner for argument types \(Bool\))

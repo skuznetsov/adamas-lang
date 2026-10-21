@@ -14292,6 +14292,38 @@ module Adamas::HIR
       end
     end
 
+    # Class declaration scans treat a handler-free begin as transparent, just as
+    # Crystal's top-level visitor does. Keep the AST and arena untouched: this is
+    # only a registration view over the original ExprIds.
+    private def class_registration_body(body : Array(ExprId), arena : Adamas::Compiler::Frontend::ArenaLike) : Array(ExprId)
+      flattened : Array(ExprId)? = nil
+      body.each_with_index do |expr_id, index|
+        if class_registration_transparent_begin?(expr_id, arena)
+          flattened ||= body[0...index]
+          append_class_registration_expr(flattened.not_nil!, expr_id, arena)
+        elsif flattened
+          flattened << expr_id
+        end
+      end
+      flattened || body
+    end
+
+    private def class_registration_transparent_begin?(expr_id : ExprId, arena : Adamas::Compiler::Frontend::ArenaLike) : Bool
+      return false if expr_id.null_ptr? || expr_id.invalid?
+      node = arena[expr_id]
+      node.is_a?(Adamas::Compiler::Frontend::BeginNode) &&
+        node.rescue_clauses.nil? && node.else_body.nil? && node.ensure_body.nil?
+    end
+
+    private def append_class_registration_expr(result : Array(ExprId), expr_id : ExprId, arena : Adamas::Compiler::Frontend::ArenaLike) : Nil
+      if class_registration_transparent_begin?(expr_id, arena)
+        node = arena[expr_id].unsafe_as(Adamas::Compiler::Frontend::BeginNode)
+        node.body.each { |child_id| append_class_registration_expr(result, child_id, arena) }
+      else
+        result << expr_id
+      end
+    end
+
     private def record_nested_type_names(
       class_name : String,
       body : Array(ExprId)?,
@@ -35083,7 +35115,8 @@ module Adamas::HIR
 
     # Register aliases inside a class (for nested alias-first processing)
     private def register_class_aliases(node : Adamas::Compiler::Frontend::ClassNode, class_name : String)
-      if body = node.body
+      if raw_body = node.body
+        body = class_registration_body(raw_body, @arena)
         body.each do |expr_id|
           next if expr_id.null_ptr? || expr_id.invalid?
           member = unwrap_visibility_member(@arena[expr_id])
@@ -36305,7 +36338,8 @@ module Adamas::HIR
     )
       bootstrap_trace_puts "[CLASS_FRONTIER] class_current_arena_enter #{class_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
       class_name = resolve_class_name_for_definition(class_name)
-      if body = node.body
+      registration_body = node.body.try { |body| class_registration_body(body, @arena) }
+      if body = registration_body
         body.each do |member_id|
           member = unwrap_visibility_member_in_arena(@arena[member_id], @arena)
           next unless member.is_a?(Adamas::Compiler::Frontend::IncludeNode)
@@ -36351,7 +36385,7 @@ module Adamas::HIR
           STDERR.puts "[DEBUG_RECORD_CLASS] class_name=#{class_name} current=#{@current_class || "(none)"}"
         end
         is_struct = node.is_struct == true
-        record_nested_type_names(class_name, node.body)
+        record_nested_type_names(class_name, registration_body)
         generic_template_registered = false
 
         # Check if this is a generic class (has type parameters)
@@ -36388,7 +36422,7 @@ module Adamas::HIR
               bootstrap_trace_puts "[CLASS_FRONTIER] generic_after_store #{class_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
             end
             # Register nested types inside generic templates under the base namespace.
-            if body = node.body
+            if body = registration_body
               bootstrap_trace_puts "[CLASS_FRONTIER] generic_before_nested_scan #{class_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
               source = source_text_for_arena_or_file(@arena)
               body.each do |expr_id|
@@ -36773,7 +36807,7 @@ module Adamas::HIR
       init_capture = InitParamsCapture.new
       init_params = init_capture.params
 
-      class_body = node.body || [] of Adamas::Compiler::Frontend::ExprId
+      class_body = class_registration_body(node.body || [] of Adamas::Compiler::Frontend::ExprId, @arena)
       if trace_concrete_phase
         STDERR.puts "[REG_CONCRETE_PHASE] class=#{class_name} phase=enter body=#{class_body.size} existing=#{existing_info ? 1 : 0} c_struct=#{is_c_struct ? 1 : 0}"
       end
