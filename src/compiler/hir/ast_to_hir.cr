@@ -54142,11 +54142,65 @@ module Adamas::HIR
       nil
     end
 
-    # A positional automatic allocator may recover a unique source initializer
-    # after ordinary overload resolution misses. Do not let that recovery revive
-    # an initializer whose complete source candidate set has already been
-    # contradicted by the concrete argument types. Missing registration or any
-    # unsupported candidate shape leaves the decision to the existing allocator.
+    # Numeric autocast is source-domain based. Restriction checks normally
+    # report distinct primitive types as a contradiction; preserve only those
+    # conversions for which every value of the actual type fits the formal.
+    private def allocator_numeric_source_autocast_compatible?(
+      actual_name : String,
+      declared_name : String,
+    ) : Bool
+      actual_name = resolve_type_alias_chain(actual_name.strip.lchop("::"), preserve_abstract_int: true)
+      declared_name = resolve_type_alias_chain(declared_name.strip.lchop("::"), preserve_abstract_int: true)
+      # Do not ask the general name resolver to materialize nominal or generic
+      # descriptors while constructing a numeric mismatch certificate.
+      return false unless numeric_primitive_class_name?(actual_name) && numeric_primitive_class_name?(declared_name)
+      actual_ref = type_ref_for_name(actual_name)
+      declared_ref = type_ref_for_name(declared_name)
+      actual_integer = signed_integer_primitive?(actual_ref) || unsigned_integer_type?(actual_ref)
+      declared_integer = signed_integer_primitive?(declared_ref) || unsigned_integer_type?(declared_ref)
+      if actual_integer && declared_integer
+        return source_integer_domain_subset?(actual_ref, declared_ref)
+      end
+      return true if actual_ref == TypeRef::FLOAT32 && declared_ref == TypeRef::FLOAT64
+      if actual_integer && (declared_ref == TypeRef::FLOAT32 || declared_ref == TypeRef::FLOAT64)
+        bits = integer_bit_width(actual_ref)
+        return false unless bits
+        return bits <= (declared_ref == TypeRef::FLOAT32 ? 16 : 32)
+      end
+      false
+    end
+    private def allocator_source_argument_mismatch_for_def(
+      def_node : Adamas::Compiler::Frontend::DefNode,
+      arg_types : Array(TypeRef),
+      context : String?,
+    ) : Tuple(String, String)?
+      return nil if arg_types.empty? || arg_types.any? { |type_ref| type_ref == TypeRef::VOID }
+      params = method_forall_call_param_infos(def_node, arg_types, function_param_infos(def_node))
+      return nil if params.any? { |param| param.is_splat || param.is_double_splat || named_only_separator?(param) }
+
+      arg_index = 0
+      params.each do |param|
+        next if param.is_block
+        break if arg_index >= arg_types.size
+        if restriction_text = param.type_annotation
+          declared_name = normalize_declared_type_name(restriction_text, context, specialize_bare_generics: false)
+          actual_name = generic_param_type_name_from_ref(arg_types[arg_index])
+          if source_generic_restriction_match?(actual_name, declared_name) == false
+            # A safe numeric conversion excuses only this argument. Continue
+            # scanning later formals before issuing the rejection certificate.
+            unless allocator_numeric_source_autocast_compatible?(actual_name, declared_name)
+              return {actual_name, declared_name}
+            end
+          end
+        end
+        arg_index += 1
+      end
+      allocator_simple_source_argument_mismatch_for_def(def_node, arg_types, context)
+    end
+
+    # Rejection certificate for positional recovery paths shared by allocation
+    # and explicit super lookup. Missing registration or unsupported candidate
+    # shapes leave the decision to the existing resolver.
     private def allocator_source_contract_mismatch_for_call(
       init_base_name : String,
       callsite_types : Array(TypeRef),
@@ -54192,8 +54246,7 @@ module Adamas::HIR
             {true, false, true, nil.as(Tuple(String, String)?)}
           else
             compatible = params_compatible_with_args?(candidate_def, callsite_types, candidate_context)
-            mismatch = source_generic_argument_mismatch_for_def(candidate_def, callsite_types, candidate_context) ||
-              allocator_simple_source_argument_mismatch_for_def(candidate_def, callsite_types, candidate_context)
+            mismatch = allocator_source_argument_mismatch_for_def(candidate_def, callsite_types, candidate_context)
             {true, compatible, mismatch.nil?, mismatch}
           end
         end
@@ -54205,6 +54258,124 @@ module Adamas::HIR
       end
       return nil if viable_count == 0
       observed_mismatch
+    end
+
+    private def source_super_has_explicit_numeric_autocast_arguments?(
+      node : Adamas::Compiler::Frontend::SuperNode,
+      arg_types : Array(TypeRef),
+      call_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Bool
+      source_args = node.args
+      return false unless source_args
+      return false if source_args.empty? || source_args.size != arg_types.size
+      if named_args = node.named_args
+        return false unless named_args.empty?
+      end
+      return false if arg_types.any? { |type_ref| type_ref == TypeRef::VOID || is_union_type?(type_ref) }
+
+      source_args.each do |expr_id|
+        return false if expr_id.invalid?
+        return false if call_arena[expr_id].is_a?(Adamas::Compiler::Frontend::SplatNode)
+      end
+      true
+    end
+
+    private def source_super_integer_autocast_entry(
+      base_method_name : String,
+      positional_args : Array(ExprId),
+      arg_types : Array(TypeRef),
+      call_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Tuple(String, Adamas::Compiler::Frontend::DefNode, Array(TypeRef))?
+      entry = source_integer_autocast_entry(
+        base_method_name, positional_args, arg_types, call_arena, true,
+      )
+      return nil unless entry
+      candidate_name, candidate_def, converted_types = entry
+      return nil unless strip_type_suffix(candidate_name) == strip_type_suffix(base_method_name)
+      registered_def = @function_defs[candidate_name]?
+      return nil unless registered_def && registered_def.same?(candidate_def)
+      candidate_arena = @function_def_arenas[candidate_name]?
+      return nil unless candidate_arena && arena_fits_def?(candidate_arena, candidate_def)
+      return nil unless function_context_for_lookup_candidate(base_method_name, candidate_name)
+      {candidate_name, candidate_def, converted_types}
+    end
+
+    private def source_super_has_simple_explicit_positional_arguments?(
+      node : Adamas::Compiler::Frontend::SuperNode,
+      arg_types : Array(TypeRef),
+    ) : Bool
+      source_args = node.args
+      return false unless source_args
+      return false if source_args.empty? || source_args.size != arg_types.size
+      if named_args = node.named_args
+        return false unless named_args.empty?
+      end
+      return false if arg_types.any? { |type_ref| type_ref == TypeRef::VOID || is_union_type?(type_ref) }
+
+      source_args.each do |expr_id|
+        return false if expr_id.invalid?
+        kind = Adamas::Compiler::Frontend.node_kind(@arena[expr_id])
+        # Numeric literals reach this rejection proof only after the source
+        # autocast probe failed. They must not bypass the source restriction
+        # through the bare-def recovery path. Operators, splats, blocks, and
+        # enum shorthand still require their own binding evidence.
+        case kind
+        when Adamas::Compiler::Frontend::NodeKind::Number,
+             Adamas::Compiler::Frontend::NodeKind::Identifier,
+             Adamas::Compiler::Frontend::NodeKind::InstanceVar,
+             Adamas::Compiler::Frontend::NodeKind::ClassVar,
+             Adamas::Compiler::Frontend::NodeKind::Global,
+             Adamas::Compiler::Frontend::NodeKind::Self,
+             Adamas::Compiler::Frontend::NodeKind::MemberAccess,
+             Adamas::Compiler::Frontend::NodeKind::Call,
+             Adamas::Compiler::Frontend::NodeKind::Nil,
+             Adamas::Compiler::Frontend::NodeKind::Bool,
+             Adamas::Compiler::Frontend::NodeKind::String,
+             Adamas::Compiler::Frontend::NodeKind::Char
+          # The existing source argument type is sufficient for these forms.
+        else
+          return false
+        end
+      end
+      true
+    end
+
+    # A higher ancestor with an unclassified but arity-viable source candidate
+    # makes an earlier mismatch non-final. Keep that case on the legacy resolver
+    # path rather than rejecting a call whose complete target set is uncertain.
+    private def source_owner_has_viable_positional_candidate_shape?(
+      base_name : String,
+      arity : Int32,
+    ) : Bool
+      owner = function_context_from_name(base_name)
+      return true unless owner
+      owner_base = strip_generic_args(owner)
+      return true if @class_included_modules.has_key?(owner) || @class_included_modules.has_key?(owner_base)
+
+      lookup_base = base_name
+      candidate_names = function_def_overloads(lookup_base).dup
+      if candidate_names.empty? && lookup_base.starts_with?("::")
+        lookup_base = lookup_base.lchop("::")
+        candidate_names = function_def_overloads(lookup_base).dup
+      end
+      function_type_keys_for_base(lookup_base).each do |type_key|
+        return true unless @function_defs.has_key?(type_key)
+        candidate_names << type_key unless candidate_names.includes?(type_key)
+      end
+
+      candidate_names.each do |candidate_name|
+        candidate_def = @function_defs[candidate_name]?
+        return true unless candidate_def
+        candidate_arena = @function_def_arenas[candidate_name]?
+        return true unless candidate_arena
+        viable = with_arena(candidate_arena) do
+          stats = function_param_stats(candidate_name, candidate_def)
+          param_count, required, has_splat, has_double_splat, skip = effective_arity_stats_for_call(stats, false)
+          !skip && (stats.has_block || has_splat || has_double_splat || (arity >= required && arity <= param_count))
+        end
+        return true if viable
+      end
+      false
     end
 
     private def params_compatible_with_args?(
@@ -84825,6 +84996,9 @@ module Adamas::HIR
       # incorrectly select e.g. inspect(io) for a no-arg super call).
       super_method_name : String? = nil
       resolved_args = args
+      source_super_contract_check = source_super_has_simple_explicit_positional_arguments?(node, arg_types)
+      source_super_mismatch = nil.as(Tuple(String, String, String)?)
+      source_super_unresolved_candidate = false
       probe_owner : String? = parent_name
       seen_super_owners = Set(String).new
 
@@ -84837,13 +85011,39 @@ module Adamas::HIR
 
         candidate_name = mangled_name
         candidate_def : Adamas::Compiler::Frontend::DefNode? = @function_defs[mangled_name]?
+        candidate_numeric_target_types : Array(TypeRef)? = nil
+        owner_source_mismatch = nil.as(Tuple(String, String, String)?)
 
         unless candidate_def
           if entry = lookup_function_def_for_call(base_method_name, args.size, false, arg_types)
             candidate_name, candidate_def = entry
-          elsif base_def = @function_defs[base_method_name]?
-            candidate_name = base_method_name
-            candidate_def = base_def
+          else
+            numeric_entry : Tuple(String, Adamas::Compiler::Frontend::DefNode, Array(TypeRef))? = nil
+            if source_super_has_explicit_numeric_autocast_arguments?(node, arg_types, @arena)
+              if source_args = node.args
+                numeric_entry = source_super_integer_autocast_entry(base_method_name, source_args, arg_types, @arena)
+              end
+            end
+            if numeric_entry
+              candidate_name = numeric_entry[0]
+              candidate_def = numeric_entry[1]
+              candidate_numeric_target_types = numeric_entry[2]
+            else
+              if source_super_contract_check
+                owner_source_mismatch = allocator_source_contract_mismatch_for_call(base_method_name, arg_types)
+                if mismatch = owner_source_mismatch
+                  source_super_mismatch ||= mismatch
+                elsif source_owner_has_viable_positional_candidate_shape?(base_method_name, args.size)
+                  source_super_unresolved_candidate = true
+                end
+              end
+              unless owner_source_mismatch
+                if base_def = @function_defs[base_method_name]?
+                  candidate_name = base_method_name
+                  candidate_def = base_def
+                end
+              end
+            end
           end
         end
 
@@ -84873,6 +85073,25 @@ module Adamas::HIR
             STDERR.puts "[ARGERR_SUPER] phase=ancestor owner=#{owner} candidate=#{candidate_name}"
           end
           candidate_args = args.dup
+          if numeric_targets = candidate_numeric_target_types
+            raise LoweringError.new("invalid source integer autocast target vector for super", node) unless numeric_targets.size == arg_types.size
+            numeric_targets.each_with_index do |target_type, index|
+              next if target_type == arg_types[index]
+              next if control_flow_dead_block?(ctx, ctx.current_block)
+              value_id = candidate_args[index]
+              if ctx.type_literal?(value_id) || ctx.type_of(value_id) != arg_types[index] ||
+                 enum_tracked_type(ctx, value_id) != arg_types[index]
+                raise LoweringError.new(
+                  "no overload matches #{base_method_name}: super integer autocast requires a runtime #{get_type_name_from_ref(arg_types[index])} value",
+                  node,
+                )
+              end
+              cast = Cast.new(ctx.next_id, target_type, value_id, target_type)
+              ctx.emit(cast)
+              ctx.register_type(cast.id, target_type)
+              candidate_args[index] = cast.id
+            end
+          end
           callable = true
           if params = candidate_def.params
             param_count = count_params(params) { |p| !p.is_block && !named_only_separator?(p) }
@@ -84906,6 +85125,17 @@ module Adamas::HIR
       end
 
       unless super_method_name
+        if mismatch = source_super_mismatch
+          unless source_super_unresolved_candidate
+            actual_name = mismatch[0]
+            declared_name = mismatch[1]
+            rejected_candidate = mismatch[2]
+            raise LoweringError.new(
+              "no overload matches #{rejected_candidate} for super argument types (#{actual_name}); expected #{declared_name}",
+              node,
+            )
+          end
+        end
         fallback_base = "#{parent_name}##{method_name}"
         super_method_name = mangle_function_name(fallback_base, arg_types)
       end
@@ -114760,52 +114990,78 @@ module Adamas::HIR
       end
     end
 
+    private def source_integer_autocast_candidate_entry(
+      func_name : String,
+      positional_args : Array(ExprId),
+      arg_types : Array(TypeRef),
+      call_arena : Adamas::Compiler::Frontend::ArenaLike,
+      candidate_name : String,
+      candidate_def : Adamas::Compiler::Frontend::DefNode,
+    ) : Tuple(String, Adamas::Compiler::Frontend::DefNode, Array(TypeRef))?
+      # Keep source slots positional until named/splat/block autocasting has
+      # an equivalent binding contract. No ABI-only fallback is admitted.
+      params = function_param_infos(candidate_def)
+      return nil if params.any? { |param| param.is_splat || param.is_double_splat || param.is_block }
+      return nil unless return_def_accepts_positional?(candidate_def, positional_args.size)
+      return nil unless named_args_compatible_with_def?(candidate_def, [] of String, positional_args.size, positional_args.size)
+      context = function_context_for_lookup_candidate(func_name, candidate_name)
+      converted_types = arg_types.dup
+      changed = false
+      params.each_with_index do |param, index|
+        break if index >= positional_args.size
+        restriction_text = param.type_annotation
+        next unless restriction_text
+        restriction = normalize_declared_type_name(restriction_text, context, specialize_bare_generics: false)
+        target_type = type_ref_for_name(restriction)
+        next if target_type == arg_types[index]
+        arg_node = call_arena[positional_args[index]]
+        admitted = if arg_node.is_a?(Adamas::Compiler::Frontend::NumberNode)
+                     integer_literal_representable_as?(arg_node, target_type)
+                   else
+                     source_integer_domain_subset?(arg_types[index], target_type)
+                   end
+        next unless admitted
+        converted_types[index] = target_type
+        changed = true
+      end
+      return nil unless changed
+      return nil unless params_compatible_with_args?(candidate_def, converted_types, context)
+      return nil unless source_generic_argument_mismatch_for_def(candidate_def, converted_types, context).nil?
+      # The unchanged resolver must select this very declaration with the
+      # validated vector. This preserves owner/arity/default/type scoring.
+      selected = lookup_function_def_for_call(func_name, converted_types.size, false, converted_types)
+      return nil unless selected && selected[1].same?(candidate_def)
+      {selected[0], candidate_def, converted_types}
+    end
+
     private def source_integer_autocast_entry(
       func_name : String,
       positional_args : Array(ExprId),
       arg_types : Array(TypeRef),
       call_arena : Adamas::Compiler::Frontend::ArenaLike,
+      exact_candidate_arenas : Bool = false,
     ) : Tuple(String, Adamas::Compiler::Frontend::DefNode, Array(TypeRef))?
       return nil unless arg_types.any? { |type| signed_integer_primitive?(type) || unsigned_integer_type?(type) }
       candidates = [] of Tuple(String, Adamas::Compiler::Frontend::DefNode, Array(TypeRef))
       function_def_overload_keys(func_name).each do |candidate_name|
         candidate_def = @function_defs[candidate_name]?
         next unless candidate_def
-        # Keep source slots positional until named/splat/block autocasting has
-        # an equivalent binding contract. No ABI-only fallback is admitted.
-        params = function_param_infos(candidate_def)
-        next if params.any? { |param| param.is_splat || param.is_double_splat || param.is_block }
-        next unless return_def_accepts_positional?(candidate_def, positional_args.size)
-        next unless named_args_compatible_with_def?(candidate_def, [] of String, positional_args.size, positional_args.size)
-        context = function_context_for_lookup_candidate(func_name, candidate_name)
-        converted_types = arg_types.dup
-        changed = false
-        params.each_with_index do |param, index|
-          break if index >= positional_args.size
-          restriction_text = param.type_annotation
-          next unless restriction_text
-          restriction = normalize_declared_type_name(restriction_text, context, specialize_bare_generics: false)
-          target_type = type_ref_for_name(restriction)
-          next if target_type == arg_types[index]
-          arg_node = call_arena[positional_args[index]]
-          admitted = if arg_node.is_a?(Adamas::Compiler::Frontend::NumberNode)
-                       integer_literal_representable_as?(arg_node, target_type)
-                     else
-                       source_integer_domain_subset?(arg_types[index], target_type)
-                     end
-          next unless admitted
-          converted_types[index] = target_type
-          changed = true
-        end
-        next unless changed
-        next unless params_compatible_with_args?(candidate_def, converted_types, context)
-        next unless source_generic_argument_mismatch_for_def(candidate_def, converted_types, context).nil?
-        # The unchanged resolver must select this very declaration with the
-        # validated vector. This preserves owner/arity/default/type scoring.
-        selected = lookup_function_def_for_call(func_name, converted_types.size, false, converted_types)
-        next unless selected && selected[1].same?(candidate_def)
-        next if candidates.any? { |(_, existing, types)| existing.same?(candidate_def) && types == converted_types }
-        candidates << {selected[0], candidate_def, converted_types}
+        candidate_entry = if exact_candidate_arenas
+                            candidate_arena = @function_def_arenas[candidate_name]?
+                            next unless candidate_arena && arena_fits_def?(candidate_arena, candidate_def)
+                            with_arena(candidate_arena) do
+                              source_integer_autocast_candidate_entry(
+                                func_name, positional_args, arg_types, call_arena,
+                                candidate_name, candidate_def,
+                              )
+                            end
+                          else
+                            source_integer_autocast_candidate_entry(
+                              func_name, positional_args, arg_types, call_arena,
+                              candidate_name, candidate_def,
+                            )
+                          end
+        candidates << candidate_entry if candidate_entry
       end
       return nil if candidates.empty?
       # Integer restrictions are nominally disjoint. Several representable

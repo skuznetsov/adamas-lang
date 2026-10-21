@@ -1,0 +1,1 @@
+(?i)(?=.*SuperContractWrongOverloadParent)(?=.*String)(?=.*(?:Bool|Int32))(?=.*(?:no overload|not|must be|expected))

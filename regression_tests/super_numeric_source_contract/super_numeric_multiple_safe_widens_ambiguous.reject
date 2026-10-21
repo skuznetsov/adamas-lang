@@ -1,0 +1,1 @@
+(?i)^(?:Error: ambiguous call, implicit cast of UInt8 matches all of Int16, UInt16|Error: ambiguous call to SuperContractAmbiguousParent#choose with source integer autocasts)$

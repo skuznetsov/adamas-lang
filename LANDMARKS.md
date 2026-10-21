@@ -1,3 +1,28 @@
+### Explicit super lookup preserves typed source argument contracts (2026-10-21)
+Explicit super skipped the ordinary source integer-autocast route and could
+recover a bare definition after typed lookup had rejected its arguments. Probe
+against the caller AST and the candidate's owning arena, require ordinary
+resolution to select that exact definition with the converted vector, and emit
+those conversions. A complete supported source-candidate mismatch prevents bare
+def recovery; uncertain ancestors/mixins remain on ordinary resolution.
+
+Clean source9817 passes the portable super_numeric_source_contract_repro.sh
+in frozen run9829 after all pinned Crystal 1.20.1 cases pass: 9 exact-output
+programs and 9 semantic rejections with no executable. Clean parent9524's
+identifier-widening program compiles but exits 134 in a super stub (run9823).
+The shared allocator_source_contract_repro.sh passes 6P/2N on both compilers
+(run9830). Source manifest SHA256
+a3277ab179aedf166310cadb17b3d3c4faf315c6bd09d1015ee7fc99ad818031;
+host SHA256 3380ba50662d7181b264a8681452a37b271494a7d172b8b178b7c877559755c8.
+Scoped adversary ROBUST for explicit positional numeric/source-contract calls:
+signed/unsigned range boundaries, narrowing, ambiguity, invariant generic
+arguments and later-formal mismatches retain strict rejection. Named/splat/block
+autocasting and lexical alias-head resolution require separate evidence.
+No application or stdlib changes. Fresh bootstrap and unchanged LavinMQ runtime
+and upstream-test parity remain open. Refresh after source argument binding,
+overload inventory, arena ownership or super resolution changes; revert source
+and regression together.
+
 ### Automatic allocator recovery must preserve initializer source contracts (2026-10-21)
 Ordinary overload rejection could fall through to a generated allocator that
 recovered a source initializer without honoring its rejected argument contract.

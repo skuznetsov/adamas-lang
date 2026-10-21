@@ -21466,3 +21466,21 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   the same source-ownership boundary. Parameter-name fallback is statically
   bounded; a raw-name-loss runtime discriminator remains useful. Refresh
   bootstrap and unchanged LavinMQ parity separately.
+
+
+### Preserve typed source contracts in explicit super calls (2026-10-21)
+- [x] Resolve legal integer autocasts against the original positional AST and
+  the exact candidate definition arena, then emit the validated conversion.
+  Do not revive a bare source definition after its complete supported argument
+  contract is contradicted. Preserve uncertain ancestor/mixin candidate sets.
+- [x] Frozen clean source9817 passes super_numeric_source_contract_repro.sh
+  in run9829: nine byte-exact runtime cases and nine strict type rejections,
+  including signed/unsigned literal boundaries, ambiguity, invariant generics
+  and later argument mismatches. Pinned Crystal 1.20.1 passes every case first.
+  Clean parent9524 compiles the identifier-widening case but aborts in a stub
+  (run9823); source9817 runs it correctly. Shared allocator guard: 6P/2N pass
+  on original and candidate (run9830), including wrong Proc input rejection.
+- [ ] Extend source autocast binding evidence to named/splat/block super forms.
+  Existing controls preserve their current behavior; no general conversion
+  claim is made for unsupported shapes. Lexical alias-head lookup, unchanged
+  LavinMQ test parity and a fresh bootstrap fixed point remain separate work.

@@ -1,0 +1,1 @@
+(?i)^(?:Error: expected argument #1 to 'SuperContractLaterMismatchParent#send_values'\s+(?:to be|must be) Int64, not Int32|Error: expected argument #2 to 'SuperContractLaterMismatchParent#send_values'\s+(?:to be|must be) Bool, not String|Error: no overload matches SuperContractLaterMismatchParent#send_values\$Int64_Bool for super argument types \(String\); expected Bool)$
