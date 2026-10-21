@@ -2046,7 +2046,7 @@ module Adamas
         def_nodes = [] of Tuple(Frontend::DefNode, Frontend::ArenaLike)
         class_nodes = [] of Tuple(Frontend::ClassNode, Frontend::ArenaLike)
         module_nodes = [] of Tuple(Frontend::ModuleNode, Frontend::ArenaLike)
-        # Preserve declaration order across both node kinds. Qualified class
+        # Preserve declaration order across classes, modules, and aliases. Qualified class
         # declarations use ModuleNode scaffolds and must not leap ahead of an
         # earlier ClassNode that declares their superclass. The kind/index
         # pairs refer to the existing node/arena inventories without copying
@@ -2381,30 +2381,11 @@ module Adamas
           timings["dbg_ms_hir_reg_enums"] = (Time.instant - hir_phase_start.not_nil!).total_milliseconds
           hir_phase_start = Time.instant
         end
-        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_before_log_aliases aliases=#{alias_nodes.size}"; STDERR.flush
+        # Keep aliases in the same declaration stream as classes and modules.
+        # Pre-registering every alias here would authorize a superclass through
+        # an alias whose source declaration has not been visited yet.
         log(options, out_io, "    Aliases: #{alias_nodes.size}")
-        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_log_aliases aliases=#{alias_nodes.size}"; STDERR.flush
         alias_count = alias_nodes.size
-        stage2_debug("[STAGE2_DEBUG] alias register start count=#{alias_count}", err_io)
-        i = 0
-        while i < alias_count
-          n, a = alias_nodes.unsafe_fetch(i)
-          if i < 3 || i == alias_count - 1
-            stage2_debug("[STAGE2_DEBUG] alias register idx=#{i + 1}/#{alias_count}", err_io)
-          end
-          hir_converter.arena = a
-          hir_converter.register_alias(n)
-          i += 1
-        end
-        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_alias_loop"; STDERR.flush
-        stage2_debug("[STAGE2_DEBUG] alias register done", err_io)
-        if debug_profile
-          timings["dbg_ms_hir_reg_aliases"] = (Time.instant - hir_phase_start.not_nil!).total_milliseconds
-          hir_phase_start = Time.instant
-        end
-        if const_map_trace
-          bootstrap_trace_puts "[CONST_MAP] phase=alias_register_done literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
-        end
         bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_before_log_macros macros=#{macro_nodes.size}"; STDERR.flush
         log(options, out_io, "    Macros: #{macro_nodes.size}")
         bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_log_macros macros=#{macro_nodes.size}"; STDERR.flush
@@ -2466,10 +2447,24 @@ module Adamas
         reg_type_profile = BootstrapEnv.enabled?("ADAMAS_REG_TYPE_PROFILE")
         module_reg_ms = 0.0
         class_reg_ms = 0.0
+        alias_reg_ms = 0.0
         type_i = 0
         while type_i < ordered_type_nodes.size
           kind, i = ordered_type_nodes.unsafe_fetch(type_i)
           case kind
+          when Frontend::NodeKind::Alias
+            n, a = alias_nodes.unsafe_fetch(i)
+            if i < 3 || i == alias_count - 1
+              stage2_debug("[STAGE2_DEBUG] alias register idx=#{i + 1}/#{alias_count}", err_io)
+            end
+            hir_converter.arena = a
+            reg_t0 = Time.instant if reg_type_profile || debug_profile
+            hir_converter.register_alias(n)
+            if reg_type_profile || debug_profile
+              ms = (Time.instant - reg_t0.not_nil!).total_milliseconds
+              alias_reg_ms += ms
+              bootstrap_trace_puts "[REG_TYPE] alias #{String.new(n.name)} #{ms.round(1)}ms" if reg_type_profile && ms > 5.0
+            end
           when Frontend::NodeKind::Module
             n, a = module_nodes.unsafe_fetch(i)
             bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_module_before_fetch idx=#{i}"; STDERR.flush
@@ -2522,6 +2517,7 @@ module Adamas
         bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_class_loop"; STDERR.flush
         stage2_debug("[STAGE2_DEBUG] source-ordered type register done", err_io)
         if debug_profile
+          timings["dbg_ms_hir_reg_aliases"] = alias_reg_ms
           timings["dbg_ms_hir_reg_modules"] = module_reg_ms
           timings["dbg_ms_hir_reg_classes"] = class_reg_ms
           hir_phase_start = Time.instant
@@ -5302,6 +5298,7 @@ module Adamas
         when Frontend::AliasNode
           top_level_type_names.add(String.new(node.name))
           alias_nodes << {node, arena}
+          ordered_type_nodes << {Frontend::NodeKind::Alias, alias_nodes.size - 1} if ordered_type_nodes
           pending_annotations.clear
         when Frontend::LibNode
           top_level_type_names.add(String.new(node.name))

@@ -20960,3 +20960,26 @@ lavin10424_predefined_parent_glob_qualified_candidate.frozen_inputs.receipt.json
 under /Users/sergey/Projects/Adamas/sol_help_20261012. Refresh after intrinsic
 type creation, parent validation, or source reopening changes. Roll back the
 metadata and its regression suite together.
+
+
+### Future aliases cannot authorize an earlier superclass (2026-10-21)
+After the source-order and intrinsic-type suites passed, an additional adversary
+found a false acceptance: class Child < FutureAlias before alias FutureAlias =
+AlreadyDeclaredParent. The all-alias prepass published the alias early; checking
+only the canonical target could not recover the original alias declaration time.
+Original Crystal publishes Alias nodes at their TopLevelVisitor source visit.
+
+Move top-level alias registration into the same ordered class/module stream.
+Keep the alias inventory for collection/profiling, without early publication.
+Run10442 passes four exact-output positives (including lazy method restriction
+and return-type forward references) and two strict future-alias negatives on
+both original Crystal 1.20.1 and sealed10440. Original-first suites also pass:
+31 source-order cases in run10444, 24 intrinsic/glob cases in run10445, and six
+inherited-behavior macro cases in run10446. Scoped adversary ROBUST for these
+67 exercised cases. This does not certify the full regression suite or bootstrap.
+The unchanged prelude remains blocked by constructor literal autocast (run10443).
+Evidence: corresponding OUT/lavin1044*.frozen_inputs.receipt.json under
+/Users/sergey/Projects/Adamas/sol_help_20261012. Refresh after declaration
+collection, registration order, alias resolution, or lazy method typing changes.
+Roll back the ordered alias visit and its regression suite together. Unchanged
+LavinMQ runtime/spec parity and fresh S3/S4 equality remain open.

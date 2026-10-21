@@ -21590,3 +21590,17 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Full prelude reaches Index.new(-1, 0) and stops at constructor literal
   autocast (run10425). Full regression suite, S1-to-S2, unchanged LavinMQ parity,
   and fresh bootstrap remain open.
+
+
+### Keep alias publication in the source declaration stream (2026-10-21)
+- [x] Remove the early all-alias publication pass. Register each top-level alias
+  alongside classes/modules at its source position, matching Crystal's Alias
+  visitor without delaying strict superclass validation.
+- [x] Preserve prior alias chains and legal lazy method restriction/result
+  forward references; reject future top-level and nested superclass aliases.
+- [x] Sealed10440 and original Crystal 1.20.1 pass all four suites: six alias
+  controls (run10442), 31 source-order cases (run10444), 24 intrinsic/glob cases
+  (run10445), and six inherited-behavior macro cases (run10446).
+- [ ] Prelude still stops at the same Index.new(-1, 0) numeric autocast frontier
+  (run10443). Full regressions, S1-to-S2, unchanged LavinMQ parity, and fresh
+  S3/S4 fixed point remain open.
