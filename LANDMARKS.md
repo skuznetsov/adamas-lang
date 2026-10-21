@@ -20649,3 +20649,39 @@ after SuperNode, string-table or cache-format changes; revert source and tests
 together. The CLI cache loader is still disabled, so CLI hits, Adamas self-hosted
 cache behavior, fresh bootstrap and unchanged LavinMQ runtime/spec parity remain
 open. No stdlib or application source was changed.
+
+
+### Generated parameters retain exact expansion source ownership (2026-10-21)
+A Parameter span is relative to its generated buffer, even when the same arena
+also owns the ordinary source and other expansions. Module/class begin reparses
+did not record that source before definition registration. Missing raw slices
+therefore let an untyped generated argument acquire String from a comment in
+the original file; arena identity alone was correct and insufficient.
+
+Retain the existing generated Def source map and add a Parameter-identity map
+within its owning arena. Record before registration, preserve raw-token
+authority, and make an exact generated source authoritative even when the
+parameter has no annotation. Apply the same ownership rule to missing names.
+Ordinary source recovery, overload restrictions and type admission are unchanged.
+
+Clean parent9360 falsely rejects the original-qualified Nil call (runs9508,
+9510 and final-fixture run9539). Sealed9516 passes six exact-output controls and three rc1/no-binary type
+rejections with pinned Crystal 1.20.1 in repository-form run9538. Cases cover
+module/class begin, absent/explicit annotations, overlapping spans in two
+expansions in one arena, and ordinary parameters. Adjacent generated-ivar HIR
+guard passes in run9527. Root compiled every native command through run_safe.sh.
+
+Evidence: /Users/sergey/Projects/Adamas/sol_help_20261012/OUT/
+lavin9538_final_parameter_source.frozen_inputs.receipt.json and
+lavin9527_macro_extra_source_guard.frozen_inputs.receipt.json; exact9516 source
+replay is recorded in lavin9521_generated_parameter_source_owner_revalidation.json.
+Production HIR and committed regression bytes match these frozen inputs.
+
+Scoped adversary ROBUST for the tested module/class begin paths: overlap and
+wrong-type probes distinguish source ownership from weakened type admission.
+Refresh after expansion reparsing, Parameter lifetime/identity, annotation/name
+recovery or arena reset changes; revert source and regression together. The
+threaded class macro-branch reparse also lacks producer recording and needs its
+own original-qualified probe. Missing-name recovery has source/static coverage.
+Fresh bootstrap and unchanged LavinMQ runtime/upstream-spec parity remain open.
+No application or stdlib source was changed.

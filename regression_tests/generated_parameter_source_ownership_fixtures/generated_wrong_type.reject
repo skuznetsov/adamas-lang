@@ -1,0 +1,1 @@
+(?i)(?:must be|to be|expected|argument types|overload).*Int32.*Int64|(?i:Int64).*Int32

@@ -21445,3 +21445,20 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   spaced-path regression (8558); the corrected WT path suite passes (8563).
   Scope: parser ASTs. Runtime semantics, LavinMQ parity and bootstrap remain
   separate verification obligations.
+
+
+### Bind generated parameters to their exact source buffer (2026-10-21)
+- [x] Record the source of module/class begin expansions before registering
+  their definitions, keyed by owning arena and Parameter identity. Recover
+  missing raw annotation/name slices from that source, including an absent
+  annotation, without consulting an unrelated retained expansion.
+- [x] Qualify with original-first generated_parameter_source_ownership_repro.sh:
+  six exact-output programs and three strict type rejections pass on pinned
+  Crystal 1.20.1 and sealed Adamas 9516 (run9538); adjacent generated-ivar HIR
+  guard passes (run9527). Clean parent 9360 falsely rejects the untyped Nil
+  parameter (runs9508/9510 and final-fixture run9539).
+- [ ] Cover process_threaded_macro_branch_in_class with an original-qualified
+  discriminator before adding its missing generated-source recording.
+  Parameter-name fallback is statically bounded; a raw-name-loss runtime
+  discriminator remains useful. Refresh bootstrap and unchanged LavinMQ parity
+  separately; this source-identity regression does not establish them.

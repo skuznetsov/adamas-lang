@@ -7622,6 +7622,8 @@ module Adamas::HIR
     @macro_generated_parameter_def_ids : Set(UInt64)
     # Exact generated source buffer that produced each macro-expanded DefNode.
     @macro_generated_parameter_sources : Hash({UInt64, UInt64}, String)
+    # Exact source buffer for each parameter whose raw annotation slice was lost.
+    @macro_generated_parameter_annotation_sources : Hash({UInt64, UInt64}, String)
     # Exact buffers for nodes parsed by macro expansion, partitioned by arena.
     @macro_generated_sources_by_arena : Hash(UInt64, {Adamas::Compiler::Frontend::ArenaLike, Hash(Int32, String)})
     @link_libraries : Array(String)
@@ -7989,6 +7991,7 @@ module Adamas::HIR
       @extra_sources_by_arena = {} of UInt64 => Array(String)
       @macro_generated_parameter_def_ids = Set(UInt64).new
       @macro_generated_parameter_sources = {} of {UInt64, UInt64} => String
+      @macro_generated_parameter_annotation_sources = {} of {UInt64, UInt64} => String
       @macro_generated_sources_by_arena = {} of UInt64 => {Adamas::Compiler::Frontend::ArenaLike, Hash(Int32, String)}
       @macro_primary_source_owners = {} of UInt64 => {Adamas::Compiler::Frontend::ArenaLike, String, Int32}
       @link_libraries = link_libraries || [] of String
@@ -8264,6 +8267,7 @@ module Adamas::HIR
       @extra_sources_by_arena = {} of UInt64 => Array(String)
       @macro_generated_parameter_def_ids = Set(UInt64).new
       @macro_generated_parameter_sources = {} of {UInt64, UInt64} => String
+      @macro_generated_parameter_annotation_sources = {} of {UInt64, UInt64} => String
       @macro_generated_sources_by_arena = {} of UInt64 => {Adamas::Compiler::Frontend::ArenaLike, Hash(Int32, String)}
       @macro_primary_source_owners = {} of UInt64 => {Adamas::Compiler::Frontend::ArenaLike, String, Int32}
     end
@@ -8291,6 +8295,7 @@ module Adamas::HIR
       @source_recovered_defs = {} of UInt64 => Adamas::Compiler::Frontend::DefNode
       @macro_generated_parameter_def_ids = Set(UInt64).new
       @macro_generated_parameter_sources = {} of {UInt64, UInt64} => String
+      @macro_generated_parameter_annotation_sources = {} of {UInt64, UInt64} => String
       @macro_generated_sources_by_arena = {} of UInt64 => {Adamas::Compiler::Frontend::ArenaLike, Hash(Int32, String)}
       @macro_primary_source_owners = {} of UInt64 => {Adamas::Compiler::Frontend::ArenaLike, String, Int32}
       @last_splat_context = nil
@@ -22633,6 +22638,11 @@ module Adamas::HIR
         def_id = node.object_id.to_u64
         @macro_generated_parameter_def_ids.add(def_id)
         @macro_generated_parameter_sources[{arena_map_key(arena), def_id}] = source
+        if params = node.params
+          each_param(params) do |param|
+            @macro_generated_parameter_annotation_sources[{arena_map_key(arena), param.object_id.to_u64}] = source
+          end
+        end
         if body = node.body
           body.each do |child_id|
             remember_macro_generated_parameter_sources(child_id, arena, source, depth + 1)
@@ -30799,9 +30809,11 @@ module Adamas::HIR
       output = expander.expand_top_level_text(node.then_body, owner_type: owner_type, scope: owner_type.try(&.scope))
       return if output.strip.empty?
 
-      expanded_id = expander.reparse_output(wrap_module_body_macro_output(module_name, output), node.then_body)
+      expanded_source = wrap_module_body_macro_output(module_name, output)
+      expanded_id = expander.reparse_output(expanded_source, node.then_body)
       return if expanded_id.invalid?
 
+      remember_macro_generated_parameter_sources(expanded_id, @arena, expanded_source)
       expanded_node = @arena[expanded_id]
       if expanded_node.is_a?(Adamas::Compiler::Frontend::ModuleNode)
         with_arena(@arena) do
@@ -32277,7 +32289,13 @@ module Adamas::HIR
       # (`Hash(Int32, Nil)`) while retaining the parser-owned separator,
       # external-name, and visibility metadata on the Parameter itself.
       if raw_text.nil? && arena
-        if recovered = source_parameter_type_annotation_from_span(param.span, arena.not_nil!)
+        source_arena = arena.not_nil!
+        if generated_source = @macro_generated_parameter_annotation_sources[{arena_map_key(source_arena), param.object_id.to_u64}]?
+          # This Parameter belongs to a known generated buffer. Its span is
+          # meaningful only in that exact buffer, even when it has no type.
+          return source_parameter_type_annotation_from_span(param.span, source_arena, generated_source)
+        end
+        if recovered = source_parameter_type_annotation_from_span(param.span, source_arena)
           return recovered
         end
       end
@@ -32327,17 +32345,20 @@ module Adamas::HIR
     private def source_parameter_type_annotation_from_span(
       span : Adamas::Compiler::Frontend::Span,
       arena : Adamas::Compiler::Frontend::ArenaLike,
+      source_override : String? = nil,
     ) : String?
-      source = source_text_for_arena_or_file(arena)
+      source = source_override || source_text_for_arena_or_file(arena)
       return nil unless source
       # A span alone cannot identify which retained buffer produced a macro
       # expansion. Let `parameter_span_text_from_extra_sources` handle those
       # arenas through its candidate checks rather than guessing from the
-      # ordinary source file and overriding generated-token authority. The
-      # parser retains the ordinary source itself; `store_extra_source` records
-      # generated buffers in the converter-side map, so skip those arenas.
-      if extras = extra_sources_for_arena(arena)
-        return nil unless extras.empty?
+      # ordinary source file and overriding generated-token authority. An
+      # exact source override is already keyed by Parameter identity and is
+      # authoritative, including when that parameter has no annotation.
+      if source_override.nil?
+        if extras = extra_sources_for_arena(arena)
+          return nil unless extras.empty?
+        end
       end
 
       text = slice_source_for_span(span, source.not_nil!)
@@ -32378,6 +32399,21 @@ module Adamas::HIR
       # authoritative for this parser-owned namespace.
       if raw_text && parser_generated_block_param_name?(raw_text)
         return raw_text
+      end
+
+      if raw_text.nil? && arena
+        source_arena = arena.not_nil!
+        if generated_source = @macro_generated_parameter_annotation_sources[{arena_map_key(source_arena), param.object_id.to_u64}]?
+          # A generated Parameter's name span indexes its exact expansion, not
+          # the ambient source or another expansion in the same arena.
+          if span = param.name_span
+            if text = slice_source_for_span(span, generated_source)
+              stripped = strip_single_line_comments(text).strip
+              return stripped if parameter_name_text_candidate?(stripped)
+            end
+          end
+          return nil
+        end
       end
 
       if span = param.name_span
@@ -34120,10 +34156,12 @@ module Adamas::HIR
       return if output.strip.empty?
 
       STDERR.puts "[BEGIN_MACRO_CLASS] class=#{class_name} phase=before_reparse" if trace_begin_macro
-      expanded_id = expander.reparse_output(wrap_class_body_macro_output(output), node.then_body)
+      expanded_source = wrap_class_body_macro_output(output)
+      expanded_id = expander.reparse_output(expanded_source, node.then_body)
       STDERR.puts "[BEGIN_MACRO_CLASS] class=#{class_name} phase=after_reparse id=#{expanded_id.index}" if trace_begin_macro
       return if expanded_id.invalid?
 
+      remember_macro_generated_parameter_sources(expanded_id, @arena, expanded_source)
       expanded_node = @arena[expanded_id]
       if trace_begin_macro
         STDERR.puts "[BEGIN_MACRO_CLASS] class=#{class_name} phase=after_expanded_fetch kind=#{Adamas::Compiler::Frontend.node_kind(expanded_node)}"
