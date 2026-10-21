@@ -20734,3 +20734,33 @@ parameter identity/lifetime or raw-slice recovery changes; revert the producer
 change and fixtures together. Other reparse producers, fresh bootstrap and
 unchanged LavinMQ runtime/upstream-spec parity remain open. No application or
 stdlib source was changed.
+
+
+### Qualified type paths retain their lexical head binding (2026-10-21)
+The anchored top-level shortcut and qualified-path fallback could discard a
+lexically visible first component. After binding that component, resolve its
+alias target and append the tail in the selected namespace; a missing tail
+cannot restart lookup through a same-named global namespace. Explicit absolute
+paths retain global lookup. Reject undeclared simple superclasses before layout
+materialization rather than retaining phantom owners.
+
+Pinned Crystal 1.20.1 and sealed9833 pass all seven exact-output cases and five
+strict rc1/no-executable semantic rejections in the portable
+qualified_type_path_source_contract_repro.sh (run9855). Clean committed parent
+9817 selects the wrong global parent, rejects a valid nested parent, and accepts
+all five invalid programs (run9854). The original-first combined matrix in
+run9848 preserves all 18 super source-contract cases; that run's separate alias
+diagnostic predicate needed the canonical namespace spelling admitted in run9855.
+Source manifest SHA256
+fbcfef631f6d82cbc5bcb69721f83393a52e3ef7d3838daf6a6dfb38da910db7;
+host SHA256 2c8cad99dcfff7ceee67e12ca9d7636fd1cb105918062c09b7b852e6d2de546a.
+Evidence: /Users/sergey/Projects/Adamas/sol_help_20261012/OUT/
+lavin9855_qualified_type_path_fixed.frozen_inputs.receipt.json.
+
+Scoped adversary ROBUST for the tested lexical/absolute paths: runtime owner
+selection, missing alias tails, forward parents and wrong parent argument types
+distinguish correct resolution from weakened admission. Refresh after lexical
+context, alias expansion, declaration availability or resolution-cache changes;
+revert source and regression together. Builtin superclass metadata, unchanged
+LavinMQ runtime/spec parity and fresh bootstrap remain separate obligations.
+No application or stdlib source changed.

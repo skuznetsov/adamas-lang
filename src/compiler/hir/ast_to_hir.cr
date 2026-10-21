@@ -36690,6 +36690,11 @@ module Adamas::HIR
         parent_name = resolve_type_name_in_context(raw_parent)
         @current_class = old_class
         if resolved_parent = parent_name
+          # A resolved spelling is not proof that its superclass was declared.
+          # Reject missing simple paths before layout can retain a phantom owner.
+          if materializable_unknown_named_type?(resolved_parent) && !type_name_exists?(resolved_parent)
+            raise LoweringError.new("undefined constant #{resolved_parent}", node)
+          end
           parent_name = materialize_generic_parent_for_layout(resolved_parent)
         end
         if filter = env_get("DEBUG_CLASS_PARENT_TRACE")
@@ -63115,6 +63120,15 @@ module Adamas::HIR
                              @top_level_class_kinds.has_key?(head) ||
                              BUILTIN_TYPE_NAMES.includes?(head)
         if anchored_namespace
+          # A relative qualified path binds its first component in lexical context
+          # before falling back to a matching top-level type. Absolute paths return above.
+          if namespace_path_head_in_context(head) && materializable_unknown_named_type?(name)
+            resolved = resolve_path_string_in_context(name)
+            if resolved != name
+              resolved_type_name_cache_set(name, resolved)
+              return resolved
+            end
+          end
           resolved_type_name_cache_set(name, name)
           return name
         end
@@ -63603,16 +63617,18 @@ module Adamas::HIR
       tail_start = sep + 2
       tail = tail_start < path.bytesize ? path.byte_slice(tail_start, path.bytesize - tail_start) : ""
 
-      resolved_head = resolve_class_name_in_context(head)
-      if resolved_head == head
-        if contextual_head = namespace_path_head_in_context(head)
-          resolved_head = contextual_head
-        end
-      end
+      # Binding the first component commits the rest of this relative path
+      # to that namespace. A missing tail cannot reopen global-head lookup.
+      contextual_head = namespace_path_head_in_context(head)
+      resolved_head = if contextual_head
+                        resolve_type_alias_chain(contextual_head)
+                      else
+                        resolve_class_name_in_context(head)
+                      end
       return path if resolved_head == head
 
       resolved = "#{resolved_head}::#{tail}"
-      return resolved if type_name_exists?(resolved)
+      return resolved if contextual_head || type_name_exists?(resolved)
       return path if type_name_exists?(path)
       resolved
     end

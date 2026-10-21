@@ -21484,3 +21484,18 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   Existing controls preserve their current behavior; no general conversion
   claim is made for unsupported shapes. Lexical alias-head lookup, unchanged
   LavinMQ test parity and a fresh bootstrap fixed point remain separate work.
+
+
+### Preserve lexical binding of qualified type paths (2026-10-21)
+- [x] Bind relative qualified paths to their lexically visible first component,
+  including alias targets, before global fallback. A missing tail stays missing
+  in that selected namespace. Preserve explicit absolute paths and reject an
+  undeclared simple superclass before materializing its layout.
+- [x] Original-first qualified_type_path_source_contract_repro.sh passes all
+  seven byte-exact programs and five rc1/no-executable semantic rejections on
+  sealed9833 (run9855). Clean parent9817 chooses the wrong global superclass,
+  rejects a legal nested parent, and falsely accepts all five negatives
+  (run9854). The combined super matrix retains all 18 source-contract cases
+  in run9848; its separate alias diagnostic spelling was qualified in run9855.
+- [ ] Qualify builtin superclass metadata independently. This path regression
+  does not establish unchanged LavinMQ runtime/spec parity or fresh bootstrap.

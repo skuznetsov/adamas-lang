@@ -1,0 +1,1 @@
+(?i)(?:must be Bool, not Int32|Bool.{0,100}Int32|Int32.{0,100}Bool)
