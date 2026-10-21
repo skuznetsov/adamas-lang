@@ -1,0 +1,1 @@
+undefined constant[^\n]*SelfParentOwner|(?:can't|cannot)[^\n]*inherit[^\n]*itself|cyclic[^\n]*inherit

@@ -20864,3 +20864,39 @@ Unchanged LavinMQ runtime/spec parity and fresh S3/S4 bootstrap remain open.
 Refresh after class registration, BeginNode/macro expansion, visibility,
 generic-template identity or arena ownership changes; revert the registration
 view and its regression together.
+
+
+### Active enclosing superclass evidence and parent kind (2026-10-21)
+Nested class registration can ask for its enclosing superclass before that
+class's ClassInfo is published. The name inventory is not declaration authority:
+on clean parent10151 an enclosing ancestor is rejected, while a self-parent and
+a class inheriting an active struct are accepted. Original Crystal publishes
+the nominal class in its scope before visiting the body (top_level_visitor.cr).
+
+Track a stack of exact ClassNode/arena/owner/kind frames through registration,
+with balanced identity checks and ensure-based restoration. Only a same-arena,
+non-generic enclosing declaration can bridge the missing-ClassInfo interval.
+Use registered declarations, generic template kind, or that exact active frame
+to validate class/struct compatibility and abstract struct parent requirements.
+Reject self-parents and module/lib/enum parents before layout accepts a name.
+Forward and absent parent names still fail; no provisional layout is invented.
+
+Pinned Crystal 1.20.1 and clean sealed10198 pass four exact-output positives and
+ten strict primary semantic rc1/no-executable rejection guards in run10209.
+The six core fixtures are byte-identical to parent run10194. The candidate also
+advances the unchanged prelude past Sync::Error; run10196 stops at IO::Error.
+This is not a successful prelude or LavinMQ build.
+Source manifest SHA256
+499fb5a7e970859572996899f772de3c63031c53fd8d85b8b431fdd7e0cfb05f;
+host SHA256 37ece3c37604560372cabe9d1773966575ffbf121ce9c95a9892644bfe40ebe4.
+Evidence: /Users/sergey/Projects/Adamas/sol_help_20261012/OUT/
+lavin10209_parent_kind_source_contract.frozen_inputs.receipt.json.
+
+Scoped adversary ROBUST for the exercised declaration identity/kind boundary:
+runtime output, no-executable rejection and original-first primary diagnostics
+separate the valid active parent from inventories, self-parents, future names,
+and incompatible kinds. Field-bearing struct layout, aliases, reopening
+identity and generated cross-arena declarations are not covered by this verdict.
+Refresh after class registration, superclass resolution, generic template kind
+or arena ownership changes; revert the frame/validation and regression together.
+Unchanged LavinMQ runtime/spec parity and fresh S3/S4 bootstrap remain open.

@@ -1,0 +1,2 @@
+class SelfParentOwner < SelfParentOwner
+end

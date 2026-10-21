@@ -21545,3 +21545,19 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Continue generic reopened-alias method materialization and missing-method
   rejection independently; those pre-existing defects are outside this fix.
 - [ ] Unchanged LavinMQ runtime/spec parity and fresh bootstrap remain open.
+
+
+### Preserve active enclosing superclass declaration evidence (2026-10-21)
+- [x] Track exact class declaration nodes and owning arenas through nested
+  registration; an active legal enclosing declaration can be a superclass
+  before its ClassInfo is published. Pop and restore the frame in ensure.
+- [x] Validate explicit parent kind and reject self-inheritance before a name
+  inventory or type cache can authorize it. Keep forward/missing parents closed.
+- [x] Crystal 1.20.1 and clean sealed10198 pass four exact-output controls and
+  ten primary semantic rejection checks (run10209). Clean parent10151 rejects
+  the legal enclosing ancestor and accepts self/class-from-struct inheritance
+  on the same six core fixtures (run10194).
+- [ ] Prelude compilation advances past Sync::Error, then stops at IO::Error
+  (run10196); investigate that declaration-order path. Inherited struct field
+  layout and superclass aliases/reopenings need separate controls.
+- [ ] Unchanged LavinMQ runtime/spec parity and fresh bootstrap remain open.

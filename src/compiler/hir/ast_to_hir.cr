@@ -782,6 +782,15 @@ module Adamas::HIR
   # Class type info (is_struct=true for value types)
   record ClassInfo, name : String, type_ref : TypeRef, ivars : Array(IVarInfo), class_vars : Array(ClassVarInfo), size : Int32, is_struct : Bool = false, parent_name : String? = nil
 
+  # Exact declaration context while a class body registers nested declarations.
+  record ActiveClassDeclarationFrame,
+    owner_name : String,
+    node : Adamas::Compiler::Frontend::ClassNode,
+    arena : Adamas::Compiler::Frontend::ArenaLike,
+    is_struct : Bool,
+    is_union : Bool,
+    is_generic : Bool
+
   # Macro parameter metadata (internal/external names + prefix).
   record MacroParamInfo, name : String, external_name : String? = nil, prefix : String = ""
 
@@ -2636,6 +2645,8 @@ module Adamas::HIR
     # Class type information
     getter class_info : Hash(String, ClassInfo)
     @class_info_by_type_id : Hash(TypeId, ClassInfo)
+    # Stack-scoped declaration evidence; unlike nested-name inventory it preserves source order and kind.
+    @active_class_declaration_frames : Array(ActiveClassDeclarationFrame)
     # Ivars with an explicit source type annotation (property x : T, @x : T,
     # def initialize(@x : T)). Assignment-driven union widening must not
     # mutate these: the declaration is authoritative, and a nilable RHS there
@@ -7686,6 +7697,7 @@ module Adamas::HIR
       @function_return_type_literal_defs = Set({String, UInt64, UInt64}).new
       @class_info = Hash(String, ClassInfo).new(initial_capacity: 2048)
       @class_info_by_type_id = {} of TypeId => ClassInfo
+      @active_class_declaration_frames = [] of ActiveClassDeclarationFrame
       @declared_typed_ivars = {} of String => Set(String)
       @declared_ivar_type_names = {} of String => Hash(String, String)
       @class_info_version = 0
@@ -36332,6 +36344,80 @@ module Adamas::HIR
       STDERR.puts "[CLASS_WITH_NAME] class=#{class_name} phase=leave_fallback" if trace_with_name
     end
 
+    private def active_enclosing_parent_declaration(
+      child_name : String,
+      parent_name : String,
+    ) : ActiveClassDeclarationFrame?
+      return nil unless child_name.starts_with?(parent_name + "::")
+      @active_class_declaration_frames.reverse_each do |frame|
+        next unless frame.owner_name == parent_name
+        next unless frame.arena.same?(@arena)
+        next if frame.is_union || frame.is_generic
+        return frame
+      end
+      nil
+    end
+
+    private def active_enclosing_class_parent?(child_name : String, parent_name : String, child_is_struct : Bool, child_is_union : Bool) : Bool
+      return false if child_is_union
+      frame = active_enclosing_parent_declaration(child_name, parent_name)
+      return false unless frame
+      return false unless frame.is_struct == child_is_struct
+      !frame.is_struct || frame.node.is_abstract == true
+    end
+
+    # An existing name alone does not establish a legal superclass. Use the
+    # registered declaration kind or the exact active enclosing declaration;
+    # inventories and type-name cache hits cannot authorize inheritance.
+    private def validate_explicit_superclass_kind(
+      node : Adamas::Compiler::Frontend::ClassNode,
+      child_name : String,
+      parent_name : String,
+      child_is_struct : Bool,
+    ) : Nil
+      if child_name == parent_name
+        raise LoweringError.new("can't make class or struct '#{child_name}' inherit itself", node)
+      end
+      parent_base = split_generic_base_and_args(parent_name).try(&.base) || parent_name
+      parent_is_struct : Bool? = nil
+      parent_is_abstract = false
+      if parent_info = @class_info[parent_name]?
+        parent_is_struct = parent_info.is_struct
+        parent_is_abstract = @abstract_class_names.includes?(parent_name)
+      elsif template = @generic_templates[parent_name]? || @generic_templates[parent_base]?
+        parent_is_struct = template.is_struct
+        parent_is_abstract = template.node.is_abstract == true
+      elsif frame = active_enclosing_parent_declaration(child_name, parent_name)
+        parent_is_struct = frame.is_struct
+        parent_is_abstract = frame.node.is_abstract == true
+      elsif @module_defs.has_key?(parent_name) || @module.is_lib?(parent_name)
+        raise LoweringError.new("#{parent_name} is not a class and cannot be a superclass", node)
+      elsif enum_info = @enum_info
+        if enum_info.has_key?(parent_name)
+          raise LoweringError.new("#{parent_name} is an enum and cannot be a superclass", node)
+        end
+      end
+      return if parent_is_struct.nil?
+
+      if child_is_struct != parent_is_struct
+        child_kind = child_is_struct ? "struct" : "class"
+        parent_kind = parent_is_struct ? "struct" : "class"
+        raise LoweringError.new("can't make #{child_kind} '#{child_name}' inherit #{parent_kind} '#{parent_name}'", node)
+      end
+      if parent_is_struct && !parent_is_abstract
+        raise LoweringError.new("can't extend non-abstract struct #{parent_name}", node)
+      end
+    end
+
+    private def pop_active_class_declaration_frame(frame : ActiveClassDeclarationFrame) : Nil
+      popped = @active_class_declaration_frames.pop?
+      unless popped && popped.node.same?(frame.node) && popped.arena.same?(frame.arena) &&
+             popped.owner_name == frame.owner_name && popped.is_struct == frame.is_struct &&
+             popped.is_union == frame.is_union && popped.is_generic == frame.is_generic
+        raise "active class declaration frame stack is unbalanced"
+      end
+    end
+
     private def register_class_with_name_in_current_arena(
       node : Adamas::Compiler::Frontend::ClassNode,
       class_name : String,
@@ -36363,7 +36449,15 @@ module Adamas::HIR
       register_reopened_nested_type_name(class_name)
       old_class = @current_class
       old_override = @current_namespace_override
+      active_is_generic = false
+      if active_type_params = node.type_params
+        active_is_generic = active_type_params.size > 0
+      end
+      active_frame = ActiveClassDeclarationFrame.new(
+        class_name, node, @arena, node.is_struct == true, node.is_union == true, active_is_generic
+      )
       @current_class = class_name
+      @active_class_declaration_frames << active_frame
       begin
         if env_get("DEBUG_TYPE_PATH") && class_name.includes?('/')
           current_path = source_path_for(@arena) || "(unknown)"
@@ -36473,6 +36567,7 @@ module Adamas::HIR
       ensure
         STDERR.puts "[CLASS_EXIT] class=#{class_name} phase=ensure_before_restore" if trace_class_exit
         bootstrap_trace_puts "[CLASS_FRONTIER] class_current_arena_leave #{class_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
+        pop_active_class_declaration_frame(active_frame)
         @current_class = old_class
         @current_namespace_override = old_override
         STDERR.puts "[CLASS_EXIT] class=#{class_name} phase=ensure_after_restore" if trace_class_exit
@@ -36724,9 +36819,11 @@ module Adamas::HIR
         parent_name = resolve_type_name_in_context(raw_parent)
         @current_class = old_class
         if resolved_parent = parent_name
+          validate_explicit_superclass_kind(node, class_name, resolved_parent, is_struct)
           # A resolved spelling is not proof that its superclass was declared.
           # Reject missing simple paths before layout can retain a phantom owner.
-          if materializable_unknown_named_type?(resolved_parent) && !type_name_exists?(resolved_parent)
+          if materializable_unknown_named_type?(resolved_parent) && !type_name_exists?(resolved_parent) &&
+             !active_enclosing_class_parent?(class_name, resolved_parent, is_struct, node.is_union == true)
             raise LoweringError.new("undefined constant #{resolved_parent}", node)
           end
           parent_name = materialize_generic_parent_for_layout(resolved_parent)
