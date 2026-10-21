@@ -2509,6 +2509,18 @@ module Adamas::HIR
       @lib_names.includes?(name)
     end
 
+    # Create a compiler-generated function with a module-wide fresh name.
+    # Ordinary create_function keeps its existing duplicate behavior.
+    def create_generated_function(prefix : String, return_type : TypeRef) : Function
+      generated_name = "#{prefix}_#{@next_function_id}"
+      disambiguator = 0
+      while @functions_by_name.has_key?(generated_name)
+        disambiguator += 1
+        generated_name = "#{prefix}_#{@next_function_id}_#{disambiguator}"
+      end
+      create_function(generated_name, return_type)
+    end
+
     def create_function(name : String, return_type : TypeRef) : Function
       if ENV.has_key?("DBG_FILE_NEW") && (name.includes?("File") || name.includes?("file"))
         STDERR.puts "[FUNC_CREATE_FILE] name=#{name} return=#{return_type.id}"

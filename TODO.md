@@ -1,3 +1,15 @@
+2026-10-21 C CALLBACK LITERAL FUNCTION IDENTITY: each direct callback literal
+needs a fresh module function even when the C callee and formal index coincide.
+The fixed name reused one Function and appended the second body's parameters;
+C still supplied only the original two arguments. Allocate a checked fresh name
+from the module function identity and point FuncPointer at that exact function.
+- [x] Clean-parent original-first repro: Crystal prints AB/BB; Adamas exits 139.
+- [x] Exact two-file repair matches raw Crystal stdout; portable checked-in
+  c_callback_site_identity_repro.sh passes (sealed runs 8960/8961 and 8958).
+- [ ] Qualify non-Void direct callback result ABI independently; unchanged here.
+- [ ] Verify unchanged LavinMQ runtime/upstream-spec parity and fresh bootstrap.
+Refresh after generated function allocation, direct callback lowering or ABI changes.
+
 2026-10-19 SOURCE SELF RETURN CONTRACT AND INHERITED CLASS RECEIVER:
 keep the source `: self` obligation on the exact lowering context and validate
 implicit/explicit source values before ABI coercion. Static inherited calls use

@@ -111593,8 +111593,8 @@ module Adamas::HIR
       extern_func : ExternFunction,
       arg_idx : Int32,
     ) : ValueId
-      # Generate a unique callback function name
-      callback_name = "__crystal_callback_#{extern_func.real_name}_#{arg_idx}"
+      # Give each callback literal a module-wide function identity.
+      callback_name_prefix = "__crystal_callback_#{extern_func.real_name}_#{arg_idx}"
 
       # Determine param types from the extern function's expected callback signature.
       # The C function parameter at arg_idx should be a function pointer type.
@@ -111604,8 +111604,8 @@ module Adamas::HIR
       # Determine return type — C callbacks for GC are void
       return_type = TypeRef::VOID
 
-      # Create a new top-level function for the callback
-      callback_func = @module.create_function(callback_name, return_type)
+      # Create a top-level function with a fresh name for this callback literal.
+      callback_func = @module.create_generated_function(callback_name_prefix, return_type)
       callback_ctx = LoweringContext.new(callback_func, @module, @arena)
 
       # Add parameters from the proc literal
@@ -111655,7 +111655,7 @@ module Adamas::HIR
       end
 
       # Emit a FuncPointer in the CALLER's context referencing the callback
-      fp = FuncPointer.new(ctx.next_id, TypeRef::POINTER, callback_name)
+      fp = FuncPointer.new(ctx.next_id, TypeRef::POINTER, callback_func.name)
       ctx.emit(fp)
       ctx.register_type(fp.id, TypeRef::POINTER)
       fp.id
