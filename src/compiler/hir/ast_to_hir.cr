@@ -64631,11 +64631,10 @@ module Adamas::HIR
       end
       if j < source.bytesize
         next_byte = source.byte_at(j)
-        # `&` starts a block-parameter slot in a definition signature; it
-        # cannot be an input type continuing an unbraced proc annotation.
-        # Therefore the preceding comma is a parameter separator even when
-        # the block annotation contains a later top-level `->`.
-        if next_byte == '{'.ord.to_u8 || next_byte == '&'.ord.to_u8
+        # `{` and `&` begin delimited Proc/block slots, while `@` begins an
+        # implicit-ivar parameter. None can continue an unbraced Proc input
+        # type, so the preceding comma is a parameter separator.
+        if next_byte == '{'.ord.to_u8 || next_byte == '&'.ord.to_u8 || next_byte == '@'.ord.to_u8
           return false
         end
       end

@@ -1,3 +1,16 @@
+2026-10-21 IMPLICIT-IVAR PARAMETER SOURCE BOUNDARY: stop an unbraced Proc
+input-list scan at a following @parameter. Otherwise a later sibling arrow
+changes the preceding ivar's recovered Int32 annotation into a Proc annotation.
+- [x] Exact one-hunk repair on clean a16f8d41: original-first portable regression
+  passes three byte-exact runtime cases and one strict Int32/String rejection
+  (9207); the same regression fails on the clean parent (9214).
+- [ ] Repair independent constructor Proc-input admission: the strict wrong
+  callback is false-accepted on both clean parent and repaired source (9189).
+  The older combined qualification 9181 remains RED; no negative was relaxed.
+- [ ] Qualify class-variable @@ and splat-prefixed implicit-ivar signatures.
+- [ ] Verify unchanged LavinMQ runtime/upstream-spec parity and fresh bootstrap.
+Refresh after source signature recovery, comma splitting or Proc-arrow scanning.
+
 2026-10-21 MACRO YIELD EXPRESSION GROUPING: retain the yielded AST as one
 expression when an output macro interpolation embeds it in generated source.
 Match Crystal's direct output-yield begin/end boundary; leave macro statement

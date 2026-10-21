@@ -1,3 +1,27 @@
+### Implicit-ivar parameters delimit recovered source annotations (2026-10-21)
+source_ivar_param_shape_from_source used the generic comma splitter, whose
+Proc-arrow lookahead crossed the next @parameter. A signature such as
+initialize(@value : Int32, @finalizer : Int32 ->) consequently recovered
+T, @finalizer : T -> for an earlier field even when its AST and generic binding
+were correct. Recognize the next @ as a parameter boundary in that lookahead;
+the existing braced/block-parameter and nested-delimiter rules remain intact.
+
+On clean a16f8d41, frozen run9214 fails the targeted consume_int32 call with
+a Proc argument after all original cases pass. The isolated one-hunk source
+9167 passes the exact same portable implicit_ivar_parameter_boundary_repro.sh
+in run9207: three byte-exact runtime cases (one/multiple ivars and explicit Proc
+syntax), plus strict Int32-to-String consumer rejection with exit 1 and no
+executable. Source manifest SHA256
+fdf53646374fcc09d489f187b9768576b4a19ab031cad97632d7f3e84355e494;
+host SHA256 4b734ac9078472d0b0c2558f061693d2f4dafc42723accd9775960c65e32df8b.
+Scoped adversary ROBUST for the recovered ivar type and opposite consumer.
+Constructor Proc-input checking remains a separate open defect: run9189 proves
+the same wrong callback is false-accepted on clean parent and fixed source;
+the older combined run9181 remains RED. Class-variable/splat forms, fresh
+bootstrap and pristine LavinMQ runtime/upstream parity are not established.
+Refresh after source signature recovery or Proc-arrow scanning changes; revert
+source and regression together. Application and stdlib bytes are unchanged.
+
 ### Direct output macro yield retains its expression boundary (2026-10-21)
 The text expander emitted a multi-statement yielded AST without grouping. In
 generated `value = {{yield}}` source, the first statement became the assigned
