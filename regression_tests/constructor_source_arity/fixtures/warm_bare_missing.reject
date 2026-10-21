@@ -1,0 +1,1 @@
+(?i)(wrong number of arguments|no overload matches|missing argument|missing named argument|undefined method.*new)

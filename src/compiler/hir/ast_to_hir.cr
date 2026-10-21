@@ -40519,6 +40519,43 @@ module Adamas::HIR
       {selected_name, candidate_def, candidate_arena}
     end
 
+    # Physical allocators implement source constructors; their existence cannot
+    # make an otherwise impossible source arity callable. Inspect both source
+    # families before any default filling or allocator materialization. This is
+    # only a rejection proof: an arity-compatible entry still needs the ordinary
+    # type, block, named-argument, and overload-selection checks.
+    private def constructor_source_positional_arity_rejected?(class_name : String, arity : Int32) : Bool
+      saw_initializer = false
+      get_ancestor_chain(normalize_method_owner_name(class_name)).each do |owner|
+        {"#{owner}.new", "#{owner}#initialize"}.each do |base_name|
+          candidates = function_def_overloads(base_name).dup
+          if @function_defs.has_key?(base_name) && !candidates.includes?(base_name)
+            candidates << base_name
+          end
+          # Class registration publishes a physical .new return signature even
+          # when no source constructor accepts this arity. Those ABI-only keys
+          # are not source definitions and cannot authorize this call.
+          candidates.each do |candidate_name|
+            candidate_def = @function_defs[candidate_name]?
+            return false unless candidate_def
+            candidate_arena = @function_def_arenas[candidate_name]?
+            return false unless candidate_arena && arena_fits_def?(candidate_arena, candidate_def)
+            saw_initializer = true if base_name.ends_with?("#initialize")
+            accepts_arity = with_arena(candidate_arena) do
+              stats = function_param_stats(candidate_name, candidate_def)
+              param_count, required, has_splat, has_double_splat, skip = effective_arity_stats_for_call(stats, false)
+              # Double-splat binding is outside this positional-only proof.
+              has_double_splat || (!skip && arity >= required && (has_splat || arity <= param_count))
+            end
+            return false if accepts_arity
+          end
+        end
+      end
+      # A class without initialize retains Crystal's implicit zero-argument new.
+      return false if !saw_initializer && arity == 0
+      true
+    end
+
     # Resolve the initializer body used by a synthesized allocator from the
     # complete call shape. The bare `Class#initialize` entry is an alias used
     # by registration and may point at a protected named-only overload when
@@ -102881,6 +102918,13 @@ module Adamas::HIR
                     call_arg_types = expanded_types
                   end
                 end
+                if !call_has_named_args && !call_has_splat &&
+                   constructor_source_positional_arity_rejected?(class_name_str, call_args.size)
+                  raise LoweringError.new(
+                    "no overload matches #{class_name_str}.new for #{call_args.size} positional arguments",
+                    node,
+                  )
+                end
                 # Auto-allocators bind named arguments against initialize's
                 # external parameter names before the allocator overload is
                 # materialized. Explicit class-level new methods retain their
@@ -127548,6 +127592,9 @@ module Adamas::HIR
       source_new_entry : Tuple(String, Adamas::Compiler::Frontend::DefNode)? = nil
       if member_name == "new"
         if class_info = @class_info[class_name_str]? || @class_info[lookup_class_name]?
+          if constructor_source_positional_arity_rejected?(lookup_class_name, 0)
+            raise LoweringError.new("no overload matches #{lookup_class_name}.new for 0 positional arguments")
+          end
           zero_arg_types = [] of TypeRef
           explicit_new = lookup_function_def_for_call(
             full_method_name, 0, false, zero_arg_types, false, false,

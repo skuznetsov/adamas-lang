@@ -21648,3 +21648,22 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   separately. The existing prelude File constructor blocker remains open.
 - [ ] Complete unchanged LavinMQ runtime/spec parity, full regressions and a
   fresh bootstrap fixed point. These two no-prelude programs do not prove them.
+
+
+### Keep source constructor arity authoritative over physical allocators (2026-10-21)
+- [x] Reject impossible positional arities from arena-owned new/initialize
+  definitions before default filling or allocator generation. The same proof
+  covers bare Type.new; physical return-type entries grant no source authority.
+- [x] Sealed10644 and Crystal 1.20.1 pass the strict 29-case original-first
+  matrix in run10655 (16 positives, 13 negatives), four C constructor arity
+  controls in run10663 and nine class-call admission cases in run10647.
+- [ ] Complete constructor candidate/body identity and source overload order.
+  Prelude run10648 still binds initialize-shaped File arguments to a different
+  new body; do not relax Crystal::System::File.open's argument restrictions.
+- [ ] Fix named C struct field initialization and C union field access. Both
+  parent10606/run10661 and candidate10644/run10659 fail the same three cases;
+  the strict open_c_layout regression preserves them without blessing failures.
+- [ ] Qualify typed empty splat and implicit default-new precedence separately.
+  Two proposed controls were refuted by the original compiler in run10650.
+- [ ] Full prelude, full regressions, S1-to-S2, unchanged LavinMQ runtime/spec
+  parity and a fresh S3/S4 fixed point remain open.

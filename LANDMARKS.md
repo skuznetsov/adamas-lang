@@ -21068,3 +21068,47 @@ OUT/lavin10608*.frozen_inputs.receipt.json under
 /Users/sergey/Projects/Adamas/sol_help_20261012. Refresh after String layout,
 runtime-helper emission order, builtin type-id or direct Bool writer changes.
 Revert backend changes and this regression together.
+
+
+### Source constructor arity cannot be created by allocator materialization (2026-10-21)
+After source new/initialize lookup rejected an arity, permissive recovery could
+still bind a sole source body or emit an allocator. Class registration also
+publishes a .new return signature with no source definition. Such physical ABI
+entries cannot count as unknown source overloads and defeat an arity proof.
+
+Inspect only arena-owned source new/initialize families before filling defaults
+or generating allocators. Reject only when none can accept the raw positional
+count; retain implicit zero-argument new without initialize. Apply this shared
+proof to ordinary calls and bare Type.new, which has a separate lowering path.
+Arity acceptance is not type/block/overload authority. Unknown source arenas
+and double-splat binding keep the existing resolver responsible for the call.
+
+Original Crystal 1.20.1 and sealed10644 pass 29 strict original-first cases in
+run10655 (16 exact-output positives, 13 primary semantic rc1/no-executable
+negatives), four C constructor arity controls in run10663 and nine ordinary
+class admission controls in run10647. Parent10606 falsely accepts all eight negatives
+in the initial core matrix (run10633); the warm-extra adversary instead reached
+an ambiguous physical target (run10652). Missing/extra calls now reject before
+materialization, including after a valid call, macros/includes, named-only
+requirements and both zero-argument source syntaxes. Scoped adversary ROBUST
+for these exercised arity boundaries; not complete constructor parity.
+
+Run10657 is harness-invalid (non-executable runner), replaced by immutable
+successor run10659. That broader C layout probe is RED: named C struct fields
+remain zero and C union getters/setters are absent. Parent10606 reproduces the
+same three failures in run10661, so they are pre-existing compiler bugs. The
+open_c_layout runner preserves the failing oracle; it is not in the default
+passing arity wrapper. Run10663 narrows only the arity admission certificate:
+union zero creation does not certify union field semantics. Run10650 refuted two proposed positive expectations: typed
+empty initializer splat and default-new precedence over an explicit splat
+factory. Do not promote those expectations or infer full splat parity here.
+
+Prelude run10648 still fails the existing File.open restrictions. Its trace
+shows initialize parameter types (Path|String, Int32, String, Bool, Nil, Nil)
+entering the explicit File.new factory body and File.new_internal in a different
+parameter order. Fix source candidate/body identity; do not weaken open's
+restrictions or change stdlib. Full prelude/suite/bootstrap/LavinMQ claims are
+open. Evidence: OUT/lavin106{33,47,48,50,52,55,57,59} receipts/logs under
+/Users/sergey/Projects/Adamas/sol_help_20261012 (plus runs10661/10663). Refresh after constructor source
+registration, arena provenance, default binding or allocator recovery changes.
+Revert the HIR change and constructor_source_arity regression together.
