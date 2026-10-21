@@ -1,0 +1,1 @@
+(?i)argument (?:#1|'value') of 'C[.#]free' must be Pointer\(UInt8\), not (?:BadPointee \(nor Pointer\(Int32\) returned by 'BadPointee#to_unsafe'\)|Pointer\(Int32\))

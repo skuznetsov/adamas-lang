@@ -21685,3 +21685,22 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Full prelude, full regressions, bootstrap and unchanged LavinMQ parity
   remain open. Composed prelude run10936 rejects Proc-typed signal parameter sig
   at LibC._exit(sig); do not weaken the fixed C argument contract.
+
+
+### Preserve the fixed C argument source contract before ABI lowering (2026-10-21)
+- [x] Materialize source numeric and to_unsafe conversions before checking fixed
+  C argument types. Keep typed pointer and enum identities; reject known source
+  mismatches for positional, named and tuple-splat arguments.
+- [x] Dispatch numeric union payloads by their runtime tag and merge converted
+  scalar values. Numeric coercion must convert values; unsafe_as retains bits.
+- [x] Run10910: Crystal 1.20.1 and sealed10904 pass 52 original-first cases
+  (28 runtime positives, 24 rc1/no-binary semantic negatives). Run10916 on
+  composed10911 adds seven exact-output and main-IR opcode controls, including
+  signed/unsigned conversion and unchanged explicit unsafe_as behavior.
+- [ ] Complete unknown/nonnumeric union conversion, generic/module variance and
+  callback ABI typing. Undecidable pairs retain the existing partial HIR model;
+  this change rejects known mismatches and does not certify all FFI programs.
+- [ ] Check floating-point overflow/NaN and broader numeric coercion consumers.
+- [ ] Full prelude remains RED: composed run10936 exposes Proc-typed sig at
+  LibC._exit(sig), before conversion. Fix specialized Proc.new block input
+  inference rather than bypassing the C parameter check.

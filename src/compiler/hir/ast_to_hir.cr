@@ -83856,6 +83856,325 @@ module Adamas::HIR
       raise LoweringError.new("wrong number of arguments for '#{call_name}' (given #{arg_count}, expected #{expected})", node)
     end
 
+    # Map a fixed C integer/float parameter to the source conversion Crystal
+    # uses before checking to_unsafe.
+    private def source_extern_numeric_conversion_method(expected_type : TypeRef) : String?
+      case expected_type
+      when TypeRef::INT8   ; "to_i8!"
+      when TypeRef::INT16  ; "to_i16!"
+      when TypeRef::INT32  ; "to_i32!"
+      when TypeRef::INT64  ; "to_i64!"
+      when TypeRef::INT128 ; "to_i128!"
+      when TypeRef::UINT8  ; "to_u8!"
+      when TypeRef::UINT16 ; "to_u16!"
+      when TypeRef::UINT32 ; "to_u32!"
+      when TypeRef::UINT64 ; "to_u64!"
+      when TypeRef::UINT128; "to_u128!"
+      when TypeRef::FLOAT32; "to_f32!"
+      when TypeRef::FLOAT64; "to_f64!"
+      else
+        if desc = @module.get_type_descriptor(expected_type)
+          case desc.name
+          when "Int"   ; "to_i!"
+          when "Float" ; "to_f!"
+          else            nil
+          end
+        else
+          nil
+        end
+      end
+    end
+
+    private def source_extern_method_available?(full_name : String) : Bool
+      @function_defs.has_key?(full_name) ||
+        @function_types.has_key?(full_name) ||
+        @module.has_function?(full_name) ||
+        has_function_base?(full_name)
+    end
+
+    private def source_extern_pointer_element(type_ref : TypeRef) : TypeRef?
+      desc = @module.get_type_descriptor(type_ref)
+      return nil unless desc && desc.kind == TypeKind::Pointer
+      desc.type_params.first?
+    end
+
+    private def source_extern_proc_parts(type_ref : TypeRef) : Tuple(Array(TypeRef), TypeRef)?
+      desc = @module.get_type_descriptor(type_ref)
+      return nil unless desc && desc.kind == TypeKind::Proc
+      return nil if desc.type_params.empty?
+      params = desc.type_params
+      {params[0...params.size - 1], params.last}
+    end
+
+    # Check source conversion declarations for a union arm without pretending
+    # the conversion has been materialized into the union's runtime ABI.
+    private def source_extern_union_arm_conversion_possible?(
+      actual_type : TypeRef,
+      expected_type : TypeRef,
+    ) : Bool?
+      return nil if actual_type.null_ptr? || expected_type.null_ptr? ||
+                    actual_type == TypeRef::VOID || expected_type == TypeRef::VOID
+
+      if conversion_method = source_extern_numeric_conversion_method(expected_type)
+        return true if numeric_primitive?(actual_type)
+        actual_name = get_type_name_from_ref(actual_type)
+        unless actual_name == "Unknown" || actual_name == "Pointer"
+          full_name = "#{actual_name}##{conversion_method}"
+          if selected = lookup_function_def_for_call(full_name, 0, false, [] of TypeRef)
+            return get_function_return_type(selected[0], 0, selected[1]) == expected_type
+          end
+          return nil if source_extern_method_available?(full_name)
+        end
+      end
+
+      actual_name = get_type_name_from_ref(actual_type)
+      unless actual_name == "Unknown" || actual_name == "Pointer"
+        full_name = "#{actual_name}#to_unsafe"
+        if selected = lookup_function_def_for_call(full_name, 0, false, [] of TypeRef)
+          return_type = get_function_return_type(selected[0], 0, selected[1])
+          return false if return_type.null_ptr? || return_type == TypeRef::VOID
+          return nil if is_union_type?(return_type)
+          return source_extern_argument_compatible?(return_type, expected_type)
+        end
+        return nil if source_extern_method_available?(full_name)
+      end
+
+      if actual_type == TypeRef::STRING
+        pointer_type = pointer_type_ref_for_element(TypeRef::UINT8)
+        return source_extern_argument_compatible?(pointer_type, expected_type)
+      end
+
+      false
+    end
+
+    # `nil` means the partial HIR type model cannot decide this pair. `false`
+    # is reserved for a known mismatch after applicable source conversions are checked.
+    private def source_extern_argument_compatible?(actual_type : TypeRef, expected_type : TypeRef) : Bool?
+      return nil if actual_type.null_ptr? || expected_type.null_ptr? ||
+                    actual_type == TypeRef::VOID || expected_type == TypeRef::VOID
+      return true if actual_type == expected_type
+
+      actual_desc = @module.get_type_descriptor(actual_type)
+      expected_desc = @module.get_type_descriptor(expected_type)
+
+      if expected_desc && expected_desc.kind == TypeKind::Union
+        return exact_union_call_type_subset?(actual_type, expected_type)
+      end
+
+      if actual_desc && actual_desc.kind == TypeKind::Union
+        # A tagged union cannot be passed as one scalar HIR value merely because
+        # its arms are individually convertible. Reject an arm only when its
+        # source conversions are known incompatible; otherwise keep the whole
+        # union unresolved until per-arm lowering is implemented.
+        saw_unresolved = false
+        split_union_type_name(actual_desc.name).each do |variant_name|
+          variant_type = type_ref_for_name(variant_name.strip)
+          return nil if variant_type == TypeRef::VOID
+          compatible = source_extern_argument_compatible?(variant_type, expected_type)
+          if compatible == false
+            possible = source_extern_union_arm_conversion_possible?(variant_type, expected_type)
+            return false if possible == false
+          end
+          saw_unresolved = true
+        end
+        return nil if saw_unresolved
+        return true
+      end
+
+      if actual_type == TypeRef::NIL
+        return true if expected_type == TypeRef::POINTER ||
+                       (expected_desc && expected_desc.kind.in?(TypeKind::Pointer, TypeKind::Proc))
+        return false
+      end
+
+      if expected_type == TypeRef::POINTER
+        return true if actual_desc && actual_desc.kind == TypeKind::Pointer
+        return false
+      end
+
+      if expected_desc && expected_desc.kind == TypeKind::Pointer
+        return nil if actual_type == TypeRef::POINTER
+        if actual_desc && actual_desc.kind == TypeKind::Pointer
+          actual_element = actual_desc.type_params.first?
+          expected_element = expected_desc.type_params.first?
+          return nil unless actual_element && expected_element
+          return true if expected_element == TypeRef::VOID
+          return actual_element == expected_element
+        end
+        return false
+      end
+
+      if expected_desc && expected_desc.kind == TypeKind::Proc
+        return nil if actual_type == TypeRef::POINTER
+        if actual_parts = source_extern_proc_parts(actual_type)
+          expected_parts = source_extern_proc_parts(expected_type)
+          return nil unless expected_parts
+          return true if actual_parts[0] == expected_parts[0] && expected_parts[1] == TypeRef::NIL
+        end
+        return false
+      end
+
+      # Equal source enum identities returned above. Sharing an integer ABI
+      # carrier does not make distinct enums or an enum and a pointer compatible.
+      return false if enum_type_ref?(actual_type) || enum_type_ref?(expected_type)
+
+      if actual_desc && expected_desc
+        if actual_desc.kind == TypeKind::Class && expected_desc.kind == TypeKind::Class
+          return inherits_from?(actual_desc.name, expected_desc.name)
+        end
+        # Module inclusion and generic variance are not represented completely
+        # in this HIR lane, so keep those pairs undecided.
+        return nil if expected_desc.kind == TypeKind::Module
+        return false
+      end
+
+      # Primitive kinds are fully represented here. A mismatch between two
+      # known primitive values is not a valid fixed-parameter conversion.
+      primitive_actual = numeric_primitive?(actual_type) ||
+                         actual_type.in?(TypeRef::BOOL, TypeRef::CHAR, TypeRef::STRING,
+                           TypeRef::SYMBOL, TypeRef::NIL)
+      primitive_expected = numeric_primitive?(expected_type) ||
+                           expected_type.in?(TypeRef::BOOL, TypeRef::CHAR, TypeRef::STRING,
+                             TypeRef::SYMBOL, TypeRef::NIL)
+      return false if (actual_desc && primitive_expected) ||
+                      (expected_desc && primitive_actual)
+      return false if primitive_actual && primitive_expected
+      nil
+    end
+
+    private def lower_source_extern_conversion_call(
+      ctx : LoweringContext,
+      receiver_id : ValueId,
+      method_name : String,
+    ) : Tuple(ValueId, TypeRef)?
+      selected = lookup_function_def_for_call(method_name, 0, false, [] of TypeRef)
+      if selected
+        selected_name = selected[0]
+        selected_def = selected[1]
+        return_type = get_function_return_type(selected_name, 0, selected_def)
+      else
+        return nil unless source_extern_method_available?(method_name)
+        selected_name = method_name
+        return_type = get_function_return_type(selected_name, 0)
+      end
+      return nil if return_type.null_ptr? || return_type == TypeRef::VOID
+
+      call = Call.with_receiver(ctx.next_id, return_type, receiver_id, selected_name, [] of ValueId)
+      ctx.emit(call)
+      ctx.register_type(call.id, return_type)
+      {call.id, return_type}
+    end
+
+    # A numeric source union carries a tag and payload. The fixed C scalar
+    # parameter needs the converted payload of the selected arm, never the
+    # aggregate itself. Build a scalar Phi before discarding the C declaration.
+    private def materialize_source_extern_numeric_union(
+      ctx : LoweringContext,
+      arg_id : ValueId,
+      expected_type : TypeRef,
+    ) : ValueId?
+      return nil unless numeric_primitive?(expected_type)
+      actual_type = ctx.type_of(arg_id)
+      descriptor = @module.get_type_descriptor(actual_type)
+      return nil unless descriptor && descriptor.kind == TypeKind::Union
+      return nil unless ensure_union_descriptor_for_type_ref(actual_type)
+      union_descriptor = union_descriptor_from_sidecar(actual_type)
+      return nil unless union_descriptor && !union_descriptor.variants.empty?
+      members = union_descriptor.variants.map do |variant|
+        {mir_to_hir_type_ref(variant.type_ref), variant.type_id}
+      end
+      # Unknown or nonnumeric conversions still use the source compatibility
+      # validator. Do not unwrap an arm into an invented scalar contract.
+      return nil unless members.all? { |member| numeric_primitive?(member[0]) }
+
+      saved_locals = ctx.save_locals
+      merge = ctx.create_block
+      incoming = [] of {BlockId, ValueId}
+      members.each_with_index do |(member_type, variant_id), index|
+        next_block : BlockId? = nil
+        unless index == members.size - 1
+          check = UnionIs.new(ctx.next_id, arg_id, variant_id, actual_type)
+          ctx.emit(check)
+          ctx.register_type(check.id, TypeRef::BOOL)
+          selected = ctx.create_block
+          next_block = ctx.create_block
+          ctx.terminate(Branch.new(check.id, selected, next_block))
+          ctx.current_block = selected
+          ctx.restore_locals(saved_locals)
+        end
+
+        unwrapped = UnionUnwrap.new(ctx.next_id, member_type, arg_id, variant_id, false)
+        ctx.emit(unwrapped)
+        ctx.register_type(unwrapped.id, member_type)
+        converted = coerce_value_to_type(ctx, unwrapped.id, expected_type)
+        incoming << {ctx.current_block, converted}
+        ctx.terminate(Jump.new(merge))
+        if following = next_block
+          ctx.current_block = following
+          ctx.restore_locals(saved_locals)
+        end
+      end
+      ctx.current_block = merge
+      ctx.restore_locals(saved_locals)
+      result = Phi.new(ctx.next_id, expected_type, incoming)
+      ctx.emit(result)
+      ctx.register_type(result.id, expected_type)
+      result.id
+    end
+
+    private def materialize_source_extern_argument(
+      ctx : LoweringContext,
+      arg_id : ValueId,
+      expected_type : TypeRef,
+    ) : ValueId
+      actual_type = enum_tracked_type(ctx, arg_id)
+      return arg_id if source_extern_argument_compatible?(actual_type, expected_type) == true
+      if converted = materialize_source_extern_numeric_union(ctx, arg_id, expected_type)
+        return converted
+      end
+
+      if conversion_method = source_extern_numeric_conversion_method(expected_type)
+        if numeric_primitive?(actual_type) && numeric_primitive?(expected_type)
+          return coerce_value_to_type(ctx, arg_id, expected_type)
+        end
+        actual_name = get_type_name_from_ref(actual_type)
+        unless actual_name == "Unknown" || actual_name == "Pointer"
+          if converted = lower_source_extern_conversion_call(ctx, arg_id, "#{actual_name}##{conversion_method}")
+            return converted[0]
+          end
+        end
+      end
+
+      try_implicit_to_unsafe(ctx, arg_id, nil)
+    end
+
+    # Validate after source numeric/to_unsafe conversions have been materialized
+    # and their actual HIR return TypeRefs are available.
+    private def validate_source_extern_argument_types(
+      ctx : LoweringContext,
+      extern_func : ExternFunction,
+      arg_ids : Array(ValueId),
+      node : Adamas::Compiler::Frontend::Node? = nil,
+    ) : Nil
+      fixed_count = extern_func.param_types.size
+      return if arg_ids.size < fixed_count
+
+      fixed_count.times do |index|
+        actual_type = enum_tracked_type(ctx, arg_ids.unsafe_fetch(index))
+        expected_type = extern_func.param_types.unsafe_fetch(index)
+        next unless source_extern_argument_compatible?(actual_type, expected_type) == false
+
+        call_name = if lib_name = extern_func.lib_name
+                      "#{lib_name}.#{extern_func.name}"
+                    else
+                      extern_func.name
+                    end
+        expected_name = get_type_name_from_ref(expected_type)
+        actual_name = get_type_name_from_ref(actual_type)
+        raise LoweringError.new("argument ##{index + 1} of '#{call_name}' must be #{expected_name}, not #{actual_name}", node)
+      end
+    end
+
     # Emit a call to an external C function
     private def emit_extern_call(ctx : LoweringContext, extern_func : ExternFunction, arg_ids : Array(ValueId)) : ValueId
       # Emit an ExternCall instruction with the real C function name
@@ -102736,6 +103055,7 @@ module Adamas::HIR
                 STDERR.puts "[MEM_INTRINSIC] extern method=#{method_name} call_args=#{call_args.size} lowered=#{arg_ids.size}"
               end
               validate_source_extern_arity(extern_func, arg_ids.size, node)
+              validate_source_extern_argument_types(ctx, extern_func, arg_ids, node)
               call_result = emit_extern_call(ctx, extern_func, arg_ids)
               return call_result
             end
@@ -112558,9 +112878,15 @@ module Adamas::HIR
             result << lower_proc_as_c_callback(ctx, arg_node, extern_func, parameter_index)
           else
             arg_val = lower_expr(ctx, arg_expr)
-            # Crystal implicitly calls to_unsafe when passing a class instance
-            # to a C function. Check if the arg is `self` and the class has to_unsafe.
-            arg_val = try_implicit_to_unsafe(ctx, arg_val, arg_node)
+            if parameter_index < extern_func.param_types.size
+              arg_val = materialize_source_extern_argument(
+                ctx,
+                arg_val,
+                extern_func.param_types.unsafe_fetch(parameter_index),
+              )
+            else
+              arg_val = try_implicit_to_unsafe(ctx, arg_val, arg_node)
+            end
             result << arg_val
           end
         end
@@ -112571,58 +112897,33 @@ module Adamas::HIR
       result
     end
 
-    # Crystal implicitly calls to_unsafe when passing a class instance to a C function.
-    # For example, `LibC.pthread_mutex_lock(self)` where self is Thread::Mutex
-    # becomes `LibC.pthread_mutex_lock(self.to_unsafe)`.
-    # Also handles Slice/String/Array arguments: `LibC.write(fd, slice, size)`
-    # becomes `LibC.write(fd, slice.to_unsafe, size)`.
+    # Crystal's FFI conversion calls a source to_unsafe method and retains its
+    # declared return type so the fixed C parameter can be checked faithfully.
     private def try_implicit_to_unsafe(
       ctx : LoweringContext,
       arg_val : ValueId,
-      arg_node,
+      _arg_node,
     ) : ValueId
-      class_name : String? = nil
-      case arg_node
-      when Adamas::Compiler::Frontend::SelfNode
-        class_name = @current_class
-      else
-        # For any other expression, try to determine the type from the value's TypeRef.
-        # This handles VarNode (local/param refs), CallNode results, etc.
-        type_ref = ctx.type_of(arg_val)
-        if type_ref
-          # Handle built-in types that have to_unsafe (String, Slice, StaticArray)
-          # These have IDs below FIRST_USER_TYPE but still need auto-cast for C calls
-          if type_ref == TypeRef::STRING
-            class_name = "String"
-          elsif type_ref != TypeRef::POINTER && type_ref != TypeRef::VOID &&
-                type_ref.id >= TypeRef::FIRST_USER_TYPE
-            resolved_name = get_type_name_from_ref(type_ref)
-            if resolved_name != "Unknown" && resolved_name != "Pointer"
-              class_name = resolved_name
-            end
-          end
-        end
-      end
-      return arg_val unless class_name
-
-      # Check if this class has a `to_unsafe` method
-      to_unsafe_name = "#{class_name}#to_unsafe"
-      if @function_defs.has_key?(to_unsafe_name) || @module.has_function?(to_unsafe_name)
-        # Emit call: obj.to_unsafe (receiver=obj, no extra args)
-        call = Call.with_receiver(ctx.next_id, TypeRef::POINTER, arg_val, to_unsafe_name, [] of ValueId)
-        ctx.emit(call)
-        ctx.register_type(call.id, TypeRef::POINTER)
-        return call.id
+      actual_type = ctx.type_of(arg_val)
+      return arg_val if actual_type.null_ptr? ||
+                        actual_type.in?(TypeRef::NIL, TypeRef::VOID, TypeRef::POINTER)
+      if actual_desc = @module.get_type_descriptor(actual_type)
+        return arg_val if actual_desc.kind == TypeKind::Union
       end
 
-      # No stdlib `String#to_unsafe` body (e.g. --no-prelude): coerce to the char
-      # data pointer (offset 12) via the always-emitted runtime helper instead of
-      # passing the raw String object pointer (whose header byte the C function
-      # would read as the string). Mirrors pointerof(@c) / String#to_unsafe.
-      if class_name == "String"
-        ext = ExternCall.new(ctx.next_id, TypeRef::POINTER, "__adamas_string_to_unsafe", [arg_val])
+      actual_name = get_type_name_from_ref(actual_type)
+      return arg_val if actual_name == "Unknown" || actual_name == "Pointer"
+      if converted = lower_source_extern_conversion_call(ctx, arg_val, "#{actual_name}#to_unsafe")
+        return converted[0]
+      end
+
+      # In no-prelude compilation, preserve the existing String data-pointer
+      # runtime bridge but expose its real Crystal result type, Pointer(UInt8).
+      if actual_type == TypeRef::STRING
+        pointer_type = pointer_type_ref_for_element(TypeRef::UINT8)
+        ext = ExternCall.new(ctx.next_id, pointer_type, "__adamas_string_to_unsafe", [arg_val])
         ctx.emit(ext)
-        ctx.register_type(ext.id, TypeRef::POINTER)
+        ctx.register_type(ext.id, pointer_type)
         return ext.id
       end
 
@@ -112801,8 +113102,22 @@ module Adamas::HIR
                   ctx.register_type(extract.id, elem_type)
                   # A tuple expansion retains the C call's conversion boundary.
                   # Use the splat node rather than its receiver (which may be self)
-                  # so conversion follows each extracted value's actual type.
-                  result << (extern_func ? try_implicit_to_unsafe(ctx, extract.id, arg_node) : extract.id)
+                  # so conversion follows each extracted value's actual type and
+                  # the corresponding fixed formal parameter.
+                  if extern_func
+                    parameter_index = parameter_offset + result.size
+                    if parameter_index < extern_func.param_types.size
+                      result << materialize_source_extern_argument(
+                        ctx,
+                        extract.id,
+                        extern_func.param_types.unsafe_fetch(parameter_index),
+                      )
+                    else
+                      result << try_implicit_to_unsafe(ctx, extract.id, arg_node)
+                    end
+                  else
+                    result << extract.id
+                  end
                 end
                 if env_get("DEBUG_SPLAT_TRACE")
                   STDERR.puts "[SPLAT_TRACE_DONE] tuple_unpack=#{elem_types.size} inner=#{arg_node.expr.index}"
@@ -113570,7 +113885,10 @@ module Adamas::HIR
 
       if numeric_primitive?(target_type)
         if numeric_primitive?(value_type) || value_type == TypeRef::POINTER
-          cast = Cast.new(ctx.next_id, target_type, value_id, target_type)
+          # Coercion converts a numeric value. A default unsafe Cast would
+          # reinterpret equal-width integer/float bits in MIR lower_cast.
+          # Explicit unsafe_as operations keep their separate lowering path.
+          cast = Cast.new(ctx.next_id, target_type, value_id, target_type, safe: true)
           ctx.emit(cast)
           ctx.register_type(cast.id, target_type)
           return cast.id

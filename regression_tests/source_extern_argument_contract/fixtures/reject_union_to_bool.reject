@@ -1,0 +1,1 @@
+(?i)argument (?:#1|'value') of 'C[.#]accept' must be Bool, not (?:\(Bool \| String\)|Bool \| String)

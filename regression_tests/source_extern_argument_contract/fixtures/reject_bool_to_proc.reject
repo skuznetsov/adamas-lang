@@ -1,0 +1,1 @@
+(?i)argument (?:#1|'callback') of 'C[.#]atexit' must be Proc(?:\(Nil\))?, not Bool

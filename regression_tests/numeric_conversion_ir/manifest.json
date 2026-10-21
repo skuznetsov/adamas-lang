@@ -1,0 +1,31 @@
+{
+  "files": {
+    "README.md": "7596e38971a6a683780dce15622691d2616eef8edd7d7cd88c3137385bc450f9",
+    "fixtures/float_union_f32_to_i32.cr": "bbd4e331be2f2bdee1c8113c22163d3813be7c585a5eeb04258e2b41a043ef80",
+    "fixtures/float_union_f32_to_i32.expected": "559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd",
+    "fixtures/scalar_f32_to_i32.cr": "486351e1015640ad11a6daa0d6d3872bb2ff96370f2e4615ef46f1b4f0781351",
+    "fixtures/scalar_f32_to_i32.expected": "559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd",
+    "fixtures/scalar_f32_to_u32.cr": "58489b74215a21ceef47237b27c5b293576a7f64bd7702c319a443bf85acebfe",
+    "fixtures/scalar_f32_to_u32.expected": "559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd",
+    "fixtures/scalar_i32_to_f32.cr": "7ece804a04001dc7cd5aa03f75bf884d8b5bf017e7d774d991562a280c70b188",
+    "fixtures/scalar_i32_to_f32.expected": "559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd",
+    "fixtures/scalar_u32_to_f32.cr": "18768fdb04d8c350f233c05dcf075039ee592907382c1e1e111c6f738b021150",
+    "fixtures/scalar_u32_to_f32.expected": "559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd",
+    "fixtures/unsafe_as_f32_bits.cr": "f0e349f43964e4c9c0100cfe318e32c1f50030b5945512cf082a0a853531d2b8",
+    "fixtures/unsafe_as_f32_bits.expected": "559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd",
+    "fixtures/unsafe_as_i32_bits.cr": "6d226a605f1ba0a180c77a83bd8a3694efe8c2da4ce63098fd5327f86f61e609",
+    "fixtures/unsafe_as_i32_bits.expected": "559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd",
+    "run_original_first.py": "91083bcd4f594be473720fc5d4bfbb6f9e0442cd2411105d5043290452ca8816",
+    "support_source.json": "1e297f6683eb23998bf6e1d0d1d475c345ed7bb7691890f18bfb999ab70da4a2"
+  },
+  "ir_patterns": {
+    "float_union_f32_to_i32": "\\bfptosi float [^\n]+ to i32",
+    "scalar_f32_to_i32": "\\bfptosi float [^\n]+ to i32",
+    "scalar_f32_to_u32": "\\bfptoui float [^\n]+ to i32",
+    "scalar_i32_to_f32": "\\bsitofp i32 [^\n]+ to float",
+    "scalar_u32_to_f32": "\\buitofp i32 [^\n]+ to float",
+    "unsafe_as_f32_bits": "\\bbitcast float [^\n]+ to i32",
+    "unsafe_as_i32_bits": "\\bbitcast i32 [^\n]+ to float"
+  },
+  "supersedes": "packet10913 contained an accidentally escaped regex word boundary; fixtures unchanged"
+}

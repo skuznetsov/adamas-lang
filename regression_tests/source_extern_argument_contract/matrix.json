@@ -1,0 +1,178 @@
+{
+  "packet": "lavin10823_ffi_diagnostic_regex_oracle",
+  "base_source": "source_s1_lavin10821_ffi_source_fixed_compat_unknowns/src/compiler/hir/ast_to_hir.cr",
+  "candidate_source": "source_s1_lavin10822_union_argument_arm_guard/src/compiler/hir/ast_to_hir.cr",
+  "config": "lavin10822_union_argument_arm_guard.config.json",
+  "mode": "original-first; root-owned original Crystal and candidate compiler execution only",
+  "source_boundary": "Fixed source lib call after argument expansion and arity validation, before HIR ExternCall erases formal parameter types; synthetic extern emission stays outside this validator.",
+  "implemented_claim": "Known non-union fixed-argument checks and source conversion return checks remain as in 10821. This delta rejects a union when any arm has a known incompatible conversion, leaves potentially convertible unions unresolved until per-arm lowering, and applies existing scalar source conversion to compile-time tuple-splat elements using their fixed formal index.",
+  "positives": [
+    {
+      "fixture": "exact_named_integer",
+      "stdout_hex": "410a"
+    },
+    {
+      "fixture": "numeric_i8_to_i32",
+      "stdout_hex": "410a"
+    },
+    {
+      "fixture": "numeric_i64_to_i32",
+      "stdout_hex": "420a"
+    },
+    {
+      "fixture": "pointer_nil",
+      "stdout_hex": ""
+    },
+    {
+      "fixture": "pointer_to_unsafe",
+      "stdout_hex": ""
+    },
+    {
+      "fixture": "enum_exact",
+      "stdout_hex": "410a"
+    },
+    {
+      "fixture": "proc_callback",
+      "stdout_hex": ""
+    },
+    {
+      "fixture": "typed_pointer_exact",
+      "stdout_hex": ""
+    },
+    {
+      "fixture": "typed_pointer_to_void",
+      "stdout_hex": ""
+    },
+    {
+      "fixture": "nil_to_proc",
+      "stdout_hex": ""
+    },
+    {
+      "fixture": "proc_result_to_nil",
+      "stdout_hex": ""
+    },
+    {
+      "fixture": "inherited_to_unsafe",
+      "stdout_hex": ""
+    },
+    {
+      "fixture": "numeric_union_to_i32",
+      "stdout_hex": "410a",
+      "qualification_note": "Runtime falsifier only; no per-arm conversion or ABI correctness is claimed."
+    },
+    {
+      "fixture": "numeric_union_i64_to_i32",
+      "stdout_hex": "420a",
+      "qualification_note": "Runtime falsifier only; no per-arm conversion or ABI correctness is claimed."
+    },
+    {
+      "fixture": "numeric_tuple_splat_i8_to_i32",
+      "stdout_hex": "410a",
+      "qualification_note": "Tests fixed tuple element numeric conversion through the scalar materializer; does not qualify runtime-shaped splats or varargs."
+    }
+  ],
+  "negatives": [
+    {
+      "fixture": "reject_selected_exact_body",
+      "primary_diagnostic_pattern": "(?i)argument (?:#1|'value') of 'C[.#]putchar' must be Int32, not Bool"
+    },
+    {
+      "fixture": "reject_selected_abstract_body",
+      "primary_diagnostic_pattern": "(?i)argument (?:#1|'value') of 'C[.#]putchar' must be Int32, not Bool"
+    },
+    {
+      "fixture": "reject_bool_to_int32",
+      "primary_diagnostic_pattern": "(?i)argument (?:#1|'value') of 'C[.#]putchar' must be Int32, not Bool"
+    },
+    {
+      "fixture": "reject_named_bool_to_int32",
+      "primary_diagnostic_pattern": "(?i)argument (?:#1|'value') of 'C[.#]putchar' must be Int32, not Bool"
+    },
+    {
+      "fixture": "reject_bool_to_pointer",
+      "primary_diagnostic_pattern": "(?i)argument (?:#1|'value') of 'C[.#]free' must be Pointer\\(Void\\), not Bool"
+    },
+    {
+      "fixture": "reject_bool_to_proc",
+      "primary_diagnostic_pattern": "(?i)argument (?:#1|'callback') of 'C[.#]atexit' must be Proc\\(Nil\\), not Bool"
+    },
+    {
+      "fixture": "reject_bool_to_enum",
+      "primary_diagnostic_pattern": "(?i)argument (?:#1|'value') of 'C[.#]putchar' must be CharacterCode, not Bool"
+    },
+    {
+      "fixture": "reject_bool_to_float",
+      "primary_diagnostic_pattern": "(?i)argument (?:#1|'value') of 'C[.#]putchar' must be Float64, not Bool"
+    },
+    {
+      "fixture": "reject_missing_arity",
+      "primary_diagnostic_pattern": "(?i)wrong number of arguments for 'C[.#]putchar' \\(given 0, expected 1\\)"
+    },
+    {
+      "fixture": "reject_extra_arity",
+      "primary_diagnostic_pattern": "(?i)wrong number of arguments for 'C[.#]putchar' \\(given 2, expected 1\\)"
+    },
+    {
+      "fixture": "reject_to_unsafe_scalar",
+      "primary_diagnostic_pattern": "(?i)argument (?:#1|'value') of 'C[.#]free' must be Pointer\\(UInt8\\), not (?:BadScalar \\(nor Int32 returned by 'BadScalar#to_unsafe'\\)|Int32)"
+    },
+    {
+      "fixture": "reject_to_unsafe_wrong_pointee",
+      "primary_diagnostic_pattern": "(?i)argument (?:#1|'value') of 'C[.#]free' must be Pointer\\(UInt8\\), not (?:BadPointee \\(nor Pointer\\(Int32\\) returned by 'BadPointee#to_unsafe'\\)|Pointer\\(Int32\\))"
+    },
+    {
+      "fixture": "reject_wrong_pointer_pointee",
+      "primary_diagnostic_pattern": "(?i)argument (?:#1|'value') of 'C[.#]free' must be Pointer\\(UInt8\\), not Pointer\\(Int32\\)"
+    },
+    {
+      "fixture": "reject_string_to_bool",
+      "primary_diagnostic_pattern": "(?i)argument (?:#1|'value') of 'C[.#]accept' must be Bool, not String"
+    },
+    {
+      "fixture": "reject_struct_to_pointer",
+      "primary_diagnostic_pattern": "(?i)argument (?:#1|'value') of 'C[.#]free' must be Pointer\\(Void\\), not Payload"
+    },
+    {
+      "fixture": "reject_class_to_pointer",
+      "primary_diagnostic_pattern": "(?i)argument (?:#1|'value') of 'C[.#]free' must be Pointer\\(Void\\), not Payload"
+    },
+    {
+      "fixture": "reject_union_to_bool",
+      "primary_diagnostic_pattern": "(?i)argument (?:#1|'value') of 'C[.#]accept' must be Bool, not (?:\\(Bool \\| String\\)|Bool \\| String)"
+    },
+    {
+      "fixture": "reject_union_bad_numeric_arm",
+      "primary_diagnostic_pattern": "(?i)argument (?:#1|'value') of 'C[.#]putchar' must be Int32, not (?:\\(Int32 \\| String\\)|Int32 \\| String)"
+    },
+    {
+      "fixture": "reject_union_bad_pointer_arm",
+      "primary_diagnostic_pattern": "(?i)argument (?:#1|'value') of 'C[.#]accept' must be Pointer\\(UInt8\\), not (?:\\(Bool \\| Pointer\\(UInt8\\)\\)|Bool \\| Pointer\\(UInt8\\))"
+    },
+    {
+      "fixture": "reject_tuple_splat_bool_to_i32",
+      "primary_diagnostic_pattern": "(?i)argument (?:#1|'value') of 'C[.#]putchar' must be Int32, not Bool"
+    }
+  ],
+  "not_claimed": [
+    "Numeric overflow, literal fit, and float-to-integer edge semantics are not proven by the target-typed HIR Cast path.",
+    "Generic class ancestry substitutions and module inclusion compatibility are not modeled completely; unknown pairs remain undecided.",
+    "Union conversion admission remains a probe-only boundary: numeric/pointer/proc union calls are not materialized per arm, and must be qualified against emitted IR and runtime behavior.",
+    "HIR ExternCall/MIR erase fixed formal types; source-side conversion does not prove backend ABI parity. Root qualification must inspect emitted IR and runtime behavior.",
+    "Numeric union selectors are runtime falsifiers, not support evidence; coerce_value_to_type has no union-to-scalar numeric lowering, and the candidate does not claim numeric, pointer, or Proc union ABI correctness.",
+    "Runtime-shaped splat and varargs element correspondence, out parameters, and callback ABI beyond included Proc cases remain open."
+  ],
+  "overlay_base_source": "source_s1_lavin10821_ffi_source_fixed_compat_unknowns/src/compiler/hir/ast_to_hir.cr",
+  "diagnostic_provenance": {
+    "original_stage": "Saved original-first diagnostics from lavin10842; all 15 positive controls passed and the 20 negative primaries were semantic rejections whose previous regexes failed to match.",
+    "candidate_stage": "Expected candidate messages are derived from frozen 10822 source templates, not observed by a compiler run.",
+    "offline_replay": "Every revised regex was matched against both the saved original primary and the source-derived candidate expected diagnostic; no compiler was invoked.",
+    "candidate_source": "source_s1_lavin10822_union_argument_arm_guard/src/compiler/hir/ast_to_hir.cr",
+    "candidate_source_sha256": "1fb7ef796fcd4f2599b2907da20cf8871272690375413d59933552a619f8fd6f",
+    "candidate_template_anchors": {
+      "arity": "ast_to_hir.cr:83830-83856; library/name concatenation and arity diagnostic.",
+      "argument_types": "ast_to_hir.cr:84100-84113; library/name concatenation and TypeRef diagnostic.",
+      "type_rendering": "ast_to_hir.cr:136899-136937; pointer and union TypeRef rendering."
+    },
+    "original_log_directory": "/var/folders/60/brlfc95s5db3jl5_pbcl3tmr0000gn/T/adamas_declaration_identity_6u6a96zj"
+  }
+}

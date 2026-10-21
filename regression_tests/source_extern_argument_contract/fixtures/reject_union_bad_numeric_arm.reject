@@ -1,0 +1,1 @@
+(?i)argument (?:#1|'value') of 'C[.#]putchar' must be Int32, not (?:\(Int32 \| String\)|Int32 \| String)

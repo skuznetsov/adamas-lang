@@ -1,0 +1,1 @@
+(?i)argument (?:#1|'value') of 'C[.#]accept' must be Pointer\(UInt8\), not (?:\(Bool \| Pointer\(UInt8\)\)|Bool \| Pointer\(UInt8\)|Pointer\(Bool \| UInt8\))

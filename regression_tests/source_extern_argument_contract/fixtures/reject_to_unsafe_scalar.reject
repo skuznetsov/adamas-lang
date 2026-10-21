@@ -1,0 +1,1 @@
+(?i)argument (?:#1|'value') of 'C[.#]free' must be Pointer\(UInt8\), not (?:BadScalar \(nor Int32 returned by 'BadScalar#to_unsafe'\)|Int32)

@@ -21140,3 +21140,38 @@ Evidence is in OUT/lavin109{39,60,62} under
 /Users/sergey/Projects/Adamas/sol_help_20261012. Refresh after declaration
 registration, alias normalization, mangling or parameter-arena changes. Revert
 the HIR delta and source_int_declaration_identity regression together.
+
+
+### Fixed extern arguments retain source identity through conversion (2026-10-21)
+The earlier extern path emitted C calls after arity checks but did not check
+fixed source parameter compatibility. Its implicit to_unsafe path also erased
+the selected method's return type to Pointer. Materialize Crystal's numeric or
+to_unsafe conversion, retain its real return type, then reject known source
+mismatches while the C declaration is still available. Apply the same boundary
+to positional, named and tuple-splat arguments. Enum identity comes from the
+tracked source type, not its integer ABI carrier; typed pointers retain their
+pointee type. A tagged numeric union needs per-arm payload conversion and a
+scalar Phi rather than passing the aggregate to C.
+
+A separate discriminator exposed equal-width numeric coercion as an unsafe
+bit reinterpretation: the default HIR Cast lowers to LLVM bitcast. Mark numeric
+value coercion safe so lower_cast selects fptosi/sitofp and their unsigned
+counterparts; explicit unsafe_as keeps its independent bit-preserving path.
+Run10903 on the parent passed 43/44 cases and failed the float-union conversion.
+Run10910 passes all 52 cases on sealed10904, original-first with Crystal 1.20.1.
+Run10916 on composed10911 passes seven runtime plus emitted-main IR controls,
+including fptoui/uitofp and the opposite unsafe_as framing. Inputs were frozen
+before/after. Scoped adversary ROBUST for the declared matrices.
+
+This is a partial-model contract: undecidable types keep the baseline behavior.
+Unknown/nonnumeric union conversion, generic/module variance, callback ABI,
+float overflow/NaN and broader coercion consumers remain obligations. Passing
+an unused Proc to C does not prove its invoked callback ABI. Full prelude,
+regressions, bootstrap and LavinMQ parity are not closed; run10936 correctly
+rejects a Proc-typed signal argument caused by specialized Proc.new block input
+inference. Never weaken that rejection to move the frontier.
+
+Evidence: OUT/lavin109{03,07,10,15,16,36} under
+/Users/sergey/Projects/Adamas/sol_help_20261012. Refresh after source restriction,
+conversion selection, union tags, Cast lowering or extern argument changes.
+Rollback the HIR delta and both associated regression directories together.
