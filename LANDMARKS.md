@@ -20983,3 +20983,31 @@ Evidence: corresponding OUT/lavin1044*.frozen_inputs.receipt.json under
 collection, registration order, alias resolution, or lazy method typing changes.
 Roll back the ordered alias visit and its regression suite together. Unchanged
 LavinMQ runtime/spec parity and fresh S3/S4 equality remain open.
+
+
+### Constructor literals and runtime integer domains have different authority (2026-10-21)
+Index.new(-1, 0) in unchanged IO stdlib exposed a missing direct-literal source
+certificate. Conversely, broad initializer ABI compatibility admitted an Int32
+local into a UInt32 parameter. Trace10508 showed that early AST inference saw
+the local as Void while later lowering already knew Int32, so the source check
+was skipped before expected-type coercion could conceal the original value type.
+
+Carry the exact call-owned NumberNode and arena into constructor source checks.
+Direct integer literals use existing representability rules; runtime integer
+expressions retain domain checks. A concrete integer mismatch overrides broad
+ABI compatibility. Install the existing scoped typeof-local bindings during
+early constructor inference, including its cache invalidation and ensure restore.
+
+Original Crystal 1.20.1 and sealed10510 pass all 18 constructor cases in run10515
+(eight exact-output positives, ten primary semantic rc1/no-executable negatives).
+Run10518 also passes 45 existing integer autocast and 18 super numeric contract
+cases unchanged. Scoped adversary ROBUST for these 81 exercised cases, including
+overflow, signedness, constants, generic owners, later arguments, parameters,
+expression results, and local rebinding. This is not complete allocator parity:
+union, block, named, and splat shapes remain outside this certificate.
+Evidence: OUT/lavin10515_constructor_active_context_contract.frozen_inputs.receipt.json
+and OUT/lavin10518_existing_numeric_source_guards.frozen_inputs.receipt.json under
+/Users/sergey/Projects/Adamas/sol_help_20261012. Refresh after source argument
+typing, numeric admission, allocator selection, or arena ownership changes.
+Roll back the HIR change and its regression together. Full prelude, full
+regressions, S1-to-S2, unchanged LavinMQ parity, and fresh S3/S4 equality remain open.

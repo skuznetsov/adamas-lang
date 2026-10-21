@@ -54396,12 +54396,46 @@ module Adamas::HIR
       end
       false
     end
+    private def allocator_integer_source_pair?(actual_name : String, declared_name : String) : Bool
+      actual_name = resolve_type_alias_chain(actual_name.strip.lchop("::"), preserve_abstract_int: true)
+      declared_name = resolve_type_alias_chain(declared_name.strip.lchop("::"), preserve_abstract_int: true)
+      return false unless numeric_primitive_class_name?(actual_name) && numeric_primitive_class_name?(declared_name)
+      actual_type = type_ref_for_name(actual_name)
+      declared_type = type_ref_for_name(declared_name)
+      (signed_integer_primitive?(actual_type) || unsigned_integer_type?(actual_type)) &&
+        (signed_integer_primitive?(declared_type) || unsigned_integer_type?(declared_type))
+    end
+
+    # A direct integer literal may autocast only when its value fits the exact
+    # declared integer type. Identifiers and other expressions use domain checks.
+    private def allocator_integer_literal_source_autocast_compatible?(
+      expr_id : ExprId,
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
+      actual_name : String,
+      declared_name : String,
+    ) : Bool
+      return false if expr_id.invalid?
+      actual_name = resolve_type_alias_chain(actual_name.strip.lchop("::"), preserve_abstract_int: true)
+      declared_name = resolve_type_alias_chain(declared_name.strip.lchop("::"), preserve_abstract_int: true)
+      return false unless numeric_primitive_class_name?(actual_name) && numeric_primitive_class_name?(declared_name)
+      actual_type = type_ref_for_name(actual_name)
+      declared_type = type_ref_for_name(declared_name)
+      return false unless signed_integer_primitive?(actual_type) || unsigned_integer_type?(actual_type)
+      return false unless signed_integer_primitive?(declared_type) || unsigned_integer_type?(declared_type)
+      source_node = source_arena[expr_id]
+      return false unless source_node.is_a?(Adamas::Compiler::Frontend::NumberNode)
+      integer_literal_representable_as?(source_node, declared_type)
+    end
+
     private def allocator_source_argument_mismatch_for_def(
       def_node : Adamas::Compiler::Frontend::DefNode,
       arg_types : Array(TypeRef),
       context : String?,
+      source_args : Array(ExprId),
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
     ) : Tuple(String, String)?
       return nil if arg_types.empty? || arg_types.any? { |type_ref| type_ref == TypeRef::VOID }
+      return nil unless source_args.size == arg_types.size
       params = method_forall_call_param_infos(def_node, arg_types, function_param_infos(def_node))
       return nil if params.any? { |param| param.is_splat || param.is_double_splat || named_only_separator?(param) }
 
@@ -54413,9 +54447,12 @@ module Adamas::HIR
           declared_name = normalize_declared_type_name(restriction_text, context, specialize_bare_generics: false)
           actual_name = generic_param_type_name_from_ref(arg_types[arg_index])
           if source_generic_restriction_match?(actual_name, declared_name) == false
-            # A safe numeric conversion excuses only this argument. Continue
-            # scanning later formals before issuing the rejection certificate.
-            unless allocator_numeric_source_autocast_compatible?(actual_name, declared_name)
+            # A direct literal has value-based eligibility; runtime expressions
+            # require a source-domain-preserving numeric conversion.
+            literal_autocast = allocator_integer_literal_source_autocast_compatible?(
+              source_args[arg_index], source_arena, actual_name, declared_name,
+            )
+            unless literal_autocast || allocator_numeric_source_autocast_compatible?(actual_name, declared_name)
               return {actual_name, declared_name}
             end
           end
@@ -54431,8 +54468,11 @@ module Adamas::HIR
     private def allocator_source_contract_mismatch_for_call(
       init_base_name : String,
       callsite_types : Array(TypeRef),
+      source_args : Array(ExprId),
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
     ) : Tuple(String, String, String)?
       return nil if callsite_types.empty? || callsite_types.any? { |type| type == TypeRef::VOID || is_union_type?(type) }
+      return nil unless source_args.size == callsite_types.size
       owner = function_context_from_name(init_base_name)
       return nil unless owner
       owner_base = strip_generic_args(owner)
@@ -54473,14 +54513,19 @@ module Adamas::HIR
             {true, false, true, nil.as(Tuple(String, String)?)}
           else
             compatible = params_compatible_with_args?(candidate_def, callsite_types, candidate_context)
-            mismatch = allocator_source_argument_mismatch_for_def(candidate_def, callsite_types, candidate_context)
+            mismatch = allocator_source_argument_mismatch_for_def(
+              candidate_def, callsite_types, candidate_context, source_args, source_arena,
+            )
             {true, compatible, mismatch.nil?, mismatch}
           end
         end
         next unless check[0]
         viable_count += 1
-        return nil if check[1] || check[2] || check[3].nil?
+        return nil if check[2] || check[3].nil?
         actual_name, declared_name = check[3].not_nil!
+        # Broad ABI compatibility can admit a lossy integer conversion. A
+        # concrete integer-source certificate remains authoritative in that case.
+        return nil if check[1] && !allocator_integer_source_pair?(actual_name, declared_name)
         observed_mismatch ||= {actual_name, declared_name, candidate_name}
       end
       return nil if viable_count == 0
@@ -85268,7 +85313,9 @@ module Adamas::HIR
               candidate_numeric_target_types = numeric_entry[2]
             else
               if source_super_contract_check
-                owner_source_mismatch = allocator_source_contract_mismatch_for_call(base_method_name, arg_types)
+                if source_args = node.args
+                  owner_source_mismatch = allocator_source_contract_mismatch_for_call(base_method_name, arg_types, source_args, @arena)
+                end
                 if mismatch = owner_source_mismatch
                   source_super_mismatch ||= mismatch
                 elsif source_owner_has_viable_positional_candidate_shape?(base_method_name, args.size)
@@ -102510,7 +102557,11 @@ module Adamas::HIR
             receiver_id = nil if static_class_name # Static call, no receiver
             if method_name == "new"
               if class_info = @class_info[class_name_str]?
-                call_arg_types = infer_arg_types_for_call(call_args, @current_class)
+                # Source contracts need the active local types before expected
+                # argument lowering can coerce values to initializer ABI slots.
+                call_arg_types = with_typeof_local_bindings(ctx) do
+                  infer_arg_types_for_call(call_args, @current_class)
+                end
                 call_has_splat = call_args.any? { |arg_expr| call_arena[arg_expr].is_a?(Adamas::Compiler::Frontend::SplatNode) }
                 call_has_named_args = node.named_args.try(&.empty?) == false
                 if call_has_splat
@@ -102545,7 +102596,7 @@ module Adamas::HIR
                                                  "#{class_name_str}#initialize"
                   if !call_has_named_args && !call_has_splat && !has_block_call &&
                      call_arg_types.size == call_args.size
-                    if mismatch = allocator_source_contract_mismatch_for_call(constructor_arg_binding_name, call_arg_types)
+                    if mismatch = allocator_source_contract_mismatch_for_call(constructor_arg_binding_name, call_arg_types, call_args, call_arena)
                       actual_names = call_arg_types.map { |type| get_type_name_from_ref(type) }.join(", ")
                       raise LoweringError.new(
                         "no overload matches #{class_name_str}.new for argument types (#{actual_names}); #{mismatch[2]} expects #{mismatch[1]}, not #{mismatch[0]}",

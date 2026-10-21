@@ -1,0 +1,1 @@
+expected argument #2 to 'NumericIndex\.new' to be UInt32, not Int64

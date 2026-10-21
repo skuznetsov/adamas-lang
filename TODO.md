@@ -21604,3 +21604,18 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Prelude still stops at the same Index.new(-1, 0) numeric autocast frontier
   (run10443). Full regressions, S1-to-S2, unchanged LavinMQ parity, and fresh
   S3/S4 fixed point remain open.
+
+
+### Preserve constructor integer source contracts (2026-10-21)
+- [x] Distinguish direct integer literal representability from the domain of a
+  runtime integer expression, retaining call-owned source nodes and arenas.
+- [x] Keep strict integer-source rejection authoritative over broad initializer
+  ABI compatibility, including mismatches in later parameters.
+- [x] Supply active local semantic types to the early constructor source check
+  before expected-argument lowering can coerce values to initializer slots.
+- [x] Original Crystal 1.20.1 and sealed10510 pass eight exact-output positives
+  and ten semantic negatives (run10515), plus all 45 existing source integer
+  autocast and 18 super numeric contract cases (run10518).
+- [ ] Union, block, named, and splat allocation shapes need separate coverage.
+  Full prelude, full regressions, S1-to-S2, unchanged LavinMQ runtime/spec parity,
+  and fresh S3/S4 fixed point remain open.
