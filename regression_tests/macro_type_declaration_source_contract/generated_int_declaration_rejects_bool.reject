@@ -1,0 +1,1 @@
+(?:argument.*consume_int.*Int32.*not.*Bool|no overload matches PrimitiveScope\.consume_int for argument types \(Bool\))

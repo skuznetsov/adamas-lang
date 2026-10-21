@@ -862,7 +862,7 @@ module Adamas
             end
           when "type"
             if node.is_a?(Frontend::TypeDeclarationNode)
-              MacroIdValue.new(intern_name(node.declared_type))
+              MacroIdValue.new(normalized_type_declaration_name(node.declared_type))
             else
               MacroNilValue.new
             end
@@ -903,8 +903,7 @@ module Adamas
           when Frontend::TypeDeclarationNode
             # Crystal: TypeDeclaration#id returns the full form "var : Type = default"
             # so that record macro's "@#{field.id}".id produces "@var : Type = default"
-            type_n = intern_name(node.declared_type)
-            type_n = type_n[1..] if type_n.starts_with?(':')
+            type_n = normalized_type_declaration_name(node.declared_type)
             id_result = "#{intern_name(node.name)} : #{type_n}"
             if val_id = node.value
               val_str = stringify_node(@arena[val_id])
@@ -1158,8 +1157,7 @@ module Adamas
           when Frontend::InstanceVarNode
             intern_name(node.name)
         when Frontend::TypeDeclarationNode
-          type_name = intern_name(node.declared_type)
-          type_name = type_name[1..] if type_name.starts_with?(':')
+          type_name = normalized_type_declaration_name(node.declared_type)
           sn_result = "#{intern_name(node.name)} : #{type_name}"
           if sn_val_id = node.value
             sn_val_str = stringify_node(@arena[sn_val_id])
@@ -1245,6 +1243,17 @@ module Adamas
             pool.intern_string(slice)
           else
             String.new(slice)
+          end
+        end
+
+        # Nested macro TypeDeclaration nodes may carry one leading colon as a
+        # relative-name marker. Preserve the two-colon absolute-path marker.
+        private def normalized_type_declaration_name(slice : Slice(UInt8)) : String
+          name = intern_name(slice)
+          if name.starts_with?(':') && !name.starts_with?("::")
+            name[1..]
+          else
+            name
           end
         end
       end

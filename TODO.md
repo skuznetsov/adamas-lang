@@ -21499,3 +21499,20 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   in run9848; its separate alias diagnostic spelling was qualified in run9855.
 - [ ] Qualify builtin superclass metadata independently. This path regression
   does not establish unchanged LavinMQ runtime/spec parity or fresh bootstrap.
+
+
+### Normalize macro TypeDeclaration source rendering (2026-10-21)
+- [x] Normalize the stored single relative-name colon before exposing a
+  TypeDeclaration through .type, .id or stringification; preserve absolute ::.
+  Use the same conversion for all three views instead of changing generated
+  library declarations or relaxing argument checks.
+- [x] The portable original-first macro_type_declaration_source_contract_repro.sh
+  passes three byte-exact programs and two strict rc1/no-executable semantic
+  rejections on clean sealed10080 (run10094). Committed parent9833 fails the
+  combined rendering program while retaining the four controls (run10095).
+- [ ] Repair the independent absolute-constructor/default binding defect under
+  a local class shadow. Pure nonmacro controls fail identically on parent9833
+  and sealed10080 (runs10105/10104); the absolute-shadow macro adversary is
+  still open. This rendering fix does not establish general name binding.
+- [ ] Resolve the current unchanged-LavinMQ read_bytes(UInt64) -> Void frontier,
+  then complete runtime/spec parity and fresh bootstrap qualification.

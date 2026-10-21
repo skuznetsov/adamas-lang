@@ -20764,3 +20764,34 @@ context, alias expansion, declaration availability or resolution-cache changes;
 revert source and regression together. Builtin superclass metadata, unchanged
 LavinMQ runtime/spec parity and fresh bootstrap remain separate obligations.
 No application or stdlib source changed.
+
+
+### Macro TypeDeclaration views preserve the declared type spelling (2026-10-21)
+Nested macro TypeDeclaration storage can include one leading colon as a
+relative-name marker. The .type accessor exposed that marker, while .id and
+stringification stripped one colon even from an absolute :: path. Use one
+normalization helper: remove exactly one relative marker and retain the
+absolute-path prefix. This fixes the source-rendering boundary; no argument
+admission checks, application sources or stdlib sources change.
+
+Pinned Crystal 1.20.1 and clean sealed10080 pass three exact-output programs
+and two strict semantic rejections in the portable
+macro_type_declaration_source_contract_repro.sh (run10094). The combined
+relative/absolute program checks .type, .id, stringification and defaults and
+prints AAABBB. Committed parent9833 aborts in that program and retains the
+other four controls (run10095). Source manifest SHA256
+44dbecb5ecc04d8359bb860e644594fe99899a809a99fab953d4a5ea1719d8f9;
+host SHA256 c84eec81caad2f9bcbb3f95f591b6158055405e1c1130dcea401dcef095a1594.
+Evidence: /Users/sergey/Projects/Adamas/sol_help_20261012/OUT/
+lavin10094_macro_type_portable_fixed.frozen_inputs.receipt.json.
+
+Scoped adversary ROBUST for relative-marker normalization, absolute spelling
+and the tested strict argument rejections. General absolute name binding is
+VULNERABLE: adding a local class shadow still breaks the macro program.
+Pure nonmacro controls independently reproduce an incorrect constructor
+argument type and a default constructing the local class, identically before
+and after this patch (runs10105/10104, packet10103). Keep that obligation open;
+the rendering result does not certify it. Refresh these claims after macro
+AST storage, rendering, alias binding or namespace-resolution changes; revert
+the helper and its regression together. Unchanged LavinMQ runtime/spec parity
+and fresh S3/S4 bootstrap remain unverified.

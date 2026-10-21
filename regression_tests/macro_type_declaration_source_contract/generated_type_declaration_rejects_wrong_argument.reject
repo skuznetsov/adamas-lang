@@ -1,0 +1,1 @@
+(?:argument.*consume_generated.*NegativeScope::Marker.*not.*NegativeScope::WrongValue|no overload matches NegativeScope\.consume_generated for argument types \(NegativeScope::WrongValue\))
