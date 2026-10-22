@@ -5183,6 +5183,19 @@ module Adamas
           end
         end
 
+        # A sign starts a no-parentheses `super` argument only when its operand
+        # is adjacent, matching Crystal's command-argument boundary. Whitespace
+        # leaves the sign for the surrounding binary expression.
+        private def super_sign_starts_command_argument?(token : Token) : Bool
+          return false unless token.kind.in?(Token::Kind::Plus, Token::Kind::Minus)
+
+          operand_offset = token.span.end_offset
+          return false if operand_offset < 0
+          return true if operand_offset >= @source.bytesize
+
+          !@source.byte_at(operand_offset).unsafe_chr.ascii_whitespace?
+        end
+
         # Phase 39: Parse super (call parent method)
         # Grammar: super | super() | super(arg1, arg2, ...)
         private def parse_super : ExprId
@@ -5314,9 +5327,9 @@ module Adamas
               Token::Kind::LParen, Token::Kind::LBracket,
               Token::Kind::True, Token::Kind::False, Token::Kind::Nil,
               Token::Kind::Self, Token::Kind::Typeof, Token::Kind::Yield,
-              Token::Kind::Plus, Token::Kind::Minus, Token::Kind::Not, Token::Kind::Tilde,
+              Token::Kind::Not, Token::Kind::Tilde,
               Token::Kind::AmpPlus, Token::Kind::AmpMinus
-            )
+            ) || super_sign_starts_command_argument?(arg_token)
 
             unless current_token.kind.in?(Token::Kind::Newline, Token::Kind::EOF, Token::Kind::Semicolon, Token::Kind::End, Token::Kind::Rescue, Token::Kind::Ensure) || !arg_starter
               loop do

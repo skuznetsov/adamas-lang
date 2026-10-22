@@ -21711,3 +21711,15 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [x] Isolate inline callee declarations, restore caller frames for yielded blocks, and discard block-local declarations.
 - [x] Original-first lexical-scope matrix: 3 positive and 5 negative cases pass on sealed11009 (run11012); portable regression added.
 - [ ] Audit exception-handler meta-vars and instance-variable out arguments separately; this matrix does not cover them.
+
+
+### Preserve the super unary-argument spacing boundary (2026-10-21)
+- [x] Distinguish adjacent signed command arguments (`super +5`, `super -5`)
+  from spaced binary expressions (`super + 5`, `super - 5`), including tabs.
+  Match Crystal's source-character boundary without changing argument types.
+- [x] Original-first regression run11204: all six shapes match Crystal 1.20.1
+  byte-for-byte on sealed11192, whose 1919 source files match this commit.
+  The same script rejects parent11009 in run11208; the candidate passes all
+  9 positive and 9 negative super numeric source guards in run11202.
+- [ ] Complete named/splat super argument binding, command block ownership,
+  Proc.new signature typing, full prelude and unchanged LavinMQ parity.
