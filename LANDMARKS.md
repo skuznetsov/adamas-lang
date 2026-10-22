@@ -21357,3 +21357,39 @@ Host SHA256: 6ca99638da388eccc25e1f32f57597ccaa630a574d02dc6743a13175554c0178.
 Refresh after receiver resolution, owner normalization, selected source-new
 result, block contract or raw-pair changes. Revert the AST consumer delta and
 proc_constructor_receiver_ownership regression together.
+
+### Concrete Proc source admission and rooted annotations (2026-10-22)
+
+Root cause: the direct Proc call path emitted a call before checking its
+concrete input vector, while carrier-only signature identity conflated class
+values and instances. Record source-kind slots in the Proc descriptor and
+interner; validate arity, source kind and source subtype before ABI conversion.
+This preserves strict Crystal Proc numeric admission rather than borrowing
+ordinary method-parameter autocasts. Synthetic Proc annotation lookup consumes
+only its lexical declaration's proven owner/forall bindings.
+
+The strict guard exposed another root cause: return inference normalized
+`::SourceAlias` into a relative name, allowing a lexical alias to replace it.
+Resolve the annotation without that spelling round trip and keep absolute
+lookup out of contextual alias fallback.
+
+Sealed12503 passes original-first strict19 (12506), alias6 (12505), the full
+existing Proc164 matrix (12507), parser27 (12508), and both actual portable
+entries (12514). Runtime positives compare exact bytes; negatives require
+semantic rejection and no executable. Five existing exception-flow controls
+stop at semantic/HIR output. All native execution uses run_safe.sh; source,
+external stdlib and executable oracle inputs remained frozen. Evidence is in
+OUT/lavin125{03,04,05,06,07,08,09,14} under
+/Users/sergey/Projects/Adamas/sol_help_20261012. AST SHA256:
+084377fdbab06de1a6937657d76723d30656a78d304a1bfe7d1d9668e2a3b057.
+Host SHA256: e36d06023a49e0c9d794c54fce769aa4cb89442f8d62e273c3ae02755523ae51.
+
+Scoped adversary: ROBUST for direct concrete Proc input admission and rooted
+integer aliases under these controls. Inference is still open: run12512
+qualifies four original cases, then shows returned Proc signatures losing
+`.class` and incorrectly admitting instance arguments. Capture transport,
+typeof result ownership and concrete tuple splats remain separate active
+obligations; no full Proc, bootstrap or LavinMQ closure claim follows.
+Refresh after Proc interning, signature inference, annotation bindings or call
+admission changes. Revert the compiler delta and the proc_call_source_contract
+and proc_rooted_annotation_alias regressions together.

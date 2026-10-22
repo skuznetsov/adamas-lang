@@ -2216,7 +2216,7 @@ module Adamas::HIR
       @functions_by_name = {} of String => Function
       @functions_by_base_name = {} of String => Array(Function)
       @types = [] of TypeDescriptor
-      @type_intern = {} of String => Array(Tuple(UInt8, Array(TypeRef), TypeRef))
+      @type_intern = {} of String => Array(Tuple(UInt8, Array(TypeRef), Array(Bool)?, TypeRef))
       @strings = [] of String
       @string_intern = {} of String => StringId
       @link_libraries = [] of String
@@ -2254,7 +2254,7 @@ module Adamas::HIR
       @functions_by_name = {} of String => Function
       @functions_by_base_name = {} of String => Array(Function)
       @types = [] of TypeDescriptor
-      @type_intern = {} of String => Array(Tuple(UInt8, Array(TypeRef), TypeRef))
+      @type_intern = {} of String => Array(Tuple(UInt8, Array(TypeRef), Array(Bool)?, TypeRef))
       @strings = [] of String
       @string_intern = {} of String => StringId
       @link_libraries = [] of String
@@ -3141,20 +3141,20 @@ module Adamas::HIR
       # where String::Builder is still an active bootstrap crash surface.
       kind_key = type_kind_key(desc.kind)
       bucket = @type_intern[desc.name]? || begin
-        created = [] of Tuple(UInt8, Array(TypeRef), TypeRef)
+        created = [] of Tuple(UInt8, Array(TypeRef), Array(Bool)?, TypeRef)
         @type_intern[desc.name] = created
         created
       end
       bucket.each do |entry|
-        if entry[0] == kind_key && entry[1] == desc.type_params
+        if entry[0] == kind_key && entry[1] == desc.type_params && entry[2] == desc.proc_type_literal_slots
           if Adamas::LayoutProbe.trace_enabled? && Adamas::LayoutProbe.trace_match?(desc.name)
             Adamas::LayoutProbe.log(
               phase: "hir", site: "intern_type.hit", context: "registration", role: "registry",
-              type_name: desc.name, type_id: entry[2].id.to_i64,
+              type_name: desc.name, type_id: entry[3].id.to_i64,
               storage: "kind=#{desc.kind}", slot_size: desc.type_params.size.to_i64,
               access_size: bucket.size.to_i64)
           end
-          return entry[2]
+          return entry[3]
         end
       end
       # Kind-upgrade pass (B1b): same name + same params with an upgradeable
@@ -3162,12 +3162,12 @@ module Adamas::HIR
       # mirror direction (a late placeholder/guess REQUEST against an existing
       # concrete entry) is satisfied without downgrading the entry.
       bucket.each_with_index do |entry, i|
-        next unless entry[1] == desc.type_params
+        next unless entry[1] == desc.type_params && entry[2] == desc.proc_type_literal_slots
         if intern_kind_upgrade?(entry[0], kind_key)
-          ref = entry[2]
+          ref = entry[3]
           idx = (ref.id - TypeRef::FIRST_USER_TYPE).to_i32
           @types[idx] = desc
-          bucket[i] = {kind_key, entry[1], ref}
+          bucket[i] = {kind_key, entry[1], entry[2], ref}
           if Adamas::LayoutProbe.trace_enabled? && Adamas::LayoutProbe.trace_match?(desc.name)
             Adamas::LayoutProbe.log(
               phase: "hir", site: "intern_type.upgrade", context: "registration", role: "registry",
@@ -3182,12 +3182,12 @@ module Adamas::HIR
           if Adamas::LayoutProbe.trace_enabled? && Adamas::LayoutProbe.trace_match?(desc.name)
             Adamas::LayoutProbe.log(
               phase: "hir", site: "intern_type.satisfy", context: "registration", role: "registry",
-              type_name: desc.name, type_id: entry[2].id.to_i64,
+              type_name: desc.name, type_id: entry[3].id.to_i64,
               storage: "kind=#{desc.kind}", slot_size: desc.type_params.size.to_i64,
               access_size: bucket.size.to_i64,
               declared: "existing_kind_key:#{entry[0]}")
           end
-          return entry[2]
+          return entry[3]
         end
       end
       # Add new type
@@ -3200,7 +3200,7 @@ module Adamas::HIR
         existing = String.build do |io|
           bucket.each_with_index do |entry, i|
             io << ';' if i > 0
-            io << "id=" << entry[2].id << " kind_key=" << entry[0] << " params=" << entry[1].size
+            io << "id=" << entry[3].id << " kind_key=" << entry[0] << " params=" << entry[1].size
           end
         end
         Adamas::LayoutProbe.log(
@@ -3211,7 +3211,7 @@ module Adamas::HIR
           declared: existing.empty? ? "" : "existing:#{existing}",
           effective: "params:#{desc.type_params.map(&.id).join(",")}")
       end
-      bucket << {kind_key, desc.type_params.dup, ref}
+      bucket << {kind_key, desc.type_params.dup, desc.proc_type_literal_slots.try(&.dup), ref}
       ref
     end
 
@@ -3364,6 +3364,7 @@ module Adamas::HIR
     getter kind : TypeKind
     getter name : String
     getter type_params : Array(TypeRef)
+    getter proc_type_literal_slots : Array(Bool)?
 
     private def kind_name(kind : TypeKind) : String
       case kind
@@ -3396,13 +3397,35 @@ module Adamas::HIR
       end
     end
 
-    def initialize(@kind : TypeKind, name : String, type_params : Array(TypeRef) = [] of TypeRef)
+    def initialize(
+      @kind : TypeKind,
+      name : String,
+      type_params : Array(TypeRef) = [] of TypeRef,
+      proc_type_literal_slots : Array(Bool)? = nil,
+    )
       @name = String.new(name.to_slice)
       @type_params = type_params.dup
+      if slots = proc_type_literal_slots
+        raise ArgumentError.new("Proc source slots require a Proc descriptor") unless @kind == TypeKind::Proc
+        raise ArgumentError.new("Proc source slot arity must match type parameters") unless slots.size == @type_params.size
+        @proc_type_literal_slots = slots.any? { |type_literal| type_literal } ? slots.dup : nil
+      else
+        @proc_type_literal_slots = nil
+      end
+    end
+
+    def proc_type_literal_slot?(index : Int32) : Bool
+      if slots = @proc_type_literal_slots
+        slots[index]? || false
+      else
+        false
+      end
     end
 
     def ==(other : TypeDescriptor) : Bool
-      @kind == other.kind && @name == other.name && @type_params == other.type_params
+      @kind == other.kind && @name == other.name &&
+        @type_params == other.type_params &&
+        @proc_type_literal_slots == other.proc_type_literal_slots
     end
 
     def to_s(io : IO) : Nil

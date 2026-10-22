@@ -21849,3 +21849,19 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   Body-inference frame/cache changes require a separate matched falsifier.
 - [ ] Broader semantic replacement, fresh bootstrap and unchanged LavinMQ
   runtime/upstream parity remain open; see architecture SDD section 6.3.
+
+### Admit concrete Proc inputs before ABI coercion (2026-10-22)
+- [x] Intern concrete Proc input/result source-kind slots, preserve their
+  specialization identity, and validate arity, source kind and source subtype
+  before introducing ABI coercions. Ordinary numeric parameter autocasts do
+  not apply to the Proc call primitive.
+- [x] Resolve rooted Proc annotations without stripping their absolute lookup
+  authority or rebinding an alias in a nested lexical owner. Synthetic Proc
+  functions retain only the source declaration's proven annotation bindings.
+- [x] Sealed12503 passes strict19 (12506), alias6 (12505), all existing Proc164
+  (12507), parser27 (12508), and both actual portable regression entries
+  (12514), with original Crystal 1.20.1 qualified first and frozen inputs.
+- [ ] Preserve source-kind slots when inferring a returned Proc from its
+  literal: run12512 exposes two rejected class-value positives and two
+  incorrectly accepted instance negatives. Keep the capture/typeof/tuple
+  obligations and unchanged LavinMQ/bootstrap gates open.

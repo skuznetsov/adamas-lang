@@ -51,6 +51,10 @@ module Adamas::HIR
     # independently of ambient state changed while lowering nested methods.
     property source_self_return_type : TypeRef? = nil
 
+    # A synthetic Proc function inherits only the enclosing source declaration's
+    # proven annotation bindings. Its generated name is not a source Def key.
+    property source_annotation_type_params : Hash(String, String)? = nil
+
     # Current block being built
     property current_block : BlockId
     property current_source_location : SourceLocation?
@@ -24591,7 +24595,7 @@ module Adamas::HIR
       end
       resolved = TypeRef::VOID
       begin
-        if namespace_separator_index(resolved_name).nil?
+        if !absolute_annotation && namespace_separator_index(resolved_name).nil?
           if contextual_alias = resolve_contextual_type_alias_name(resolved_name)
             resolved_name = contextual_alias
             STDERR.puts "[HANDLE_ANNOT] contextual=#{resolved_name}" if debug_handle
@@ -29116,9 +29120,11 @@ module Adamas::HIR
           return nil if param.is_splat || param.is_double_splat || param.is_block || param.is_instance_var
           param_annotation = parameter_type_annotation_string(param, @arena)
           return nil unless param_annotation
-          normalized = normalize_declared_type_name(param_annotation)
-          return nil if normalized.empty?
-          param_type = type_ref_for_name(normalized)
+          # Resolve the source annotation as one operation. Normalizing to a
+          # spelling first strips an absolute root and can rebind a top-level
+          # alias to an identically named alias in this lexical owner.
+          return nil if param_annotation.strip.empty?
+          param_type = annotation_type_ref(param_annotation)
           return nil if param_type == TypeRef::VOID
           param_name = get_type_name_from_ref(param_type)
           return nil if param_name.empty? || param_name == "Unknown" || param_name == "Void"
@@ -29132,9 +29138,8 @@ module Adamas::HIR
       return_name = nil.as(String?)
       if proc_annotation = proc_node.return_type
         raw_name = safe_slice_to_string(proc_annotation) || ""
-        normalized = normalize_declared_type_name(raw_name)
-        return nil if normalized.empty?
-        return_type = type_ref_for_name(normalized)
+        return nil if raw_name.strip.empty?
+        return_type = annotation_type_ref(raw_name)
         return nil if return_type == TypeRef::VOID
         return_name = get_type_name_from_ref(return_type)
       else
@@ -70684,9 +70689,139 @@ module Adamas::HIR
       [elem_ref]
     end
 
+    # Runtime type values use their instance TypeRef as an ABI carrier. Keep
+    # the source value kind in a Proc's signature before that carrier erases it.
+    private def proc_annotation_type_literal?(source_name : String) : Bool
+      name = strip_fully_grouped_type_name(substitute_type_params_in_type_name(source_name.strip))
+      name = resolve_type_alias_chain(name, preserve_abstract_int: true)
+      name = strip_fully_grouped_type_name(name)
+      union_names = split_union_type_name(name)
+      return union_names.all? { |part| proc_annotation_type_literal?(part) } if union_names.size > 1
+      name.ends_with?(".class") || name.ends_with?(".metaclass")
+    end
+
+    private def proc_source_type_name(type : TypeRef, type_literal : Bool) : String
+      name = generic_param_type_name_from_ref(type)
+      type_literal ? "#{name}.class" : name
+    end
+
+    private def proc_source_signature_name(descriptor : TypeDescriptor) : String
+      names = descriptor.type_params.map_with_index do |type, index|
+        proc_source_type_name(type, descriptor.proc_type_literal_slot?(index))
+      end
+      "Proc(#{names.join(", ")})"
+    end
+
+    private def intern_proc_source_contract(
+      types : Array(TypeRef),
+      type_literal_slots : Array(Bool)? = nil,
+    ) : TypeRef
+      @module.intern_type(TypeDescriptor.new(TypeKind::Proc, "Proc", types, type_literal_slots))
+    end
+
+    private def proc_source_contracts_match?(
+      actual : TypeDescriptor,
+      expected : TypeDescriptor,
+      discard_result : Bool = false,
+    ) : Bool
+      return false unless actual.type_params.size == expected.type_params.size
+      actual.type_params.each_index do |index|
+        next if discard_result && index == actual.type_params.size - 1
+        return false unless actual.proc_type_literal_slot?(index) == expected.proc_type_literal_slot?(index)
+      end
+      true
+    end
+
+    # Proc#call binds the concrete input tuple (*args : *T). Crystal does not
+    # apply ordinary scalar-parameter NumberAutocastType conversions here:
+    # numeric inputs must satisfy the same source subtype contract as all
+    # other values before any ABI coercion is introduced.
+    # Admit every Proc#call input against its concrete source contract before
+    # creating any ABI casts. Unsupported call shapes stay fail-closed.
+    private def validate_proc_call_source_kinds(
+      ctx : LoweringContext,
+      descriptor : TypeDescriptor,
+      args : Array(ValueId),
+      source_args : Array(ExprId),
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
+      node : Adamas::Compiler::Frontend::Node,
+    ) : Array(ValueId)
+      if descriptor.type_params.empty?
+        raise LoweringError.new("cannot call Proc#call without a concrete Proc signature", node)
+      end
+
+      expected_count = descriptor.type_params.size - 1
+      if args.size != expected_count
+        raise LoweringError.new(
+          "wrong number of arguments for '#{proc_source_signature_name(descriptor)}#call' (given #{args.size}, expected #{expected_count})",
+          node,
+        )
+      end
+
+      if source_args.size != args.size ||
+         source_args.any? { |expr_id| source_arena[expr_id].is_a?(Adamas::Compiler::Frontend::SplatNode) }
+        raise LoweringError.new("Proc#call requires simple positional arguments", node)
+      end
+      if call_node = node.as?(Adamas::Compiler::Frontend::CallNode)
+        if call_node.named_args
+          raise LoweringError.new("Proc#call requires simple positional arguments", node)
+        end
+      end
+
+      mismatch_index = args.each_index.find do |index|
+        expected = descriptor.type_params[index]?
+        next true unless expected
+
+        value = args[index]
+        actual_literal = ctx.type_literal?(value)
+        expected_literal = descriptor.proc_type_literal_slot?(index)
+        next true if actual_literal != expected_literal
+
+        actual = ctx.type_of(value)
+        compatible = if actual == expected
+                       true
+                     elsif actual_literal
+                       proc_result_type_assignable?(actual, expected)
+                     else
+                       proc_result_type_assignable?(actual, expected)
+                     end
+        !compatible
+      end
+
+      if mismatch_index
+        actual_names = args.map { |value| proc_source_type_name(ctx.type_of(value), ctx.type_literal?(value)) }
+        actual_description = actual_names.size == 1 ? "type #{actual_names.first}" : "types #{actual_names.join(", ")}"
+        raise LoweringError.new(
+          "no overload matches '#{proc_source_signature_name(descriptor)}#call' with #{actual_description}", node,
+        )
+      end
+
+      args.map_with_index do |value, index|
+        expected = descriptor.type_params[index]?
+        next value unless expected
+        admitted = coerce_value_to_type(ctx, value, expected)
+        ctx.mark_type_literal(admitted) if descriptor.proc_type_literal_slot?(index)
+        admitted
+      end
+    end
+
+    private def proc_reachable_result_type_literal?(ctx : LoweringContext) : Bool
+      values = [] of ValueId
+      reachable_blocks(ctx.function).each do |block|
+        if ret = block.terminator.as?(Return)
+          value = ret.value
+          return false unless value
+          next if get_type_name_from_ref(ctx.type_of(value)) == "NoReturn"
+          values << value
+        end
+      end
+      !values.empty? && values.all? { |value| ctx.type_literal?(value) }
+    end
+
     private def intern_proc_type(type_names : Array(String)) : TypeRef
       names = type_names
       names = ["Nil"] if names.empty?
+      type_literal_slots = [] of Bool
       type_refs = names.map do |tn|
         normalized = normalize_tuple_literal_type_name(substitute_type_params_in_type_name(tn.strip))
         if normalized == "self" || normalized == "Self"
@@ -70704,9 +70839,10 @@ module Adamas::HIR
             normalized = override if owner_prefix == override
           end
         end
+        type_literal_slots << proc_annotation_type_literal?(normalized)
         type_ref_for_name(normalized)
       end
-      @module.intern_type(TypeDescriptor.new(TypeKind::Proc, "Proc", type_refs))
+      intern_proc_source_contract(type_refs, type_literal_slots)
     end
 
     private def proc_type_ref_for_name(name : String) : TypeRef?
@@ -85059,6 +85195,12 @@ module Adamas::HIR
           if actual_parts[0] == expected_parts[0]
             actual_result = actual_parts[1]
             expected_result = expected_parts[1]
+            if actual_desc && actual_desc.kind == TypeKind::Proc
+              discard_result = ((!expected_desc.proc_type_literal_slot?(expected_desc.type_params.size - 1)) &&
+                                (expected_result == TypeRef::NIL || expected_result == TypeRef::VOID)) ||
+                               get_type_name_from_ref(actual_result) == "NoReturn"
+              return false unless proc_source_contracts_match?(actual_desc, expected_desc, discard_result)
+            end
             return actual_result == expected_result || expected_result == TypeRef::NIL ||
                    expected_result == TypeRef::VOID || get_type_name_from_ref(actual_result) == "NoReturn"
           end
@@ -90058,7 +90200,8 @@ module Adamas::HIR
       # unrelated callbacks would satisfy is_a? and collapse during union joins.
       if value_desc.kind == TypeKind::Proc
         if check_desc.kind == TypeKind::Proc
-          return check_desc.type_params.empty? || value_desc.type_params == check_desc.type_params
+          return check_desc.type_params.empty? ||
+                 (value_desc.type_params == check_desc.type_params && proc_source_contracts_match?(value_desc, check_desc))
         end
         # The parser can register the bare Proc class before typed Proc values.
         return true if check_desc.name == "Proc" && check_desc.type_params.empty?
@@ -103151,8 +103294,12 @@ module Adamas::HIR
             proc_recv_type = ctx.type_of(proc_recv_id)
             if proc_recv_desc = @module.get_type_descriptor(proc_recv_type)
               if proc_recv_desc.kind == TypeKind::Proc || proc_recv_desc.name == "Proc" || proc_recv_desc.name.starts_with?("Proc(")
-                # Lower each arg individually
+                # Lower each arg before admission, but do not coerce until the
+                # complete source vector has passed arity, type, and value-kind checks.
                 proc_call_args = call_args.map { |arg_expr| lower_expr(ctx, arg_expr) }
+                proc_call_args = validate_proc_call_source_kinds(
+                  ctx, proc_recv_desc, proc_call_args, call_args, call_arena, node,
+                )
                 # Extract return type from Proc type_params (last element)
                 proc_call_return = TypeRef::VOID
                 if proc_recv_desc.type_params.size > 0
@@ -103169,6 +103316,7 @@ module Adamas::HIR
                 proc_call = Call.with_receiver(ctx.next_id, proc_call_return, proc_recv_id, "Proc#call", proc_call_args)
                 ctx.emit(proc_call)
                 ctx.register_type(proc_call.id, proc_call_return)
+                ctx.mark_type_literal(proc_call.id) if proc_recv_desc.proc_type_literal_slot?(proc_recv_desc.type_params.size - 1)
                 return proc_call.id
               end
             end
@@ -126544,7 +126692,9 @@ module Adamas::HIR
         proc_recv_type = ctx.type_of(proc_recv_id)
         if proc_recv_desc = @module.get_type_descriptor(proc_recv_type)
           if proc_recv_desc.kind == TypeKind::Proc || proc_recv_desc.name == "Proc" || proc_recv_desc.name.starts_with?("Proc(")
-            proc_call_args = [] of ValueId
+            proc_call_args = validate_proc_call_source_kinds(
+              ctx, proc_recv_desc, [] of ValueId, [] of ExprId, @arena, node,
+            )
             # Extract return type from Proc type_params (last element)
             proc_call_return = TypeRef::VOID
             if proc_recv_desc.type_params.size > 0
@@ -126561,6 +126711,7 @@ module Adamas::HIR
             proc_call = Call.with_receiver(ctx.next_id, proc_call_return, proc_recv_id, "Proc#call", proc_call_args)
             ctx.emit(proc_call)
             ctx.register_type(proc_call.id, proc_call_return)
+            ctx.mark_type_literal(proc_call.id) if proc_recv_desc.proc_type_literal_slot?(proc_recv_desc.type_params.size - 1)
             return proc_call.id
           end
         end
@@ -130774,6 +130925,7 @@ module Adamas::HIR
         end
       end
 
+      source_contract = @module.get_type_descriptor(ctx.type_of(proc_id))
       param_ids = [] of ValueId
       if param_types
         param_types.each_with_index do |param_type, idx|
@@ -130782,6 +130934,9 @@ module Adamas::HIR
           ctx.emit(param_val)
           ctx.register_local(name, param_val.id)
           ctx.register_type(param_val.id, param_type)
+          if source_contract && source_contract.kind == TypeKind::Proc && source_contract.proc_type_literal_slot?(idx)
+            ctx.mark_type_literal(param_val.id)
+          end
           update_typeof_local(name, param_type)
           if param_type != TypeRef::VOID
             update_typeof_local_name(name, get_type_name_from_ref(param_type))
@@ -130806,6 +130961,10 @@ module Adamas::HIR
       call = Call.with_receiver(ctx.next_id, return_type, proc_id, actual_name, param_ids)
       ctx.emit(call)
       ctx.register_type(call.id, return_type)
+      if proc_descriptor && proc_descriptor.kind == TypeKind::Proc &&
+         proc_descriptor.proc_type_literal_slot?(proc_descriptor.type_params.size - 1)
+        ctx.mark_type_literal(call.id)
+      end
 
       if ctx.get_block(ctx.current_block).terminator.is_a?(Unreachable)
         ctx.terminate(Return.new(call.id))
@@ -132361,13 +132520,45 @@ module Adamas::HIR
       box_ptr
     end
 
+    # Resolve only source-bound method forall arguments alongside the receiver's
+    # lexical owner bindings. This deliberately excludes unrelated caller state.
+    private def proc_literal_annotation_type_param_bindings(
+      owner_name : String?,
+      ctx : LoweringContext,
+    ) : Hash(String, String)
+      bindings = {} of String => String
+      if owner_name
+        if owner_bindings = type_param_map_for_receiver_name("#{owner_name}#_")
+          owner_bindings.each { |name, value| bindings[name] = value }
+        end
+      end
+
+      # Nested Proc contexts carry the exact lexical declaration's bindings.
+      # They may shadow an identically named receiver parameter, but must never
+      # borrow unrelated active caller substitutions by spelling alone.
+      if lexical_bindings = ctx.source_annotation_type_params
+        lexical_bindings.each { |name, value| bindings[name] = value }
+      end
+
+      # The HIR function name selects the exact source declaration. Only its
+      # declared forall names may override an identically named owner parameter.
+      if source_def = @function_defs[ctx.function.name]?
+        forall_type_param_names(source_def).each do |name|
+          next unless value = @type_param_map[name]?
+          next if value.strip == name
+          bindings[name] = value
+        end
+      end
+      bindings
+    end
+
     # Resolve Proc literal annotations in their lexical owner and local typeof
     # environment, then require source identity before permissive type interning.
     private def proc_literal_annotation_type_ref(
       ctx : LoweringContext,
       node : Adamas::Compiler::Frontend::ProcLiteralNode,
       type_name : String,
-    ) : TypeRef
+    ) : Tuple(TypeRef, Bool)
       owner = @block_owner[node.object_id]?
       owner_name = owner.try(&.class_name) ||
                    owner.try(&.namespace_override) ||
@@ -132386,12 +132577,7 @@ module Adamas::HIR
           @current_namespace_override = owner.namespace_override
         end
 
-        bindings = @type_param_map
-        if owner_name
-          if owner_bindings = type_param_map_for_receiver_name("#{owner_name}#_")
-            bindings = owner_bindings unless owner_bindings.empty?
-          end
-        end
+        bindings = proc_literal_annotation_type_param_bindings(owner_name, ctx)
 
         with_isolated_type_param_map(bindings) do
           with_typeof_local_bindings(ctx) do
@@ -132399,8 +132585,9 @@ module Adamas::HIR
             # dimension. Resolve typeof while those bindings are active and pass
             # this same concrete text to validation and the cached interner.
             resolved_name = resolve_typeof_in_type_string(type_name).strip
+            resolved_name = substitute_type_params_in_type_name(resolved_name).strip
             validate_proc_literal_source_annotation(resolved_name, owner_name, node)
-            annotation_type_ref(resolved_name, owner_name)
+            {annotation_type_ref(resolved_name, owner_name), proc_annotation_type_literal?(resolved_name)}
           end
         end
       ensure
@@ -132506,6 +132693,12 @@ module Adamas::HIR
         return
       end
 
+      if name.ends_with?(".class") || name.ends_with?(".metaclass")
+        suffix_size = name.ends_with?(".metaclass") ? 10 : 6
+        validate_proc_literal_source_annotation(name[0, name.bytesize - suffix_size], owner_name, node, depth + 1)
+        return
+      end
+
       if generic = split_generic_base_and_args(name)
         # Compiler generic-base tables are fallback resolution hints, not proof
         # that the Crystal source program declared a usable base type.
@@ -132579,34 +132772,41 @@ module Adamas::HIR
       # Resolve source Proc annotations before the permissive type-name interner
       # can turn an unresolved annotation into an ABI placeholder.
       proc_param_types = [] of TypeRef
+      proc_param_type_literals = [] of Bool
       if params = node.params
         effective_param_types = expand_flat_block_param_types(params, param_type_override)
         each_param_with_index(params) do |param, idx|
           if param_name = param.name
-            param_type = if ta = param.type_annotation
-                           proc_literal_annotation_type_ref(ctx, node, safe_slice_to_string(ta) || "")
-                         elsif effective_param_types && (override = effective_param_types[idx]?)
-                           override
-                         else
-                           TypeRef::VOID
-                         end
+            param_type, param_literal = if ta = param.type_annotation
+                                          proc_literal_annotation_type_ref(ctx, node, safe_slice_to_string(ta) || "")
+                                        elsif effective_param_types && (override = effective_param_types[idx]?)
+                                          {override, false}
+                                        else
+                                          {TypeRef::VOID, false}
+                                        end
             proc_param_types << param_type
+            proc_param_type_literals << param_literal
           end
         end
       end
 
       # Pre-determine return type (may be refined after lowering)
-      proc_return_type = if rt = node.return_type
-                           proc_literal_annotation_type_ref(ctx, node, safe_slice_to_string(rt) || "")
-                         else
-                           TypeRef::VOID # Will be updated after body lowering
-                         end
+      proc_return_type, proc_return_type_literal = if rt = node.return_type
+                                                   proc_literal_annotation_type_ref(ctx, node, safe_slice_to_string(rt) || "")
+                                                 else
+                                                   {TypeRef::VOID, false}
+                                                 end
 
       # Lower source results before applying an explicit Proc annotation.
       # The annotation constrains admission; it must not coerce invalid values
       # into apparently compatible types before that check.
       proc_func = @module.create_function(proc_func_name, TypeRef::VOID)
       proc_ctx = LoweringContext.new(proc_func, @module, @arena)
+      lexical_owner = @block_owner[node.object_id]?
+      lexical_owner_name = lexical_owner.try(&.class_name) ||
+                           lexical_owner.try(&.namespace_override) ||
+                           @current_class || @current_namespace_override
+      proc_ctx.source_annotation_type_params = proc_literal_annotation_type_param_bindings(lexical_owner_name, ctx)
 
       # Collect proc param names (to exclude from capture detection)
       proc_param_names = Set(String).new
@@ -132698,6 +132898,7 @@ module Adamas::HIR
             proc_ctx.register_local(name, hir_param.id)
             proc_ctx.mark_block_parameter_binding(name, hir_param.id)
             proc_ctx.register_type(hir_param.id, param_type)
+            proc_ctx.mark_type_literal(hir_param.id) if proc_param_type_literals[idx]?
             update_typeof_local(name, param_type)
             if ta = param.type_annotation
               update_typeof_local_name(name, (safe_slice_to_string(ta) || ""))
@@ -132816,13 +133017,14 @@ module Adamas::HIR
       # Both Proc literals and Proc.new validate uncoerced source results.
       # Only a validated contract can determine the public result ABI.
       if node.return_type
-        validate_proc_result(proc_ctx, node, proc_return_type, semantic_return_type)
+        validate_proc_result(proc_ctx, node, proc_return_type, semantic_return_type, proc_return_type_literal)
         proc_func.return_type = proc_return_type
         normalize_function_return_terminators(proc_ctx, proc_return_type)
       else
         # Source typing may retain a union wider than an optimized CFG. Keep
         # that union only when it admits every actual return, then normalize
         # those exits to the one published Proc result representation.
+        proc_return_type_literal = proc_reachable_result_type_literal?(proc_ctx)
         return_types = [] of TypeRef
         reachable_blocks(proc_func).each do |return_block|
           if return_node = return_block.terminator.as?(Return)
@@ -132856,7 +133058,9 @@ module Adamas::HIR
       @type_param_map = saved_type_param_map
 
       # Compute proc type (user-visible, does NOT include captures)
-      proc_type = @module.intern_type(TypeDescriptor.new(TypeKind::Proc, "Proc", proc_param_types + [proc_return_type]))
+      proc_type = intern_proc_source_contract(
+        proc_param_types + [proc_return_type], proc_param_type_literals + [proc_return_type_literal],
+      )
 
       emit_make_proc_value(ctx, proc_type, proc_func_name, proc_func, captured_vars)
     end
@@ -133202,7 +133406,7 @@ module Adamas::HIR
       ctx.register_local(name, value)
       ctx.mark_block_parameter_binding(name, value)
       update_typeof_local(name, type)
-      update_typeof_local_name(name, get_type_name_from_ref(type))
+      update_typeof_local_name(name, proc_source_type_name(type, ctx.type_literal?(value)))
       track_enum_value(value, get_type_name_from_ref(type))
     end
 
@@ -133211,12 +133415,14 @@ module Adamas::HIR
       block_node : Adamas::Compiler::Frontend::BlockNode,
       inputs : Array(TypeRef),
       pattern_capture_names : Set(String) = Set(String).new,
+      source_contract : TypeDescriptor? = nil,
     ) : Nil
       validate_proc_constructor_block_parameters(block_node, inputs)
       # Keep all input slots even when the source has fewer parameter names.
       values = inputs.map_with_index do |type, index|
         param = ctx.function.add_param("__arg#{index}", type)
         ctx.register_type(param.id, type)
+        ctx.mark_type_literal(param.id) if source_contract && source_contract.proc_type_literal_slot?(index)
         param.id
       end
       params = block_node.params
@@ -133294,6 +133500,10 @@ module Adamas::HIR
           return false unless actual_inputs == expected_inputs
           actual_result = actual_desc.type_params.last
           expected_result = expected_desc.type_params.last
+          discard_result = ((!expected_desc.proc_type_literal_slot?(expected_desc.type_params.size - 1)) &&
+                            (expected_result == TypeRef::NIL || expected_result == TypeRef::VOID)) ||
+                           get_type_name_from_ref(actual_result) == "NoReturn"
+          return false unless proc_source_contracts_match?(actual_desc, expected_desc, discard_result)
           return actual_result == expected_result || expected_result == TypeRef::NIL ||
                  expected_result == TypeRef::VOID || get_type_name_from_ref(actual_result) == "NoReturn"
         end
@@ -133310,11 +133520,12 @@ module Adamas::HIR
       node : Adamas::Compiler::Frontend::BlockNode | Adamas::Compiler::Frontend::ProcLiteralNode,
       expected : TypeRef,
       semantic_return_type : TypeRef?,
+      expected_type_literal : Bool = false,
     ) : Nil
       # Nil explicitly discards a result. Proc.new also maps its Void result
       # contract to Nil; a literal's explicit annotation remains a constraint.
-      return if expected == TypeRef::NIL ||
-                (expected == TypeRef::VOID && node.is_a?(Adamas::Compiler::Frontend::BlockNode))
+      return if !expected_type_literal && (expected == TypeRef::NIL ||
+                (expected == TypeRef::VOID && node.is_a?(Adamas::Compiler::Frontend::BlockNode)))
       result_owner = node.is_a?(Adamas::Compiler::Frontend::ProcLiteralNode) ? "Proc" : "block"
       if semantic = semantic_return_type
         # Source result typing includes unreachable tail expressions. A known
@@ -133332,9 +133543,11 @@ module Adamas::HIR
         ret = block.terminator.as?(Return)
         next unless ret
         actual = ret.value.try { |value| ctx.type_of(value) } || TypeRef::NIL
-        next if proc_result_type_assignable?(actual, expected)
+        actual_type_literal = ret.value.try { |value| ctx.type_literal?(value) } || false
+        next if get_type_name_from_ref(actual) == "NoReturn"
+        next if actual_type_literal == expected_type_literal && proc_result_type_assignable?(actual, expected)
         raise LoweringError.new(
-          "expected #{result_owner} to return #{get_type_name_from_ref(expected)}, not #{get_type_name_from_ref(actual)}",
+          "expected #{result_owner} to return #{proc_source_type_name(expected, expected_type_literal)}, not #{proc_source_type_name(actual, actual_type_literal)}",
           node,
         )
       end
@@ -133353,11 +133566,13 @@ module Adamas::HIR
       proc_constructor_type : TypeRef? = nil,
       semantic_return_type : TypeRef? = nil,
     ) : ValueId
+      constructor_contract = nil.as(TypeDescriptor?)
       if constructor_type = proc_constructor_type
         descriptor = @module.get_type_descriptor(constructor_type)
         unless descriptor && descriptor.kind == TypeKind::Proc && !descriptor.type_params.empty?
           raise LoweringError.new("selected Proc.new has no concrete callback contract", block_node)
         end
+        constructor_contract = descriptor
         param_types = descriptor.type_params[0, descriptor.type_params.size - 1]
         expected_return_type = descriptor.type_params.last
         expected_return_type = TypeRef::NIL if expected_return_type == TypeRef::VOID
@@ -133434,6 +133649,7 @@ module Adamas::HIR
       end
       @block_owner[block_node.object_id] = BlockOwner.new(owner_class, owner_method, owner_is_class, owner_namespace)
       @block_owner_function_ids[block_node.object_id] = ctx.function.id
+      proc_ctx.source_annotation_type_params = proc_literal_annotation_type_param_bindings(owner_class || owner_namespace, ctx)
       owner_self_id = ctx.lookup_local("self") || @block_owner_self_ids[block_node.object_id]?
       if owner_self_id.nil?
         owner_self_param = find_self_param(ctx.function)
@@ -133645,7 +133861,7 @@ module Adamas::HIR
 
       # Add parameters to the standalone function
       if proc_constructor_type
-        bind_proc_constructor_block_parameters(proc_ctx, block_node, proc_param_types, pattern_capture_names)
+        bind_proc_constructor_block_parameters(proc_ctx, block_node, proc_param_types, pattern_capture_names, constructor_contract)
       elsif params = block_node.params
         if block_node.unpacks
           proc_param_types.each_with_index do |expected_type, idx|
@@ -133913,7 +134129,8 @@ module Adamas::HIR
           proc_ctx.terminate(Return.new(last_value))
         end
         result_type = expected_return_type.not_nil!
-        validate_proc_result(proc_ctx, block_node, result_type, semantic_return_type)
+        result_type_literal = constructor_contract.not_nil!.proc_type_literal_slot?(proc_param_types.size)
+        validate_proc_result(proc_ctx, block_node, result_type, semantic_return_type, result_type_literal)
         proc_return_type = result_type
         proc_func.return_type = result_type
         normalize_function_return_terminators(proc_ctx, result_type)
@@ -133983,7 +134200,13 @@ module Adamas::HIR
       @current_typeof_local_names = saved_typeof_local_names
 
       # Compute proc type (does NOT include captures)
-      proc_type = @module.intern_type(TypeDescriptor.new(TypeKind::Proc, "Proc", proc_param_types + [proc_return_type]))
+      proc_type = if source_contract = constructor_contract
+                    slots = proc_param_types.map_with_index { |_, index| source_contract.proc_type_literal_slot?(index) }
+                    slots << source_contract.proc_type_literal_slot?(proc_param_types.size)
+                    intern_proc_source_contract(proc_param_types + [proc_return_type], slots)
+                  else
+                    intern_proc_source_contract(proc_param_types + [proc_return_type])
+                  end
 
       if heap_proc
         return emit_make_proc_value(ctx, proc_type, proc_func_name, proc_func, captured_vars)
@@ -138029,7 +138252,11 @@ module Adamas::HIR
           return TypeRef::VOID if short_type_param_name?(lookup_name) && !@type_param_map.empty?
         end
       end
-      resolved_alias = resolve_type_alias_chain(lookup_name)
+      resolved_alias = if absolute_name
+                         resolve_type_alias_chain_no_context(lookup_name)
+                       else
+                         resolve_type_alias_chain(lookup_name)
+                       end
       lookup_name = resolved_alias if resolved_alias != lookup_name
       lookup_name = normalize_missing_generic_parens(lookup_name || "")
       lookup_is_union = union_type_name?(lookup_name)
@@ -139135,7 +139362,7 @@ module Adamas::HIR
     private def generic_param_type_name_from_ref(type_ref : TypeRef) : String
       if desc = @module.get_type_descriptor(type_ref)
         if desc.kind == TypeKind::Proc && !desc.type_params.empty?
-          return builtin_generic_type_name("Proc", desc.type_params)
+          return proc_source_signature_name(desc)
         end
       end
       get_type_name_from_ref(type_ref)
