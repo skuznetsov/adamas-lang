@@ -761,6 +761,7 @@ module Adamas
             nxt = peek_token
             unless nxt.kind == Token::Kind::Percent || nxt.kind == Token::Kind::LBrace
               # Not a macro; first try full disambiguation, then tolerant fallbacks
+              lbrace_token = current_token
               saved_index = @index
               saved_prev = @previous_token
               saved_brace = @brace_depth
@@ -781,7 +782,31 @@ module Adamas
               @previous_token = saved_prev
               @brace_depth = saved_brace
               named_try = parse_brace_named_tuple_fallback
-              return parse_brace_literal_postfix(named_try)
+              unless named_try.invalid?
+                return parse_brace_literal_postfix(named_try)
+              end
+
+              # None of the brace-literal alternatives accepted this statement.
+              # Report the failure and consume the rejected literal as one unit so
+              # its interior tokens cannot be reparsed as outer statements.
+              @index = saved_index
+              @previous_token = saved_prev
+              @brace_depth = saved_brace
+              @diagnostics << Diagnostic.new("invalid brace literal", lbrace_token.span)
+              recovery_brace_depth = 0
+              loop do
+                token = current_token
+                break if token.kind == Token::Kind::EOF
+                case token.kind
+                when Token::Kind::LBrace
+                  recovery_brace_depth += 1
+                when Token::Kind::RBrace
+                  recovery_brace_depth -= 1
+                end
+                advance
+                break if recovery_brace_depth == 0
+              end
+              return PREFIX_ERROR
             end
           end
 
@@ -9791,7 +9816,9 @@ module Adamas
           # Crystal rule: { } binds to the closest method call, do...end to the outer call.
           # So `puts arr.any? { block }` → `puts(arr.any? { block })`  (block on any?)
           # But `puts arr.any? do block end` → `puts(arr.any?) do block end` (block on puts)
-          consume_newlines # Allow newlines before block
+          # Newlines after a comma are consumed in the argument loop above.
+          # A newline after the final command argument ends this call; keep it
+          # so a brace on the next line starts its own expression.
           block_expr : ExprId? = nil
           if current_token.kind == Token::Kind::Do || current_token.kind == Token::Kind::LBrace
             is_brace_block = current_token.kind == Token::Kind::LBrace

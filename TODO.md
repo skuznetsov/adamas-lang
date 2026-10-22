@@ -21723,3 +21723,18 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   9 positive and 9 negative super numeric source guards in run11202.
 - [ ] Complete named/splat super argument binding, command block ownership,
   Proc.new signature typing, full prelude and unchanged LavinMQ parity.
+
+### 2026-10-21 — Command-call newlines and failed brace literals
+
+- Preserve the statement-ending newline after command-call arguments. A following
+  brace literal belongs to the next statement; same-line blocks and comma-newline
+  argument continuation retain their existing grammar.
+- When all speculative brace-literal alternatives fail, restore the starting
+  parser state, diagnose the literal, and recover through its balanced braces.
+  Rejected interior expressions must not become executable outer statements.
+- Verification: `command_statement_boundary_repro.sh` passes five runtime cases
+  and four source rejections against pinned Crystal 1.20.1 (lavin11222); the
+  committed parent loses the first fixture's `ABC` output (lavin11223).
+- Scope: parser statement boundaries and recovery only. Proc.new contracts,
+  generic spawn/macro block transport, full LavinMQ compilation, test parity,
+  and a fresh bootstrap remain open. No application or stdlib changes.
