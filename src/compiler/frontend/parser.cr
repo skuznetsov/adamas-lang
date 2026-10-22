@@ -39,6 +39,8 @@ module Adamas
         @string_pool : StringPool  # Week 1 Day 2: for interning generic type annotations
         @debug_enabled : Bool      # Debug output control
         @parsing_call_args : Int32 # Prevent nested calls without parens during argument parsing
+        # Permit a command call only at the root of a logical RHS nested in a call argument.
+        @command_call_rhs_args_depth : Int32
         @macro_mode : Int32
         @in_macro_expression : Bool   # Flag to track parsing inside {% ... %} expressions
         @allow_pointer_suffix : Int32 # Allow parsing pointer suffixes like Void* in type-ish contexts
@@ -178,6 +180,7 @@ module Adamas
           @string_pool = lexer.string_pool             # Week 1 Day 2: share string pool for deduplication
           @debug_enabled = ::Adamas::Compiler::BootstrapEnv.get?("PARSER_DEBUG") == "1" # Enable debug via PARSER_DEBUG=1
           @parsing_call_args = 0                       # Not parsing call args initially
+          @command_call_rhs_args_depth = 0
           @macro_mode = 0
           @in_macro_expression = false # Not in macro expression initially
           @allow_pointer_suffix = 0
@@ -373,6 +376,7 @@ module Adamas
           @string_pool = lexer.string_pool             # Week 1 Day 2: share string pool for deduplication
           @debug_enabled = ::Adamas::Compiler::BootstrapEnv.get?("PARSER_DEBUG") == "1" # Enable debug via PARSER_DEBUG=1
           @parsing_call_args = 0                       # Not parsing call args initially
+          @command_call_rhs_args_depth = 0
           @macro_mode = 0
           @in_macro_expression = false # Not in macro expression initially
           @allow_pointer_suffix = 0
@@ -1534,6 +1538,26 @@ module Adamas
             @newline_bracket_floor = previous_bracket_floor
             @newline_brace_floor = previous_brace_floor
           end
+        end
+
+        # Crystal permits command-call arguments throughout a logical RHS
+        # expression, including nested calls such as `flag || box inner value`.
+        # Keep the permission scoped to this expression and its descendant call
+        # arguments; the ensure restores the enclosing parser context before the
+        # next sibling argument is parsed.
+        private def with_command_call_rhs_permission(&)
+          previous_depth = @command_call_rhs_args_depth
+          @command_call_rhs_args_depth = @parsing_call_args
+          begin
+            yield
+          ensure
+            @command_call_rhs_args_depth = previous_depth
+          end
+        end
+
+        private def command_call_rhs_permission? : Bool
+          @command_call_rhs_args_depth > 0 &&
+            @parsing_call_args >= @command_call_rhs_args_depth
         end
 
         # Temporarily treat newlines inside braces as statement separators (do not skip them).
@@ -10120,7 +10144,13 @@ module Adamas
               else
                 # See comment above (ternary case): postfix modifiers should not
                 # be consumed while parsing the RHS of an infix operator.
-                right = without_postfix_modifiers { parse_expression(current_precedence + 1) }
+                if @parsing_call_args > 0 && token.kind.in?(Token::Kind::OrOr, Token::Kind::AndAnd)
+                  right = with_command_call_rhs_permission do
+                    without_postfix_modifiers { parse_expression(current_precedence + 1) }
+                  end
+                else
+                  right = without_postfix_modifiers { parse_expression(current_precedence + 1) }
+                end
               end
             end
             if right.invalid?
@@ -13874,7 +13904,7 @@ current_token.kind == Token::Kind::Identifier &&
             parse_generic_instantiation(identifier_span, identifier_slice)
           elsif @no_type_declaration == 0 && current_token.kind == Token::Kind::Colon && space_consumed
             parse_type_declaration_from_identifier(identifier_span, identifier_slice)
-          elsif @parsing_call_args == 0 && allow_call_without_parens
+          elsif (@parsing_call_args == 0 || command_call_rhs_permission?) && allow_call_without_parens
             boundary_token = current_token
             force_call = macro_call_candidate || colon_immediate
             # Allow Plus/Minus through as potential unary prefix when immediately

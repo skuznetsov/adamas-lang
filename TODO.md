@@ -21772,3 +21772,19 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   candidate11585/run11595 reach the same LibGC.get_my_stackbottom pointer-type
   rejection, with no parser errors. LavinMQ parity and fresh bootstrap remain
   separate obligations; no application or stdlib code is changed.
+
+
+### Scoped command calls on logical RHS expressions (2026-10-22)
+- [x] Admit command-call arguments throughout a logical RHS inside an enclosing
+  call, including grouping and descendant command calls. Save and restore the
+  permission at the logical-expression boundary so following sibling arguments
+  keep their own grammar and comma ownership.
+- [x] Sealed11587 matches Crystal 1.20.1 on ten exact-output positives and two
+  rc1/no-executable negatives in portable run11602. Cumulative run11593 also
+  passes the four shared EOF rejection cases (16 cases per compiler total).
+  The wrong String argument is rejected by the unchanged Int32 restriction.
+- [ ] Unify explicit super argument parsing and preserve positional/named/splat
+  occurrence order through AST transformations and caches; this permission does
+  not repair double-splat identity or argument binding.
+- [ ] Proc.new capture typing, full-prelude runtime, unchanged LavinMQ parity and
+  a fresh bootstrap remain open. No application or stdlib files are changed.
