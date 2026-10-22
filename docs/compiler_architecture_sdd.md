@@ -29,6 +29,18 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+The bounded legacy Proc constructor receiver ownership pilot is admitted for
+the consumers listed in section 6.3. A concrete receiver now travels as an
+immutable fact tied to its source call and arena. Canonical `Proc` dispatch no
+longer re-resolves that name through a caller alias. Generated allocators use
+the receiver result contract; selected source `.new` bodies retain their own
+result authority. Original-first runs pass the new 16-case receiver regression,
+the existing 164-case Proc corpus and 27 shared-parser controls. The broader
+20-case probe improves from 12 to 13 passing cases; seven unchanged failures
+and the separate local `typeof` result failure remain open. Rollback is the
+atomic receiver facade/consumer change and its regression. This is not T1
+semantic replacement, a fresh bootstrap certificate or LavinMQ parity.
+
 Applied module restrictions consume qualified ancestor projections with their
 concrete arguments. Lazy module-method registration is not a complete ancestry
 proof: the restriction binder also reads direct generic class includes and
@@ -558,6 +570,7 @@ a current full-source emitted artifact reproduces it.
 | GC-aware realloc demand | LLVMEmissionSession `GRH` tag (`31cd6009`) | `scripts/generated_stage_gc_realloc_helper_report.sh` + `regression_tests/gc_aware_realloc_gating_repro.sh` | consumed |
 | STABLE6 materialization replay shadow | none on main (`MaterializationReplayShadow` prototype only in `/private/tmp`) | in-process prototype discriminator; no admitted owner | REFUTED IN-PROCESS PROTOTYPE / NOT ADMITTED |
 | same-arena selected definition -> ordinary HIR call | existing `DefInstanceKey` / `TypeContext` / `SelectedCallTarget` | `spec/semantic_cli_spec.cr`, `spec/semantic_cli_compile_contracts_spec.cr`; `ADAMAS_SEMANTIC_COMPILE=1` | consumed only for the admitted single-active-unit source-backed shapes; broader T1 open |
+| source Proc constructor receiver -> owner/block/result consumers | local immutable call/arena/type fact; separate generated/source result authority | 16 receiver cases, existing 164 Proc cases and 27 parser controls; wider 20-case probe retains seven failures | consumed in the bounded legacy HIR pilot; broader T1 and Proc closure open |
 
 ### 0.3 STABLE6 — refuted in-process prototype / not admitted
 
@@ -1086,6 +1099,87 @@ Key falsifiers:
 ### 6.3 CallResolution
 
 Owns overload selection and the semantic target of a call.
+
+#### Bounded legacy Proc constructor ownership pilot
+
+This is a HIR compatibility facade, not a second semantic resolver or a new
+`DefInstanceKey`. The source receiver producer owns one immutable concrete
+`TypeRef` with the exact `CallNode` and its owning arena. Its lifetime is the
+current `lower_call`; it is not a global cache or a new `AstToHir` field.
+Canonical dispatch serialization, block-contract construction and the raw-pair
+intrinsic consume that fact. They may not turn `Proc` back into a source name,
+re-parse the signature or read a different arena to reconstruct it.
+
+The selected target owns the method result independently of the receiver:
+
+- A generated allocator consumes the concrete receiver result contract.
+- A selected source `.new` consumes its selected Def/body result. A `self`
+  block annotation describes block inputs, not the method's return value.
+  A user overload may return an unrelated type.
+
+An explicit body-inference frame remains a conditional follow-up, not part of
+this pilot. The read-only nested-arrow capture case passes in the neutral
+extraction control before the proposed consumer repair. On the clean baseline
+and this pilot it still fails with missing captured source-kind metadata.
+It does not isolate a frame or memoization bug.
+Reopen that work only with an original-qualified case that still loses its
+selected Def/body input contract after this ownership boundary. Such a frame
+would need to distinguish the selected Def, source arena, exact target, block
+formal and concrete block type in both memoization and active recursion keys,
+and restore the caller frame on every exit. Reversed specialization order and
+a user-defined Proc constructor that returns `Int32` remain required guards.
+
+Late generic owner fallback cannot overwrite either established authority.
+Missing target/body facts retain ordinary demand and rejection behavior; they
+do not authorize a nominal Proc result or relaxed argument checks. The first
+extraction must preserve the existing output before consumer behavior changes.
+The admitted behavioral pilot compares original-first exact output for rooted
+`::Proc` under a lexical `Proc` alias, nested Proc construction, callable aliases,
+custom source `.new` results, ordinary generic constructors and raw Proc pairs.
+Its negative case requires rejecting a source `.new` result of `Int32` where
+a concrete Proc is required, with the original diagnostic marker requirements.
+The existing Proc corpus is the broader guard. Source/consumer changes
+invalidate this evidence and require rerunning those checks. Fresh S2 and
+LavinMQ runtime/upstream parity remain independent gates.
+
+The pilot must delete the transported signature string and the replaced
+consumer re-resolution. Merely adding a record around the old heuristics does
+not satisfy this ownership boundary. Broader semantic replacement still uses
+the existing identity substrate and the T1 gates in specification 07.
+
+Admission evidence (2026-10-22): sealed `lavin12144_atomic_proc_fact_pilot`
+passes `proc_constructor_receiver_ownership_repro.sh` in run12170 (15 exact
+runtime positives and one strict semantic rejection). Run12166 preserves all
+164 existing Proc cases, including five semantic/HIR-only exception controls;
+run12163 preserves 27 parser controls. All use pinned Crystal 1.20.1 first and
+unchanged frozen compiler/oracle inputs. The matched full20 runs12167/12168
+improve only rooted `::Proc` under `alias Proc = Int64`: 12 to 13 passes, with
+no previously passing case lost. The seven remaining failures are three class
+capture positives, three incorrectly accepted source-kind/signature negatives,
+and a wrong-arity rejection that loses its concrete Proc signature diagnostic.
+Do not weaken those cases or treat the narrow green regression as full20
+closure. Custom source-new result controls already passed the baseline and
+remain guards, rather than newly fixed baseline defects.
+
+Two observed gaps are outside this receiver fact's authority:
+
+- Captured class values and instances can share a carrier `TypeRef`. Box and
+  capture metadata must preserve source kind as well. Optional Boolean copies
+  can still be omitted by new producers; a broader replacement needs a required
+  source-kind contract, preferably bundled with the carrier type. A transport
+  patch alone is not a canonical semantic owner.
+- A local `typeof(expr)` annotation is currently flattened into type text,
+  whereas expression-form `typeof` retains AST identity. The text resolver and
+  AST inference therefore take different paths; both need the same selected
+  call/result authority. Preserve the annotation expression in its owning
+  arena and version the AST cache before migrating this consumer. A textual
+  `.new` heuristic or an unowned reparsed expression cannot close this gap.
+
+The qualified local `typeof` counterexample selects a source `Proc.new` that
+returns `Int32`, yet the candidate reports `Pointer(Void)` at its downstream
+consumer. This is an open failure, not evidence that the runtime receiver
+fact is complete across static inference. Frame/cache changes require their
+own matched original/parent/candidate discriminator.
 
 Input:
 

@@ -21825,3 +21825,27 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   class-valued captures, exact numeric Proc#call admission and nullable C Proc
   ABI adaptation. Keep these obligations separate from this bounded matrix.
   Unchanged LavinMQ runtime/spec parity and fresh bootstrap remain open.
+
+
+### Preserve Proc constructor receiver facts across HIR consumers (2026-10-22)
+- [x] Replace the transported Proc signature string with one immutable concrete
+  receiver fact tied to its exact call and source arena. Owner serialization,
+  block contracts and raw-pair construction consume it without resolving the
+  canonical `Proc` name again through caller aliases.
+- [x] Keep generated allocator receiver results separate from selected source
+  `.new` body results. Preserve existing custom/default/splat source results
+  and strict result restriction rejection.
+- [x] Sealed12144 passes the new 15-positive/one-negative portable regression
+  in run12170, all 164 existing Proc cases in run12166 and 27 parser controls
+  in run12163, with original-first frozen inputs. Matched full20 runs12167/12168
+  improve only rooted `::Proc` under a lexical Proc alias, from 12 to 13 passes.
+- [ ] Close the seven unchanged full20 failures without weakening assertions:
+  three class capture positives, three incorrectly accepted source-kind or
+  signature negatives, and the lost concrete signature in wrong-arity errors.
+  Replace optional carrier/kind copies with a required source-value contract.
+- [ ] Preserve local `typeof` annotation AST ownership and share selected-call
+  result authority with expression inference, including cache versioning.
+  The qualified source Proc.new returning Int32 still becomes Pointer(Void).
+  Body-inference frame/cache changes require a separate matched falsifier.
+- [ ] Broader semantic replacement, fresh bootstrap and unchanged LavinMQ
+  runtime/upstream parity remain open; see architecture SDD section 6.3.

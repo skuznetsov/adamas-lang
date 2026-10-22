@@ -1146,6 +1146,34 @@ module Adamas::HIR
       end
     end
 
+    # HIR-local source receiver fact. The concrete signature is resolved once
+    # while its source scope is active; downstream owner serialization does not
+    # turn the canonical dispatch name back into a source lookup request.
+    # This is not a semantic DefInstanceKey or a constructor result contract.
+    private struct ProcConstructorReceiver
+      getter call_node : Adamas::Compiler::Frontend::CallNode
+      getter source_arena : Adamas::Compiler::Frontend::ArenaLike
+      getter type : TypeRef
+
+      def initialize(
+        @call_node : Adamas::Compiler::Frontend::CallNode,
+        @source_arena : Adamas::Compiler::Frontend::ArenaLike,
+        @type : TypeRef,
+      )
+      end
+
+      def dispatch_owner : String
+        "Proc"
+      end
+
+      def belongs_to?(
+        call_node : Adamas::Compiler::Frontend::CallNode,
+        source_arena : Adamas::Compiler::Frontend::ArenaLike,
+      ) : Bool
+        @call_node.same?(call_node) && @source_arena.same?(source_arena)
+      end
+    end
+
     # Source authority and concrete callback shape captured before HIR lowering.
     # An arena is required so consumers can inspect the selected Def's owned AST.
     private struct ProcConstructorBlockContract
@@ -29943,7 +29971,8 @@ module Adamas::HIR
                      resolve_method_with_inheritance(receiver_name, member_name) || "#{receiver_name}##{member_name}"
                    end
         return block_param_types_for_call(
-          resolved, resolved, receiver_type, call_arg_types, false, expr_node, arena_for_expr?(expr_node.callee)
+          resolved, resolved, receiver_type, call_arg_types, false, expr_node, @arena,
+          resolve_proc_constructor_receiver(expr_node, @arena),
         )
       elsif callee_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
         method_name = (safe_slice_to_string(callee_node.name) || "")
@@ -29953,7 +29982,8 @@ module Adamas::HIR
         receiver_ref = type_ref_for_name(owner_name)
         return nil if receiver_ref == TypeRef::VOID
         return block_param_types_for_call(
-          base, base, receiver_ref, call_arg_types, false, expr_node, arena_for_expr?(expr_node.callee)
+          base, base, receiver_ref, call_arg_types, false, expr_node, @arena,
+          resolve_proc_constructor_receiver(expr_node, @arena),
         )
       end
       nil
@@ -68705,6 +68735,7 @@ module Adamas::HIR
       call_has_named_args : Bool = false,
       call_node : Adamas::Compiler::Frontend::CallNode? = nil,
       call_arena : Adamas::Compiler::Frontend::ArenaLike? = nil,
+      proc_receiver : ProcConstructorReceiver? = nil,
     ) : Array(TypeRef)?
       debug_trace_each = env_get("DEBUG_TRACE_EACH_WITH_INDEX") &&
                          (mangled_method_name.includes?("each_with_index") || base_method_name.includes?("each_with_index"))
@@ -68794,7 +68825,7 @@ module Adamas::HIR
         STDERR.puts "[TRACE_EWI] block_param_types_for_call enter base=#{resolved_base} mangled=#{resolved_mangled} recv=#{recv_name} func_def=#{!!func_def}"
       end
 
-      if proc_inputs = proc_constructor_self_block_input_types(func_def, resolved_mangled, call_node, call_arena)
+      if proc_inputs = proc_constructor_self_block_input_types(func_def, resolved_mangled, proc_receiver)
         return proc_inputs
       end
 
@@ -73489,10 +73520,10 @@ module Adamas::HIR
       return nil unless block_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
 
       with_arena(call_arena) do
-        receiver_type = proc_constructor_receiver_type(call_node, call_arena)
-        return nil unless receiver_type
-        receiver_name = get_type_name_from_ref(receiver_type.not_nil!)
-        return nil if receiver_name.empty? || unresolved_generic_return_type?(receiver_type.not_nil!)
+        receiver = resolve_proc_constructor_receiver(call_node, call_arena)
+        return nil unless receiver
+        receiver_name = receiver.not_nil!.dispatch_owner
+        return nil if unresolved_generic_return_type?(receiver.not_nil!.type)
 
         # Production class-call lowering starts constructors at their concrete
         # receiver owner, then the structured resolver selects the source Def.
@@ -73506,7 +73537,7 @@ module Adamas::HIR
           named_names: nil,
         )
         contract = resolve_proc_constructor_block_contract_for_analysis(
-          input, call_node, call_arena,
+          input, call_node, call_arena, receiver,
         )
         contract.try(&.input_types)
       end
@@ -102554,7 +102585,7 @@ module Adamas::HIR
       method_name : String = ""
       full_method_name : String? = nil
       static_class_name : String? = nil
-      proc_return_type_name : String? = nil
+      proc_constructor_receiver : ProcConstructorReceiver? = nil
       top_level_bare_call_target : String? = nil
       explicit_self_receiver = false
       prefer_allocator_new_call = false
@@ -103749,7 +103780,9 @@ module Adamas::HIR
               end
 
               if lookup_base_name == "Proc"
-                proc_return_type_name = class_name_str
+                proc_constructor_receiver = ProcConstructorReceiver.new(
+                  node, call_arena, intern_proc_type(type_args),
+                ) if method_name == "new"
                 class_name_str = "Proc"
               else
                 # Monomorphize generic class if not already done
@@ -103793,7 +103826,9 @@ module Adamas::HIR
                       end
                     end
                     if lookup_base_name == "Proc"
-                      proc_return_type_name = class_name_str
+                      proc_constructor_receiver = ProcConstructorReceiver.new(
+                        node, call_arena, intern_proc_type(type_args),
+                      ) if method_name == "new"
                       class_name_str = "Proc"
                     else
                       class_name_str, type_args = canonical_builtin_generic_instance(lookup_base_name, class_name_str, type_args)
@@ -103879,7 +103914,9 @@ module Adamas::HIR
                     # signature for block-input inference and the .new result.
                     class_name_str = "Proc"
                     path_receiver_class_name = "Proc"
-                    proc_return_type_name = resolved if method_name == "new"
+                    proc_constructor_receiver = ProcConstructorReceiver.new(
+                      node, call_arena, resolved_proc_ref.not_nil!,
+                    ) if method_name == "new"
                   else
                     class_name_str = String.new(resolved.to_slice)
                     path_receiver_class_name = resolved
@@ -103936,22 +103973,33 @@ module Adamas::HIR
           # All type-literal spellings share the same semantic dispatch owner.
           # In particular an arrow-shaped Proc alias is not a class named `->`.
           # Keep its complete signature separately from the generic source owner.
-          if receiver_name = class_name_str
-            resolved_receiver_name = resolve_type_alias_chain(receiver_name)
-            if receiver_proc_type = proc_type_ref_for_name(resolved_receiver_name)
-              if receiver_descriptor = @module.get_type_descriptor(receiver_proc_type)
-                if receiver_descriptor.kind == TypeKind::Proc
-                  proc_return_type_name = resolved_receiver_name if method_name == "new"
-                  class_name_str = "Proc"
-                  path_receiver_class_name = "Proc" if path_receiver_class_name_found
+          # An explicit receiver fact already owns its signature. The name
+          # left in class_name_str is a serialization, not a new lookup.
+          if proc_constructor_receiver.nil?
+            if receiver_name = class_name_str
+              resolved_receiver_name = resolve_type_alias_chain(receiver_name)
+              if receiver_proc_type = proc_type_ref_for_name(resolved_receiver_name)
+                if receiver_descriptor = @module.get_type_descriptor(receiver_proc_type)
+                  if receiver_descriptor.kind == TypeKind::Proc
+                    proc_constructor_receiver = ProcConstructorReceiver.new(
+                      node, call_arena, receiver_proc_type,
+                    ) if method_name == "new"
+                    class_name_str = "Proc"
+                    path_receiver_class_name = "Proc" if path_receiver_class_name_found
+                  end
                 end
               end
             end
           end
-
           unless class_name_str.nil?
             class_name_for_normalization = class_name_str.not_nil!
-            normalized_class_name = normalize_method_owner_name(class_name_for_normalization)
+            # The receiver fact already resolved its source signature. Proc is
+            # the dispatch serialization; a caller alias cannot rebind it.
+            normalized_class_name = if proc_receiver = proc_constructor_receiver
+                                      proc_receiver.dispatch_owner
+                                    else
+                                      normalize_method_owner_name(class_name_for_normalization)
+                                    end
             if normalized_class_name.starts_with?("::")
               normalized_class_name = strip_absolute_name_prefix(normalized_class_name)
             end
@@ -104012,7 +104060,9 @@ module Adamas::HIR
                     end
                   end
                   if lookup_base_name == "Proc"
-                    proc_return_type_name = class_name_str
+                    proc_constructor_receiver = ProcConstructorReceiver.new(
+                      node, call_arena, intern_proc_type(type_args),
+                    ) if method_name == "new"
                     class_name_str = "Proc"
                   else
                     class_name_str, type_args = canonical_builtin_generic_instance(lookup_base_name, class_name_str, type_args)
@@ -107618,7 +107668,11 @@ module Adamas::HIR
       end
       if method_name == "new" && full_method_name
         if class_name = method_owner(full_method_name)
-          resolved_class_name = normalize_method_owner_name(resolve_type_name_in_context(class_name))
+          resolved_class_name = if proc_receiver = proc_constructor_receiver
+                                  proc_receiver.dispatch_owner
+                                else
+                                  normalize_method_owner_name(resolve_type_name_in_context(class_name))
+                                end
           if !@class_info.has_key?(resolved_class_name)
             if resolved_short = resolve_short_type_in_namespace_chain(resolved_class_name)
               resolved_class_name = resolved_short
@@ -107987,7 +108041,7 @@ module Adamas::HIR
             selected_call_entry_name || mangled_method_name,
             selected_proc_def, selected_call_entry_arena,
           )
-          if proc_constructor_block_contract_for_target(selected_proc_target, node, call_arena)
+          if proc_constructor_block_contract_for_target(selected_proc_target, node, call_arena, proc_constructor_receiver)
             if captured_block = node_for_call_expr(call_arena, block_expr).as?(Adamas::Compiler::Frontend::BlockNode)
               captured_arena = @block_node_arenas[captured_block.object_id]? ||
                                resolve_arena_for_block(captured_block, call_arena) || call_arena
@@ -108016,7 +108070,7 @@ module Adamas::HIR
             base_method_name,
             receiver_id ? ctx.type_of(receiver_id) : nil,
             arg_types,
-            !!call_has_named_args, node, call_arena
+            !!call_has_named_args, node, call_arena, proc_constructor_receiver
           )
           if method_name == "try" && receiver_id
             if non_nil = non_nil_type_for_union(ctx.type_of(receiver_id))
@@ -108035,7 +108089,7 @@ module Adamas::HIR
           base_method_name,
           receiver_id ? ctx.type_of(receiver_id) : nil,
           arg_types,
-          !!call_has_named_args, node, call_arena
+          !!call_has_named_args, node, call_arena, proc_constructor_receiver
         )
         if method_name == "try" && receiver_id
           if non_nil = non_nil_type_for_union(ctx.type_of(receiver_id))
@@ -108136,7 +108190,7 @@ module Adamas::HIR
                  selected_base,
                  receiver_id ? ctx.type_of(receiver_id) : nil,
                  arg_types,
-                 !!call_has_named_args, node, call_arena
+                 !!call_has_named_args, node, call_arena, proc_constructor_receiver
                )
               block_param_types_inline = selected_block_types
             end
@@ -108604,7 +108658,7 @@ module Adamas::HIR
                      base_method_name,
                      receiver_id ? ctx.type_of(receiver_id) : nil,
                      arg_types,
-                     !!call_has_named_args, node, call_arena
+                     !!call_has_named_args, node, call_arena, proc_constructor_receiver
                    )
                    if method_name == "try" && receiver_id
                      if non_nil = non_nil_type_for_union(ctx.type_of(receiver_id))
@@ -108825,7 +108879,7 @@ module Adamas::HIR
             selected_proc_name, selected_proc_def, selected_call_entry_arena,
           )
           if proc_contract = proc_constructor_block_contract_for_target(
-               selected_proc_target, node, call_arena,
+               selected_proc_target, node, call_arena, proc_constructor_receiver,
              )
             descriptor = @module.get_type_descriptor(proc_contract.proc_type).not_nil!
             callback_result = descriptor.type_params.last
@@ -109367,9 +109421,12 @@ module Adamas::HIR
         end
       end
 
-      if proc_return_type_name && method_name == "new"
-        if proc_ref = proc_type_ref_for_name(proc_return_type_name.not_nil!)
-          return_type = proc_ref
+      # Only a generated allocator returns its receiver type by construction.
+      # A selected source .new owns its body result independently, including
+      # when its block parameter is annotated as self.
+      if method_name == "new" && !allocator_explicit_new_call
+        if proc_receiver = proc_constructor_receiver
+          return_type = proc_receiver.type
         end
       end
 
@@ -111746,7 +111803,7 @@ module Adamas::HIR
               selected_proc_name, selected_proc_def, selected_call_entry_arena,
             )
             if proc_contract = proc_constructor_block_contract_for_target(
-                 selected_proc_target, node, call_arena,
+                 selected_proc_target, node, call_arena, proc_constructor_receiver,
                )
               proc_constructor_type = proc_contract.proc_type
             end
@@ -111756,7 +111813,7 @@ module Adamas::HIR
             base_method_name,
             receiver_id ? ctx.type_of(receiver_id) : nil,
             arg_types,
-            !!call_has_named_args, node, call_arena
+            !!call_has_named_args, node, call_arena, proc_constructor_receiver
           )
           # The inline-yield probe above already resolved the block parameter
           # contract for this exact call site. Recomputing it here can drift
@@ -112222,11 +112279,13 @@ module Adamas::HIR
       if proc_constructor_result = lower_stdlib_raw_proc_pair_constructor(
            ctx,
            node,
+           call_arena,
            receiver_id,
            selected_call_entry_name,
            selected_call_entry_def,
            args,
            return_type,
+           proc_constructor_receiver,
            has_block_call,
            block_id,
            has_splat,
@@ -115238,11 +115297,13 @@ module Adamas::HIR
     private def lower_stdlib_raw_proc_pair_constructor(
       ctx : LoweringContext,
       call_node : Adamas::Compiler::Frontend::CallNode,
+      call_arena : Adamas::Compiler::Frontend::ArenaLike,
       receiver_id : ValueId?,
       selected_name : String?,
       selected_def : Adamas::Compiler::Frontend::DefNode?,
       args : Array(ValueId),
       result_type : TypeRef,
+      receiver : ProcConstructorReceiver?,
       has_block_call : Bool,
       block_id : ValueId?,
       has_splat : Bool,
@@ -115282,8 +115343,11 @@ module Adamas::HIR
       # The selected generic `Proc.new` Def returns `self`, but its attached
       # return contract can be the unspecialized `Struct Proc`. Preserve the
       # concrete Proc signature written on the call's type-literal receiver.
-      concrete_proc_type = proc_constructor_receiver_type(call_node, arena_for_expr?(call_node.callee))
-      make_proc_type = concrete_proc_type || result_type
+      return nil unless receiver
+      unless receiver.not_nil!.belongs_to?(call_node, call_arena)
+        raise LoweringError.new("raw Proc constructor receiver belongs to a different source call", call_node)
+      end
+      make_proc_type = receiver.not_nil!.type
       make_proc = MakeProc.new(ctx.next_id, make_proc_type, args.unsafe_fetch(0), args.unsafe_fetch(1))
       ctx.emit(make_proc)
       ctx.register_type(make_proc.id, make_proc_type)
@@ -115297,10 +115361,9 @@ module Adamas::HIR
     private def proc_constructor_self_block_input_types(
       func_def,
       mangled_name : String,
-      call_node : Adamas::Compiler::Frontend::CallNode?,
-      call_arena : Adamas::Compiler::Frontend::ArenaLike?,
+      receiver : ProcConstructorReceiver?,
     ) : Array(TypeRef)?
-      return nil unless func_def && call_node
+      return nil unless func_def && receiver
       owner = method_owner(mangled_name)
       return nil unless strip_generic_args(owner) == "Proc"
       return nil unless method_part(mangled_name) == "new" && method_separator(mangled_name) == '.'
@@ -115312,9 +115375,7 @@ module Adamas::HIR
       annotation_text = safe_slice_to_string(block_type_annotation)
       return nil unless annotation_text && annotation_text.not_nil!.strip == "self"
 
-      concrete_proc_type = proc_constructor_receiver_type(call_node, call_arena)
-      return nil unless concrete_proc_type
-      descriptor = @module.get_type_descriptor(concrete_proc_type.not_nil!)
+      descriptor = @module.get_type_descriptor(receiver.not_nil!.type)
       return nil unless descriptor && descriptor.kind == TypeKind::Proc
       return nil if descriptor.type_params.empty?
 
@@ -115328,26 +115389,25 @@ module Adamas::HIR
       inputs
     end
 
-    private def proc_constructor_receiver_type(
+    # Analysis entry point: resolve while the source call and all nested type
+    # expressions are in their owning arena, then pass the immutable fact.
+    private def resolve_proc_constructor_receiver(
       call_node : Adamas::Compiler::Frontend::CallNode,
       preferred_arena : Adamas::Compiler::Frontend::ArenaLike? = nil,
-    ) : TypeRef?
-      callee = if arena = preferred_arena
-        node_for_expr(call_node.callee, arena)
-      else
-        node_for_expr(call_node.callee)
+    ) : ProcConstructorReceiver?
+      source_arena = preferred_arena || @arena
+      with_arena(source_arena) do
+        callee = node_for_expr(call_node.callee, source_arena)
+        return nil unless callee.is_a?(Adamas::Compiler::Frontend::MemberAccessNode)
+        return nil unless member_access_name_text(callee) == "new"
+        receiver_name = stringify_type_expr(callee.object)
+        return nil unless receiver_name && !receiver_name.not_nil!.empty?
+        resolved_receiver_name = resolve_type_alias_chain(receiver_name.not_nil!)
+        receiver_type = proc_type_ref_for_name(resolved_receiver_name) || type_ref_for_name(resolved_receiver_name)
+        descriptor = @module.get_type_descriptor(receiver_type)
+        return nil unless descriptor && descriptor.kind == TypeKind::Proc && !descriptor.type_params.empty?
+        ProcConstructorReceiver.new(call_node, source_arena, receiver_type)
       end
-      return nil unless callee
-      return nil unless callee.is_a?(Adamas::Compiler::Frontend::MemberAccessNode)
-      return nil unless member_access_name_text(callee) == "new"
-
-      receiver_name = stringify_type_expr(callee.object)
-      return nil unless receiver_name && !receiver_name.not_nil!.empty?
-      resolved_receiver_name = resolve_type_alias_chain(receiver_name.not_nil!)
-      receiver_type = proc_type_ref_for_name(resolved_receiver_name) || type_ref_for_name(resolved_receiver_name)
-      descriptor = @module.get_type_descriptor(receiver_type)
-      return nil unless descriptor && descriptor.kind == TypeKind::Proc && !descriptor.type_params.empty?
-      receiver_type
     end
 
     private def raw_block_callback_param?(function : Function, param : Parameter) : Bool
@@ -116118,7 +116178,12 @@ module Adamas::HIR
       target : SelectedCallTarget,
       call_node : Adamas::Compiler::Frontend::CallNode,
       call_arena : Adamas::Compiler::Frontend::ArenaLike,
+      receiver : ProcConstructorReceiver?,
     ) : ProcConstructorBlockContract?
+      return nil unless receiver
+      unless receiver.not_nil!.belongs_to?(call_node, call_arena)
+        raise LoweringError.new("Proc constructor receiver belongs to a different source call", call_node)
+      end
       source_arena = target.source_arena
       unless source_arena && arena_fits_def?(source_arena.not_nil!, target.def_node)
         source_arena = registered_arena_for_def(target.def_node)
@@ -116127,13 +116192,12 @@ module Adamas::HIR
       return nil unless arena_fits_def?(source_arena.not_nil!, target.def_node)
 
       inputs = proc_constructor_self_block_input_types(
-        target.def_node, target.symbol_name, call_node, call_arena,
+        target.def_node, target.symbol_name, receiver,
       )
       return nil unless inputs
 
-      proc_type = proc_constructor_receiver_type(call_node, call_arena)
-      return nil unless proc_type
-      descriptor = @module.get_type_descriptor(proc_type.not_nil!)
+      proc_type = receiver.not_nil!.type
+      descriptor = @module.get_type_descriptor(proc_type)
       return nil unless descriptor && descriptor.kind == TypeKind::Proc
       return nil unless descriptor.type_params.size == inputs.not_nil!.size + 1
 
@@ -116149,11 +116213,12 @@ module Adamas::HIR
       input : CallResolutionInput,
       call_node : Adamas::Compiler::Frontend::CallNode,
       call_arena : Adamas::Compiler::Frontend::ArenaLike,
+      receiver : ProcConstructorReceiver?,
     ) : ProcConstructorBlockContract?
       return nil unless input.has_block
       target = resolve_call_target_for_analysis(input)
       return nil unless target
-      proc_constructor_block_contract_for_target(target, call_node, call_arena)
+      proc_constructor_block_contract_for_target(target, call_node, call_arena, receiver)
     end
 
     # Legacy {name, def} adapter for callers not yet moved to SelectedCallTarget.

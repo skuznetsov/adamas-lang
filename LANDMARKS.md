@@ -21317,3 +21317,43 @@ Host SHA256: 34da4535fff0722845228faf75e191b242645c07f72d11211710f08da6f85c07.
 Refresh after parser binding, AST/cache representation, annotation lookup,
 capture flow or Proc source/ABI admission changes. Revert the eight compiler
 file delta, parser cache spec and proc_source_contract regression together.
+
+
+### Proc constructor consumers preserve one source receiver fact (2026-10-22)
+The legacy path resolved a concrete source Proc receiver, transported its
+signature as text, then resolved the canonical dispatch name through ambient
+aliases again. `::Proc(Int32, Int32).new` inside an owner with `alias Proc =
+Int64` therefore lost its receiver authority. Replace that transport with a
+local immutable TypeRef plus exact CallNode/arena identity. Owner serialization,
+block contracts and raw-pair lowering consume this fact. A generated allocator
+returns its receiver type; a selected source `.new` retains its own body result.
+This is the bounded legacy HIR ownership slice from specification 07, not a
+new semantic identity, global cache or completed T1 migration.
+
+DoD: regression_tests/proc_constructor_receiver_ownership_repro.sh <candidate>,
+with ORIGINAL_CRYSTAL_BIN and CRYSTAL_PATH pinned to Crystal 1.20.1. Sealed12144
+passes 15 exact-output positives and one strict no-executable rejection in
+run12170. Run12166 also preserves all 164 existing Proc cases (five stop at
+semantic/HIR output); run12163 preserves 27 parser controls. All native runs
+use run_safe.sh; source, runtime and executable oracle inputs remained frozen.
+Matched full20 runs12167/12168 improve from 12 to 13 passes, changing only the
+rooted receiver alias case and losing no previous pass. The seven other cases
+still fail. The narrow green regression does not redefine the full20 result.
+
+Scoped adversary: ROBUST for the call/arena receiver transport and its observed
+guards. Broader Proc closure remains VULNERABLE: captured class versus instance
+kind needs a required source-value contract; local typeof annotations lose AST
+identity into text and do not share selected-call result authority. A separate
+qualified local typeof case still reports Pointer(Void) for source Proc.new
+returning Int32. The nested-arrow case does not isolate a frame/cache defect;
+require a matched original/parent/candidate discriminator before that change.
+No application/stdlib edits or weakened type checks. Fresh bootstrap and
+LavinMQ functionality/upstream parity remain separate obligations.
+
+Evidence: OUT/lavin121{44,49,62,63,64,66,67,68,69,70} under
+/Users/sergey/Projects/Adamas/sol_help_20261012. AST SHA256:
+84e13f6230ffae30605ca2bc3ef5a7b7be5cb4044323ab07dd15c71711ee2345.
+Host SHA256: 6ca99638da388eccc25e1f32f57597ccaa630a574d02dc6743a13175554c0178.
+Refresh after receiver resolution, owner normalization, selected source-new
+result, block contract or raw-pair changes. Revert the AST consumer delta and
+proc_constructor_receiver_ownership regression together.
