@@ -21242,3 +21242,33 @@ Revert the six compiler-file delta and this macro regression together.
 Cross-unit arena aliasing and the AST kind of macro rest arguments need their
 own discriminators. Full prelude, Proc.new contracts, unchanged LavinMQ runtime
 and spec parity, and bootstrap are not certified by these focused regressions.
+
+
+### Member and shorthand calls consume one command-argument grammar (2026-10-22)
+Independent argument loops in member access and block shorthand drifted from
+ordinary calls. In particular, shorthand eagerly attached a spaced parenthesis
+and its postfix to the wrong expression. Use attach_command_call_arguments to
+preserve the actual callee while consuming arguments through the ordinary
+command parser. A spaced parenthesis starts a complete command argument;
+operators, semicolons, newlines and terminal blocks retain their boundaries.
+Propagate invalid expressions rather than swallowing parser failures.
+
+Run11707 qualifies the original-pass/predecessor-fail shorthand discriminator;
+run11708 passes all eleven cases after the change. The isolated parser-only
+source sealed11714 is based on 06991d45 and passes eleven exact-output programs
+against Crystal 1.20.1 in run11715. Its portable, byte-identical regression
+passes in run11726. Run11716 passes 27 logical-RHS, command-boundary and EOF
+controls, including rc1/no-executable rejections. Scoped adversary ROBUST for
+these concrete matrices; neither these controls nor a valid parse certify the
+entire compiler pipeline.
+
+DoD: regression_tests/member_shorthand_command_boundary_repro.sh <candidate>,
+with ORIGINAL_CRYSTAL_BIN and CRYSTAL_PATH pinned to the reference compiler,
+must pass all eleven cases. Evidence: OUT/lavin117{07,08,14,15,16,25,26} under
+/Users/sergey/Projects/Adamas/sol_help_20261012. Host SHA256:
+cfa18615741db6b94a75b0a9f4c2777610a8c3e4b2a4de5f514139ca5a7af3a2.
+Compiler, runtime and oracle bytes remained frozen before and after each run.
+Refresh after command argument, postfix, shorthand, or recovery changes.
+Revert the parser delta and member_shorthand_command_boundary regression
+together. Explicit super binding, Proc.new typing, full prelude, unchanged
+LavinMQ runtime/spec parity and fresh bootstrap remain open.

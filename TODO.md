@@ -21788,3 +21788,20 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   not repair double-splat identity or argument binding.
 - [ ] Proc.new capture typing, full-prelude runtime, unchanged LavinMQ parity and
   a fresh bootstrap remain open. No application or stdlib files are changed.
+
+
+### Shared command grammar for member calls and block shorthand (2026-10-22)
+- [x] Route identifier members, keyword members and block shorthand through the
+  ordinary command-argument parser. Preserve the real callee, named arguments,
+  terminal block ownership and primary syntax errors instead of maintaining
+  three divergent argument loops.
+- [x] A spaced parenthesized shorthand argument owns its postfix chain, matching
+  Crystal: `&.consume (value).finish` passes `(value).finish` to consume.
+  Before the change run11707 rejects that valid program; run11708 passes it.
+- [x] Qualify the isolated parser delta on committed parent 06991d45: sealed11714
+  passes all eleven original-first exact-output controls in run11715 and the
+  portable regression in run11726. Run11716 also passes 27 logical-RHS, command
+  boundary and required-token EOF controls, including source rejections.
+- [ ] Explicit super actual normalization, Proc.new capture storage, full-prelude
+  runtime, unchanged LavinMQ parity and a fresh bootstrap remain separate
+  obligations. No application or stdlib files are changed.

@@ -13364,175 +13364,7 @@ current_token.kind == Token::Kind::Identifier &&
             )
             trace_member_access_transition(member_span, member_token, "node")
 
-            # Check if this member access is followed by arguments without parentheses
-            # Example: Foo.bar 1, b: 2 → CallNode with MemberAccessNode as callee
-            # Must check for space (not newline!) like original Crystal parser
-            space_consumed = false
-            next_token_view = current_token
-            if next_token_view.kind == Token::Kind::Whitespace
-              advance # Consume space
-              space_consumed = true
-              next_token_view = current_token
-            elsif next_token_view.span.start_line == member_end_span.end_line &&
-                  next_token_view.span.start_offset > member_end_span.end_offset
-              # Heuristic: even without explicit whitespace tokens (default lexing),
-              # detect a gap on the same line to allow DSL-style calls like
-              # json.field "value", foo
-              space_consumed = true
-            end
-
-            if space_consumed
-              token = current_token
-              # Same-line parenthesized command arguments include their postfix chain.
-              allow_parenthesized_argument = token.kind == Token::Kind::LParen &&
-                                             token.span.start_line == member_token.span.end_line
-              if call_without_parens_disallowed?(token) && !allow_parenthesized_argument
-                node
-              else
-                # Try to parse arguments
-                @parsing_call_args += 1
-
-                args_b = ExprIdBuffer.new(4)
-                named_b = NamedArgumentBuffer.new(2)
-
-                loop do
-                  # Stop parsing arguments if a 'do' block starts here; let postfix loop attach it.
-                  break if current_token.kind == Token::Kind::Do
-
-                  # Parse one argument
-                  # 1) Splat arguments: * / **
-                  if current_token.kind == Token::Kind::Star || current_token.kind == Token::Kind::StarStar
-                    star_token = current_token
-                    advance
-                    skip_trivia
-                    value_expr = without_postfix_modifiers { parse_op_assign }
-                    if value_expr.invalid?
-                      @parsing_call_args -= 1
-                      return PREFIX_ERROR
-                    end
-                    span = star_token.span.cover(@arena[value_expr].span)
-                    arg = @arena.add_typed(SplatNode.new(span, value_expr))
-                    # 2) Block shorthand / capture: &.method or &ident
-                  elsif current_token.kind == Token::Kind::Amp
-                    amp_token = current_token
-                    saved_index = @index # Phase 103P: Save position for proper restore
-                    advance
-                    skip_trivia
-                    if current_token.kind == Token::Kind::Operator
-                      # &.method — block shorthand
-                      arg = parse_block_shorthand(amp_token)
-                    elsif current_token.kind == Token::Kind::Identifier || current_token.kind == Token::Kind::InstanceVar
-                      # Check if the identifier is followed by :: (path expression like LibC::S_IFMT)
-                      # In that case, & is binary AND, not block capture
-                      next_after_ident = peek_token
-                      if next_after_ident.kind == Token::Kind::ColonColon
-                        # & ident:: → binary AND with path expression, not block capture
-                        @index = saved_index
-                        break
-                      end
-                      # &block — block capture argument
-                      ident = current_token
-                      advance
-                      ident_span = ident.span
-                      ident_node = if ident.kind == Token::Kind::Identifier
-                                     @arena.add_typed(IdentifierNode.new(ident_span, @string_pool.intern(ident.slice)))
-                                   else
-                                     @arena.add_typed(InstanceVarNode.new(ident_span, ident.slice))
-                                   end
-                      arg_span = amp_token.span.cover(ident_span)
-                      arg = @arena.add_typed(UnaryNode.new(arg_span, amp_token.slice, ident_node))
-                    else
-                      # Phase 103P: Not block shorthand or capture - & is a binary operator
-                      # This handles cases like `x.y & ~15` where & is binary AND
-                      # Restore position and break out of arg parsing; let caller handle &
-                      @index = saved_index
-                      break
-                    end
-                  elsif proc_pointer_block_argument_start?
-                    arg = parse_proc_pointer_block_argument
-                  elsif current_token.kind == Token::Kind::AmpDot
-                    # &.method with no parentheses
-                    amp_token = current_token
-                    advance
-                    skip_trivia
-                    arg = parse_block_shorthand(amp_token)
-                  else
-                    arg = without_postfix_modifiers { parse_op_assign }
-                  end
-                  if arg.invalid?
-                    @parsing_call_args -= 1
-                    return PREFIX_ERROR
-                  end
-
-                  # Check if this is a named argument BEFORE skipping trivia
-                  # Named arguments require NO space before colon: "name: value"
-                  # Type restrictions require space: "name : Type"
-                  # By checking current token before skip_trivia, we can distinguish them
-                  arg_node = @arena[arg]
-                  if Frontend.node_kind(arg_node) == Frontend::NodeKind::Identifier &&
-                     current_token.kind == Token::Kind::Colon
-                    # Named argument! (no whitespace before colon, zero-copy)
-                    name_span = arg_node.span
-                    name_slice = Frontend.node_literal(arg_node).not_nil!
-
-                    advance # consume ':'
-                    skip_trivia
-
-                    value_expr = without_postfix_modifiers { parse_op_assign }
-                    if value_expr.invalid?
-                      @parsing_call_args -= 1
-                      return PREFIX_ERROR
-                    end
-
-                    value_span = @arena[value_expr].span
-
-                    named_b << NamedArgument.new(name_slice, value_expr, name_span, value_span)
-                    skip_trivia
-                  else
-                    # Positional argument (including type-restricted assignments like "x : Type = value")
-                    skip_trivia
-                    args_b << arg
-                  end
-
-                  # A block argument is terminal even when this call is nested
-                  # in a tuple, array, or an outer argument list.
-                  break if terminal_call_block_argument?(arg)
-
-                  # Check for comma
-                  if current_token.kind == Token::Kind::Comma
-                    advance
-                    skip_trivia
-                  elsif current_token.kind.in?(Token::Kind::Amp, Token::Kind::AmpDot)
-                    # Treat consecutive block shorthands (foo(&.a &.b)) as separate args
-                    # even without an explicit comma.
-                    next
-                  else
-                    # If the next token starts a block, allow the postfix loop to handle it.
-                    break if current_token.kind == Token::Kind::LBrace || current_token.kind == Token::Kind::Do
-                    break
-                  end
-                end
-
-                # Create CallNode with MemberAccessNode as callee
-                # Materialize arrays once
-                args = args_b.to_a
-                named_args = named_b.to_a
-                last_arg_id = args.last? || named_args.last?.try(&.value) || node
-                call_span = member_span.cover(@arena[last_arg_id].span)
-                result = @arena.add_typed(new_call_node(
-                  call_span,
-                  node, # MemberAccessNode as callee
-                  args,
-                  nil, # no block
-                  named_args.empty? ? nil : named_args
-                ))
-
-                @parsing_call_args -= 1
-                result
-              end
-            else
-              node
-            end
+            attach_command_call_arguments(node, member_token.slice)
           elsif !member_token.slice.empty?
             # Phase 101: Keywords can be method names after dot (e.g., .class, .select, .begin)
             member_span = node_span(receiver).cover(dot.span).cover(member_token.span)
@@ -13545,150 +13377,40 @@ current_token.kind == Token::Kind::Identifier &&
             )
             advance
 
-            # Check if this member access is followed by arguments without parentheses
-            # Example: Foo.bar 1, b: 2 → CallNode with MemberAccessNode as callee
-            # Must check for space (not newline!) like original Crystal parser
-            space_consumed = false
-            next_token_view = current_token
-            if next_token_view.kind == Token::Kind::Whitespace
-              advance # Consume space
-              space_consumed = true
-            elsif next_token_view.span.start_line == member_token.span.end_line &&
-                  next_token_view.span.start_offset > member_token.span.end_offset
-              # Heuristic: even without explicit whitespace tokens (default lexing),
-              # detect a gap on the same line to allow DSL-style calls like
-              # json.field "value", foo
-              space_consumed = true
-            end
-
-            if space_consumed
-              token = current_token
-              # Same-line parenthesized command arguments include their postfix chain.
-              allow_parenthesized_argument = token.kind == Token::Kind::LParen &&
-                                             token.span.start_line == member_token.span.end_line
-              if call_without_parens_disallowed?(token) && !allow_parenthesized_argument
-                node
-              else
-                # Try to parse arguments
-                @parsing_call_args += 1
-
-                args_b = ExprIdBuffer.new(4)
-                named_b = NamedArgumentBuffer.new(2)
-
-                loop do
-                  # Stop parsing arguments if a 'do' block starts here; let postfix loop attach it.
-                  break if current_token.kind == Token::Kind::Do
-
-                  # Parse one argument
-                  # Phase 103P: Special handling for & (block shorthand/capture)
-                  arg = if current_token.kind == Token::Kind::Amp
-                          amp_token = current_token
-                          saved_index = @index
-                          advance
-                          skip_trivia
-                          if current_token.kind == Token::Kind::Operator
-                            # &.method — block shorthand
-                            parse_block_shorthand(amp_token)
-                          elsif current_token.kind == Token::Kind::Identifier || current_token.kind == Token::Kind::InstanceVar
-                            # &block — block capture argument
-                            ident = current_token
-                            advance
-                            ident_span = ident.span
-                            ident_node = if ident.kind == Token::Kind::Identifier
-                                           @arena.add_typed(IdentifierNode.new(ident_span, @string_pool.intern(ident.slice)))
-                                         else
-                                           @arena.add_typed(InstanceVarNode.new(ident_span, ident.slice))
-                                         end
-                            arg_span = amp_token.span.cover(ident_span)
-                            @arena.add_typed(UnaryNode.new(arg_span, amp_token.slice, ident_node))
-                          else
-                            # Not block shorthand or capture - & is binary operator; stop arg parsing
-                            @index = saved_index
-                            break
-                          end
-                        elsif current_token.kind == Token::Kind::AmpDot
-                          # &.method with no parentheses
-                          amp_token = current_token
-                          advance
-                          skip_trivia
-                          parse_block_shorthand(amp_token)
-                        else
-                          without_postfix_modifiers { parse_op_assign }
-                        end
-                  if arg.invalid?
-                    @parsing_call_args -= 1
-                    return PREFIX_ERROR
-                  end
-
-                  # Check if this is a named argument BEFORE skipping trivia
-                  # Named arguments require NO space before colon: "name: value"
-                  # Type restrictions require space: "name : Type = value"
-                  # By checking current token before skip_trivia, we can distinguish them
-                  arg_node = @arena[arg]
-                  if Frontend.node_kind(arg_node) == Frontend::NodeKind::Identifier &&
-                     current_token.kind == Token::Kind::Colon
-                    # Named argument! (no whitespace before colon, zero-copy)
-                    name_span = arg_node.span
-                    name_slice = Frontend.node_literal(arg_node).not_nil!
-
-                    advance # consume ':'
-                    skip_trivia
-
-                    value_expr = without_postfix_modifiers { parse_op_assign }
-                    if value_expr.invalid?
-                      @parsing_call_args -= 1
-                      return PREFIX_ERROR
-                    end
-
-                    value_span = @arena[value_expr].span
-
-                    named_b << NamedArgument.new(name_slice, value_expr, name_span, value_span)
-                    skip_trivia
-                  else
-                    # Positional argument (including type-restricted assignments like "x : Type = value")
-                    skip_trivia
-                    args_b << arg
-                  end
-
-                  # A block argument is terminal even when this call is nested
-                  # in a tuple, array, or an outer argument list.
-                  break if terminal_call_block_argument?(arg)
-
-                  # Check for comma
-                  if current_token.kind == Token::Kind::Comma
-                    advance
-                    skip_trivia
-                  else
-                    # If the next token starts a block, allow the postfix loop to handle it.
-                    break if current_token.kind == Token::Kind::LBrace || current_token.kind == Token::Kind::Do
-                    break
-                  end
-                end
-
-                # Create CallNode with MemberAccessNode as callee
-                # Materialize arrays once
-                args = args_b.to_a
-                named_args = named_b.to_a
-                last_arg_id = args.last? || named_args.last?.try(&.value) || node
-                call_span = member_span.cover(@arena[last_arg_id].span)
-                result = @arena.add_typed(new_call_node(
-                  call_span,
-                  node, # MemberAccessNode as callee
-                  args,
-                  nil, # no block
-                  named_args.empty? ? nil : named_args
-                ))
-
-                @parsing_call_args -= 1
-                result
-              end
-            else
-              node
-            end
+            attach_command_call_arguments(node, member_token.slice)
           else
             emit_unexpected(member_token)
             receiver
           end
+        end
+
+        # Member calls and shorthand calls share the ordinary command grammar.
+        # Keep the actual callee, named arguments, and terminal block ownership.
+        # A spaced parenthesized expression is parsed as a whole argument.
+        private def attach_command_call_arguments(callee_id : ExprId, callee_name : Slice(UInt8)) : ExprId
+          callee_span = @arena[callee_id].span
+          token = current_token
+          if token.kind == Token::Kind::Whitespace
+            advance
+            token = current_token
+          end
+          same_line = token.span.start_line == callee_span.end_line
+          has_gap = token.span.start_offset > callee_span.end_offset
+          return callee_id unless same_line && has_gap
+          parenthesized_argument = token.kind == Token::Kind::LParen
+          return callee_id if !parenthesized_argument &&
+                              call_without_parens_disallowed?(token, allow_unary_prefix: true)
+
+          start = @index
+          parsed_id = try_parse_call_args_without_parens(callee_span, callee_name,
+            allow_parenthesized_argument: parenthesized_argument)
+          if parsed_id.invalid?
+            return @index == start ? callee_id : PREFIX_ERROR
+          end
+          parsed = @arena[parsed_id].as?(CallNode)
+          return callee_id unless parsed
+          @arena.add_typed(new_call_node(parsed.span, callee_id, parsed.args,
+            parsed.block, parsed.named_args))
         end
 
         # Parse the operator-name form `obj.[](args)`, `obj.[]?(args)`,
@@ -17129,6 +16851,7 @@ current_token.kind == Token::Kind::Identifier &&
 
             # Phase 103J: Parse method chains: &.value.close
             call_expr = consume_block_shorthand_postfix(call_expr)
+            return PREFIX_ERROR if call_expr.invalid?
 
             # Phase 101: Check for trailing do...end or {...} block (Amp case)
             # This handles: &.each_value do |x| ... end
@@ -17239,6 +16962,7 @@ current_token.kind == Token::Kind::Identifier &&
 
             # Phase 103J: Parse method chains: &.value.close
             call_expr = consume_block_shorthand_postfix(call_expr)
+            return PREFIX_ERROR if call_expr.invalid?
 
             # Phase 101: Check for trailing do...end or {...} block (AmpDot case)
             # This handles: &.each_value do |x| ... end
@@ -17261,31 +16985,6 @@ current_token.kind == Token::Kind::Identifier &&
           else
             @diagnostics << Diagnostic.new("Expected '&' or '&.' for block shorthand", current_token.span)
             return PREFIX_ERROR
-          end
-
-          # Optional no-parens arguments after shorthand: &.foo arg1, arg2
-          args_after = [] of ExprId
-          loop do
-            skip_whitespace_and_optional_newlines
-            # Operators and postfix conditions belong to the enclosing expression.
-            # Signed adjacent operands remain valid arguments, as in `&.add -1`.
-            break if call_without_parens_disallowed?(current_token, allow_unary_prefix: true)
-
-            arg_expr = parse_op_assign
-            break if arg_expr.invalid?
-            args_after << arg_expr
-
-            skip_whitespace_and_optional_newlines
-            if current_token.kind == Token::Kind::Comma
-              advance
-              next
-            end
-            break
-          end
-
-          if args_after.size > 0
-            call_span = @arena[call_expr].span.cover(@arena[args_after.last].span)
-            call_expr = @arena.add_typed(CallNode.new(call_span, call_expr, args_after, nil))
           end
 
           # Handle setter-style shorthand: &.foo=(value)
@@ -17352,128 +17051,23 @@ current_token.kind == Token::Kind::Identifier &&
                 break
               end
             when Token::Kind::LParen
+              callee_span = @arena[call_expr].span
+              break if token.span.start_line == callee_span.end_line &&
+                       token.span.start_offset > callee_span.end_offset
               call_expr = parse_parenthesized_call(call_expr)
             when Token::Kind::LBracket
               call_expr = parse_index(call_expr)
             else
               break
             end
+            return PREFIX_ERROR if call_expr.invalid?
           end
 
-          # Optional: parse no-parens arguments to the shorthand method, e.g.:
-          #   join(@str, ", ", &.accept self)
-          # Here `self` should be consumed as an argument to `accept` without parentheses.
-          begin
-            skip_trivia
-            tok = current_token
-            callee_span = @arena[call_expr].span
-            # Require same line and a visible gap to consider it a no-parens argument.
-            same_line = tok.span.start_line == callee_span.end_line
-            has_gap = tok.span.start_column > callee_span.end_column
-            allow_inline_args = @parsing_call_args == 0 || tok.kind.in?(Token::Kind::Amp, Token::Kind::AmpDot)
-            disallowed = call_without_parens_disallowed?(tok)
-            disallowed = false if tok.kind.in?(Token::Kind::Amp, Token::Kind::AmpDot)
-            if same_line && has_gap && allow_inline_args && !disallowed
-              # Only allow for call-like nodes (MemberAccess/Call)
-              kind = Frontend.node_kind(@arena[call_expr])
-              if kind == Frontend::NodeKind::MemberAccess || kind == Frontend::NodeKind::Call
-                @parsing_call_args += 1
-                args_b = ExprIdBuffer.new(2)
-                named_b = NamedArgumentBuffer.new(1)
-                loop do
-                  # Stop on block delimiters to let outer layer attach them
-                  break if current_token.kind.in?(Token::Kind::Do, Token::Kind::LBrace)
-
-                  if current_token.kind == Token::Kind::AmpDot
-                    amp_token = current_token
-                    advance
-                    skip_trivia
-                    arg = parse_block_shorthand(amp_token)
-                    break if arg.invalid?
-                    args_b << arg
-                  elsif current_token.kind == Token::Kind::Amp
-                    amp_token = current_token
-                    advance
-                    skip_trivia
-                    if current_token.kind == Token::Kind::Operator
-                      arg = parse_block_shorthand(amp_token)
-                      break if arg.invalid?
-                      args_b << arg
-                    elsif current_token.kind == Token::Kind::Identifier || current_token.kind == Token::Kind::InstanceVar
-                      ident_tok = current_token
-                      advance
-                      ident_span = ident_tok.span
-                      ident_node = if ident_tok.kind == Token::Kind::Identifier
-                                     @arena.add_typed(IdentifierNode.new(ident_span, @string_pool.intern(ident_tok.slice)))
-                                   else
-                                     @arena.add_typed(InstanceVarNode.new(ident_span, ident_tok.slice))
-                                   end
-                      arg_span = amp_token.span.cover(ident_span)
-                      arg = @arena.add_typed(UnaryNode.new(arg_span, amp_token.slice, ident_node))
-                      args_b << arg
-                    else
-                      # Fallback to normal expression starting with amp
-                      unadvance
-                      arg = parse_op_assign
-                      break if arg.invalid?
-                      args_b << arg
-                    end
-                  elsif named_arg_start?
-                    name_tok = current_token
-                    name_slice = name_tok.slice
-                    name_span = name_tok.span
-                    advance
-                    skip_whitespace_and_optional_newlines
-                    unless current_token.kind == Token::Kind::Colon
-                      @parsing_call_args -= 1
-                      return call_expr
-                    end
-                    advance
-                    skip_whitespace_and_optional_newlines
-                    @no_type_declaration += 1
-                    val = parse_op_assign
-                    @no_type_declaration -= 1
-                    break if val.invalid?
-                    named_b << NamedArgument.new(name_slice, val, name_span, @arena[val].span)
-                  else
-                    arg = parse_op_assign
-                    break if arg.invalid?
-                    args_b << arg
-                  end
-
-                  skip_whitespace_and_optional_newlines
-                  if current_token.kind == Token::Kind::Comma
-                    advance
-                    skip_whitespace_and_optional_newlines
-                    next
-                  end
-                  break
-                end
-                args = args_b.to_a
-                named = named_b.to_a
-                last_span = if named.size > 0
-                              named.last.span
-                            elsif args.size > 0
-                              @arena[args.last].span
-                            else
-                              callee_span
-                            end
-                call_span = callee_span.cover(last_span)
-                call_expr = @arena.add_typed(
-                  if named.empty?
-                    CallNode.new(call_span, call_expr, args, nil)
-                  else
-                    CallNode.new(call_span, call_expr, args, nil, named)
-                  end
-                )
-                @parsing_call_args -= 1
-              end
-            end
-          rescue
-            # Best-effort; on failure, leave call_expr unchanged
-            @parsing_call_args = 0 if @parsing_call_args > 0
-          end
-          call_expr
+          return PREFIX_ERROR if call_expr.invalid?
+          callee = @arena[call_expr]
+          return call_expr unless callee.is_a?(MemberAccessNode) || callee.is_a?(CallNode)
+          name = callee.is_a?(MemberAccessNode) ? callee.member : "__shorthand".to_slice
+          attach_command_call_arguments(call_expr, name)
         end
 
         # Phase 103K: Parse fun parameters (supports proc types and varargs)
