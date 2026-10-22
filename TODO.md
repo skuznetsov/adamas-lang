@@ -21754,3 +21754,21 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Audit cross-unit arena identity and rest-argument AST kind separately; the
   concrete matrix does not certify all macro evaluation. Proc.new typing,
   full prelude, unchanged LavinMQ parity and fresh bootstrap remain open.
+
+
+### Required-token EOF diagnostics (2026-10-22)
+- [x] Diagnose EOF at the shared required-token boundary and preserve unexpected
+  EOF as a primary syntax failure when invalid-expression recovery returns
+  before delimiter validation. An empty unterminated call must not disappear
+  into a successful compile.
+- [x] Original-first portable regression run11596 on sealed11585: two exact-output
+  balanced controls and four rc1/no-executable EOF rejections match Crystal
+  1.20.1. Run11584 refutes delimiter-only recovery: its empty call still emits
+  an executable. The fix covers the shared diagnostic path instead of adding
+  another call-specific recovery exception.
+- [ ] Audit remaining unconditional token suppression separately; this matrix
+  covers call, grouping and index EOF boundaries, not all parser recovery.
+- [ ] Full-prelude runtime remains open: isolated parent11450/run11597 and
+  candidate11585/run11595 reach the same LibGC.get_my_stackbottom pointer-type
+  rejection, with no parser errors. LavinMQ parity and fresh bootstrap remain
+  separate obligations; no application or stdlib code is changed.

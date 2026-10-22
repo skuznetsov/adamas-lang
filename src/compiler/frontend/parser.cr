@@ -14551,6 +14551,17 @@ current_token.kind == Token::Kind::Identifier &&
           token = current_token
           if token.kind == kind
             advance
+          elsif token.kind == Token::Kind::EOF
+            # Explicit token-kind expectations are required delimiters. Keep
+            # recovery-mode EOF suppression out of this mandatory boundary.
+            expected = case kind
+                      when Token::Kind::RParen then ")"
+                      when Token::Kind::RBracket then "]"
+                      when Token::Kind::RBrace then "}"
+                      when Token::Kind::LBrace then "{"
+                      else kind.to_s
+                      end
+            @diagnostics << Diagnostic.new("expecting token: #{expected}, not EOF", token.span)
           else
             emit_unexpected(token)
           end
@@ -14634,7 +14645,8 @@ current_token.kind == Token::Kind::Identifier &&
           # Colon and MacroExprStart/End are especially noisy in nested macro contexts.
           # Pipe is noisy in type union contexts during recovery.
           # OrOr is noisy in boolean expression contexts during recovery.
-          # EOF is noisy at end of complex expressions during recovery.
+          # An unexpected EOF is a primary syntax failure, even when an
+          # invalid expression returns before a required-delimiter helper.
           # Eq is noisy in assignment contexts during recovery.
           # RParen is noisy (creates duplicate diagnostics) in call/expression contexts during recovery.
           # NotEq is noisy in comparison contexts during recovery.
@@ -14642,7 +14654,7 @@ current_token.kind == Token::Kind::Identifier &&
           # AndAnd is noisy in boolean expression contexts during recovery.
           # ClassVar creates duplicate diagnostics in recovery contexts.
           # All remaining tokens from secondary list moved here for full suppression on valid stdlib code.
-          if token.kind.in?(Token::Kind::Colon, Token::Kind::MacroExprStart, Token::Kind::MacroExprEnd, Token::Kind::Pipe, Token::Kind::OrOr, Token::Kind::EOF, Token::Kind::Eq, Token::Kind::RParen, Token::Kind::NotEq, Token::Kind::EqEq, Token::Kind::AndAnd, Token::Kind::ClassVar,
+          if token.kind.in?(Token::Kind::Colon, Token::Kind::MacroExprStart, Token::Kind::MacroExprEnd, Token::Kind::Pipe, Token::Kind::OrOr, Token::Kind::Eq, Token::Kind::RParen, Token::Kind::NotEq, Token::Kind::EqEq, Token::Kind::AndAnd, Token::Kind::ClassVar,
                Token::Kind::Else, Token::Kind::Rescue, Token::Kind::When,
                Token::Kind::Spaceship, Token::Kind::Operator, Token::Kind::Arrow, Token::Kind::ThinArrow,
                Token::Kind::Identifier, Token::Kind::LParen, Token::Kind::LBracePercent,
