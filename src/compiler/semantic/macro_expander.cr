@@ -213,6 +213,9 @@ module Adamas
         @macro_body_giant_single_bytes : Int64
         @macro_body_giant_cumulative_bytes : Int64
 
+        # Supplied by HIR so block ExprIds are interpreted in their caller arena.
+        @block_value_provider : Proc(ExprId, MacroValue?)?
+
         def initialize(
           @program : Program,
           @arena : Frontend::ArenaLike,
@@ -221,6 +224,7 @@ module Adamas
           symbol_table : SymbolTable? = nil,
           recovery_mode : Bool = false,
           source_provider : Proc(ExprId, String?)? = nil,
+          block_value_provider : Proc(ExprId, MacroValue?)? = nil,
           macro_source : String? = nil,
           macro_source_path : String? = nil,
           source_sink : Proc(String, Nil)? = nil,
@@ -236,6 +240,7 @@ module Adamas
           @symbol_table = symbol_table
           @recovery_mode = recovery_mode
           @source_provider = source_provider
+          @block_value_provider = block_value_provider
           @macro_source = macro_source
           @macro_source_path = macro_source_path
           @macro_source_provider = nil.as(Proc(Frontend::ExprId, String?)?)
@@ -346,6 +351,24 @@ module Adamas
           @diagnostics.clear
           @last_output = nil
 
+          # Resolve caller block AST exactly once in its owning arena. A missing
+          # provider or unresolved BlockNode is an expansion error, never a
+          # fabricated truthy value.
+          resolved_block_value = nil.as(MacroValue?)
+          if call_block_id = block_id
+            provider = @block_value_provider
+            unless provider
+              emit_error("Macro block AST is unavailable in this expansion context", call_block_id)
+              return ExprId.new(-1)
+            end
+            block_value = provider.call(call_block_id)
+            unless block_value
+              emit_error("Macro block AST is unavailable in this expansion context", call_block_id)
+              return ExprId.new(-1)
+            end
+            resolved_block_value = block_value
+          end
+
           # Check recursion depth
           if @depth >= MAX_DEPTH
             emit_error("Macro recursion depth exceeded (#{MAX_DEPTH})")
@@ -367,7 +390,7 @@ module Adamas
           @macro_source ||= resolve_macro_source(macro_symbol)
           begin
             # Bind parameters to arguments
-            context = build_context(macro_symbol, args, owner_type, named_args, block_id, preserve_unresolved_expressions)
+            context = build_context(macro_symbol, args, owner_type, named_args, block_id, preserve_unresolved_expressions, resolved_block_value)
 
             # Evaluate macro body
             output = evaluate_macro_body(macro_symbol.body, context)
@@ -592,7 +615,8 @@ module Adamas
           owner_type : ClassSymbol?,
           named_args : Array(Frontend::NamedArgument)?,
           block_id : ExprId?,
-          preserve_unresolved_expressions : Bool
+          preserve_unresolved_expressions : Bool,
+          resolved_block_value : MacroValue?
         ) : Context
           variables = {} of String => MacroValue
           param_decls = macro_symbol.param_decls
@@ -612,6 +636,9 @@ module Adamas
           # Bind parameters to arguments (supports *args and **kwargs).
           arg_index = 0
           params.each_with_index do |raw_name, idx|
+            # The caller Block AST is bound after ordinary arguments. Its
+            # declaration consumes neither a positional argument nor a default.
+            next if raw_name.starts_with?('&')
             if raw_name.starts_with?("**")
               name = raw_name[2..]
               variables[name] = MacroNamedTupleValue.new(named_values.dup)
@@ -644,8 +671,18 @@ module Adamas
             end
           end
 
-          # Provide a truthy `block` variable when macro call includes a block.
-          variables["block"] = block_id ? MacroBoolValue.new(true) : macro_nil_value
+          # Bind the caller-owned Block AST when available. Crystal binds it
+          # under the macro's declared &parameter name; keep the legacy `block`
+          # key as an alias for existing macro evaluation paths.
+          block_value = resolved_block_value || MacroNopValue.new
+          # Preserve a regular macro parameter named `block`; only install the
+          # compatibility alias when it does not shadow a declared argument.
+          variables["block"] = block_value unless variables.has_key?("block")
+          params.each do |raw_name|
+            if raw_name.starts_with?('&')
+              variables[raw_name[1..]] = block_value
+            end
+          end
 
           Context.new(variables, {} of String => String, owner_type, @depth, @flags, block_id, nil, preserve_unresolved_expressions)
         end
@@ -773,6 +810,7 @@ module Adamas
             symbol_table: @symbol_table,
             recovery_mode: @recovery_mode,
             source_provider: @source_provider,
+            block_value_provider: @block_value_provider,
             macro_source: wrapped,
             macro_source_path: @macro_source_path,
             source_sink: @source_sink,

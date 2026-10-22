@@ -1,0 +1,30 @@
+{
+  "files": {
+    "README.md": "46a749767f76f274a6d85f7f802fc37aa988d266e7d0324ef34026a1940dcfbe",
+    "fixtures/absent_callback_ast_shape.cr": "18a34ade3b2fa97356369ce7002fbb37e579ee8445277c7f171d4c4c30bd3027",
+    "fixtures/absent_callback_ast_shape.expected": "c4694f2e93d5c4e7d51f9c5deb75e6cc8be5e1114178c6a45b6fc2c566a0aa8c",
+    "fixtures/empty_callback_body_ast_shape.cr": "51132a4993a5e840bc25e419456d86bd14afe8f0b78d6aaf3027f82851670836",
+    "fixtures/empty_callback_body_ast_shape.expected": "5c62e091b8c0565f1bafad0dad5934276143ae2ccef7a5381e8ada5b1a8d26d2",
+    "fixtures/kwargs_argument_named_block_and_callback.cr": "5e0f1cf85711c5377e9534250c6d26a91b5dc6f78d0bfd7926696736365d0eb1",
+    "fixtures/kwargs_argument_named_block_and_callback.expected": "8de0b3c47f112c59745f717a626932264c422a7563954872e237b223af4ad643",
+    "fixtures/macro_without_block.cr": "ecd003ab7fc81b0cbe989da438b7ade82c5b5e5cc949084bea2fd6f3b453b839",
+    "fixtures/macro_without_block.expected": "8ce86a6ae65d3692e7305e2c58ac62eebd97d3d943e093f577da25c36988246b",
+    "fixtures/ordinary_argument_named_block_and_callback.cr": "8a7d15d352a6e2053f9ff73aa4cea1e262a8f619044739270e9d0e70d21b2df8",
+    "fixtures/ordinary_argument_named_block_and_callback.expected": "44bd7ae60f478fae1061e11a7739f4b94d1daf917982d33b6fc8a01a63f89c21",
+    "fixtures/ordinary_macro_block_named_guard_negative.cr": "a8710522c67973ff1c48ca58f26e13edeb2ebf4a023e650d4ad0c11ac554cb46",
+    "fixtures/ordinary_macro_block_single.cr": "7d9258b93881add950e3489e8059499e631c881f2dd1f9cee83548530a22b311",
+    "fixtures/ordinary_macro_block_single.expected": "a9f51566bd6705f7ea6ad54bb9deb449f795582d6529a0e22207b8981233ec58",
+    "fixtures/reject_ordinary_after_double_splat.cr": "e322ad2e45720a2c013e750f1d31fec0639788d40c93aadf7788d076830d7153",
+    "fixtures/reject_ordinary_after_double_splat_block.cr": "3519a46a5ff7ba57ded1640481ce7b83ed388953b16010ff1301fbbc3ae56e74",
+    "fixtures/rest_argument_named_block_and_callback.cr": "ad10c509cdd349f511c2aeb8b189f5c2baeba5e03fa72f727dbf593473908b7d",
+    "fixtures/rest_argument_named_block_and_callback.expected": "8c2574892063f995fdf756bce07f46c1a5193e54cd52837ed91e32008ccf41ac",
+    "fixtures/spawn_macro_block_multiple.cr": "4e6dbbb8b255409d87216fdf2ca00eefa6e541c5f1d70141d1aec33d074df7d4",
+    "fixtures/spawn_macro_block_multiple.expected": "2097d9edbebf7ccc834ac87b2bf4f2b871908a7f8ef80b35a8608cbb08e0ce07",
+    "fixtures/spawn_macro_block_multiple_guard_negative.cr": "59a3b72b6a63519af672045e533a2df55282ba285fbfd9d802c571a16e1824ef",
+    "fixtures/spawn_macro_block_single.cr": "dfd23a61cdfd0ce9180b1e3058a4a51ed4152703915c44fbf0328ac73cdca01e",
+    "fixtures/spawn_macro_block_single.expected": "3f39d5c348e5b79d06e842c114e6cc571583bbf44e4b0ebfda1a01ec05745d43",
+    "fixtures/spawn_macro_block_single_guard_negative.cr": "3166a4e0dcced3b6bb6dfb8d7ef31fc0115796e791d456ffe6583e1c14e572db",
+    "run_original_first.py": "712da329364b3cfbbd05ee6beb0fb5bd4afeeeefc6d9b5eb63507f8038f0137e",
+    "run_original_first.sh": "a1fca679354d8545e4edc81ba4e2754d4c6e88657112d828b9f1c1c686feeeef"
+  }
+}

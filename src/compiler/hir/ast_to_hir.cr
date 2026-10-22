@@ -15884,6 +15884,7 @@ module Adamas::HIR
         recovery_mode: true,
         generated_sources: macro_generated_sources_for(macro_arena),
         source_provider: ->(expr_id : ExprId) : String? { macro_block_body_text(expr_id) },
+        block_value_provider: ->(expr_id : ExprId) : Adamas::Compiler::Semantic::MacroValue? { macro_block_value_for(expr_id) },
         macro_source: source_for_arena(macro_arena),
         macro_source_path: source_path_for(macro_arena),
         source_sink: ->(code : String) { store_extra_source(macro_arena, code) },
@@ -16329,6 +16330,66 @@ module Adamas::HIR
         named_arg.name_span,
         named_arg.value_span
       )
+    end
+
+    private def macro_block_value_for(block_id : ExprId) : Adamas::Compiler::Semantic::MacroValue?
+      return nil if block_id.invalid?
+      arena = arena_for_expr?(block_id)
+      return nil unless arena
+      return nil if block_id.index < 0 || block_id.index >= arena.size
+      block_node = arena[block_id]
+      return nil unless block_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
+
+      body_values = [] of Adamas::Compiler::Semantic::MacroValue
+      block_node.body.each do |expr_id|
+        body_values << macro_source_node_value_for(expr_id, arena)
+      end
+      body_source = macro_block_body_text(block_id)
+      body_value = case body_values.size
+                   when 0
+                     Adamas::Compiler::Semantic::MacroNopValue.new.as(Adamas::Compiler::Semantic::MacroValue)
+                   when 1
+                     body_values[0]
+                   else
+                     Adamas::Compiler::Semantic::MacroExpressionsValue.new(body_source, body_values).as(Adamas::Compiler::Semantic::MacroValue)
+                   end
+
+      parameters = block_node.params || [] of Adamas::Compiler::Frontend::Parameter
+      block_args = parameters.map do |parameter|
+        Adamas::Compiler::Semantic::MacroIdValue.new(parameter.name.try { |name| String.new(name) } || "").as(Adamas::Compiler::Semantic::MacroValue)
+      end
+      splat_index = parameters.index { |parameter| parameter.is_splat }
+      splat_value = if index = splat_index
+                      Adamas::Compiler::Semantic::MacroNumberValue.new(index.to_i64).as(Adamas::Compiler::Semantic::MacroValue)
+                    else
+                      Adamas::Compiler::Semantic::MacroNilLiteralValue.new.as(Adamas::Compiler::Semantic::MacroValue)
+                    end
+
+      block_source = ""
+      if source = source_for_arena(arena)
+        block_source = slice_source_for_expr_in_arena(block_id, arena, source) || ""
+      end
+      Adamas::Compiler::Semantic::MacroBlockValue.new(
+        block_source,
+        body_value,
+        Adamas::Compiler::Semantic::MacroArrayValue.new(block_args),
+        splat_value
+      )
+    end
+
+    private def macro_source_node_value_for(
+      expr_id : ExprId,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Adamas::Compiler::Semantic::MacroValue
+      source_text = nil
+      if source = source_for_arena(arena)
+        source_text = slice_source_for_expr_in_arena(expr_id, arena, source)
+      end
+      if source_text && !source_text.empty?
+        Adamas::Compiler::Semantic::MacroSourceNodeValue.new(expr_id, arena, source_text)
+      else
+        Adamas::Compiler::Semantic::MacroNodeValue.new(expr_id, arena)
+      end
     end
 
     private def macro_block_body_text(block_id : ExprId) : String
@@ -101544,9 +101605,8 @@ module Adamas::HIR
           end
         end
 
-        # Check if this is a macro call - expand inline instead of generating Call.
-        # Skip spawn macro when lowering SpawnNode-generated calls (block + no args).
-        unless method_name == "spawn" && block_expr && call_args.empty? && node.named_args.nil?
+        # Resolve every source macro, including spawn, with its caller block.
+        begin
           macro_lookup = if qualified_identifier_call
                            if owner = static_class_name
                              lookup_macro_entry_with_inheritance(method_name, owner, allow_global: false)

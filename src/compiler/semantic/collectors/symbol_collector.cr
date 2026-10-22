@@ -42,7 +42,8 @@ module Adamas
           @arena,
           context.flags,
           symbol_table: context.symbol_table,
-          source_provider: ->(block_id : Frontend::ExprId) { macro_block_source(block_id) }
+          source_provider: ->(block_id : Frontend::ExprId) { macro_block_source(block_id) },
+          block_value_provider: ->(block_id : Frontend::ExprId) : MacroValue? { macro_block_value(block_id) }
         )
         @macro_expander.macro_source_provider = ->(node_id : Frontend::ExprId) {
           macro_source_for(node_id)
@@ -249,6 +250,14 @@ module Adamas
           return nil if start < 0 || finish <= start || start >= source.bytesize
           finish = source.bytesize if finish > source.bytesize
           source.byte_slice(start, finish - start)
+        end
+
+        private def macro_block_value(block_id : Frontend::ExprId) : MacroValue?
+          return nil if block_id.invalid? || block_id.index < 0 || block_id.index >= arena.size
+          block_node = arena[block_id]
+          return nil unless block_node.is_a?(Frontend::BlockNode)
+          source = source_for_node(block_id) || source_for_span(arena, block_node.span)
+          MacroBlockValue.from_ast(block_id, arena, source, @string_pool)
         end
 
         private def macro_block_source(block_id : Frontend::ExprId) : String?

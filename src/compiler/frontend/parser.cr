@@ -4521,118 +4521,11 @@ module Adamas
           end
         end
 
-        # Phase 84: spawn fiber (concurrency)
-        # Syntax: spawn do...end | spawn expression
+        # Spawn is provided by source macros/methods. Ordinary call parsing
+        # preserves all arguments and the actual caller block for resolution.
         private def parse_spawn : ExprId
           spawn_token = current_token
-          advance
-          skip_trivia
-
-          token = current_token
-
-          # Special-case: allow argument list before block, e.g. spawn(name: "x") do ... end
-          if token.kind == Token::Kind::LParen
-            # Parse arguments using call machinery on a dummy callee to consume tokens/diags
-            callee = @arena.add_typed(IdentifierNode.new(spawn_token.span, "spawn".to_slice))
-            call_expr = parse_parenthesized_call(callee)
-            return PREFIX_ERROR if call_expr.invalid?
-            skip_trivia
-            token = current_token
-            if token.kind == Token::Kind::Do
-              # Treat as block-form spawn
-              advance
-              consume_newlines
-
-              body_ids_b = ExprIdBuffer.new(4)
-              loop do
-                skip_trivia
-                token = current_token
-                break if token.kind == Token::Kind::End
-                break if token.kind == Token::Kind::EOF
-
-                expr = parse_statement
-                body_ids_b << expr unless expr.invalid?
-                consume_newlines
-              end
-
-              expect_identifier("end")
-              end_token = previous_token
-
-              spawn_span = end_token ? spawn_token.span.cover(end_token.span) : spawn_token.span
-              return @arena.add_typed(
-                SpawnNode.new(
-                  spawn_span,
-                  nil,
-                  body_ids_b.to_a
-                )
-              )
-            else
-              # No block, keep parsed call as expression form
-              expr_span = node_span(call_expr)
-              spawn_span = spawn_token.span.cover(expr_span)
-              return @arena.add_typed(
-                SpawnNode.new(
-                  spawn_span,
-                  call_expr,
-                  nil
-                )
-              )
-            end
-          end
-
-          # Check if it's block form (spawn do...end) or expression form (spawn expr)
-          if token.kind == Token::Kind::Do
-            # Block form: spawn do...end
-            advance
-            consume_newlines
-
-            # Parse body
-            body_id_indexes = Array(Int32).new(16)
-            loop do
-              skip_trivia
-              token = current_token
-              break if token.kind == Token::Kind::End
-              break if token.kind == Token::Kind::EOF
-
-              expr = parse_statement
-              body_id_indexes << expr.index unless expr.invalid?
-              consume_newlines
-            end
-
-            expect_identifier("end")
-            end_token = previous_token
-
-            spawn_span = if end_token
-                           spawn_token.span.cover(end_token.span)
-                         else
-                           spawn_token.span
-                         end
-
-            body_ids = materialize_expr_ids(body_id_indexes)
-
-            @arena.add_typed(
-              SpawnNode.new(
-                spawn_span,
-                nil,
-                body_ids
-              )
-            )
-          else
-            # Expression form: spawn expression
-            expr = parse_expression(0)
-            return PREFIX_ERROR if expr.invalid?
-
-            expr_span = node_span(expr)
-            spawn_span = spawn_token.span.cover(expr_span)
-
-            @arena.add_typed(
-              SpawnNode.new(
-                spawn_span,
-                expr,
-                nil
-              )
-            )
-          end
+          parse_identifier_like(spawn_token.span, stable_identifier_token_slice(spawn_token))
         end
 
         # Phase 25: Parse until loop (inverse of while)
@@ -8553,9 +8446,16 @@ module Adamas
           seen_non_block_after_double_splat = false
           named_after_bare_splat = false
           just_saw_double_splat = false
+          just_saw_block_after_double_splat = false
+          seen_block_after_double_splat = false
           while depth > 0 && current_token.kind != Token::Kind::EOF
             token = current_token
             trace_macro_def("params-token", token, depth: depth, extra: "buf=#{current_param_tokens.size}")
+            if depth == 1 && just_saw_block_after_double_splat &&
+               !token.kind.in?(Token::Kind::Whitespace, Token::Kind::Comment, Token::Kind::Newline, Token::Kind::Identifier)
+              seen_non_block_after_double_splat = true
+              just_saw_block_after_double_splat = false
+            end
             case token.kind
             when Token::Kind::LParen
               current_param_tokens << token if depth >= 1
@@ -8603,13 +8503,30 @@ module Adamas
               if just_saw_double_splat
                 # This identifier is the parameter name for **, which is valid (e.g., **opts)
                 seen_double_splat_param_name = true
+              elsif just_saw_block_after_double_splat
+                # Crystal permits exactly one trailing block parameter after **kwargs.
+                seen_block_after_double_splat = true
               elsif seen_double_splat && seen_double_splat_param_name
-                # Identifier after the **param_name, which is invalid
+                # An ordinary identifier after **kwargs (or its block parameter) is invalid.
                 seen_non_block_after_double_splat = true
               elsif seen_bare_splat
                 # Identifiers after bare * are named parameters; mark so final check passes
                 named_after_bare_splat = true
               end
+              just_saw_double_splat = false
+              just_saw_block_after_double_splat = false
+            when Token::Kind::Amp
+              at_parameter_start = current_param_tokens.all? do |buffered|
+                buffered.kind.in?(Token::Kind::Whitespace, Token::Kind::Comment, Token::Kind::Newline)
+              end
+              if depth == 1 && seen_double_splat
+                if seen_double_splat_param_name && !seen_block_after_double_splat && at_parameter_start
+                  just_saw_block_after_double_splat = true
+                else
+                  seen_non_block_after_double_splat = true
+                end
+              end
+              current_param_tokens << token if depth >= 1
               just_saw_double_splat = false
             when Token::Kind::Comma
               if depth == 1
@@ -8625,6 +8542,9 @@ module Adamas
             else
               current_param_tokens << token if depth >= 1
               just_saw_double_splat = false
+              unless token.kind.in?(Token::Kind::Whitespace, Token::Kind::Comment, Token::Kind::Newline)
+                just_saw_block_after_double_splat = false
+              end
             end
             advance
           end
@@ -8651,6 +8571,9 @@ module Adamas
               idx = 1
             when Token::Kind::Star
               prefix = "*"
+              idx = 1
+            when Token::Kind::Amp
+              prefix = "&"
               idx = 1
             end
           end

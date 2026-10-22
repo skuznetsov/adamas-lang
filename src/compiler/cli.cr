@@ -8406,6 +8406,9 @@ module Adamas
           source_provider: ->(block_expr_id : Frontend::ExprId) {
             shadow_collector_macro_block_source(expansion_arena, block_expr_id, aggregate, source)
           },
+          block_value_provider: ->(block_expr_id : Frontend::ExprId) : Semantic::MacroValue? {
+            shadow_collector_macro_block_value(expansion_arena, block_expr_id, aggregate, source)
+          },
           macro_source: macro_source,
           macro_source_path: macro_stat_path
         )
@@ -8459,6 +8462,24 @@ module Adamas
             )
           end
         end
+      end
+
+      private def shadow_collector_macro_block_value(
+        arena : Frontend::ArenaLike,
+        block_id : Frontend::ExprId,
+        aggregate : Semantic::CompileShadowAggregate?,
+        fallback_source : String = ""
+      ) : Semantic::MacroValue?
+        return nil if block_id.invalid? || block_id.index < 0 || block_id.index >= arena.size
+        block_node = arena[block_id]
+        return nil unless block_node.is_a?(Frontend::BlockNode)
+        block_source = if agg = aggregate
+                         agg.unit_for(block_id).try(&.source)
+                       else
+                         fallback_source
+                       end
+        block_source ||= fallback_source
+        Semantic::MacroBlockValue.from_ast(block_id, arena, block_source)
       end
 
       private def shadow_collector_macro_block_source(

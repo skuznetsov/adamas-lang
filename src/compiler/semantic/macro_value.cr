@@ -1258,6 +1258,24 @@ module Adamas
         end
       end
 
+      # A caller-owned source AST node used by macro Block#body and
+      # Expressions#expressions. The arena identity is retained; source text
+      # only supplies faithful macro interpolation for this exact node.
+      class MacroSourceNodeValue < MacroNodeValue
+        def initialize(
+          node_id : Frontend::ExprId,
+          arena : Frontend::ArenaLike,
+          @source_text : String,
+          string_pool : Frontend::StringPool? = nil
+        )
+          super(node_id, arena, string_pool)
+        end
+
+        def to_macro_output : String
+          @source_text
+        end
+      end
+
       # Array value
       class MacroArrayValue < MacroValue
         getter elements : Array(MacroValue)
@@ -1362,6 +1380,149 @@ module Adamas
 
         def each_with_index(&block : MacroValue, Int32 ->)
           @elements.each_with_index { |e, i| block.call(e, i) }
+        end
+      end
+
+      # Crystal's syntax AST represents an empty block body with Nop.
+      class MacroNopValue < MacroValue
+        def truthy? : Bool
+          false
+        end
+
+        def call_method(name : String, args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : MacroValue
+          return MacroBoolValue.new(true) if name == "nil?"
+          super
+        end
+
+        def to_macro_output : String
+          ""
+        end
+
+        def class_name : String
+          "Nop"
+        end
+      end
+
+      # A multi-expression block body. Crystal collapses a one-expression
+      # body to that expression, so this value is used only for two or more.
+      class MacroExpressionsValue < MacroValue
+        getter expressions : MacroArrayValue
+
+        def initialize(@source_text : String, expressions : Array(MacroValue))
+          @expressions = MacroArrayValue.new(expressions)
+        end
+
+        def to_macro_output : String
+          @source_text
+        end
+
+        def class_name : String
+          "Expressions"
+        end
+
+        def call_method(name : String, args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : MacroValue
+          return @expressions if name == "expressions"
+          super
+        end
+      end
+
+      # The actual caller block AST value bound to a macro's &block parameter.
+      class MacroBlockValue < MacroValue
+        getter body : MacroValue
+        getter args : MacroArrayValue
+        getter splat_index : MacroValue
+
+        # Materialize a caller BlockNode only in the arena that owns its ExprIds.
+        # Source text is optional and used only for faithful interpolation.
+        def self.from_ast(
+          block_id : Frontend::ExprId,
+          arena : Frontend::ArenaLike,
+          source : String? = nil,
+          string_pool : Frontend::StringPool? = nil
+        ) : MacroBlockValue?
+          return nil if block_id.invalid? || block_id.index < 0 || block_id.index >= arena.size
+          block_node = arena[block_id]
+          return nil unless block_node.is_a?(Frontend::BlockNode)
+
+          body_values = [] of MacroValue
+          block_node.body.each do |expr_id|
+            source_text = source.try { |text| source_text_for_expr(expr_id, arena, text) }
+            if source_text && !source_text.empty?
+              body_values << MacroSourceNodeValue.new(expr_id, arena, source_text, string_pool).as(MacroValue)
+            else
+              body_values << MacroNodeValue.new(expr_id, arena, string_pool).as(MacroValue)
+            end
+          end
+
+          body_source = ""
+          unless block_node.body.empty?
+            body_span = Frontend::Span.cover_all(block_node.body.map { |expr_id| arena[expr_id].span })
+            body_source = source.try { |text| source_text_for_span(body_span, text) } || ""
+          end
+          body_value = case body_values.size
+                       when 0
+                         MacroNopValue.new.as(MacroValue)
+                       when 1
+                         body_values[0]
+                       else
+                         MacroExpressionsValue.new(body_source, body_values).as(MacroValue)
+                       end
+
+          parameters = block_node.params || [] of Frontend::Parameter
+          block_args = parameters.map do |parameter|
+            MacroIdValue.new(parameter.name.try { |name| String.new(name) } || "").as(MacroValue)
+          end
+          splat_index = parameters.index { |parameter| parameter.is_splat }
+          splat_value = if index = splat_index
+                          MacroNumberValue.new(index.to_i64).as(MacroValue)
+                        else
+                          MacroNilLiteralValue.new.as(MacroValue)
+                        end
+
+          block_source = source.try { |text| source_text_for_span(block_node.span, text) } || ""
+          MacroBlockValue.new(block_source, body_value, MacroArrayValue.new(block_args), splat_value)
+        end
+
+        private def self.source_text_for_expr(expr_id : Frontend::ExprId, arena : Frontend::ArenaLike, source : String) : String?
+          return nil if expr_id.invalid? || expr_id.index < 0 || expr_id.index >= arena.size
+          source_text_for_span(arena[expr_id].span, source)
+        end
+
+        private def self.source_text_for_span(span : Frontend::Span, source : String) : String?
+          start = span.start_offset
+          finish = span.end_offset
+          return nil if start < 0 || finish <= start || start >= source.bytesize
+          finish = source.bytesize if finish > source.bytesize
+          source.byte_slice(start, finish - start)
+        end
+
+        def initialize(
+          @source_text : String,
+          @body : MacroValue,
+          @args : MacroArrayValue,
+          @splat_index : MacroValue
+        )
+        end
+
+        def to_macro_output : String
+          @source_text
+        end
+
+        def class_name : String
+          "Block"
+        end
+
+        def call_method(name : String, args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : MacroValue
+          case name
+          when "body"
+            @body
+          when "args"
+            @args
+          when "splat_index"
+            @splat_index
+          else
+            super
+          end
         end
       end
 

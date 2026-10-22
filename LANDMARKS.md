@@ -21209,3 +21209,36 @@ parenthesized raise expressions and super splats). Do not infer a compiled
 application percentage from focused regressions. Refresh after declaration,
 branch snapshot, block lowering or inlining changes. Revert this HIR delta and
 the ffi_out_lexical_scope regression together.
+
+
+### Macro block arguments are source AST values, not truthy flags (2026-10-21)
+The parser discarded the & prefix of macro parameters, and expansion fabricated
+a Boolean for a caller block. Source spawn also took a separate syntax/lowering
+path that dropped source arguments and bypassed macro lookup. Parse spawn as an
+ordinary call, preserve the block declaration kind, and resolve the actual Block
+once through an arena-owning provider in HIR, collection and shadow expansion.
+No provider or wrong node kind is an expansion error.
+
+Crystal binds an absent block to falsey, nil-like Nop; an empty Block body is
+also Nop. Preserve single expressions versus Expressions, block args and splat
+index. Install the legacy block alias only when ordinary argument binding has
+not already occupied that name, including *block and **block. Permit one
+trailing &callback after **kwargs without admitting ordinary later parameters.
+
+DoD: regression_tests/macro_block_source_value_repro.sh <candidate>, with the
+original Crystal executable and fresh MACRO_BLOCK_OUTPUT_DIR configured.
+Sealed11450 passes all nine runtime positives and five no-executable source
+rejections against pinned Crystal 1.20.1 in run11443. Run11444 also preserves
+the five runtime and four rejection command-statement guards. Run11426 rejected
+the earlier candidate on absent-block semantics; run11429 exposed the remaining
+**kwargs parser rejection. Scoped adversary ROBUST for these concrete matrices.
+All compiler and oracle inputs were frozen before and after qualification.
+
+Evidence: OUT/lavin114{26,29,38,39,42,43,44,45} under
+/Users/sergey/Projects/Adamas/sol_help_20261012; host SHA256
+8bd31f6fb67d337a2b353f288c4485d0781f6fbb7d326a4f2dd7ef587097a340.
+Refresh after parser parameter, macro lookup/value, or arena ownership changes.
+Revert the six compiler-file delta and this macro regression together.
+Cross-unit arena aliasing and the AST kind of macro rest arguments need their
+own discriminators. Full prelude, Proc.new contracts, unchanged LavinMQ runtime
+and spec parity, and bootstrap are not certified by these focused regressions.

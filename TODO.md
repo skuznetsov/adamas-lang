@@ -21738,3 +21738,19 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - Scope: parser statement boundaries and recovery only. Proc.new contracts,
   generic spawn/macro block transport, full LavinMQ compilation, test parity,
   and a fresh bootstrap remain open. No application or stdlib changes.
+
+
+### Source-backed macro blocks and ordinary spawn parsing (2026-10-21)
+- [x] Preserve `&parameter` declarations, bind the caller-owned Block AST in its
+  arena, and resolve source spawn through ordinary macro/method lookup.
+- [x] Represent absent blocks and empty bodies with Nop; retain single versus
+  multiple body expressions and preserve ordinary/rest/double-splat arguments
+  named block alongside an independently named callback.
+- [x] Permit a trailing block parameter after **kwargs while rejecting ordinary
+  parameters after either **kwargs or that block parameter.
+- [x] Sealed11450 passes nine exact-output programs and five source rejections
+  against Crystal 1.20.1 in run11443. The five-positive/four-negative command
+  statement-boundary regression also passes on that source in run11444.
+- [ ] Audit cross-unit arena identity and rest-argument AST kind separately; the
+  concrete matrix does not certify all macro evaluation. Proc.new typing,
+  full prelude, unchanged LavinMQ parity and fresh bootstrap remain open.
