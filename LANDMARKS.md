@@ -21272,3 +21272,48 @@ Refresh after command argument, postfix, shorthand, or recovery changes.
 Revert the parser delta and member_shorthand_command_boundary regression
 together. Explicit super binding, Proc.new typing, full prelude, unchanged
 LavinMQ runtime/spec parity and fresh bootstrap remain open.
+
+
+### Proc construction consumes source contracts before ABI adaptation (2026-10-22)
+The parser flattened tuple-pattern leaves into callback inputs and discarded
+nested bindings. That changed source arity before typing could check it.
+Retain one input slot per top-level block parameter and carry recursive tuple
+and splat patterns through the AST, cache format, macro values and lowering.
+Reject duplicate names and invalid splat declarations at the source boundary.
+Use the same explicit arrow output parser for zero and nonzero input counts;
+a following arrow begins its own expression rather than extending a command.
+
+Proc construction also inferred or coerced representation types before source
+contracts were established. Check selected source input and result contracts,
+lexical return ownership, flow and capture binding before ABI conversion.
+Preserve declared external types and validate explicit annotations; missing
+type facts cannot be replaced with a permissive result or a fabricated type.
+No application or stdlib files are changed and no type checks are relaxed.
+
+DoD: regression_tests/proc_source_contract_repro.sh <candidate>, with
+ORIGINAL_CRYSTAL_BIN and CRYSTAL_PATH pinned to the reference toolchain.
+Sealed11863 passes all 164 original and 164 candidate cases in 14 suites in
+run11877. Positives require exact output and clean safe-run records; negatives
+require semantic rejection and no executable. Five exception cases stop at
+semantic/HIR output. Additional guards: 27 shared-parser controls in run11879,
+11 member/shorthand controls in run11883, and six parser/cache specs in 11875.
+The integrated compiler sources and executable fixture/runner bytes match the
+qualified sealed inputs; only the regression README and its checksums change
+to document the portable entry point, correct the case count and state scope.
+
+Scoped adversary verdict: ROBUST for those observed matrices. This does not
+certify all Proc semantics: later original-first probes expose source metaclass
+identity loss, dynamic class-valued capture dispatch and exact numeric Proc#call
+admission. Nullable C Proc interop has separate ABI obligations. The original
+compiler itself asserts in codegen for exact nullable C Proc inputs in run11949;
+that invalidates those fixtures as positive compatibility oracles, not the
+separate nullable return-only question. LavinMQ and bootstrap remain open.
+
+Evidence: source_s1_lavin11863_proc_annotation_source_identity and
+OUT/lavin118{72,75,77,78,79,83} under
+/Users/sergey/Projects/Adamas/sol_help_20261012. Source manifest SHA256:
+7e19e711bface160e3f999502498d58936a39b7c3916578fb4c75d0be55d77fb.
+Host SHA256: 34da4535fff0722845228faf75e191b242645c07f72d11211710f08da6f85c07.
+Refresh after parser binding, AST/cache representation, annotation lookup,
+capture flow or Proc source/ABI admission changes. Revert the eight compiler
+file delta, parser cache spec and proc_source_contract regression together.

@@ -1,0 +1,1 @@
+argument #5 of 'NativeCallback.bsearch' must be Proc(Pointer(Void), Pointer(Void), Int32), not Proc(Pointer(Void), Pointer(Void), Bool)

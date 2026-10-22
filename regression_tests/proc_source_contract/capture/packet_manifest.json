@@ -1,0 +1,17 @@
+{
+  "positives": {
+    "branch_callback_write": "Branch-valued callback body writes Int32 into an initially UInt8 captured local; post-call overload reports the resulting type.",
+    "call_valued_initial_binding": "A source method call initializes the captured local before Proc.new writes an Int32 value.",
+    "method_parameter_capture_write": "A Proc.new callback assigns an Int32 value into a captured UInt8 method parameter.",
+    "multiline_main_owner_capture": "The top-level owner contains intervening typed local assignments around a Proc.new callback, testing whole-owner collection rather than adjacency.",
+    "nested_callback_write": "An inner Proc callback writes a parameter value into a local captured by the enclosing Proc callback.",
+    "ordinary_block_parameter_shadow": "An ordinary method block parameter named like the outer UInt8 local is reassigned; the outer local must remain UInt8.",
+    "parenthesized_call_initial_binding": "Parenthesized initial call preserves callback write constraints.",
+    "copied_call_initial_binding": "Initial value copied from a late-typed call preserves callback write constraints.",
+    "conditional_call_initial_binding": "Conditional call-valued initializer preserves callback write constraints."
+  },
+  "scope": "Lexical capture ownership and mutation; original-first runtime comparison is required.",
+  "limitations": [
+    "Focused no-prelude controls do not establish arbitrary capture inference or whole-application parity."
+  ]
+}

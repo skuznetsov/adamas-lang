@@ -121,7 +121,7 @@ module Adamas
         MAGIC   = "CV2A"
         # Bump this version whenever the parser, AST format, or cache header changes
         # to invalidate all cached ASTs
-        VERSION = 7_u32
+        VERSION = 8_u32
 
         getter arena : Frontend::AstArena
         getter roots : Array(Frontend::ExprId)
@@ -882,6 +882,12 @@ module Adamas
             write_span(io, block_node.span)
             write_parameters(io, block_node.params, string_table)
             write_expr_id_array(io, block_node.body)
+            patterns = block_node.unpacks
+            io.write_bytes((patterns.try(&.size) || 0).to_u32, IO::ByteFormat::LittleEndian)
+            patterns.try &.each do |slot, pattern|
+              io.write_bytes(slot, IO::ByteFormat::LittleEndian)
+              write_expr_id(io, pattern)
+            end
 
           when Frontend::NodeKind::ProcLiteral
             proc_node = node.as(Frontend::ProcLiteralNode)
@@ -1761,7 +1767,16 @@ module Adamas
             span = read_span(io)
             params = read_parameters(io, strings, pool)
             body = read_expr_id_array(io)
-            Frontend::BlockNode.new(span, params, body)
+            pattern_count = io.read_bytes(UInt32, IO::ByteFormat::LittleEndian)
+            patterns : Array(Tuple(Int32, Frontend::ExprId))? = nil
+            if pattern_count > 0
+              patterns = Array(Tuple(Int32, Frontend::ExprId)).new(pattern_count.to_i)
+              pattern_count.times do
+                slot = io.read_bytes(Int32, IO::ByteFormat::LittleEndian)
+                patterns << {slot, read_expr_id(io)}
+              end
+            end
+            Frontend::BlockNode.new(span, params, body, patterns)
 
           when .proc_literal_node?
             span = read_span(io)

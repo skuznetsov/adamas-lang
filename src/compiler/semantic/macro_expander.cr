@@ -2609,33 +2609,10 @@ module Adamas
           end
         end
 
-        # Evaluate index expression: ann[:key] or ann[0]
+        # Output and nested evaluation must use the same receiver/index AST.
+        # A chain such as block.args[0] is not a bare variable receiver.
         private def evaluate_index_expression(node : Frontend::IndexNode, context : Context) : String
-          obj = @arena[node.object]
-
-          # Get base object as MacroValue
-          base_value : MacroValue? = nil
-          if obj.is_a?(Frontend::IdentifierNode)
-            name = Frontend.node_literal_string(obj)
-            if name
-              base_value = context.variables[name]?
-            end
-          end
-
-          unless base_value
-            return ""
-          end
-
-          # Get first index (we only support single index for now)
-          index_expr_id = node.indexes.first?
-          return "" unless index_expr_id
-
-          # Get index as MacroValue
-          index_value = expr_to_macro_value(index_expr_id)
-
-          # Call [] method on MacroValue
-          result = base_value.call_method("[]", [index_value], nil)
-          result.to_macro_output
+          evaluate_index_to_macro_value(node, context).to_macro_output
         end
 
         private def evaluate_index_to_macro_value(node : Frontend::IndexNode, context : Context) : MacroValue

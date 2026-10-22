@@ -1135,6 +1135,7 @@ module Adamas::HIR
     getter extern_name : String # The real C function name (e.g., "puts", "malloc")
     getter args : Array(ValueId)
     getter varargs : Bool
+    getter noreturn : Bool
 
     def initialize(
       id : ValueId,
@@ -1142,6 +1143,7 @@ module Adamas::HIR
       @extern_name : String,
       @args : Array(ValueId) = [] of ValueId,
       @varargs : Bool = false,
+      @noreturn : Bool = false,
     )
       super(id, type)
     end
@@ -2146,6 +2148,7 @@ module Adamas::HIR
     getter return_type : TypeRef
     getter varargs : Bool
     getter parameter_names : Array(String?)
+    getter noreturn : Bool
 
     def initialize(
       @name,
@@ -2155,6 +2158,7 @@ module Adamas::HIR
       @return_type,
       @varargs = false,
       parameter_names : Array(String?)? = nil,
+      @noreturn = false,
     )
       @parameter_names = parameter_names || [] of String?
     end
@@ -2217,7 +2221,7 @@ module Adamas::HIR
       @string_intern = {} of String => StringId
       @link_libraries = [] of String
       @extern_functions = [] of ExternFunction
-      @extern_function_names = Set(String).new
+      @extern_function_names = Set(Tuple(String?, String)).new
       @extern_functions_by_any_name = {} of String => ExternFunction
       @extern_functions_by_lib_and_name = {} of Tuple(String, String) => ExternFunction
       @extern_globals = [] of ExternGlobal
@@ -2255,7 +2259,7 @@ module Adamas::HIR
       @string_intern = {} of String => StringId
       @link_libraries = [] of String
       @extern_functions = [] of ExternFunction
-      @extern_function_names = Set(String).new
+      @extern_function_names = Set(Tuple(String?, String)).new
       @extern_functions_by_any_name = {} of String => ExternFunction
       @extern_functions_by_lib_and_name = {} of Tuple(String, String) => ExternFunction
       @extern_globals = [] of ExternGlobal
@@ -2459,9 +2463,12 @@ module Adamas::HIR
     end
 
     def add_extern_function(func : ExternFunction)
-      # Don't add duplicates (O(1) with Set instead of O(N) scan)
-      return if @extern_function_names.includes?(func.real_name)
-      @extern_function_names.add(func.real_name)
+      # Crystal bindings have source identity independent of their C symbol.
+      # Multiple aliases or libraries can bind one symbol with their own names
+      # and parameter contracts; retain each in both lookup maps and the list.
+      binding_key = {func.lib_name, func.name}
+      return if @extern_function_names.includes?(binding_key)
+      @extern_function_names.add(binding_key)
       @extern_functions << func
       @extern_functions_by_any_name[func.name] ||= func
       @extern_functions_by_any_name[func.real_name] ||= func

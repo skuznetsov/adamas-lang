@@ -2023,7 +2023,6 @@ module Adamas
                              Token::Kind::Pipe,
                              Token::Kind::Comma,
                              Token::Kind::ColonColon,
-                             Token::Kind::ThinArrow,
                              Token::Kind::LParen,
                              Token::Kind::LBracket,
                              Token::Kind::LBrace,
@@ -6063,133 +6062,55 @@ module Adamas
           advance # consume { or do
           skip_trivia
 
-          # Parse optional block parameters: |x, y|, supports splat: |*kv|
+          # Parameters retain their top-level arity. Destructuring is a
+          # separate recursive pattern, never additional callback inputs.
           params_b = ParameterBuffer.new(2)
+          unpacks : Array(Tuple(Int32, ExprId))? = nil
           if current_token.kind == Token::Kind::Pipe
-            advance # consume opening |
+            advance
             skip_trivia
-
-            # Parse parameter list
-            block_param_prev_index = -1
+            block_param_names = Set(String).new
+            block_splat_seen = false
+            block_param_index = 0
             loop do
-              # Guard: break if no token progress
-              if block_param_prev_index == @index
-                break
-              end
-              block_param_prev_index = @index
-
+              break if current_token.kind == Token::Kind::Pipe
               is_splat = false
-              is_double_splat = false
-
-              # Optional splat markers
               if current_token.kind == Token::Kind::StarStar
-                is_double_splat = true
-                advance
-                skip_trivia
+                @diagnostics << Diagnostic.new("unexpected double splat in block parameter", current_token.span)
+                return PREFIX_ERROR
               elsif current_token.kind == Token::Kind::Star
+                if block_splat_seen
+                  @diagnostics << Diagnostic.new("splat block parameter already specified", current_token.span)
+                  return PREFIX_ERROR
+                end
+                block_splat_seen = true
                 is_splat = true
                 advance
                 skip_trivia
               end
 
-              # Tuple destructuring: |(a, b)|, |(a, (b, c))|, |(a, *b, c)|, |(a, b, )|
               if current_token.kind == Token::Kind::LParen
-                advance
-                skip_trivia
-                # Track paren nesting depth for nested destructuring
-                destruct_depth = 1
-                loop do
-                  # Handle trailing comma: |(a, b, )|
-                  break if current_token.kind == Token::Kind::RParen
-
-                  # Handle splat inside destructuring: |(a, *b, c)|
-                  inner_is_splat = false
-                  inner_is_double_splat = false
-                  if current_token.kind == Token::Kind::StarStar
-                    inner_is_double_splat = true
-                    advance
-                    skip_trivia
-                  elsif current_token.kind == Token::Kind::Star
-                    inner_is_splat = true
-                    advance
-                    skip_trivia
-                  end
-
-                  # Handle nested destructuring: |(a, (b, c))|
-                  if current_token.kind == Token::Kind::LParen
-                    # Consume nested parens and their contents as a "group"
-                    # For now, treat nested destructuring as a single unnamed param
-                    nested_start = current_token
-                    nested_depth = 1
-                    advance # consume (
-                    while nested_depth > 0 && current_token.kind != Token::Kind::EOF
-                      if current_token.kind == Token::Kind::LParen
-                        nested_depth += 1
-                      elsif current_token.kind == Token::Kind::RParen
-                        nested_depth -= 1
-                      end
-                      advance if nested_depth > 0
-                    end
-                    # After consuming nested parens, create a placeholder param
-                    # The actual nested names were skipped - Crystal compiler handles this specially
-                    advance if current_token.kind == Token::Kind::RParen # consume final )
-                    skip_trivia
-                  else
-                    name_token = current_token
-                    unless token_can_be_arg_name?(name_token)
-                      emit_unexpected(name_token)
-                      return PREFIX_ERROR
-                    end
-                    # Create simple parameter for destructured identifier
-                    param_name = name_token.slice
-                    param_name_span = name_token.span
-                    param_span = name_token.span
-                    advance
-                    params_b << Parameter.new(
-                      param_name,
-                      nil,
-                      nil,
-                      nil,
-                      param_span,
-                      param_name_span,
-                      nil,
-                      nil,
-                      nil,
-                      inner_is_splat || is_splat,
-                      inner_is_double_splat || is_double_splat,
-                      false,
-                      false
-                    )
-                    skip_trivia
-                  end
-
-                  break if current_token.kind == Token::Kind::RParen
-                  unless current_token.kind == Token::Kind::Comma
-                    emit_unexpected(current_token)
-                    return PREFIX_ERROR
-                  end
-                  advance
-                  skip_trivia
-                end
-                advance # consume )
-                skip_trivia
-                # After tuple destructure, continue to comma or pipe handling below
-                # (skip type annotation logic for destructured names)
-                # fallthrough to trailing comma/pipe handling
+                pattern = parse_block_unpack_pattern(block_param_names)
+                return PREFIX_ERROR if pattern.invalid?
+                pattern_span = @arena[pattern].span
+                # '$' cannot occur in a user local name, so this binding cannot
+                # collide with either a surrounding local or a pattern leaf.
+                internal_name = @string_pool.intern("__block_unpack$#{block_param_index}".to_slice)
+                params_b << Parameter.new(internal_name, nil, nil, nil,
+                  pattern_span, pattern_span, nil, nil, nil, is_splat, false, false, false)
+                (unpacks ||= [] of Tuple(Int32, ExprId)) << {block_param_index, pattern}
               else
                 name_token = current_token
-                unless token_can_be_arg_name?(name_token)
+                unless block_binding_name_token?(name_token)
                   emit_unexpected(name_token)
                   return PREFIX_ERROR
                 end
-
-                param_name = name_token.slice # TIER 2.1: Zero-copy slice
+                return PREFIX_ERROR unless register_block_binding_name(name_token, block_param_names)
+                param_name = name_token.slice
                 param_name_span = name_token.span
                 param_span = name_token.span
                 advance
                 skip_whitespace_and_optional_newlines
-
-                # Support optional type annotation in block params: |x : Type|
                 type_annotation : Slice(UInt8)? = nil
                 param_type_span : Span? = nil
                 if current_token.kind == Token::Kind::Colon
@@ -6199,38 +6120,21 @@ module Adamas
                   parsed_type = parse_type_annotation
                   unless parsed_type.nil?
                     type_annotation = parsed_type
-                    type_end_token = previous_token
-                    if type_end_token
+                    if type_end_token = previous_token
                       param_type_span = type_start_token.span.cover(type_end_token.span)
-                      param_span = param_span.cover(param_type_span)
                     else
                       param_type_span = type_start_token.span
-                      param_span = param_span.cover(param_type_span)
                     end
+                    param_span = param_span.cover(param_type_span)
                   else
                     emit_unexpected(type_start_token)
                   end
                   skip_trivia
                 end
-
-                params_b << Parameter.new(
-                  param_name,
-                  nil,             # Phase 103K: no external name for block params
-                  type_annotation, # optional type annotation
-                  nil,             # no default value
-                  param_span,      # full span covers name and optional type
-                  param_name_span, # name span
-                  nil,             # Phase 103K: no external name span
-                  param_type_span, # optional type span
-                  nil,             # no default span
-                  is_splat,
-                  is_double_splat,
-                  false, # is_block flag: block params are not '&'
-                  false  # is_instance_var
-                )
+                params_b << Parameter.new(param_name, nil, type_annotation, nil,
+                  param_span, param_name_span, nil, param_type_span, nil, is_splat, false, false, false)
               end
-
-              # Check for comma or closing |
+              block_param_index += 1
               if current_token.kind == Token::Kind::Comma
                 advance
                 skip_trivia
@@ -6241,8 +6145,7 @@ module Adamas
                 return PREFIX_ERROR
               end
             end
-
-            advance # consume closing |
+            advance
             skip_trivia
           end
 
@@ -6349,7 +6252,8 @@ module Adamas
           block_id = @arena.add_typed(BlockNode.new(
             block_span,
             params_b.to_a,
-            block_body_ids
+            block_body_ids,
+            unpacks
           ))
 
           if ENV.has_key?("DEBUG_BLOCK_STORE")
@@ -6364,6 +6268,78 @@ module Adamas
           end
 
           block_id
+        end
+
+        private def block_binding_name_token?(token : Token) : Bool
+          token.kind == Token::Kind::Identifier || is_keyword_identifier?(token)
+        end
+
+        private def register_block_binding_name(token : Token, names : Set(String)) : Bool
+          name = String.new(token.slice)
+          return true if name == "_"
+          if names.includes?(name)
+            @diagnostics << Diagnostic.new("duplicated block parameter name: #{name}", token.span)
+            return false
+          end
+          names << name
+          true
+        end
+
+        private def parse_block_unpack_pattern(names : Set(String)) : ExprId
+          start_token = current_token
+          advance # '('
+          skip_trivia
+          elements = [] of ExprId
+          splat_seen = false
+          loop do
+            splat_token : Token? = nil
+            if current_token.kind == Token::Kind::StarStar
+              @diagnostics << Diagnostic.new("unexpected double splat in block parameter", current_token.span)
+              return PREFIX_ERROR
+            elsif current_token.kind == Token::Kind::Star
+              if splat_seen
+                @diagnostics << Diagnostic.new("splat block parameter already specified", current_token.span)
+                return PREFIX_ERROR
+              end
+              splat_seen = true
+              splat_token = current_token
+              advance
+              skip_trivia
+            end
+
+            element = if current_token.kind == Token::Kind::LParen
+                        parse_block_unpack_pattern(names)
+                      else
+                        name_token = current_token
+                        unless block_binding_name_token?(name_token)
+                          emit_unexpected(name_token)
+                          return PREFIX_ERROR
+                        end
+                        return PREFIX_ERROR unless register_block_binding_name(name_token, names)
+                        advance
+                        @arena.add_typed(IdentifierNode.new(name_token.span, name_token.slice))
+                      end
+            return PREFIX_ERROR if element.invalid?
+            if token = splat_token
+              element = @arena.add_typed(SplatNode.new(token.span.cover(@arena[element].span), element))
+            end
+            elements << element
+            skip_trivia
+            if current_token.kind == Token::Kind::Comma
+              advance
+              skip_trivia
+              break if current_token.kind == Token::Kind::RParen
+            elsif current_token.kind == Token::Kind::RParen
+              break
+            else
+              emit_unexpected(current_token)
+              return PREFIX_ERROR
+            end
+          end
+          end_token = current_token
+          advance # ')'
+          skip_trivia
+          @arena.add_typed(TupleLiteralNode.new(start_token.span.cover(end_token.span), elements))
         end
 
         # Phase 74: Parse proc literal: ->(x : Int32) : Int32 { x + 1 }
@@ -10581,7 +10557,9 @@ module Adamas
             # Phase 74: Proc literal (->(x) { ... })
             # Also handle proc pointer shorthand: ->Type.method
             nxt = peek_next_non_trivia
-            if nxt.kind.in?(Token::Kind::LParen, Token::Kind::Do, Token::Kind::LBrace)
+            # A return annotation can start a zero-argument Proc literal.
+            # Keep it on the same literal path as parenthesized parameters.
+            if nxt.kind.in?(Token::Kind::LParen, Token::Kind::Do, Token::Kind::LBrace, Token::Kind::Colon)
               return parse_proc_literal
             end
 

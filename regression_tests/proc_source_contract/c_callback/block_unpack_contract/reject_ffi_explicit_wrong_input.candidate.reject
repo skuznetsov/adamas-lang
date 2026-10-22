@@ -1,0 +1,1 @@
+argument #2 of 'NativeCallback.signal' must be Proc(Int32, Void), not Proc(UInt8, UInt8)

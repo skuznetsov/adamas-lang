@@ -1,0 +1,1 @@
+argument #2 of 'NativeCallback#signal' must be Proc(Int32, Nil), not Proc(Int32, Int32, Int32)

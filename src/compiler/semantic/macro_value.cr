@@ -1426,6 +1426,40 @@ module Adamas
         end
       end
 
+      # A normalized AST node synthesized for Crystal's block-unpack pass.
+      # It carries the small node fields macros can inspect without mutating the
+      # caller's arena or exposing the parser-only unpack parameter name.
+      class MacroSyntheticNodeValue < MacroValue
+        getter fields : Hash(String, MacroValue)
+
+        def initialize(
+          @kind_name : String,
+          @source_text : String,
+          @fields : Hash(String, MacroValue) = {} of String => MacroValue
+        )
+        end
+
+        def to_macro_output : String
+          @source_text
+        end
+
+        def class_name : String
+          @kind_name
+        end
+
+        def call_method(name : String, args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : MacroValue
+          if field = @fields[name]?
+            return field
+          end
+          case name
+          when "nil?", "==", "!=", "stringify", "id", "class_name", "is_a?"
+            macro_node_call_method(name, args, named_args)
+          else
+            raise ArgumentError.new("undefined macro method '#{@kind_name}##{name}'")
+          end
+        end
+      end
+
       # The actual caller block AST value bound to a macro's &block parameter.
       class MacroBlockValue < MacroValue
         getter body : MacroValue
@@ -1438,7 +1472,10 @@ module Adamas
           block_id : Frontend::ExprId,
           arena : Frontend::ArenaLike,
           source : String? = nil,
-          string_pool : Frontend::StringPool? = nil
+          string_pool : Frontend::StringPool? = nil,
+          body_value_provider : Proc(Frontend::ExprId, MacroValue)? = nil,
+          body_source_override : String? = nil,
+          block_source_override : String? = nil
         ) : MacroBlockValue?
           return nil if block_id.invalid? || block_id.index < 0 || block_id.index >= arena.size
           block_node = arena[block_id]
@@ -1446,32 +1483,63 @@ module Adamas
 
           body_values = [] of MacroValue
           block_node.body.each do |expr_id|
-            source_text = source.try { |text| source_text_for_expr(expr_id, arena, text) }
-            if source_text && !source_text.empty?
-              body_values << MacroSourceNodeValue.new(expr_id, arena, source_text, string_pool).as(MacroValue)
+            if provider = body_value_provider
+              body_values << provider.call(expr_id)
             else
-              body_values << MacroNodeValue.new(expr_id, arena, string_pool).as(MacroValue)
+              source_text = source.try { |text| source_text_for_expr(expr_id, arena, text) }
+              if source_text && !source_text.empty?
+                body_values << MacroSourceNodeValue.new(expr_id, arena, source_text, string_pool).as(MacroValue)
+              else
+                body_values << MacroNodeValue.new(expr_id, arena, string_pool).as(MacroValue)
+              end
             end
           end
 
-          body_source = ""
-          unless block_node.body.empty?
-            body_span = Frontend::Span.cover_all(block_node.body.map { |expr_id| arena[expr_id].span })
-            body_source = source.try { |text| source_text_for_span(body_span, text) } || ""
+          body_source = body_source_override || begin
+            if block_node.body.empty?
+              ""
+            else
+              body_span = Frontend::Span.cover_all(block_node.body.map { |expr_id| arena[expr_id].span })
+              source.try { |text| source_text_for_span(body_span, text) } || ""
+            end
           end
-          body_value = case body_values.size
-                       when 0
-                         MacroNopValue.new.as(MacroValue)
-                       when 1
-                         body_values[0]
-                       else
-                         MacroExpressionsValue.new(body_source, body_values).as(MacroValue)
-                       end
 
           parameters = block_node.params || [] of Frontend::Parameter
           block_args = parameters.map do |parameter|
             MacroIdValue.new(parameter.name.try { |name| String.new(name) } || "").as(MacroValue)
           end
+          assignments = [] of MacroValue
+          assignment_sources = [] of String
+          temp_names = {} of Int32 => String
+          if unpacks = block_node.unpacks
+            projection = project_unpack_arguments(block_id, arena, block_node, parameters, block_args, unpacks, source)
+            return nil unless projection
+            block_args = projection[0]
+            assignments = projection[1]
+            assignment_sources = projection[2]
+            temp_names = projection[3]
+            unless assignments.empty?
+              body_values = assignments + body_values
+              generated_body_source = assignment_sources.join("
+")
+              body_source = body_source.empty? ? generated_body_source : "#{generated_body_source}
+#{body_source}"
+            end
+          end
+
+          body_value = if assignments.empty?
+                         case body_values.size
+                         when 0
+                           MacroNopValue.new.as(MacroValue)
+                         when 1
+                           body_values[0]
+                         else
+                           MacroExpressionsValue.new(body_source, body_values).as(MacroValue)
+                         end
+                       else
+                         MacroExpressionsValue.new(body_source, body_values).as(MacroValue)
+                       end
+
           splat_index = parameters.index { |parameter| parameter.is_splat }
           splat_value = if index = splat_index
                           MacroNumberValue.new(index.to_i64).as(MacroValue)
@@ -1479,8 +1547,252 @@ module Adamas
                           MacroNilLiteralValue.new.as(MacroValue)
                         end
 
-          block_source = source.try { |text| source_text_for_span(block_node.span, text) } || ""
+          raw_block_source = block_source_override || source.try { |text| source_text_for_span(block_node.span, text) } || ""
+          block_source = if assignments.empty?
+                           raw_block_source
+                         else
+                           normalize_block_source(block_id, arena, block_node, source, raw_block_source, temp_names, assignment_sources)
+                         end
           MacroBlockValue.new(block_source, body_value, MacroArrayValue.new(block_args), splat_value)
+        end
+
+        private def self.project_unpack_arguments(
+          block_id : Frontend::ExprId,
+          arena : Frontend::ArenaLike,
+          block_node : Frontend::BlockNode,
+          parameters : Array(Frontend::Parameter),
+          original_args : Array(MacroValue),
+          unpacks : Array(Tuple(Int32, Frontend::ExprId)),
+          source : String?
+        ) : Tuple(Array(MacroValue), Array(MacroValue), Array(String), Hash(Int32, String))?
+          names = [] of String
+          seen_slots = [] of Int32
+          unpacks.each do |slot, pattern_id|
+            return nil if slot < 0 || slot >= parameters.size || seen_slots.includes?(slot)
+            return nil unless valid_unpack_pattern?(pattern_id, arena, names)
+            seen_slots << slot
+          end
+
+          projected_args = original_args.dup
+          used_names = names.dup
+          parameters.each do |parameter|
+            name = parameter.name.try { |slice| String.new(slice) } || ""
+            used_names << name unless name.empty? || used_names.includes?(name)
+          end
+
+          temp_names = {} of Int32 => String
+          queue = [] of Tuple(String, Frontend::ExprId)
+          unpacks.each do |slot, pattern_id|
+            temp_name = next_unpack_temp_name(arena, block_id, slot, source, used_names)
+            projected_args[slot] = MacroIdValue.new(temp_name).as(MacroValue)
+            temp_names[slot] = temp_name
+            queue << {temp_name, pattern_id}
+          end
+
+          assignments = [] of MacroValue
+          assignment_sources = [] of String
+          while entry = queue.shift?
+            source_name, pattern_id = entry
+            tuple_node = arena[pattern_id]
+            return nil unless tuple_node.is_a?(Frontend::TupleLiteralNode)
+            targets = [] of MacroValue
+            tuple_node.elements.each do |element_id|
+              element_node = arena[element_id]
+              if element_node.is_a?(Frontend::TupleLiteralNode)
+                nested_name = next_unpack_temp_name(arena, block_id, used_names.size, source, used_names)
+                targets << synthetic_unpack_local(nested_name).as(MacroValue)
+                queue << {nested_name, element_id}
+              else
+                target = synthetic_unpack_leaf(element_id, arena, source)
+                return nil unless target
+                targets << target
+              end
+            end
+            value = synthetic_unpack_local(source_name)
+            targets_value = MacroArrayValue.new(targets)
+            values_value = MacroArrayValue.new([value.as(MacroValue)])
+            fields = {
+              "targets" => targets_value.as(MacroValue),
+              "values"  => values_value.as(MacroValue),
+            } of String => MacroValue
+            target_text = targets.map(&.to_macro_output).join(", ")
+            assignment_text = "#{target_text} = #{source_name}"
+            assignments << MacroSyntheticNodeValue.new("MultiAssign", assignment_text, fields).as(MacroValue)
+            assignment_sources << assignment_text
+          end
+
+          {projected_args, assignments, assignment_sources, temp_names}
+        end
+
+        private def self.valid_unpack_pattern?(
+          pattern_id : Frontend::ExprId,
+          arena : Frontend::ArenaLike,
+          names : Array(String)
+        ) : Bool
+          tuple_node = arena[pattern_id]
+          return false unless tuple_node.is_a?(Frontend::TupleLiteralNode)
+          return false if tuple_node.elements.empty?
+          splat_count = 0
+          tuple_node.elements.each do |element_id|
+            element_node = arena[element_id]
+            case element_node
+            when Frontend::IdentifierNode
+              name = String.new(element_node.name)
+              if name != "_"
+                return false if names.includes?(name)
+                names << name
+              end
+            when Frontend::TupleLiteralNode
+              return false unless valid_unpack_pattern?(element_id, arena, names)
+            when Frontend::SplatNode
+              splat_count += 1
+              return false if splat_count > 1
+              splat_node = arena[element_node.expr]
+              return false unless splat_node.is_a?(Frontend::IdentifierNode)
+              name = String.new(splat_node.name)
+              if name != "_"
+                return false if names.includes?(name)
+                names << name
+              end
+            else
+              return false
+            end
+          end
+          true
+        end
+
+        private def self.synthetic_unpack_local(name : String) : MacroSyntheticNodeValue
+          MacroSyntheticNodeValue.new("Var", name)
+        end
+
+        private def self.synthetic_unpack_leaf(
+          expr_id : Frontend::ExprId,
+          arena : Frontend::ArenaLike,
+          source : String?
+        ) : MacroValue?
+          node = arena[expr_id]
+          case node
+          when Frontend::IdentifierNode
+            name = String.new(node.name)
+            if name == "_"
+              MacroSyntheticNodeValue.new("Underscore", "_").as(MacroValue)
+            else
+              synthetic_unpack_local(name).as(MacroValue)
+            end
+          when Frontend::SplatNode
+            inner = arena[node.expr]
+            return nil unless inner.is_a?(Frontend::IdentifierNode)
+            inner_name = String.new(inner.name)
+            inner_value = if inner_name == "_"
+                            MacroSyntheticNodeValue.new("Underscore", "_").as(MacroValue)
+                          else
+                            synthetic_unpack_local(inner_name).as(MacroValue)
+                          end
+            fields = {"exp" => inner_value.as(MacroValue)} of String => MacroValue
+            output = source.try { |text| source_text_for_expr(expr_id, arena, text) } || "*#{inner_value.to_macro_output}"
+            MacroSyntheticNodeValue.new("Splat", output, fields).as(MacroValue)
+          else
+            nil
+          end
+        end
+
+        private def self.next_unpack_temp_name(
+          arena : Frontend::ArenaLike,
+          block_id : Frontend::ExprId,
+          slot : Int32,
+          source : String?,
+          used_names : Array(String)
+        ) : String
+          base = "__adamas_unpack_#{arena.object_id}_#{block_id.index}_#{slot}"
+          candidate = base
+          suffix = 0
+          while used_names.includes?(candidate) || source.try(&.includes?(candidate))
+            suffix += 1
+            candidate = "#{base}_#{suffix}"
+          end
+          used_names << candidate
+          candidate
+        end
+
+        private def self.normalize_block_source(
+          block_id : Frontend::ExprId,
+          arena : Frontend::ArenaLike,
+          block_node : Frontend::BlockNode,
+          source : String?,
+          block_source : String,
+          temp_names : Hash(Int32, String),
+          assignment_sources : Array(String)
+        ) : String
+          return block_source if block_source.empty?
+          full_source = source
+          return block_source unless full_source
+          block_start = block_node.span.start_offset
+          block_finish = block_node.span.end_offset
+          return block_source if block_start < 0 || block_finish <= block_start
+          edits = [] of Tuple(Int32, Int32, String)
+          if unpacks = block_node.unpacks
+            unpacks.each do |slot, pattern_id|
+              next unless temp_name = temp_names[slot]?
+              span = arena[pattern_id].span
+              next if span.start_offset < block_start || span.end_offset > block_finish
+              edits << {span.start_offset - block_start, span.end_offset - block_start, temp_name}
+            end
+          end
+
+          insertion_offset = if first_body = block_node.body.first?
+                               arena[first_body].span.start_offset
+                             else
+                               block_close_offset(block_node.span, full_source)
+                             end
+          if insertion_offset
+            indent = line_indent_before(full_source, insertion_offset)
+            insertion = if block_node.body.empty?
+                          inner_indent = indent.empty? ? "  " : "#{indent}  "
+                          "
+#{inner_indent}#{assignment_sources.join("
+#{inner_indent}")}
+#{indent}"
+                        else
+                          "#{assignment_sources.join("
+#{indent}")}
+#{indent}"
+                        end
+            relative = insertion_offset - block_start
+            edits << {relative, relative, insertion}
+          end
+
+          return block_source if edits.empty?
+          edits.sort_by! { |edit| -edit[0] }
+          result = block_source
+          edits.each do |edit|
+            start_offset, finish_offset, replacement = edit
+            next if start_offset < 0 || finish_offset < start_offset || finish_offset > result.bytesize
+            prefix = result.byte_slice(0, start_offset) || ""
+            suffix = result.byte_slice(finish_offset, result.bytesize - finish_offset) || ""
+            result = prefix + replacement + suffix
+          end
+          result
+        end
+
+        private def self.block_close_offset(span : Frontend::Span, source : String) : Int32?
+          finish = span.end_offset
+          return nil if finish <= 0 || finish > source.bytesize
+          return finish - 1 if source.byte_slice(finish - 1, 1) == "}"
+          return finish - 3 if finish >= 3 && source.byte_slice(finish - 3, 3) == "end"
+          nil
+        end
+
+        private def self.line_indent_before(source : String, offset : Int32) : String
+          return "" if offset < 0 || offset > source.bytesize
+          line_start = offset - 1
+          while line_start >= 0 && source.byte_at(line_start) != 10_u8 && source.byte_at(line_start) != 13_u8
+            line_start -= 1
+          end
+          indent = source.byte_slice(line_start + 1, offset - line_start - 1) || ""
+          indent.each_byte do |byte|
+            return "" unless byte == 32_u8 || byte == 9_u8
+          end
+          indent
         end
 
         private def self.source_text_for_expr(expr_id : Frontend::ExprId, arena : Frontend::ArenaLike, source : String) : String?

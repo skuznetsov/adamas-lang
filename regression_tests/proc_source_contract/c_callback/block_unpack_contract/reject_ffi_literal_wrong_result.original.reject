@@ -1,0 +1,1 @@
+argument #5 of 'NativeCallback#bsearch' must be a Proc returning Int32, not Bool

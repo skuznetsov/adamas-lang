@@ -70,6 +70,10 @@ module Adamas::HIR
     @scoped_receiver_narrowings : Hash(String, ScopedReceiverNarrowing)
     @boxed_locals_snapshots : Array(Hash(String, BoxedLocal))
     @entry_box_required_locals : Set(String)
+    # Pre-emission payload joins are keyed by the owner arena and exact source
+    # assignment node. Names alone are insufficient because scopes can shadow.
+    @capture_storage_types : Hash({UInt64, Int32}, TypeRef)
+    @capture_parameter_storage_types : Hash(ValueId, TypeRef)
     @block_parameter_bindings : Hash(String, ValueId)
     @block_parameter_binding_snapshots : Array(Hash(String, ValueId))
 
@@ -191,6 +195,8 @@ module Adamas::HIR
       @scoped_receiver_narrowings = {} of String => ScopedReceiverNarrowing
       @boxed_locals_snapshots = [] of Hash(String, BoxedLocal)
       @entry_box_required_locals = Set(String).new
+      @capture_storage_types = {} of {UInt64, Int32} => TypeRef
+      @capture_parameter_storage_types = {} of ValueId => TypeRef
       @block_parameter_bindings = {} of String => ValueId
       @block_parameter_binding_snapshots = [] of Hash(String, ValueId)
       @trace_shovel_types_enabled =
@@ -687,6 +693,32 @@ module Adamas::HIR
       @entry_box_required_locals
     end
 
+    def set_capture_storage_type(
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+      assignment : Adamas::Compiler::Frontend::ExprId,
+      type_ref : TypeRef,
+    ) : Nil
+      return if assignment.index < 0
+      @capture_storage_types[{arena.object_id.to_u64, assignment.index}] = type_ref
+    end
+
+    def capture_storage_type(
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+      assignment : Adamas::Compiler::Frontend::ExprId,
+    ) : TypeRef?
+      return nil if assignment.index < 0
+      @capture_storage_types[{arena.object_id.to_u64, assignment.index}]?
+    end
+
+    def set_capture_parameter_storage_type(local_id : ValueId, type_ref : TypeRef) : Nil
+      return if type_ref == TypeRef::VOID || type_ref == TypeRef::POINTER
+      @capture_parameter_storage_types[local_id] = type_ref
+    end
+
+    def capture_parameter_storage_type(local_id : ValueId) : TypeRef?
+      @capture_parameter_storage_types[local_id]?
+    end
+
     # Save current locals state (for branching).
     #
     # Returns a `LocalsSnapshot` carrying `@locals`, `@boxed_locals`,
@@ -1114,6 +1146,23 @@ module Adamas::HIR
       end
     end
 
+    # Source authority and concrete callback shape captured before HIR lowering.
+    # An arena is required so consumers can inspect the selected Def's owned AST.
+    private struct ProcConstructorBlockContract
+      getter proc_type : TypeRef
+      getter input_types : Array(TypeRef)
+      getter source_def : Adamas::Compiler::Frontend::DefNode
+      getter source_arena : Adamas::Compiler::Frontend::ArenaLike
+
+      def initialize(
+        @proc_type : TypeRef,
+        @input_types : Array(TypeRef),
+        @source_def : Adamas::Compiler::Frontend::DefNode,
+        @source_arena : Adamas::Compiler::Frontend::ArenaLike,
+      )
+      end
+    end
+
     # A single concrete target selected for an admitted virtual included-forall
     # call. Keep the HIR Function identity and its source provenance beside the
     # ABI/result snapshot so final validation cannot silently accept a replaced
@@ -1505,8 +1554,13 @@ module Adamas::HIR
       getter param_types : Array(TypeRef)
       getter return_type : TypeRef
       getter proc_type : TypeRef
+      getter self_source_def : Adamas::Compiler::Frontend::DefNode?
+      getter self_source_arena : Adamas::Compiler::Frontend::ArenaLike?
 
-      def initialize(@param_types, @return_type, @proc_type)
+      def initialize(
+        @param_types, @return_type, @proc_type,
+        @self_source_def = nil, @self_source_arena = nil,
+      )
       end
 
       def same_shape?(other : RawCallbackAbi) : Bool
@@ -1574,7 +1628,16 @@ module Adamas::HIR
       enum_names : Array(String?)?,
       has_block : Bool = false,
       has_named_args : Bool = false,
-      named_arg_names : Array(String)? = nil
+      named_arg_names : Array(String)? = nil,
+      selected_target : String? = nil
+
+    # A callback's generated symbol is an identity, not serialized call syntax.
+    # Retain the selected source and the actual callshape after pending queues
+    # are consumed; neither can be reconstructed from a raw-callback suffix.
+    private record RawCallbackSourceBinding,
+      source_def : Adamas::Compiler::Frontend::DefNode,
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
+      callsite : CallsiteArgs
 
     private record ModuleVirtualFanoutPendingTarget,
       name : String,
@@ -2784,6 +2847,7 @@ module Adamas::HIR
     @yield_functions : Set(String)
     @block_shape_specializations : Hash(String, BlockShapeSpecialization)
     @raw_callback_abis : Hash(String, RawCallbackAbi)
+    @raw_callback_source_bindings : Hash(String, RawCallbackSourceBinding)
     # Functions whose explicit returns are all `return yield` (block-return-dependent).
     @yield_return_functions : Set(String)
     @yield_return_checked : Set(String)
@@ -4004,7 +4068,9 @@ module Adamas::HIR
       inline_tuple_each_loop_exit_depth_stack : Array(Int32),
       inline_arenas : Array(Adamas::Compiler::Frontend::ArenaLike)?,
       infer_body_context : Array(ExprId)?,
-      current_def_return_type : TypeRef
+      current_def_return_type : TypeRef,
+      captured_block_return_owner : Bool,
+      inline_yield_caller_return_owner_stack : Array(Bool)
 
     private def enter_method_body_lowering_scope(return_type : TypeRef) : MethodBodyLoweringScopeSnapshot
       snapshot = MethodBodyLoweringScopeSnapshot.new(
@@ -4018,7 +4084,9 @@ module Adamas::HIR
         @inline_tuple_each_loop_exit_depth_stack,
         @inline_arenas,
         @infer_body_context,
-        @current_def_return_type
+        @current_def_return_type,
+        @captured_block_return_owner,
+        @inline_yield_caller_return_owner_stack
       )
 
       @inline_yield_block_stack = [] of Adamas::Compiler::Frontend::BlockNode
@@ -4026,6 +4094,8 @@ module Adamas::HIR
       @inline_yield_block_param_types_stack = [] of Array(TypeRef)?
       @inline_yield_block_return_stack = [] of String?
       @inline_block_return_infer_stack = Set(UInt64).new
+      @inline_yield_caller_return_owner_stack = [] of Bool
+      @captured_block_return_owner = false
       @inline_yield_name_stack = [] of String
       @inline_tuple_each_next_stack = [] of Bool
       @inline_tuple_each_loop_exit_depth_stack = [] of Int32
@@ -4047,6 +4117,8 @@ module Adamas::HIR
       @inline_arenas = snapshot.inline_arenas
       @infer_body_context = snapshot.infer_body_context
       @current_def_return_type = snapshot.current_def_return_type
+      @captured_block_return_owner = snapshot.captured_block_return_owner
+      @inline_yield_caller_return_owner_stack = snapshot.inline_yield_caller_return_owner_stack
     end
 
     # An abstract numeric annotation constrains the result; it is not an ABI
@@ -7062,6 +7134,13 @@ module Adamas::HIR
     # Declared return type of the function currently being lowered.
     # Consumed only when lowering a return, not when typing local expressions.
     @current_def_return_type : TypeRef = TypeRef::VOID
+    # True only while lowering source that belongs to a block captured by an
+    # authenticated Proc.new contract. Runtime yield thunks keep their lexical
+    # return owner and do not set this flag.
+    @captured_block_return_owner : Bool = false
+    # Caller return ownership for the block currently substituted into an
+    # inlined helper body.
+    @inline_yield_caller_return_owner_stack : Array(Bool) = [] of Bool
     # Track whether the current method is a class/module method (self.)
     @current_method_is_class : Bool
     # {def owner, receiver type} for a class method reached through a type
@@ -7809,6 +7888,7 @@ module Adamas::HIR
       @yield_functions = Set(String).new
       @block_shape_specializations = {} of String => BlockShapeSpecialization
       @raw_callback_abis = {} of String => RawCallbackAbi
+      @raw_callback_source_bindings = {} of String => RawCallbackSourceBinding
       @yield_return_functions = Set(String).new
       @yield_return_checked = Set(String).new
       @regex_match_results = Set(ValueId).new
@@ -8010,6 +8090,8 @@ module Adamas::HIR
       @inline_yield_block_param_types_stack = [] of Array(TypeRef)?
       @inline_yield_block_return_stack = [] of String?
       @inline_block_return_infer_stack = Set(UInt64).new
+      @inline_yield_caller_return_owner_stack = [] of Bool
+      @captured_block_return_owner = false
       @inline_yield_name_stack = [] of String
       @inline_tuple_each_next_stack = [] of Bool
       @inline_tuple_each_loop_exit_depth_stack = [] of Int32
@@ -8647,6 +8729,9 @@ module Adamas::HIR
     ) : Array(TypeRef)?
       return nil unless param_types
 
+      if block_node.unpacks
+        return param_types.dup
+      end
       if params = block_node.params
         if leading_tuple_destruct_info(params, param_types)
           return param_types.dup
@@ -8686,6 +8771,76 @@ module Adamas::HIR
       @raw_callback_abis[name.not_nil!]?
     end
 
+    private def raw_callback_callsite(
+      types : Array(TypeRef),
+      literals : Array(Bool)? = nil,
+      enum_names : Array(String?)? = nil,
+      has_named_args : Bool = false,
+      named_arg_names : Array(String)? = nil,
+      selected_target : String? = nil,
+    ) : CallsiteArgs
+      names = canonical_named_arg_names(named_arg_names)
+      CallsiteArgs.new(
+        types.dup, literals.try(&.dup), enum_names.try(&.dup), true,
+        has_named_args, names.try(&.dup), selected_target,
+      )
+    end
+
+    private def raw_callback_source_binding_for(name : String?) : RawCallbackSourceBinding?
+      return nil unless name
+      binding = @raw_callback_source_bindings[name]?
+      return nil unless binding
+      source_def = @function_defs[name]?
+      source_arena = @function_def_arenas[name]?
+      unless @raw_callback_abis.has_key?(name) && source_def && source_arena &&
+             same_def_node?(source_def, binding.source_def) &&
+             source_arena.object_id == binding.source_arena.object_id
+        raise LoweringError.new("raw callback source binding changed for #{name}", binding.source_def)
+      end
+      binding
+    end
+
+    private def raw_callback_source_binding_matches?(
+      name : String,
+      source_def : Adamas::Compiler::Frontend::DefNode,
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
+      callsite : CallsiteArgs,
+    ) : Bool
+      binding = raw_callback_source_binding_for(name)
+      return false unless binding
+      prior = binding.callsite
+      same_def_node?(binding.source_def, source_def) &&
+        binding.source_arena.object_id == source_arena.object_id &&
+        prior.types == callsite.types && prior.literals == callsite.literals &&
+        prior.enum_names == callsite.enum_names && prior.has_block == callsite.has_block &&
+        prior.has_named_args == callsite.has_named_args &&
+        prior.named_arg_names == callsite.named_arg_names
+    end
+
+    private def bind_raw_callback_source(
+      name : String,
+      source_def : Adamas::Compiler::Frontend::DefNode,
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
+      callsite : CallsiteArgs,
+    ) : Nil
+      unless callsite.has_block
+        raise LoweringError.new("raw callback source call has no block for #{name}", source_def)
+      end
+      saved_callsite = raw_callback_callsite(
+        callsite.types, callsite.literals, callsite.enum_names,
+        callsite.has_named_args, callsite.named_arg_names, name,
+      )
+      set_function_def_entry(name, source_def, false)
+      set_function_def_arena(name, source_arena)
+      @raw_callback_source_bindings[name] = RawCallbackSourceBinding.new(
+        source_def, source_arena, saved_callsite,
+      )
+      remember_callsite_arg_types(
+        name, saved_callsite.types, saved_callsite.literals, saved_callsite.enum_names,
+        saved_callsite.has_block, saved_callsite.has_named_args, saved_callsite.named_arg_names,
+      )
+    end
+
     private def raw_callback_abi_for_proc_type(type : TypeRef) : RawCallbackAbi?
       descriptor = @module.get_type_descriptor(type)
       return nil unless descriptor && descriptor.kind == TypeKind::Proc
@@ -8718,13 +8873,36 @@ module Adamas::HIR
       source_def : Adamas::Compiler::Frontend::DefNode,
       source_arena : Adamas::Compiler::Frontend::ArenaLike,
       call_arg_types : Array(TypeRef),
+      callsite_args : CallsiteArgs? = nil,
     ) : String
+      source_callsite = callsite_args || raw_callback_callsite(call_arg_types)
+      unless source_callsite.types == call_arg_types && source_callsite.has_block
+        raise LoweringError.new("inconsistent raw callback callshape for #{target_name}", source_def)
+      end
       shape = contract.param_types.map { |type| type.id }.join("_")
       chosen_name = "#{target_name}__rawcb_#{shape}_r#{contract.return_type.id}"
       serial = 0
       while true
         if prior = @raw_callback_abis[chosen_name]?
-          return chosen_name if prior.same_shape?(contract)
+          bound_def = @function_defs[chosen_name]?
+          bound_arena = @function_def_arenas[chosen_name]?
+          same_dependent_source = if expected_def = contract.self_source_def
+                                    prior_def = prior.self_source_def
+                                    prior_arena = prior.self_source_arena
+                                    expected_arena = contract.self_source_arena
+                                    prior_def && same_def_node?(prior_def, expected_def) &&
+                                      prior_arena && expected_arena &&
+                                      prior_arena.object_id == expected_arena.object_id
+                                  else
+                                    prior.self_source_def.nil? && prior.self_source_arena.nil?
+                                  end
+          if prior.same_shape?(contract) && prior.proc_type == contract.proc_type &&
+             same_dependent_source &&
+             raw_callback_source_binding_matches?(chosen_name, source_def, source_arena, source_callsite) &&
+             bound_def && same_def_node?(bound_def, source_def) &&
+             bound_arena && bound_arena.object_id == source_arena.object_id
+            return chosen_name
+          end
         elsif !@function_defs.has_key?(chosen_name) && !@module.has_function_with_body?(chosen_name)
           break
         end
@@ -8733,14 +8911,36 @@ module Adamas::HIR
       end
 
       @raw_callback_abis[chosen_name] = contract
-      set_function_def_entry(chosen_name, source_def, false)
-      set_function_def_arena(chosen_name, source_arena)
-      remember_callsite_arg_types(chosen_name, call_arg_types, has_block: true)
+      bind_raw_callback_source(chosen_name, source_def, source_arena, source_callsite)
       if env_get("DEBUG_RAW_CALLBACK_ABI")
         params = contract.param_types.map { |type| get_type_name_from_ref(type) }.join(",")
         STDERR.puts "[RAW_CALLBACK_ABI] late_target=#{chosen_name} params=#{params} return=#{get_type_name_from_ref(contract.return_type)} proc=#{contract.proc_type.id}"
       end
       chosen_name
+    end
+
+    # A dependent self annotation is instantiated only by the exact selected
+    # source binding that certified it. Ordinary explicit callback annotations
+    # remain authoritative even when a raw callback ABI is available.
+    private def dependent_self_callback_param_type(
+      contract : RawCallbackAbi?,
+      source_node : Adamas::Compiler::Frontend::DefNode,
+      target_name : String?,
+      annotation_text : String?,
+    ) : TypeRef?
+      return nil unless contract && annotation_text && annotation_text.strip == "self"
+      expected_def = contract.self_source_def
+      expected_arena = contract.self_source_arena
+      return nil unless expected_def && expected_arena
+      return nil unless target_name
+      bound_def = @function_defs[target_name]?
+      bound_arena = @function_def_arenas[target_name]?
+      unless same_def_node?(source_node, expected_def) &&
+             bound_def && same_def_node?(bound_def, expected_def) &&
+             bound_arena && bound_arena.object_id == expected_arena.object_id
+        raise LoweringError.new("dependent callback source binding changed for #{target_name}", source_node)
+      end
+      contract.proc_type
     end
 
     # Register a callback ABI on the exact target selected for this callsite.
@@ -8755,7 +8955,12 @@ module Adamas::HIR
       block_node : Adamas::Compiler::Frontend::BlockNode,
       block_param_types : Array(TypeRef)?,
       block_return_name : String?,
+      callsite_args : CallsiteArgs? = nil,
     ) : String?
+      source_callsite = callsite_args || raw_callback_callsite(call_arg_types)
+      unless source_callsite.types == call_arg_types && source_callsite.has_block
+        raise LoweringError.new("inconsistent raw callback callshape for #{target_name}", source_def)
+      end
       params = source_def.params
       block_param = params ? find_param(params.not_nil!) { |param| param.is_block } : nil
       if block_param
@@ -8782,13 +8987,15 @@ module Adamas::HIR
 
       chosen_name = target_name
       if existing = @raw_callback_abis[target_name]?
-        unless existing.same_shape?(contract)
+        unless existing.same_shape?(contract) &&
+               raw_callback_source_binding_matches?(target_name, source_def, source_arena, source_callsite)
           chosen_name = register_raw_callback_contract_target(
             target_name,
             contract,
             source_def,
             source_arena,
             call_arg_types,
+            source_callsite,
           )
         end
       elsif @module.has_function_with_body?(target_name)
@@ -8801,17 +9008,13 @@ module Adamas::HIR
           source_def,
           source_arena,
           call_arg_types,
+          source_callsite,
         )
       end
 
       unless prior = @raw_callback_abis[chosen_name]?
         @raw_callback_abis[chosen_name] = contract
-        if chosen_name != target_name ||
-           (!@function_defs.has_key?(chosen_name) && !@block_shape_specializations.has_key?(chosen_name))
-          set_function_def_entry(chosen_name, source_def, false)
-          set_function_def_arena(chosen_name, source_arena)
-          remember_callsite_arg_types(chosen_name, call_arg_types, has_block: true)
-        end
+        bind_raw_callback_source(chosen_name, source_def, source_arena, source_callsite)
       end
       if env_get("DEBUG_RAW_CALLBACK_ABI")
         params = contract.param_types.map { |type| get_type_name_from_ref(type) }.join(",")
@@ -14805,15 +15008,18 @@ module Adamas::HIR
     def register_lib(
       node : Adamas::Compiler::Frontend::LibNode,
       annotations : Array(Adamas::Compiler::Frontend::AnnotationNode)? = nil,
+      phase : Symbol = :all,
     )
-      if annotations && !annotations.empty?
-        annotations.each do |annotation_node|
-          register_link_libraries_from_annotation(annotation_node)
+      if phase == :all || phase == :types
+        if annotations && !annotations.empty?
+          annotations.each do |annotation_node|
+            register_link_libraries_from_annotation(annotation_node)
+          end
         end
       end
 
       lib_name = (safe_slice_to_string(node.name) || "")
-      @module.register_lib_name(lib_name)
+      @module.register_lib_name(lib_name) if phase == :all || phase == :types
       debug_lib_member = if filter = env_get("DEBUG_LIB_MEMBER")
                            filter == "1" || lib_name.includes?(filter)
                          else
@@ -14829,41 +15035,47 @@ module Adamas::HIR
       if body = node.body
         unless !force_reparse && !prefer_source_reparse && body_ids_match_arena?(@arena, body)
           if with_reparsed_lib_from_source(node) { |reparsed_node|
-               register_lib_body(reparsed_node, lib_name, debug_lib_member)
+               register_lib_body(reparsed_node, lib_name, debug_lib_member, phase)
              }
             return
           end
         end
       end
 
-      register_lib_body(node, lib_name, debug_lib_member)
+      register_lib_body(node, lib_name, debug_lib_member, phase)
     end
 
     private def register_lib_body(
       node : Adamas::Compiler::Frontend::LibNode,
       lib_name : String,
       debug_lib_member : Bool,
+      phase : Symbol = :all,
     ) : Nil
       with_resolved_body_arena(node.body, node.span, @arena) do
         if body = node.body
-          # First pass: register lib-local types so extern param/return types resolve correctly.
-          body.each_with_index do |expr_id, i|
-            next if expr_id.null_ptr? || expr_id.invalid?
-            body_node = @arena[expr_id]
-            if debug_lib_member
-              STDERR.puts "[LIB_MEMBER] lib=#{lib_name} pass=types idx=#{i + 1}/#{body.size} kind=#{body_node.class.name.split("::").last} node_kind=#{Adamas::Compiler::Frontend.node_kind(body_node)} is_alias=#{body_node.is_a?(Adamas::Compiler::Frontend::AliasNode) ? 1 : 0} detail=#{debug_lib_member_label(body_node)}"
+          # Register every lib-local type before resolving any external signatures.
+          # The CLI runs the :types phase for all libs before top-level types, then
+          # revisits libs in the :externs phase after that source type pass.
+          if phase == :all || phase == :types
+            body.each_with_index do |expr_id, i|
+              next if expr_id.null_ptr? || expr_id.invalid?
+              body_node = @arena[expr_id]
+              if debug_lib_member
+                STDERR.puts "[LIB_MEMBER] lib=#{lib_name} pass=types idx=#{i + 1}/#{body.size} kind=#{body_node.class.name.split("::").last} node_kind=#{Adamas::Compiler::Frontend.node_kind(body_node)} is_alias=#{body_node.is_a?(Adamas::Compiler::Frontend::AliasNode) ? 1 : 0} detail=#{debug_lib_member_label(body_node)}"
+              end
+              register_lib_member(body_node, lib_name, :types)
             end
-            register_lib_member(body_node, lib_name, :types)
           end
 
-          # Second pass: register extern functions after types are available.
-          body.each_with_index do |expr_id, i|
-            next if expr_id.null_ptr? || expr_id.invalid?
-            body_node = @arena[expr_id]
-            if debug_lib_member
-              STDERR.puts "[LIB_MEMBER] lib=#{lib_name} pass=externs idx=#{i + 1}/#{body.size} kind=#{body_node.class.name.split("::").last} node_kind=#{Adamas::Compiler::Frontend.node_kind(body_node)} is_alias=#{body_node.is_a?(Adamas::Compiler::Frontend::AliasNode) ? 1 : 0} detail=#{debug_lib_member_label(body_node)}"
+          if phase == :all || phase == :externs
+            body.each_with_index do |expr_id, i|
+              next if expr_id.null_ptr? || expr_id.invalid?
+              body_node = @arena[expr_id]
+              if debug_lib_member
+                STDERR.puts "[LIB_MEMBER] lib=#{lib_name} pass=externs idx=#{i + 1}/#{body.size} kind=#{body_node.class.name.split("::").last} node_kind=#{Adamas::Compiler::Frontend.node_kind(body_node)} is_alias=#{body_node.is_a?(Adamas::Compiler::Frontend::AliasNode) ? 1 : 0} detail=#{debug_lib_member_label(body_node)}"
+              end
+              register_lib_member(body_node, lib_name, :externs)
             end
-            register_lib_member(body_node, lib_name, :externs)
           end
         end
       end
@@ -16340,40 +16552,16 @@ module Adamas::HIR
       block_node = arena[block_id]
       return nil unless block_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
 
-      body_values = [] of Adamas::Compiler::Semantic::MacroValue
-      block_node.body.each do |expr_id|
-        body_values << macro_source_node_value_for(expr_id, arena)
-      end
-      body_source = macro_block_body_text(block_id)
-      body_value = case body_values.size
-                   when 0
-                     Adamas::Compiler::Semantic::MacroNopValue.new.as(Adamas::Compiler::Semantic::MacroValue)
-                   when 1
-                     body_values[0]
-                   else
-                     Adamas::Compiler::Semantic::MacroExpressionsValue.new(body_source, body_values).as(Adamas::Compiler::Semantic::MacroValue)
-                   end
-
-      parameters = block_node.params || [] of Adamas::Compiler::Frontend::Parameter
-      block_args = parameters.map do |parameter|
-        Adamas::Compiler::Semantic::MacroIdValue.new(parameter.name.try { |name| String.new(name) } || "").as(Adamas::Compiler::Semantic::MacroValue)
-      end
-      splat_index = parameters.index { |parameter| parameter.is_splat }
-      splat_value = if index = splat_index
-                      Adamas::Compiler::Semantic::MacroNumberValue.new(index.to_i64).as(Adamas::Compiler::Semantic::MacroValue)
-                    else
-                      Adamas::Compiler::Semantic::MacroNilLiteralValue.new.as(Adamas::Compiler::Semantic::MacroValue)
-                    end
-
-      block_source = ""
-      if source = source_for_arena(arena)
-        block_source = slice_source_for_expr_in_arena(block_id, arena, source) || ""
-      end
-      Adamas::Compiler::Semantic::MacroBlockValue.new(
-        block_source,
-        body_value,
-        Adamas::Compiler::Semantic::MacroArrayValue.new(block_args),
-        splat_value
+      source = source_for_arena(arena)
+      block_source = source.try { |text| slice_source_for_expr_in_arena(block_id, arena, text) } || ""
+      Adamas::Compiler::Semantic::MacroBlockValue.from_ast(
+        block_id,
+        arena,
+        source,
+        nil,
+        ->(expr_id : ExprId) : Adamas::Compiler::Semantic::MacroValue { macro_source_node_value_for(expr_id, arena) },
+        macro_block_body_text(block_id),
+        block_source
       )
     end
 
@@ -26789,7 +26977,19 @@ module Adamas::HIR
       return_type = def_node.return_type
       return false unless return_type
 
-      normalize_declared_type_name(safe_slice_to_string(return_type) || "") == "NoReturn"
+      resolve_type_alias_chain(normalize_declared_type_name(safe_slice_to_string(return_type) || "")) == "NoReturn"
+    end
+
+    private def extern_declared_noreturn?(return_type : String?, owner : String? = nil) : Bool
+      return false unless return_type
+
+      previous_class = @current_class
+      @current_class = owner if owner
+      begin
+        resolve_type_alias_chain(normalize_declared_type_name(return_type)) == "NoReturn"
+      ensure
+        @current_class = previous_class
+      end
     end
 
     # Bottom is a control-flow effect, not the unresolved/void ABI type.
@@ -26827,6 +27027,8 @@ module Adamas::HIR
             case instruction
             when Raise
               true
+            when ExternCall
+              instruction.noreturn
             when Call
               !instruction.virtual && !instruction.has_block? &&
                 materialized_function_noreturn?(instruction.method_name, visiting)
@@ -27075,6 +27277,15 @@ module Adamas::HIR
       STDERR.puts "[INFER_GUARD] hits=#{@infer_guard_hits} expr=#{expr_id.index} kind=#{kind} current=#{current} method=#{method} file=#{File.basename(path)}#{span_info}"
     end
 
+    # A Proc call's result is part of its concrete Proc descriptor. Keep this
+    # inference independent of an enclosing expected type or a generic Proc#call
+    # body whose return parameter may still be unresolved.
+    private def proc_descriptor_call_return_type(receiver_type : TypeRef) : TypeRef?
+      descriptor = @module.get_type_descriptor(receiver_type)
+      return nil unless descriptor && descriptor.kind == TypeKind::Proc
+      descriptor.type_params.last? || TypeRef::VOID
+    end
+
     private def infer_type_from_expr_inner(expr_id : ExprId) : TypeRef?
       self_type_name = @infer_self_type_name
       expr_node = @arena[expr_id]
@@ -27295,6 +27506,13 @@ module Adamas::HIR
         return type_ref_for_name((safe_slice_to_string(expr_node.target_type) || ""))
       when Adamas::Compiler::Frontend::MemberAccessNode
         member_name = (safe_slice_to_string(expr_node.member) || "")
+        if member_name == "call"
+          if receiver_type = infer_type_from_expr(expr_node.object, self_type_name)
+            if result_type = proc_descriptor_call_return_type(receiver_type)
+              return result_type
+            end
+          end
+        end
         if env_get("DEBUG_INFER_MEMBER_ACCESS") && member_name == "value"
           STDERR.puts "[INFER_MEMBER_ACCESS] member=#{member_name} self_type=#{self_type_name || "nil"}"
         end
@@ -27782,6 +28000,13 @@ module Adamas::HIR
         callee_node = node_for_expr(expr_node.callee)
         if callee_node.is_a?(Adamas::Compiler::Frontend::MemberAccessNode)
           member_name = (safe_slice_to_string(callee_node.member) || "")
+          if member_name == "call" && block_expr.nil? && block_pass_expr.nil?
+            if receiver_type = infer_type_from_expr(callee_node.object, self_type_name)
+              if result_type = proc_descriptor_call_return_type(receiver_type)
+                return result_type
+              end
+            end
+          end
           if member_name == "bsearch" || member_name == "bsearch_index"
             if recv_type = infer_type_from_expr(callee_node.object, self_type_name)
               if recv_type != TypeRef::VOID
@@ -29717,7 +29942,9 @@ module Adamas::HIR
                    else
                      resolve_method_with_inheritance(receiver_name, member_name) || "#{receiver_name}##{member_name}"
                    end
-        return block_param_types_for_call(resolved, resolved, receiver_type, call_arg_types)
+        return block_param_types_for_call(
+          resolved, resolved, receiver_type, call_arg_types, false, expr_node, arena_for_expr?(expr_node.callee)
+        )
       elsif callee_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
         method_name = (safe_slice_to_string(callee_node.name) || "")
         owner_name = self_type_name || @current_class
@@ -29725,7 +29952,9 @@ module Adamas::HIR
         base = resolve_method_with_inheritance(owner_name, method_name) || "#{owner_name}##{method_name}"
         receiver_ref = type_ref_for_name(owner_name)
         return nil if receiver_ref == TypeRef::VOID
-        return block_param_types_for_call(base, base, receiver_ref, call_arg_types)
+        return block_param_types_for_call(
+          base, base, receiver_ref, call_arg_types, false, expr_node, arena_for_expr?(expr_node.callee)
+        )
       end
       nil
     end
@@ -35709,6 +35938,14 @@ module Adamas::HIR
         STDERR.puts "[MATH_MIN_MODULE] module=#{module_name} method=#{method_name} override=#{full_name_override || "nil"} call_arg_types=#{call_type_names.join(",")} param_annotations=#{param_annotations.join(",")}"
       end
 
+      if binding = raw_callback_source_binding_for(full_name_override)
+        unless same_def_node?(node, binding.source_def)
+          raise LoweringError.new("raw callback module source changed for #{full_name_override}", node)
+        end
+        call_arg_types = binding.callsite.types.dup
+        call_arg_literals = binding.callsite.literals.try(&.dup)
+        call_arg_enum_names = binding.callsite.enum_names.try(&.dup)
+      end
       # Defer lowering for untyped params until call-site types are available.
       # Allow typed overrides to seed call_arg_types from the mangled suffix.
       # Enum value tracking is per-function; preserve outer context.
@@ -35890,6 +36127,13 @@ module Adamas::HIR
                                      else
                                        param_type
                                      end
+          if param.is_block
+            if dependent_type = dependent_self_callback_param_type(
+              raw_callback_contract, node, lookup_name, type_ann_str,
+            )
+              exact_runtime_param_type = dependent_type
+            end
+          end
           local_inference_type = exact_runtime_param_type
           param_type_map[param_name] = local_inference_type
           # A captured `&@ivar` is a materialized Proc ABI value, not a raw
@@ -41217,7 +41461,8 @@ module Adamas::HIR
                 if call_has_block && (blk_node = call_block_node)
                   if chosen = register_raw_callback_abi_target(
                        init_name, resolved[1], resolved[2], call_arg_types,
-                       blk_node, call_block_param_types, call_block_return_name)
+                       blk_node, call_block_param_types, call_block_return_name,
+                       raw_callback_callsite(call_arg_types, has_named_args: call_has_named_args, named_arg_names: call_named_arg_names))
                     init_name = chosen
                   end
                 end
@@ -42575,7 +42820,8 @@ module Adamas::HIR
           contract_arena = matched_init_arena || resolve_arena_for_def(contract_def, @arena)
           if chosen = register_raw_callback_abi_target(
                init_name, contract_def, contract_arena, init_param_types,
-               blk_node, call_block_param_types, call_block_return_name)
+               blk_node, call_block_param_types, call_block_return_name,
+               raw_callback_callsite(init_param_types, has_named_args: call_has_named_args, named_arg_names: call_named_arg_names))
             init_name = chosen
             if contract = raw_callback_abi_for(init_name)
               func.set_block_param_type(block_param_id.not_nil!, contract.proc_type)
@@ -43533,6 +43779,15 @@ module Adamas::HIR
       included_forall_body_method_arena = nil.as(Adamas::Compiler::Frontend::ArenaLike?)
       method_name = forced_method_name.empty? ? (safe_slice_to_string(node.name) || "") : forced_method_name
       effective_full_name_override = forced_full_name.empty? ? (full_name_override || "") : forced_full_name
+      callback_source_binding = raw_callback_source_binding_for(effective_full_name_override)
+      if binding = callback_source_binding
+        unless same_def_node?(node, binding.source_def)
+          raise LoweringError.new("raw callback method source changed for #{effective_full_name_override}", node)
+        end
+        call_arg_types = binding.callsite.types.dup
+        call_arg_literals = binding.callsite.literals.try(&.dup)
+        call_arg_enum_names = binding.callsite.enum_names.try(&.dup)
+      end
       is_initialize_method = method_name == "initialize"
       stop_after_pending_target_lower_method_phase(
         "lower_method_enter",
@@ -43774,7 +44029,7 @@ module Adamas::HIR
         end
       end
 
-      if !effective_full_name_override.empty? && effective_full_name_override.includes?('$')
+      if callback_source_binding.nil? && !effective_full_name_override.empty? && effective_full_name_override.includes?('$')
         suffix = method_suffix(effective_full_name_override)
         if env_get("DEBUG_FROM_IO_LOWER") && method_name == "from_io"
           STDERR.puts "[FROM_IO_LOWER] class=#{class_name} override=#{effective_full_name_override} suffix=#{suffix || ""}"
@@ -43830,7 +44085,7 @@ module Adamas::HIR
           STDERR.puts "[UNTYPED_DEFER] name=#{base_name} params=#{param_count} call_types=#{call_str.empty? ? "nil" : call_str}"
         end
         call_types = call_arg_types || [] of TypeRef
-        if (call_types.empty? || call_types.all? { |t| t == TypeRef::VOID }) &&
+        if callback_source_binding.nil? && (call_types.empty? || call_types.all? { |t| t == TypeRef::VOID }) &&
            !effective_full_name_override.empty? && effective_full_name_override.includes?('$')
           suffix = method_suffix(effective_full_name_override) || ""
           parsed_types = parse_types_from_suffix(strip_mangled_suffix_flags(suffix))
@@ -44264,6 +44519,13 @@ module Adamas::HIR
                                      else
                                        param_type
                                      end
+          if param.is_block
+            if dependent_type = dependent_self_callback_param_type(
+              raw_callback_contract, node, effective_full_name_override || logical_registered_name, type_ann_str,
+            )
+              exact_runtime_param_type = dependent_type
+            end
+          end
           local_inference_type = exact_runtime_param_type
           param_type_map[param_name] = local_inference_type
           param_info_names << param_name
@@ -45028,6 +45290,9 @@ module Adamas::HIR
             required_boxes.each do |name|
               ctx.require_entry_box_for_local(name)
             end
+            owner_capture_storage_types(ctx, body, method_arena).each do |(assignment_id, storage_type)|
+              ctx.set_capture_storage_type(method_arena, assignment_id, storage_type)
+            end
             if env_has?("DEBUG_ENTRY_BOX_REQUIREMENTS") && !required_boxes.empty?
               STDERR.puts "[ENTRY_BOX_REQUIREMENTS] func=#{ctx.function.name} names=#{required_boxes.to_a.sort.join(",")}"
             end
@@ -45035,7 +45300,7 @@ module Adamas::HIR
               next if name.empty?
               next if ctx.lookup_boxed_local(name)
               if local_id = ctx.lookup_local(name)
-                local_type = ctx.type_of(local_id)
+                local_type = ctx.capture_parameter_storage_type(local_id) || ctx.type_of(local_id)
                 hoist_box_for_local(ctx, name, local_type, local_id) unless local_type == TypeRef::VOID
               end
             end
@@ -57957,7 +58222,7 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::BlockNode
         return_order_flags_for_body(node.body, preferred_arena)
       when Adamas::Compiler::Frontend::ProcLiteralNode
-        return_order_flags_for_body(node.body, preferred_arena)
+        0_u8
       when Adamas::Compiler::Frontend::CaseNode
         flags = 0_u8
         if value = node.value
@@ -60961,7 +61226,7 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::BlockNode
         contains_return?(node.body)
       when Adamas::Compiler::Frontend::ProcLiteralNode
-        contains_return?(node.body)
+        false
       when Adamas::Compiler::Frontend::CaseNode
         node.when_branches.any? { |w| contains_return?(w.body) } ||
           (node.else_branch ? contains_return?(node.else_branch.not_nil!) : false)
@@ -61795,8 +62060,11 @@ module Adamas::HIR
         end
       end
       if existing_type == TypeRef::VOID
-        # Resolve only the exact selected annotation before base-family and body fallback.
-        if def_node = selected_def
+        # A registered declaration symbol owns its annotation even before its
+        # body is materialized. Never infer that body through a family/arity
+        # fallback before resolving the exact source contract. Call instances
+        # without a registered Def still require the resolver's selected Def.
+        if def_node = selected_def || return_def_candidate_for(name, call_arg_count)
           if def_node.return_type
             if resolved = resolve_return_type_from_def(name, base_name, nil, call_arg_count, def_node)
               if resolved != TypeRef::VOID
@@ -65888,49 +66156,14 @@ module Adamas::HIR
     end
 
     private def extract_proc_return_type_name(type_name : String) : String?
-      stripped = type_name.strip
-      if stripped.starts_with?("Proc(") && stripped.ends_with?(')')
-        inner = stripped[5, stripped.size - 6]
-        args = split_generic_type_args(inner)
-        if ret = args.last?
-          ret = ret.strip
-          return ret unless ret.empty?
-        end
-      end
-      if arrow_index = find_top_level_arrow(stripped)
-        right = stripped[arrow_index + 2, stripped.size - arrow_index - 2].strip
-        return right unless right.empty?
-      end
-      nil
+      arguments = proc_type_argument_names(type_name) || return nil
+      arguments.last?
     end
 
     private def proc_input_type_names(type_name : String) : Array(String)?
-      stripped = type_name.strip
-      return nil if stripped.empty?
-
-      if stripped.starts_with?("Proc(") && stripped.ends_with?(')')
-        inner = stripped[5, stripped.size - 6]
-        args = split_generic_type_args(inner)
-        return [] of String if args.size <= 1
-        return args[0...-1]
-      end
-
-      if arrow_index = find_top_level_arrow(stripped)
-        left = stripped[0, arrow_index].strip
-        return [] of String if left.empty?
-        # Braced proc inputs are tuple types in Crystal syntax. For example
-        # `Hash#each(& : {K, V} ->)` yields one tuple argument, not two
-        # independent block parameters and not `K -> V`.
-        if left.starts_with?('{') && left.ends_with?('}')
-          inner = left[1, left.size - 2].strip
-          parts = inner.empty? ? ([] of String) : split_proc_type_inputs(inner)
-          return [] of String if parts.empty?
-          return ["Tuple(#{parts.join(", ")})"]
-        end
-        return split_proc_type_input_names(left)
-      end
-
-      nil
+      arguments = proc_type_argument_names(type_name) || return nil
+      return [] of String if arguments.size <= 1
+      arguments[0...-1]
     end
 
     # `& : T -> U`-style annotations (Array#map) leave the block RETURN shape
@@ -65959,24 +66192,10 @@ module Adamas::HIR
     end
 
     private def nil_returning_proc_annotation?(type_name : String) : Bool
-      stripped = type_name.strip
-      return false if stripped.empty?
-
-      if arrow_index = find_top_level_arrow(stripped)
-        right = stripped[arrow_index + 2, stripped.size - arrow_index - 2].strip
-        return right.empty? || right == "Nil" || right == "nil"
-      end
-
-      if stripped.starts_with?("Proc(") && stripped.ends_with?(')')
-        inner = stripped[5, stripped.size - 6]
-        args = split_generic_type_args(inner)
-        if ret = args.last?
-          ret = ret.strip
-          return ret.empty? || ret == "Nil" || ret == "nil"
-        end
-      end
-
-      false
+      arguments = proc_type_argument_names(type_name) || return false
+      return false if arguments.empty?
+      ret_name = arguments.last.strip
+      ret_name == "Nil" || ret_name == "nil"
     end
 
     private def expected_nil_block_return_type_for_def(
@@ -67359,6 +67578,7 @@ module Adamas::HIR
       old_locals = @current_typeof_locals
       old_names = @current_typeof_local_names
       old_type_param_map = @type_param_map
+      old_body_context = @infer_body_context
       begin
         block_id = block.object_id
         block_arena = cached_block_arena(block_id)
@@ -67373,12 +67593,14 @@ module Adamas::HIR
         end
 
         body = block.body
+        @infer_body_context = body
+        bump_infer_type_cache_version
         immediate_block_return_name = nil.as(String?)
         local_map = old_locals ? old_locals.dup : {} of String => TypeRef
         name_map = old_names ? old_names.dup : {} of String => String
 
         if params = block.params
-          seed_inline_yield_block_param_type_map(params, param_types, local_map)
+          seed_inline_yield_block_param_type_map(params, param_types, local_map, block)
         end
 
         @current_typeof_locals = local_map
@@ -67423,6 +67645,8 @@ module Adamas::HIR
         @current_typeof_local_names = old_names
         @type_param_map = old_type_param_map
         @arena = old_arena
+        @infer_body_context = old_body_context
+        bump_infer_type_cache_version
       end
 
       nil
@@ -67439,6 +67663,7 @@ module Adamas::HIR
       old_locals = @current_typeof_locals
       old_names = @current_typeof_local_names
       old_type_param_map = @type_param_map
+      old_body_context = @infer_body_context
       local_map = old_locals ? old_locals.dup : {} of String => TypeRef
       name_map = old_names ? old_names.dup : {} of String => String
 
@@ -67454,6 +67679,8 @@ module Adamas::HIR
           @type_param_map = @type_param_map.merge({as_type_param => first_name}) unless first_name.empty?
         end
       end
+      @infer_body_context = body
+      bump_infer_type_cache_version
       begin
         last_expr = body.last?
         return nil unless last_expr
@@ -67465,6 +67692,8 @@ module Adamas::HIR
         @current_typeof_locals = old_locals
         @current_typeof_local_names = old_names
         @type_param_map = old_type_param_map
+        @infer_body_context = old_body_context
+        bump_infer_type_cache_version
       end
 
       nil
@@ -67507,7 +67736,26 @@ module Adamas::HIR
       params : Array(Adamas::Compiler::Frontend::Parameter),
       param_types : Array(TypeRef)?,
       local_map : Hash(String, TypeRef),
+      block_node : Adamas::Compiler::Frontend::BlockNode? = nil,
     ) : Nil
+      if block_node && (patterns = block_node.unpacks)
+        caller_arena = @arena
+        block_arena = cached_block_arena(block_node.object_id) ||
+                      resolve_arena_for_block(block_node, caller_arena) || caller_arena
+        with_arena(block_arena) do
+          patterns.each do |entry|
+            slot, pattern = entry
+            if param_types && (value_type = param_types[slot]?)
+              seed_block_unpack_pattern_type(pattern, value_type, local_map)
+            end
+          end
+          params.each_with_index do |param, idx|
+            next if block_unpack_pattern_for_slot(block_node, idx)
+            seed_inline_param_type_map_entry(param, idx, param_types, local_map)
+          end
+        end
+        return
+      end
       if param_types && type_ref_array_size_or_zero(param_types) == 1 && params.size > 1
         unsupported_params = false
         if sizeof(Adamas::Compiler::Frontend::Parameter) <= 8
@@ -68455,6 +68703,8 @@ module Adamas::HIR
       receiver_type : TypeRef?,
       call_arg_types : Array(TypeRef)? = nil,
       call_has_named_args : Bool = false,
+      call_node : Adamas::Compiler::Frontend::CallNode? = nil,
+      call_arena : Adamas::Compiler::Frontend::ArenaLike? = nil,
     ) : Array(TypeRef)?
       debug_trace_each = env_get("DEBUG_TRACE_EACH_WITH_INDEX") &&
                          (mangled_method_name.includes?("each_with_index") || base_method_name.includes?("each_with_index"))
@@ -68542,6 +68792,10 @@ module Adamas::HIR
       if debug_trace_each
         recv_name = receiver_type_value != TypeRef::VOID ? get_type_name_from_ref(receiver_type_value) : "nil"
         STDERR.puts "[TRACE_EWI] block_param_types_for_call enter base=#{resolved_base} mangled=#{resolved_mangled} recv=#{recv_name} func_def=#{!!func_def}"
+      end
+
+      if proc_inputs = proc_constructor_self_block_input_types(func_def, resolved_mangled, call_node, call_arena)
+        return proc_inputs
       end
 
       # String.new { |buffer| ... } yields a Pointer(UInt8)
@@ -70429,8 +70683,9 @@ module Adamas::HIR
       arguments ? intern_proc_type(arguments) : nil
     end
 
-    # Parse the signature without interning or substituting its source names.
-    # Source admission and TypeRef construction must share the arrow grammar.
+    # Parse Proc signatures once for type interning, block-input inference, and
+    # block-return inference. Crystal represents a missing output as Void, and
+    # a braced tuple before the arrow is one input type, not several inputs.
     private def proc_type_argument_names(name : String) : Array(String)?
       stripped = name.strip
       return nil if stripped.empty?
@@ -70443,52 +70698,44 @@ module Adamas::HIR
         end
       end
 
-      # Handle top-level arrow syntax: A, B -> C
       if arrow_index = find_top_level_arrow(stripped)
         left = stripped[0, arrow_index].strip
         right = stripped[arrow_index + 2, stripped.size - arrow_index - 2].strip
-        if left.starts_with?('{') && left.ends_with?('}')
-          inner = left[1, left.size - 2].strip
-          parts = inner.empty? ? ([] of String) : split_proc_type_inputs(inner)
-          if right.empty?
-            if parts.empty?
-              return ["Nil"]
-            elsif parts.size == 1
-              # `{A} ->` is treated as a single input with implicit Nil return.
-              return [parts.first, "Nil"]
-            else
-              # `{A, B} ->` means `A -> B` (last part is return type).
-              inputs = parts[0...-1]
-              ret_name = parts.last
-              return inputs + [ret_name]
-            end
-          else
-            # `{A, B} -> C` means `A, B -> C` (parts are inputs).
-            return parts + [right]
-          end
-        end
-
-        args = split_proc_type_input_names(left)
-        ret_name = right.empty? ? "Nil" : right
-        return args + [ret_name]
+        return proc_arrow_type_argument_names(left, right)
       end
 
-      # Handle parenthesized Proc shorthand: (A, B -> C)
-      # The arrow is NOT at top level (depth > 0 due to outer parens), so unwrap and retry
+      # Parenthesized shorthand such as `(A, B -> C)` and a fully wrapped
+      # `(A, B) -> C` use the same input/output interpretation.
       if stripped.starts_with?('(') && stripped.ends_with?(')')
-        inner = stripped[1, stripped.size - 2]
-        if inner.includes?("->")
-          if arrow_index = find_top_level_arrow(inner)
-            left = inner[0, arrow_index].strip
-            right = inner[arrow_index + 2, inner.size - arrow_index - 2].strip
-            args = split_proc_type_input_names(left)
-            ret_name = right.empty? ? "Nil" : right
-            return args + [ret_name]
-          end
+        inner = stripped[1, stripped.size - 2].strip
+        if arrow_index = find_top_level_arrow(inner)
+          left = inner[0, arrow_index].strip
+          right = inner[arrow_index + 2, inner.size - arrow_index - 2].strip
+          return proc_arrow_type_argument_names(left, right)
         end
       end
 
       nil
+    end
+
+    private def proc_arrow_type_argument_names(left : String, right : String) : Array(String)?
+      inputs = if left.starts_with?('{') && left.ends_with?('}')
+                 inner = left[1, left.size - 2].strip
+                 parts = inner.empty? ? ([] of String) : split_proc_type_inputs(inner)
+                 return nil if parts.empty?
+                 named_entries = parts.compact_map { |part| split_named_tuple_entry(part) }
+                 if named_entries.empty?
+                   ["Tuple(#{parts.join(", ")})"]
+                 else
+                   return nil unless named_entries.size == parts.size
+                   entries = named_entries.map { |entry| "#{entry[0]}: #{entry[1]}" }
+                   ["NamedTuple(#{entries.join(", ")})"]
+                 end
+               else
+                 split_proc_type_input_names(left)
+               end
+      inputs << (right.empty? ? "Void" : right)
+      inputs
     end
 
     # Ensure a generic instantiation referenced via a type annotation (e.g. `Hash(String, ValueId)`)
@@ -73225,6 +73472,534 @@ module Adamas::HIR
       end
     end
 
+    # Query the selected source contract before owner storage is allocated.
+    # This admission covers the source Proc.new(&block : self) call with no
+    # value actuals. More complex call shapes stay on normal lowering until
+    # their normalized actual types are available; an abstention is not a
+    # language rejection and must not manufacture a callback signature.
+    private def capture_plan_callback_inputs(
+      call_node : Adamas::Compiler::Frontend::CallNode,
+      call_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Array(TypeRef)?
+      return nil unless call_node.args.empty?
+      return nil unless call_node.named_args.try(&.empty?) != false
+      block_id = call_node.block
+      return nil unless block_id
+      block_node = node_for_expr(block_id.not_nil!, call_arena)
+      return nil unless block_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
+
+      with_arena(call_arena) do
+        receiver_type = proc_constructor_receiver_type(call_node, call_arena)
+        return nil unless receiver_type
+        receiver_name = get_type_name_from_ref(receiver_type.not_nil!)
+        return nil if receiver_name.empty? || unresolved_generic_return_type?(receiver_type.not_nil!)
+
+        # Production class-call lowering starts constructors at their concrete
+        # receiver owner, then the structured resolver selects the source Def.
+        input = CallResolutionInput.new(
+          func_name: "#{receiver_name}.new",
+          arg_count: 0,
+          arg_types: [] of TypeRef,
+          has_block: true,
+          has_splat: false,
+          has_named: false,
+          named_names: nil,
+        )
+        contract = resolve_proc_constructor_block_contract_for_analysis(
+          input, call_node, call_arena,
+        )
+        contract.try(&.input_types)
+      end
+    end
+
+    private def capture_plan_expr_type(
+      expr_id : Adamas::Compiler::Frontend::ExprId,
+      params : Hash(String, TypeRef),
+    ) : TypeRef?
+      return nil if expr_id.index < 0 || expr_id.index >= @arena.size
+      case node = @arena[expr_id]
+      when Adamas::Compiler::Frontend::NumberNode
+        type_ref_for_number_kind(node.kind)
+      when Adamas::Compiler::Frontend::StringNode
+        type_ref_for_name("String")
+      when Adamas::Compiler::Frontend::CharNode
+        type_ref_for_name("Char")
+      when Adamas::Compiler::Frontend::BoolNode
+        TypeRef::BOOL
+      when Adamas::Compiler::Frontend::NilNode
+        TypeRef::NIL
+      when Adamas::Compiler::Frontend::SymbolNode
+        type_ref_for_name("Symbol")
+      when Adamas::Compiler::Frontend::IdentifierNode
+        # Scope composition removes unknown shadowed names and then installs
+        # typed callback locals. A present map entry is therefore authoritative
+        # even when that spelling shadows an owner local.
+        name = safe_slice_to_string(node.name) || ""
+        params[name]?
+      when Adamas::Compiler::Frontend::GroupingNode
+        capture_plan_expr_type(node.expression, params)
+      when Adamas::Compiler::Frontend::TupleLiteralNode
+        parts = [] of TypeRef
+        node.elements.each do |element|
+          element_type = capture_plan_expr_type(element, params)
+          return nil unless element_type
+          parts << element_type.not_nil!
+        end
+        tuple = tuple_type_from_arg_types(parts)
+        tuple == TypeRef::VOID ? nil : tuple
+      else
+        # Reuse the normal expression typer for call-valued and compound RHSs,
+        # but give it only this owner's already scope-filtered known locals and
+        # no body/name fallback.
+        old_locals = @current_typeof_locals
+        old_names = @current_typeof_local_names
+        old_body = @infer_body_context
+        old_arena = @arena
+        local_map = params.dup
+        @current_typeof_locals = local_map
+        @current_typeof_local_names = {} of String => String
+        @infer_body_context = nil
+        begin
+          bump_infer_type_cache_version
+          inferred = infer_type_from_expr(expr_id, @current_class)
+          inferred == TypeRef::VOID ? nil : inferred
+        ensure
+          @current_typeof_locals = old_locals
+          @current_typeof_local_names = old_names
+          @infer_body_context = old_body
+          @arena = old_arena
+          bump_infer_type_cache_version
+        end
+      end
+    end
+
+    private def capture_plan_seed_tuple_pattern(
+      pattern_id : Adamas::Compiler::Frontend::ExprId,
+      value_type : TypeRef,
+      params : Hash(String, TypeRef),
+    ) : Bool
+      return false if pattern_id.index < 0 || pattern_id.index >= @arena.size
+      case node = @arena[pattern_id]
+      when Adamas::Compiler::Frontend::IdentifierNode
+        name = safe_slice_to_string(node.name) || ""
+        return true if name.empty? || name == "_"
+        return false if params.has_key?(name)
+        params[name] = value_type
+        true
+      when Adamas::Compiler::Frontend::TupleLiteralNode
+        return false if node.elements.any? { |child| @arena[child].is_a?(Adamas::Compiler::Frontend::SplatNode) }
+        desc = @module.get_type_descriptor(value_type)
+        return false unless desc && desc.kind == TypeKind::Tuple
+        return false if node.elements.size > desc.type_params.size
+        node.elements.each_with_index do |child, index|
+          child_type = tuple_element_type(value_type, index)
+          return false unless child_type
+          return false unless capture_plan_seed_tuple_pattern(child, child_type.not_nil!, params)
+        end
+        true
+      else
+        false
+      end
+    end
+
+    private def capture_plan_written_names(
+      expr_id : Adamas::Compiler::Frontend::ExprId,
+      candidates : Set(String),
+      found : Set(String),
+    ) : Nil
+      return if expr_id.index < 0 || expr_id.index >= @arena.size
+      case node = @arena[expr_id]
+      when Adamas::Compiler::Frontend::AssignNode
+        if target = @arena[node.target].as?(Adamas::Compiler::Frontend::IdentifierNode)
+          name = safe_slice_to_string(target.name) || ""
+          found.add(name) if candidates.includes?(name)
+        end
+        capture_plan_written_names(node.value, candidates, found)
+      when Adamas::Compiler::Frontend::MultipleAssignNode
+        node.targets.each do |target_id|
+          if target = @arena[target_id].as?(Adamas::Compiler::Frontend::IdentifierNode)
+            name = safe_slice_to_string(target.name) || ""
+            found.add(name) if candidates.includes?(name)
+          else
+            capture_plan_written_names(target_id, candidates, found)
+          end
+        end
+        capture_plan_written_names(node.value, candidates, found)
+      else
+        each_proc_scan_child(expr_id) do |child|
+          capture_plan_written_names(child, candidates, found)
+        end
+      end
+    end
+
+    private def capture_plan_add_write(
+      name : String,
+      type_ref : TypeRef?,
+      candidates : Set(String),
+      writes : Hash(String, Array(TypeRef)),
+      unknown : Set(String),
+    ) : Nil
+      return unless candidates.includes?(name)
+      unless type_ref && type_ref.not_nil! != TypeRef::VOID && type_ref.not_nil! != TypeRef::POINTER
+        unknown.add(name)
+        return
+      end
+      (writes[name] ||= [] of TypeRef) << type_ref.not_nil!
+    end
+
+    private def capture_plan_scan_callback_expr(
+      expr_id : Adamas::Compiler::Frontend::ExprId,
+      callback_arena : Adamas::Compiler::Frontend::ArenaLike,
+      param_types : Hash(String, TypeRef),
+      shadowed : Set(String),
+      candidates : Set(String),
+      writes : Hash(String, Array(TypeRef)),
+      unknown : Set(String),
+      depth : Int32 = 0,
+    ) : Nil
+      return if depth > 64 || expr_id.index < 0 || expr_id.index >= callback_arena.size
+      saved_arena = @arena
+      @arena = callback_arena
+      begin
+        case node = @arena[expr_id]
+        when Adamas::Compiler::Frontend::AssignNode
+          if target = @arena[node.target].as?(Adamas::Compiler::Frontend::IdentifierNode)
+            name = safe_slice_to_string(target.name) || ""
+            unless shadowed.includes?(name)
+              capture_plan_add_write(name, capture_plan_expr_type(node.value, param_types), candidates, writes, unknown)
+            end
+          else
+            nested = Set(String).new
+            capture_plan_written_names(node.target, candidates, nested)
+            nested.each { |name| unknown.add(name) }
+          end
+          capture_plan_scan_callback_expr(node.value, callback_arena, param_types, shadowed, candidates, writes, unknown, depth + 1)
+        when Adamas::Compiler::Frontend::MultipleAssignNode
+          rhs_type = capture_plan_expr_type(node.value, param_types)
+          rhs_tuple = @arena[node.value].as?(Adamas::Compiler::Frontend::TupleLiteralNode)
+          node.targets.each_with_index do |target_id, index|
+            if target = @arena[target_id].as?(Adamas::Compiler::Frontend::IdentifierNode)
+              name = safe_slice_to_string(target.name) || ""
+              unless shadowed.includes?(name)
+                element_type = if tuple = rhs_tuple
+                                 element = tuple.elements[index]?
+                                 element ? capture_plan_expr_type(element.not_nil!, param_types) : nil
+                               elsif rhs_type
+                                 tuple_element_type(rhs_type.not_nil!, index)
+                               else
+                                 nil
+                               end
+                capture_plan_add_write(name, element_type, candidates, writes, unknown)
+              end
+            else
+              nested = Set(String).new
+              capture_plan_written_names(target_id, candidates, nested)
+              nested.each { |name| unknown.add(name) }
+            end
+          end
+          capture_plan_scan_callback_expr(node.value, callback_arena, param_types, shadowed, candidates, writes, unknown, depth + 1)
+        when Adamas::Compiler::Frontend::ProcLiteralNode
+          if mapped = capture_plan_param_map_for_proc(node, callback_arena)
+            nested_types = param_types.dup
+            mapped[1].each { |name| nested_types.delete(name) }
+            mapped[0].each { |name, type_ref| nested_types[name] = type_ref }
+            nested_shadowed_proc = shadowed.dup
+            mapped[1].each { |name| nested_shadowed_proc.add(name) }
+            node.body.each do |child|
+              capture_plan_scan_callback_expr(child, callback_arena, nested_types, nested_shadowed_proc, candidates, writes, unknown, depth + 1)
+            end
+          else
+            nested = Set(String).new
+            node.body.each { |child| capture_plan_written_names(child, candidates, nested) }
+            nested.each { |name| unknown.add(name) }
+          end
+        when Adamas::Compiler::Frontend::CallNode
+          processed_block = false
+          if block_id = node.block
+            if block_node = callback_arena[block_id].as?(Adamas::Compiler::Frontend::BlockNode)
+              if input_types = capture_plan_callback_inputs(node, callback_arena)
+                block_arena = cached_block_arena(block_node.object_id) ||
+                              resolve_arena_for_block(block_node, callback_arena) || callback_arena
+                if mapped = capture_plan_param_map_for_block(block_node, input_types, block_arena, candidates, writes, unknown)
+                  nested_types = param_types.dup
+                  mapped[1].each { |name| nested_types.delete(name) }
+                  mapped[0].each { |name, type_ref| nested_types[name] = type_ref }
+                  nested_shadowed_block = shadowed.dup
+                  mapped[1].each { |name| nested_shadowed_block.add(name) }
+                  block_node.body.each do |child|
+                    capture_plan_scan_callback_expr(child, block_arena, nested_types, nested_shadowed_block, candidates, writes, unknown, depth + 1)
+                  end
+                  processed_block = true
+                else
+                  candidates.each { |name| unknown.add(name) }
+                end
+              else
+                nested = Set(String).new
+                block_node.body.each { |child| capture_plan_written_names(child, candidates, nested) }
+                nested.each { |name| unknown.add(name) }
+                processed_block = true
+              end
+            end
+          end
+          capture_plan_scan_callback_expr(node.callee, callback_arena, param_types, shadowed, candidates, writes, unknown, depth + 1)
+          node.args.each do |child|
+            capture_plan_scan_callback_expr(child, callback_arena, param_types, shadowed, candidates, writes, unknown, depth + 1)
+          end
+          if named_args = node.named_args
+            named_args.each do |arg|
+              capture_plan_scan_callback_expr(arg.value, callback_arena, param_types, shadowed, candidates, writes, unknown, depth + 1)
+            end
+          end
+          unless processed_block
+            if block_id = node.block
+              nested = Set(String).new
+              capture_plan_written_names(block_id, candidates, nested)
+              nested.each { |name| unknown.add(name) }
+            end
+          end
+        else
+          each_proc_scan_child(expr_id) do |child|
+            capture_plan_scan_callback_expr(child, callback_arena, param_types, shadowed, candidates, writes, unknown, depth + 1)
+          end
+        end
+      ensure
+        @arena = saved_arena
+      end
+    end
+
+    private def capture_plan_scan_callback_body(
+      body : Array(Adamas::Compiler::Frontend::ExprId),
+      callback_arena : Adamas::Compiler::Frontend::ArenaLike,
+      param_types : Hash(String, TypeRef),
+      shadowed : Set(String),
+      candidates : Set(String),
+      writes : Hash(String, Array(TypeRef)),
+      unknown : Set(String),
+    ) : Nil
+      body.each do |expr_id|
+        capture_plan_scan_callback_expr(expr_id, callback_arena, param_types, shadowed, candidates, writes, unknown)
+      end
+    end
+
+    private def capture_plan_param_map_for_block(
+      block : Adamas::Compiler::Frontend::BlockNode,
+      input_types : Array(TypeRef),
+      block_arena : Adamas::Compiler::Frontend::ArenaLike,
+      candidates : Set(String),
+      writes : Hash(String, Array(TypeRef)),
+      unknown : Set(String),
+    ) : {Hash(String, TypeRef), Set(String)}?
+      params = {} of String => TypeRef
+      shadowed = Set(String).new
+      if block_params = block.params
+        return nil if block_params.size != input_types.size
+        block_params.each_with_index do |param, index|
+          return nil if param.is_splat || param.is_double_splat || param.is_block
+          name = param.name.try { |slice| safe_slice_to_string(slice) } || ""
+          next if name.empty? || name == "_"
+          actual = input_types[index]
+          if param_type_annotation = param.type_annotation
+            declared = type_ref_for_name(safe_slice_to_string(param_type_annotation) || "")
+            return nil if declared != actual
+          end
+          params[name] = actual
+          shadowed.add(name)
+        end
+      end
+      saved_arena = @arena
+      @arena = block_arena
+      begin
+        if patterns = block.unpacks
+          patterns.each do |(slot, pattern_id)|
+            next if slot < 0 || slot >= input_types.size
+            pattern_names = Set(String).new
+            collect_block_unpack_pattern_names(pattern_id, pattern_names)
+            if capture_plan_seed_tuple_pattern(pattern_id, input_types[slot], params)
+              pattern_names.each do |name|
+                if candidates.includes?(name)
+                  # Proc.new's authenticated explicit tuple pattern assigns an
+                  # existing outer local; ordinary block parameters still shadow.
+                  shadowed.delete(name)
+                  capture_plan_add_write(name, params[name]?, candidates, writes, unknown)
+                end
+              end
+            elsif pattern_names.any? { |name| candidates.includes?(name) }
+              pattern_names.each { |name| unknown.add(name) if candidates.includes?(name) }
+            end
+          end
+        end
+      ensure
+        @arena = saved_arena
+      end
+      {params, shadowed}
+    end
+
+    private def capture_plan_param_map_for_proc(
+      proc_node : Adamas::Compiler::Frontend::ProcLiteralNode,
+      proc_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : {Hash(String, TypeRef), Set(String)}?
+      params = {} of String => TypeRef
+      shadowed = Set(String).new
+      return {params, shadowed} unless proc_params = proc_node.params
+      proc_params.each do |param|
+        return nil if param.is_splat || param.is_double_splat || param.is_block
+        name = param.name.try { |slice| safe_slice_to_string(slice) } || ""
+        next if name.empty? || name == "_"
+        shadowed.add(name)
+        if param_type_annotation = param.type_annotation
+          type_ref = type_ref_for_name(safe_slice_to_string(param_type_annotation) || "")
+          return nil if type_ref == TypeRef::VOID
+          params[name] = type_ref
+        end
+      end
+      {params, shadowed}
+    end
+
+    private def owner_capture_storage_types(
+      ctx : LoweringContext,
+      body : Array(Adamas::Compiler::Frontend::ExprId),
+      owner_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Array({Adamas::Compiler::Frontend::ExprId, TypeRef})
+      saved_arena = @arena
+      @arena = owner_arena
+      plans = [] of {Adamas::Compiler::Frontend::ExprId, TypeRef}
+      begin
+        owner_param_info = {} of String => {ValueId, TypeRef}
+        owner_types = {} of String => TypeRef
+        ctx.function.params.each do |param|
+          next if param.name.empty? || param.name == "self"
+          owner_param_info[param.name] = {param.id, param.type}
+          owner_types[param.name] = param.type unless param.type == TypeRef::VOID
+        end
+        binding_counts = Hash(String, Int32).new(0)
+        binding_info = {} of String => {Adamas::Compiler::Frontend::ExprId, TypeRef}
+        body.each do |expr_id|
+          node = @arena[expr_id].as?(Adamas::Compiler::Frontend::AssignNode)
+          next unless node
+          target = @arena[node.not_nil!.target].as?(Adamas::Compiler::Frontend::IdentifierNode)
+          next unless target
+          name = safe_slice_to_string(target.not_nil!.name) || ""
+          next if name.empty? || name == "_" || owner_param_info.has_key?(name)
+          binding_counts[name] += 1
+          if initial_type = capture_plan_expr_type(node.not_nil!.value, owner_types)
+            binding_info[name] = {expr_id, initial_type.not_nil!}
+            owner_types[name] = initial_type.not_nil!
+          else
+            # Keep the exact lexical binding even when its RHS cannot yet be
+            # typed by the prepass (for example a bare zero-argument call).
+            # Authenticated callback writes constrain its eventual storage;
+            # the actual RHS type is joined when this binding is emitted.
+            binding_info[name] = {expr_id, TypeRef::VOID}
+            owner_types.delete(name)
+          end
+        end
+        candidates = Set(String).new
+        binding_info.each_key do |name|
+          candidates.add(name) if binding_counts[name] == 1
+        end
+        owner_param_info.each_key { |name| candidates.add(name) }
+        return plans if candidates.empty?
+
+        writes = Hash(String, Array(TypeRef)).new
+        unknown = Set(String).new
+        recognized_callbacks = Set(Int32).new
+        body.each do |expr_id|
+          node = @arena[expr_id]
+          candidate_node = node
+          if assignment = node.as?(Adamas::Compiler::Frontend::AssignNode)
+            candidate_node = @arena[assignment.value]
+          end
+          if proc_node = candidate_node.as?(Adamas::Compiler::Frontend::ProcLiteralNode)
+            recognized_callbacks.add(expr_id.index)
+            proc_arena = owner_arena
+            if mapped = capture_plan_param_map_for_proc(proc_node, proc_arena)
+              callback_types = owner_types.dup
+              mapped[1].each { |name| callback_types.delete(name) }
+              mapped[0].each { |name, type_ref| callback_types[name] = type_ref }
+              capture_plan_scan_callback_body(proc_node.body, proc_arena, callback_types, mapped[1], candidates, writes, unknown)
+            else
+              candidates.each { |name| unknown.add(name) }
+            end
+          elsif call_node = candidate_node.as?(Adamas::Compiler::Frontend::CallNode)
+            if block_id = call_node.block
+              block_node = owner_arena[block_id].as?(Adamas::Compiler::Frontend::BlockNode)
+              if block_node
+                input_types = capture_plan_callback_inputs(call_node, owner_arena)
+                if input_types
+                  recognized_callbacks.add(expr_id.index)
+                  block_arena = cached_block_arena(block_node.not_nil!.object_id) ||
+                                resolve_arena_for_block(block_node.not_nil!, owner_arena) || owner_arena
+                  if mapped = capture_plan_param_map_for_block(block_node.not_nil!, input_types.not_nil!, block_arena, candidates, writes, unknown)
+                    callback_types = owner_types.dup
+                    mapped[1].each { |name| callback_types.delete(name) }
+                    mapped[0].each { |name, type_ref| callback_types[name] = type_ref }
+                    capture_plan_scan_callback_body(block_node.not_nil!.body, block_arena, callback_types, mapped[1], candidates, writes, unknown)
+                  else
+                    candidates.each { |name| unknown.add(name) }
+                  end
+                end
+              end
+            end
+          end
+        end
+
+        # Parameters may be widened only when every observed write is inside
+        # an authenticated callback; direct owner writes are deliberately left
+        # to the normal flow typer until full owner-flow inference is available.
+        body.each do |expr_id|
+          next if recognized_callbacks.includes?(expr_id.index)
+          if assignment = @arena[expr_id].as?(Adamas::Compiler::Frontend::AssignNode)
+            if target = @arena[assignment.target].as?(Adamas::Compiler::Frontend::IdentifierNode)
+              name = safe_slice_to_string(target.name) || ""
+              unknown.add(name) if owner_param_info.has_key?(name)
+            end
+          end
+        end
+
+        # Writes outside authenticated callback roots cannot contribute a
+        # guessed payload type. Preserve local assignment candidates only when
+        # their exact initial binding remains unique.
+        body.each do |expr_id|
+          next if recognized_callbacks.includes?(expr_id.index)
+          direct_binding = @arena[expr_id].as?(Adamas::Compiler::Frontend::AssignNode)
+          if direct_binding
+            target = @arena[direct_binding.not_nil!.target].as?(Adamas::Compiler::Frontend::IdentifierNode)
+            if target
+              direct_name = safe_slice_to_string(target.not_nil!.name) || ""
+              next if candidates.includes?(direct_name) && !owner_param_info.has_key?(direct_name)
+            end
+          end
+          observed = Set(String).new
+          capture_plan_written_names(expr_id, candidates, observed)
+          observed.each { |name| unknown.add(name) }
+        end
+
+        candidates.each do |name|
+          next if unknown.includes?(name)
+          info = binding_info[name]?
+          param_info = owner_param_info[name]?
+          base_type = info ? info.not_nil![1] : param_info.try(&.[1])
+          next unless base_type
+          merged = base_type.not_nil!
+          next if merged == TypeRef::POINTER || (merged == TypeRef::VOID && info.nil?)
+          callback_writes = writes[name]?
+          next unless callback_writes
+          callback_writes.each do |write_type|
+            merged = merged == TypeRef::VOID ? write_type : union_type_for_values(merged, write_type)
+          end
+          next if merged == base_type
+          if info
+            plans << {info.not_nil![0], merged}
+          elsif param_info
+            ctx.set_capture_parameter_storage_type(param_info.not_nil![0], merged)
+          end
+        end
+        plans
+      ensure
+        @arena = saved_arena
+      end
+    end
+
     private def lower_def_body_sequence(
       ctx : LoweringContext,
       body : Array(Adamas::Compiler::Frontend::ExprId),
@@ -73417,8 +74192,17 @@ module Adamas::HIR
       if override_name = full_name_override
         lookup_name = override_name
       end
+      callback_source_binding = raw_callback_source_binding_for(lookup_name)
+      if binding = callback_source_binding
+        unless same_def_node?(node, binding.source_def)
+          raise LoweringError.new("raw callback def source changed for #{lookup_name}", node)
+        end
+        call_arg_types = binding.callsite.types.dup
+        call_arg_literals = binding.callsite.literals.try(&.dup)
+        call_arg_enum_names = binding.callsite.enum_names.try(&.dup)
+      end
       use_specialized_runtime_param_types = specialized_runtime_param_types?(full_name_override)
-      if use_specialized_runtime_param_types
+      if use_specialized_runtime_param_types && callback_source_binding.nil?
         if suffix = method_suffix(lookup_name)
           unless suffix.empty?
             parsed_types = parse_types_from_suffix(strip_mangled_suffix_flags(suffix))
@@ -73575,6 +74359,13 @@ module Adamas::HIR
                                        else
                                          param_type
                                        end
+            if param.is_block
+              if dependent_type = dependent_self_callback_param_type(
+                raw_callback_contract, node, lookup_name, type_ann_str,
+              )
+                exact_runtime_param_type = dependent_type
+              end
+            end
             local_inference_type = exact_runtime_param_type
             param_type_map[param_name] = local_inference_type
             param_infos << {param_name, exact_runtime_param_type, param.is_block}
@@ -73918,6 +74709,10 @@ module Adamas::HIR
           required_boxes.each do |name|
             ctx.require_entry_box_for_local(name)
           end
+          owner_arena = @arena
+          owner_capture_storage_types(ctx, body, owner_arena).each do |(assignment_id, storage_type)|
+            ctx.set_capture_storage_type(owner_arena, assignment_id, storage_type)
+          end
           if env_has?("DEBUG_ENTRY_BOX_REQUIREMENTS") && !required_boxes.empty?
             STDERR.puts "[ENTRY_BOX_REQUIREMENTS] func=#{ctx.function.name} names=#{required_boxes.to_a.sort.join(",")}"
           end
@@ -73925,7 +74720,7 @@ module Adamas::HIR
             next if name.empty?
             next if ctx.lookup_boxed_local(name)
             if local_id = ctx.lookup_local(name)
-              local_type = ctx.type_of(local_id)
+              local_type = ctx.capture_parameter_storage_type(local_id) || ctx.type_of(local_id)
               hoist_box_for_local(ctx, name, local_type, local_id) unless local_type == TypeRef::VOID
             end
           end
@@ -74277,6 +75072,43 @@ module Adamas::HIR
       end
       STDERR.puts "[LOWER_MAIN_FRONTIER] before_seed arenas=#{ordered_arenas.size}" if lower_main_frontier
       seed_entry_box_requirements_for_main(ctx, main_exprs, ordered_arenas)
+      # Loaded declaration-only arenas do not create separate top-level owners.
+      # Crystal's main program has one shared local scope across source files,
+      # so analyze only when every executable root resolves to one valid arena;
+      # spanning arenas abstains instead of guessing lexical ownership.
+      main_owner_arena_index : Int32? = nil
+      main_owner_body = [] of Adamas::Compiler::Frontend::ExprId
+      main_owner_complete = true
+      main_exprs.each do |packed_expr_ref|
+        arena_index = (packed_expr_ref >> 32).to_i32
+        expr_index = (packed_expr_ref & 0xFFFF_FFFF_u64).to_i32
+        if arena_index < 0 || arena_index >= ordered_arenas.size
+          main_owner_complete = false
+          break
+        end
+        main_owner_arena = ordered_arenas[arena_index]
+        if expr_index < 0 || expr_index >= main_owner_arena.size
+          main_owner_complete = false
+          break
+        end
+        if selected_arena_index = main_owner_arena_index
+          if selected_arena_index != arena_index
+            main_owner_complete = false
+            break
+          end
+        else
+          main_owner_arena_index = arena_index
+        end
+        main_owner_body << Adamas::Compiler::Frontend::ExprId.new(expr_index)
+      end
+      if main_owner_complete
+        if owner_arena_index = main_owner_arena_index
+          main_owner_arena = ordered_arenas[owner_arena_index]
+          owner_capture_storage_types(ctx, main_owner_body, main_owner_arena).each do |(assignment_id, storage_type)|
+            ctx.set_capture_storage_type(main_owner_arena, assignment_id, storage_type)
+          end
+        end
+      end
       STDERR.puts "[LOWER_MAIN_FRONTIER] after_seed" if lower_main_frontier
       main_exprs.each_with_index do |packed_expr_ref, idx|
         STDERR.puts "[LOWER_MAIN_FRONTIER] before_expr idx=#{idx + 1}" if lower_main_frontier
@@ -75563,7 +76395,12 @@ module Adamas::HIR
               skipped_void += 1 if debug_emit
               next
             end
-            name = if entry = lookup_function_def_for_call(base_name, args.types.size, signature.has_block, args.types, has_splat_def)
+            name = if selected_target = args.selected_target
+                     unless raw_callback_source_binding_for(selected_target)
+                       raise LoweringError.new("missing raw callback source binding for #{selected_target}")
+                     end
+                     selected_target
+                   elsif entry = lookup_function_def_for_call(base_name, args.types.size, signature.has_block, args.types, has_splat_def)
                      entry[0]
                    else
                      mangle_function_name(base_name, args.types, signature.has_block)
@@ -77900,7 +78737,7 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::NodeKind::Call
         return lower_call(ctx, node.unsafe_as(Adamas::Compiler::Frontend::CallNode), expr_id)
       when Adamas::Compiler::Frontend::NodeKind::Assign
-        return lower_assign(ctx, node.unsafe_as(Adamas::Compiler::Frontend::AssignNode))
+        return lower_assign(ctx, node.unsafe_as(Adamas::Compiler::Frontend::AssignNode), expr_id)
       when Adamas::Compiler::Frontend::NodeKind::Identifier
         return lower_identifier(ctx, node.unsafe_as(Adamas::Compiler::Frontend::IdentifierNode))
       when Adamas::Compiler::Frontend::NodeKind::MemberAccess
@@ -77920,7 +78757,15 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::NodeKind::Block
         return lower_block(ctx, node.unsafe_as(Adamas::Compiler::Frontend::BlockNode))
       when Adamas::Compiler::Frontend::NodeKind::Def
-        result = lower_def(node.unsafe_as(Adamas::Compiler::Frontend::DefNode))
+        def_node = node.unsafe_as(Adamas::Compiler::Frontend::DefNode)
+        if @current_class.nil? && @current_method.nil?
+          # A top-level declaration publishes its source contract. Its body is
+          # demanded only after overload resolution selects it, including when
+          # a macro expansion wraps declarations in Begin or Block nodes.
+          register_function(def_node)
+          return lower_top_level_def(ctx, def_node)
+        end
+        result = lower_def(def_node)
         return result.is_a?(UInt32) ? result.as(UInt32) : 0_u32
       when Adamas::Compiler::Frontend::NodeKind::Class,
            Adamas::Compiler::Frontend::NodeKind::Struct,
@@ -78922,7 +79767,7 @@ module Adamas::HIR
           each_param(params) do |param|
             if type_ann = param.type_annotation
               type_name = (safe_slice_to_string(type_ann) || "")
-              param_type_ids << type_ref_for_c_type(type_name).id
+              param_type_ids << declared_type_ref_for_c_type(type_name).id
             else
               param_type_ids << TypeRef::POINTER.id # Default to pointer for untyped params
             end
@@ -78931,7 +79776,7 @@ module Adamas::HIR
 
         return_type_id = if ret = return_type_slice
                            ret_str = (safe_slice_to_string(ret) || "")
-                           type_ref_for_c_type(ret_str).id
+                           declared_type_ref_for_c_type(ret_str).id
                          else
                            TypeRef::VOID.id
                          end
@@ -78963,10 +79808,10 @@ module Adamas::HIR
       @current_class = lib_name if lib_name
       begin
         param_types = Array(TypeRef).new(parsed[:params].size) do |i|
-          type_ref_for_c_type(parsed[:params].unsafe_fetch(i))
+          declared_type_ref_for_c_type(parsed[:params].unsafe_fetch(i))
         end
         return_type = if ret = parsed[:return_type]
-                        type_ref_for_c_type(ret)
+                        declared_type_ref_for_c_type(ret)
                       else
                         TypeRef::VOID
                       end
@@ -78993,10 +79838,10 @@ module Adamas::HIR
       @current_class = nil
       begin
         param_types = Array(TypeRef).new(parsed[:params].size) do |i|
-          type_ref_for_c_type(parsed[:params].unsafe_fetch(i))
+          declared_type_ref_for_c_type(parsed[:params].unsafe_fetch(i))
         end
         return_type = if ret = parsed[:return_type]
-                        type_ref_for_c_type(ret)
+                        declared_type_ref_for_c_type(ret)
                       else
                         TypeRef::VOID
                       end
@@ -79350,6 +80195,7 @@ module Adamas::HIR
         param_types: param_types,
         return_type: return_type,
         varargs: parsed[:varargs],
+        noreturn: extern_declared_noreturn?(parsed[:return_type], lib_name),
         parameter_names: source_extern_parameter_names(params, param_types.size),
       ))
 
@@ -79386,11 +80232,17 @@ module Adamas::HIR
         return
       end
 
-      if parsed = extern_fun_signature_from_source(span)
+      parsed = extern_fun_signature_from_source(span)
+      declared_return_type = if signature = parsed
+                               signature[:return_type]
+                             elsif ret = return_type_slice
+                               safe_slice_to_string(ret)
+                             end
+      if signature = parsed
         if lib_name_value = lib_name
-          param_types, return_type = resolve_extern_fun_signature_from_source(lib_name_value, parsed, span)
+          param_types, return_type = resolve_extern_fun_signature_from_source(lib_name_value, signature, span)
         else
-          param_types, return_type = resolve_top_level_extern_fun_signature_from_source(parsed, span)
+          param_types, return_type = resolve_top_level_extern_fun_signature_from_source(signature, span)
         end
       else
         param_types, return_type = resolve_extern_fun_signature(lib_name, params, return_type_slice)
@@ -79408,6 +80260,7 @@ module Adamas::HIR
         param_types: param_types,
         return_type: return_type,
         varargs: varargs,
+        noreturn: extern_declared_noreturn?(declared_return_type, lib_name),
         parameter_names: source_extern_parameter_names(params, param_types.size),
       ))
 
@@ -79424,9 +80277,11 @@ module Adamas::HIR
       canonical_type_name = type_name.dup
       old_class = @current_class
       @current_class = lib_name
-      result = type_ref_for_c_type(canonical_type_name)
-      @current_class = old_class
-      result
+      begin
+        declared_type_ref_for_c_type(canonical_type_name)
+      ensure
+        @current_class = old_class
+      end
     end
 
     private def register_extern_global(lib_name : String, var_name : String, type_ref : TypeRef, real_name : String? = nil)
@@ -79439,9 +80294,71 @@ module Adamas::HIR
       ))
     end
 
+    # A declared signature is resolved after the source type registration pass.
+    # Validate every source type before the permissive internal ABI mapper can
+    # turn an unresolved Void sentinel into a pointer. Nested pointer/callback
+    # children need the same check even when their outer ABI is already known.
+    private def declared_type_ref_for_c_type(type_name : String) : TypeRef
+      validate_extern_declared_type(type_name)
+      type_ref_for_c_type(type_name)
+    end
+
+    private def validate_extern_declared_type(type_name : String, depth : Int32 = 0) : Nil
+      if depth > 64
+        raise LoweringError.new("recursive external type #{type_name}")
+      end
+      raw = normalize_tuple_literal_type_name(strip_fully_grouped_type_name(type_name.strip))
+      name = resolve_type_alias_chain(raw)
+      if name != raw
+        validate_extern_declared_type(name, depth + 1)
+        return
+      end
+
+      if name.ends_with?('*') || name.ends_with?('?')
+        validate_extern_declared_type(name[0, name.size - 1], depth + 1)
+        return
+      end
+      if arguments = proc_type_argument_names(name)
+        arguments.each { |argument| validate_extern_declared_type(argument, depth + 1) }
+        return
+      end
+      if (members = split_union_type_name(name)).size > 1
+        members.each { |member| validate_extern_declared_type(member, depth + 1) }
+        return
+      end
+      if info = split_generic_base_and_args(name)
+        base = resolve_type_name_in_context(info.base)
+        unless BUILTIN_GENERIC_BASES.includes?(base) || type_name_exists?(base)
+          raise LoweringError.new("undefined constant #{info.base}")
+        end
+        split_generic_type_args(info.args).each do |argument|
+          if base == "NamedTuple" && (entry = split_named_tuple_entry(argument))
+            validate_extern_declared_type(entry[1], depth + 1)
+          elsif !value_literal_name?(argument) && numeric_constant_type_arg(argument).nil?
+            validate_extern_declared_type(argument, depth + 1)
+          end
+        end
+        return
+      end
+
+      resolved = resolve_type_name_in_context(name)
+      if resolved != name
+        validate_extern_declared_type(resolved, depth + 1)
+        return
+      end
+      return if type_name_exists?(name) || BUILTIN_TYPE_NAMES.includes?(name) ||
+                LIBC_TYPE_ALIASES.has_key?(name) || builtin_alias_target?(name) || name == "NoReturn"
+      # typeof carries expressions rather than type children. Use its normal
+      # semantic resolver, which must produce an actual type at this boundary.
+      return if name.starts_with?("typeof(") && type_ref_for_name(name) != TypeRef::VOID
+      raise LoweringError.new("undefined constant #{name}")
+    end
+
     # Convert Crystal type notation to C-compatible TypeRef
     private def type_ref_for_c_type(type_name : String) : TypeRef
-      type_name = type_name.strip
+      # Resolve the declared source identity before choosing its C ABI. In
+      # particular, an alias of NoReturn has a void ABI and a separate effect.
+      type_name = resolve_type_alias_chain(type_name.strip)
 
       if type_name.ends_with?('*')
         base_name = type_name
@@ -84108,7 +85025,12 @@ module Adamas::HIR
         if actual_parts = source_extern_proc_parts(actual_type)
           expected_parts = source_extern_proc_parts(expected_type)
           return nil unless expected_parts
-          return true if actual_parts[0] == expected_parts[0] && expected_parts[1] == TypeRef::NIL
+          if actual_parts[0] == expected_parts[0]
+            actual_result = actual_parts[1]
+            expected_result = expected_parts[1]
+            return actual_result == expected_result || expected_result == TypeRef::NIL ||
+                   expected_result == TypeRef::VOID || get_type_name_from_ref(actual_result) == "NoReturn"
+          end
         end
         return false
       end
@@ -84268,24 +85190,131 @@ module Adamas::HIR
                     else
                       extern_func.name
                     end
-        expected_name = get_type_name_from_ref(expected_type)
-        actual_name = get_type_name_from_ref(actual_type)
+        expected_name = source_extern_type_label(expected_type)
+        actual_name = source_extern_type_label(actual_type)
         raise LoweringError.new("argument ##{index + 1} of '#{call_name}' must be #{expected_name}, not #{actual_name}", node)
       end
     end
 
-    # Emit a call to an external C function
+    private def source_extern_type_label(type_ref : TypeRef) : String
+      if parts = source_extern_proc_parts(type_ref)
+        inputs = parts[0].map { |input| get_type_name_from_ref(input) }
+        inputs << get_type_name_from_ref(parts[1])
+        return "Proc(#{inputs.join(", ")})"
+      end
+      get_type_name_from_ref(type_ref)
+    end
+
+    private def source_callback_value_definition(ctx : LoweringContext, id : ValueId) : Value?
+      ctx.function.blocks.each do |block|
+        block.instructions.each do |instruction|
+          return instruction if instruction.id == id
+        end
+      end
+      nil
+    end
+
+    # Follow only representation-preserving copies. A known environment is a
+    # compile-time closure rejection; an unknown Proc receives the same runtime
+    # environment check as Crystal before C can observe its function pointer.
+    private def source_extern_proc_code_pointer(ctx : LoweringContext, arg_id : ValueId) : ValueId
+      current = arg_id
+      visited = Set(ValueId).new
+      while visited.add?(current)
+        producer = source_callback_value_definition(ctx, current)
+        if producer.is_a?(Copy)
+          current = producer.source
+        elsif producer.is_a?(MakeProc)
+          environment = source_callback_value_definition(ctx, producer.env_ptr)
+          if environment.is_a?(Literal) && environment.value.nil?
+            return producer.fn_ptr
+          elsif environment.is_a?(MakeClosure)
+            raise LoweringError.new("can't send closure to C function")
+          end
+          break
+        else
+          break
+        end
+      end
+
+      closure_check = Call.with_receiver(ctx.next_id, TypeRef::BOOL, arg_id, "Proc#closure?", [] of ValueId)
+      ctx.emit(closure_check)
+      ctx.register_type(closure_check.id, TypeRef::BOOL)
+      rejected = ctx.create_block
+      accepted = ctx.create_block
+      ctx.terminate(Branch.new(closure_check.id, rejected, accepted))
+      ctx.current_block = rejected
+      message = Literal.new(ctx.next_id, TypeRef::STRING, "passing a closure to C is not allowed")
+      ctx.emit(message)
+      ctx.register_type(message.id, TypeRef::STRING)
+      argument_types = [TypeRef::STRING]
+      raise_entry = lookup_function_def_for_call("raise", 1, false, argument_types, false, false, nil)
+      unless raise_entry
+        raise LoweringError.new("undefined method 'raise' required by the C callback closure guard")
+      end
+      raise_base = strip_type_suffix(raise_entry[0])
+      raise_target = mangle_function_name(raise_base, argument_types, false)
+      raised = emit_top_level_bare_call(ctx, "raise", raise_target, [message.id], argument_types,
+        [true], nil, false, false, nil)
+      unless get_type_name_from_ref(ctx.type_of(raised)) == "NoReturn" ||
+             selected_call_noreturn?(raise_target, raise_entry[1])
+        raise LoweringError.new("::raise must be of NoReturn return type!")
+      end
+      ctx.terminate(Unreachable.new)
+      ctx.current_block = accepted
+      pointer = Call.with_receiver(ctx.next_id, TypeRef::POINTER, arg_id, "Proc#pointer", [] of ValueId)
+      ctx.emit(pointer)
+      ctx.register_type(pointer.id, TypeRef::POINTER)
+      pointer.id
+    end
+
+    # C uses a raw function pointer. The source language uses a Proc object.
+    # Validate the source signature first, then adapt exactly once at this ABI
+    # boundary. A Proc returned by C gets the inverse zero-environment wrapping.
     private def emit_extern_call(ctx : LoweringContext, extern_func : ExternFunction, arg_ids : Array(ValueId)) : ValueId
-      # Emit an ExternCall instruction with the real C function name
+      validate_source_extern_argument_types(ctx, extern_func, arg_ids)
+      c_args = arg_ids.map_with_index do |arg_id, index|
+        expected = extern_func.param_types[index]?
+        if expected && source_extern_proc_parts(expected)
+          actual = ctx.type_of(arg_id)
+          if source_extern_proc_parts(actual)
+            source_extern_proc_code_pointer(ctx, arg_id)
+          elsif actual == TypeRef::NIL
+            null_pointer = Literal.new(ctx.next_id, TypeRef::POINTER, nil)
+            ctx.emit(null_pointer)
+            ctx.register_type(null_pointer.id, TypeRef::POINTER)
+            null_pointer.id
+          else
+            arg_id
+          end
+        else
+          arg_id
+        end
+      end
+      returns_proc = !source_extern_proc_parts(extern_func.return_type).nil?
+      abi_return_type = returns_proc ? TypeRef::POINTER : extern_func.return_type
       extern_call = ExternCall.new(
         ctx.next_id,
-        extern_func.return_type,
-        extern_func.real_name, # Use the real C name
-        arg_ids,
-        extern_func.varargs
+        abi_return_type,
+        extern_func.real_name,
+        c_args,
+        extern_func.varargs,
+        extern_func.noreturn
       )
       ctx.emit(extern_call)
-      ctx.register_type(extern_call.id, extern_func.return_type)
+      ctx.register_type(extern_call.id, abi_return_type)
+      if extern_func.noreturn
+        @control_flow_dead_blocks.add({ctx.function.id, ctx.current_block})
+      end
+      if returns_proc
+        null_env = Literal.new(ctx.next_id, TypeRef::POINTER, nil)
+        ctx.emit(null_env)
+        ctx.register_type(null_env.id, TypeRef::POINTER)
+        proc_value = MakeProc.new(ctx.next_id, extern_func.return_type, extern_call.id, null_env.id)
+        ctx.emit(proc_value)
+        ctx.register_type(proc_value.id, proc_value.type)
+        return proc_value.id
+      end
       extern_call.id
     end
 
@@ -84952,13 +85981,15 @@ module Adamas::HIR
         raise LoweringError.new("undefined constant #{name}", node)
       end
 
-      # Otherwise create a new local (first use)
-      local = Local.new(ctx.next_id, TypeRef::VOID, name, ctx.current_scope)
-      ctx.emit(local)
-      record_hir_value_source_location(ctx, local.id, @arena, node)
-      ctx.register_debug_local(name, local.id)
-      ctx.register_local(name, local.id)
-      local.id
+      # An expression read cannot introduce a local binding. Preserve an
+      # unresolved bare method demand until source/macro registration reaches
+      # closure, where validate_unresolved_free_source_calls diagnoses it.
+      # In particular, an unused read must not disappear as a Void local.
+      call = Call.without_receiver(ctx.next_id, TypeRef::VOID, name, [] of ValueId)
+      ctx.emit(call)
+      record_hir_value_source_location(ctx, call.id, @arena, node)
+      ctx.register_type(call.id, TypeRef::VOID)
+      call.id
     end
 
     private def lower_closure_ref_cell_identifier(
@@ -90062,6 +91093,7 @@ module Adamas::HIR
     private def lower_method_pointer(
       ctx : LoweringContext,
       node : Adamas::Compiler::Frontend::UnaryNode,
+      contextual_inputs : Array(TypeRef)? = nil,
     ) : ValueId
       operand = safe_node(node.operand)
       target_callee = operand.is_a?(Adamas::Compiler::Frontend::CallNode) ? operand.callee : node.operand
@@ -90098,9 +91130,19 @@ module Adamas::HIR
         end
       end
 
+      # A C parameter supplies omitted method-pointer inputs before the target
+      # call is typed. Explicit source inputs remain authoritative.
+      inferred_inputs = target_types.empty? ? contextual_inputs : nil
+      if input_types = inferred_inputs
+        input_types.each_with_index do |input_type, index|
+          param_name = "__method_pointer_arg_#{index}"
+          proc_params << Adamas::Compiler::Frontend::Parameter.new(param_name.to_slice, span: node.span)
+          call_args << @arena.add(Adamas::Compiler::Frontend::IdentifierNode.new(node.span, param_name.to_slice))
+        end
+      end
       call = @arena.add(Adamas::Compiler::Frontend::CallNode.new(node.span, target_callee, call_args))
       proc_node = Adamas::Compiler::Frontend::ProcLiteralNode.new(node.span, proc_params, nil, [call])
-      lower_proc_literal(ctx, proc_node)
+      lower_proc_literal(ctx, proc_node, inferred_inputs)
     end
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -92067,6 +93109,7 @@ module Adamas::HIR
             block_vars = collect_assigned_vars(block_node.body, visited_blocks)
             if params = block_node.params
               param_names = params.compact_map { |param| nm = param.name; nm ? safe_slice_to_string(nm) : nil }
+              param_names.concat(block_unpack_leaf_names(block_node).to_a)
               block_vars.reject! { |name| param_names.includes?(name) }
               drop_assigned_var_yield_origins(origins_mark, @assigned_var_yield_depth, param_names)
             end
@@ -92106,6 +93149,7 @@ module Adamas::HIR
             end
             if params = inline_block.params
               param_names = params.compact_map { |param| nm = param.name; nm ? safe_slice_to_string(nm) : nil }
+              param_names.concat(block_unpack_leaf_names(inline_block).to_a)
               block_vars.reject! { |name| param_names.includes?(name) }
               drop_assigned_var_yield_origins(origins_mark, block_depth, param_names)
             end
@@ -92634,6 +93678,7 @@ module Adamas::HIR
                   end
                 end
               end
+              names.concat(block_unpack_leaf_names(block_node).to_a)
               collect_block_param_names(block_node.body, names, visited_blocks)
             end
           end
@@ -94454,6 +95499,10 @@ module Adamas::HIR
     end
 
     private def lower_return(ctx : LoweringContext, node : Adamas::Compiler::Frontend::ReturnNode) : ValueId
+      if @captured_block_return_owner
+        raise LoweringError.new("can't return from captured block, use next", node)
+      end
+
       value_id = if val = node.value
                    lower_expr(ctx, val)
                  else
@@ -95180,7 +96229,8 @@ module Adamas::HIR
         # After body, call TryEnd if we have rescue handlers
         body_block_data = ctx.get_block(ctx.current_block)
         body_flows = body_block_data.terminator.is_a?(Unreachable) &&
-                     !block_has_raise_instruction?(body_block_data)
+                     !block_has_raise_instruction?(body_block_data) &&
+                     !control_flow_dead_block?(ctx, ctx.current_block)
         early_exit_ctx.not_nil!.rescue_active = false if early_exit_ctx && has_rescue
         if has_rescue && body_flows
           try_end = TryEnd.new(ctx.next_id)
@@ -95297,7 +96347,8 @@ module Adamas::HIR
 
             # Track clause exit for PHI merging and jump to rescue_done
             # Only if the rescue body didn't already terminate (e.g., via return/raise)
-            if ctx.get_block(ctx.current_block).terminator.is_a?(Unreachable)
+            if ctx.get_block(ctx.current_block).terminator.is_a?(Unreachable) &&
+               !control_flow_dead_block?(ctx, ctx.current_block)
               clause_exit_block = ctx.current_block
               rescue_clause_exits << {clause_exit_block, rescue_result}
               ctx.terminate(Jump.new(rescue_done_block))
@@ -95351,7 +96402,8 @@ module Adamas::HIR
             result_id = lower_expr(ctx, expr_id)
           end
           after_else_target = ensure_block || exit_block
-          if ctx.get_block(ctx.current_block).terminator.is_a?(Unreachable)
+          if ctx.get_block(ctx.current_block).terminator.is_a?(Unreachable) &&
+             !control_flow_dead_block?(ctx, ctx.current_block)
             ctx.terminate(Jump.new(after_else_target))
           end
         end
@@ -95377,7 +96429,19 @@ module Adamas::HIR
           ensure_body.each do |expr_id|
             lower_expr(ctx, expr_id) # ensure result is discarded
           end
-          ctx.terminate(Jump.new(exit_block))
+          ensure_block_data = ctx.get_block(ctx.current_block)
+          if ensure_block_data.terminator.is_a?(Unreachable) &&
+             !block_has_raise_instruction?(ensure_block_data) &&
+             !control_flow_dead_block?(ctx, ctx.current_block)
+            ctx.terminate(Jump.new(exit_block))
+          end
+        end
+
+        # Preserve dead flow when no body, rescue, else, or ensure path
+        # reaches this synthetic continuation. Enclosing branch merges consult
+        # this marker rather than treating the default Unreachable as fallthrough.
+        unless reachable_blocks(ctx.function).any? { |block| block.id == exit_block }
+          @control_flow_dead_blocks.add({ctx.function.id, exit_block})
         end
 
         # Continue from exit block
@@ -95537,6 +96601,7 @@ module Adamas::HIR
       has_block : Bool,
       has_named_args : Bool,
       named_arg_names : Array(String)?,
+      selected_target : String? = nil,
     ) : UInt64
       h = 1469598103934665603_u64
       arg_types.each do |type_ref|
@@ -95556,6 +96621,9 @@ module Adamas::HIR
         names.each do |arg_name|
           h = (h ^ arg_name.object_id.to_u64) &* 1099511628211_u64
         end
+      end
+      if target = selected_target
+        target.each_byte { |byte| h = (h ^ byte.to_u64) &* 1099511628211_u64 }
       end
       h
     end
@@ -95577,6 +96645,7 @@ module Adamas::HIR
       # which otherwise causes massive monomorphization explosions.
       return if base_key.ends_with?("#in?")
       canonical_names = canonical_named_arg_names(named_arg_names)
+      selected_target = @raw_callback_source_bindings.has_key?(name) ? name : nil
       callsite = CallsiteArgs.new(
         arg_types.dup,
         arg_literals ? arg_literals.dup : nil,
@@ -95584,10 +96653,11 @@ module Adamas::HIR
         has_block,
         has_named_args,
         canonical_names ? canonical_names.dup : nil,
+        selected_target,
       )
       @pending_arg_types[name] = callsite
       return if base_key.empty?
-      callsite_key = callsite_args_fingerprint(arg_types, arg_literals, has_block, has_named_args, canonical_names)
+      callsite_key = callsite_args_fingerprint(arg_types, arg_literals, has_block, has_named_args, canonical_names, selected_target)
       seen_by_arity = @pending_arg_types_seen_by_arity[base_key]? || begin
         new_map = {} of Int32 => Set(UInt64)
         @pending_arg_types_seen_by_arity[base_key] = new_map
@@ -95688,7 +96758,7 @@ module Adamas::HIR
         if callsite = @pending_arg_types[key]?
           @pending_arg_types.delete(key)
           base = base_callsite_key(key)
-          remove_callsite_from_pending_maps(base, callsite.types, callsite.literals, callsite.has_block, callsite.named_arg_names)
+          remove_callsite_from_pending_maps(base, callsite.types, callsite.literals, callsite.has_block, callsite.named_arg_names, callsite.selected_target)
           return callsite
         end
       end
@@ -95750,7 +96820,7 @@ module Adamas::HIR
     end
 
     private def consume_callsite_args(base_key : String, entry : CallsiteArgs) : Nil
-      remove_callsite_from_pending_maps(base_key, entry.types, entry.literals, entry.has_block, entry.named_arg_names)
+      remove_callsite_from_pending_maps(base_key, entry.types, entry.literals, entry.has_block, entry.named_arg_names, entry.selected_target)
     end
 
     @[AlwaysInline]
@@ -95865,7 +96935,9 @@ module Adamas::HIR
       literals : Array(Bool)?,
       has_block : Bool,
       named_arg_names : Array(String)?,
+      selected_target : String? = nil,
     ) : Bool
+      return false unless candidate.selected_target == selected_target
       return false unless candidate.types == types
       return false unless candidate.has_block == has_block
       return false unless candidate.named_arg_names == named_arg_names
@@ -95880,10 +96952,11 @@ module Adamas::HIR
       literals : Array(Bool)?,
       has_block : Bool,
       named_arg_names : Array(String)?,
+      selected_target : String? = nil,
     ) : Int32?
       idx = 0
       while idx < bucket.size
-        return idx if callsite_args_match?(bucket.unsafe_fetch(idx), types, literals, has_block, named_arg_names)
+        return idx if callsite_args_match?(bucket.unsafe_fetch(idx), types, literals, has_block, named_arg_names, selected_target)
         idx += 1
       end
       nil
@@ -95895,12 +96968,13 @@ module Adamas::HIR
       literals : Array(Bool)?,
       has_block : Bool,
       named_arg_names : Array(String)?,
+      selected_target : String? = nil,
     ) : Nil
       return if base_key.empty?
 
       if by_arity = @pending_arg_types_by_arity[base_key]?
         if bucket = by_arity[types.size]?
-          idx = callsite_bucket_index(bucket, types, literals, has_block, named_arg_names)
+          idx = callsite_bucket_index(bucket, types, literals, has_block, named_arg_names, selected_target)
           if idx
             bucket.delete_at(idx)
             by_arity.delete(types.size) if bucket.empty?
@@ -95914,7 +96988,7 @@ module Adamas::HIR
 
       if signature = call_signature_for_base(base_key, types.size, has_block)
         if sig_bucket = @pending_arg_types_by_signature[signature]?
-          idx = callsite_bucket_index(sig_bucket, types, literals, has_block, named_arg_names)
+          idx = callsite_bucket_index(sig_bucket, types, literals, has_block, named_arg_names, selected_target)
           if idx
             sig_bucket.delete_at(idx)
             @pending_arg_types_by_signature.delete(signature) if sig_bucket.empty?
@@ -97870,8 +98944,9 @@ module Adamas::HIR
       end
 
       target_name = name
-      func_def = @function_defs[name]?
-      arena = @function_def_arenas[name]?
+      callback_source_binding = raw_callback_source_binding_for(name)
+      func_def = callback_source_binding.try(&.source_def) || @function_defs[name]?
+      arena = callback_source_binding.try(&.source_arena) || @function_def_arenas[name]?
       if demand = included_forall_body_demand
         # This exact selected include-origin is already verified by the active
         # virtual return demand. Avoid a second receiver lookup that could
@@ -98004,14 +99079,15 @@ module Adamas::HIR
       if is_math_min_debug
         STDERR.puts "[MATH_MIN_LOWER_FUNC] LOOKUP name=#{name} target=#{target_name} base=#{base_name} direct_found=#{!!func_def}"
       end
-      lookup_suffix = name_parts.suffix
-      lookup_expected_param_count = lookup_suffix ? suffix_param_count(lookup_suffix) : 0
+      lookup_suffix = callback_source_binding ? nil : name_parts.suffix
+      lookup_expected_param_count = callback_source_binding ? callback_source_binding.callsite.types.size : (lookup_suffix ? suffix_param_count(lookup_suffix) : 0)
       lookup_expect_block = if suffix = lookup_suffix
                               suffix_has_block_flag?(suffix)
                             else
                               false
                             end
-      explicit_lookup_callsite = @pending_arg_types[name]? || @pending_arg_types[target_name]?
+      explicit_lookup_callsite = callback_source_binding.try(&.callsite) || @pending_arg_types[name]? || @pending_arg_types[target_name]?
+      lookup_expect_block = callback_source_binding.callsite.has_block if callback_source_binding
       bare_inherited_exact_name = nil.as(String?)
       bare_inherited_exact_def = nil.as(Adamas::Compiler::Frontend::DefNode?)
       # Bare inherited instance wrappers must not reuse the "last seen" typed
@@ -99547,6 +100623,12 @@ module Adamas::HIR
         end
       end
       resolved_func_def = func_def || return
+      if binding = callback_source_binding
+        unless target_name == name && same_def_node?(resolved_func_def, binding.source_def) &&
+               arena && arena.object_id == binding.source_arena.object_id
+          raise LoweringError.new("raw callback materialization changed source for #{name}", binding.source_def)
+        end
+      end
       if pending_target_gate_enabled?
         stop_after_pending_target_phase(
           "lower_func_resolved_def",
@@ -99605,6 +100687,7 @@ module Adamas::HIR
       end
 
       callsite_args = pop_pending_callsite_args(name, target_name)
+      callsite_args = callback_source_binding.callsite if callback_source_binding
       if callsite_args.nil? && resolved_func_def
         callsite_args = pending_callsite_args_for_def(resolved_func_def, name, target_name)
       end
@@ -99630,7 +100713,7 @@ module Adamas::HIR
       # (e.g., Indexable#index! with `&` replacing Indexable#index!(obj, offset)).
       if resolved_func_def && effective_call_arg_types && effective_call_arg_types.size > 0
         target_suffix = method_suffix(target_name)
-        target_has_block_suffix = target_suffix ? suffix_has_block_flag?(target_suffix) : false
+        target_has_block_suffix = callback_source_binding ? callback_source_binding.callsite.has_block : (target_suffix ? suffix_has_block_flag?(target_suffix) : false)
         unless target_has_block_suffix
           current_stats = function_param_stats(target_name, resolved_func_def)
           if current_stats.has_block
@@ -99738,9 +100821,9 @@ module Adamas::HIR
         STDERR.puts "[RANGE_LOWER_INDEX] name=#{name} target=#{target_name} call_arg_types=#{types_str} callsite_args_nil=#{callsite_args.nil?}"
       end
       # The mangled suffix encodes the concrete specialization for this function
-      # variant. Callsite arg types may be stale (e.g. from an unspecialized
-      # generic context). Prefer suffix types as ground truth.
-      if name.includes?('$')
+      # variant. Registered callbacks instead carry their selected source and
+      # actual types explicitly; their generated suffix is not argument syntax.
+      if name.includes?('$') && callback_source_binding.nil?
         suffix = method_suffix(name)
         if suffix && !suffix.empty?
           parsed_type_ids = parse_type_ids_from_suffix(strip_mangled_suffix_flags(suffix))
@@ -100520,10 +101603,13 @@ module Adamas::HIR
                                    callsite_types_has_non_void?(call_arg_types)
                                  end
                 effective_new_call_types = call_arg_types || ([] of TypeRef)
-                expects_block_new = false
-                if suffix = method_suffix(target_for_lower)
-                  expects_block_new = suffix_has_block_flag?(suffix)
-                end
+                expects_block_new = if binding = callback_source_binding
+                                      binding.callsite.has_block
+                                    elsif suffix = method_suffix(target_for_lower)
+                                      suffix_has_block_flag?(suffix)
+                                    else
+                                      false
+                                    end
                 if owner == "File" && env_get("DBG_FILE_NEW")
                   arg_strs = effective_new_call_types.map { |t| t.id.to_s }
                   STDERR.puts "[FILE_NEW_RESOLVE] owner=File explicit_new=#{explicit_new} has_call_types=#{has_call_types} call_args=[#{arg_strs.join(",")}] allocator_ok=#{allocator_supported?(owner)}"
@@ -102390,6 +103476,12 @@ module Adamas::HIR
                              resolve_class_name_in_context(name)
                            end
                 resolved = resolve_type_alias_chain(resolved)
+                # A callable type is a type-valued receiver before class-owner
+                # heuristics inspect its parenthesized input list. Preserve the
+                # complete signature for the common Proc source-owner dispatch.
+                if class_name_str.nil? && proc_type_ref_for_name(resolved)
+                  class_name_str = resolved
+                end
                 if env_get("DEBUG_MISSING_SYMS") && (method_name == "leap_year?" || method_name == "month_week_date")
                   STDERR.puts "[CONST_RESOLVE] name=#{name} resolved=#{resolved} current=#{@current_class} override=#{@current_namespace_override} class_name_str=#{class_name_str}"
                 end
@@ -102488,6 +103580,12 @@ module Adamas::HIR
                                   resolve_class_name_in_context(substituted_name)
                                 end
                 resolved_name = resolve_type_alias_chain(resolved_name)
+                # A callable type is a type-valued receiver before class-owner
+                # heuristics inspect its parenthesized input list. Preserve the
+                # complete signature for the common Proc source-owner dispatch.
+                if class_name_str.nil? && proc_type_ref_for_name(resolved_name)
+                  class_name_str = resolved_name
+                end
                 if env_get("DEBUG_THREAD_RESOLVE") && method_name == "threads"
                   STDERR.puts "[THREAD_RESOLVE] name=#{name} resolved=#{resolved_name} current=#{@current_class || "nil"} override=#{@current_namespace_override || "nil"}"
                 end
@@ -102773,8 +103871,19 @@ module Adamas::HIR
                 elsif @type_aliases.has_key?(full_path) || LIBC_TYPE_ALIASES.has_key?(full_path)
                   resolved = resolve_type_alias_chain(full_path)
                   resolved = substitute_type_params_in_type_name(resolved)
-                  class_name_str = String.new(resolved.to_slice)
-                  path_receiver_class_name = resolved
+                  resolved_proc_ref = proc_type_ref_for_name(resolved)
+                  resolved_proc_descriptor = resolved_proc_ref ? @module.get_type_descriptor(resolved_proc_ref.not_nil!) : nil
+                  if resolved_proc_descriptor && resolved_proc_descriptor.kind == TypeKind::Proc
+                    # Proc aliases carry a callable signature, not a class-name
+                    # suffix. Dispatch through Proc while retaining the full
+                    # signature for block-input inference and the .new result.
+                    class_name_str = "Proc"
+                    path_receiver_class_name = "Proc"
+                    proc_return_type_name = resolved if method_name == "new"
+                  else
+                    class_name_str = String.new(resolved.to_slice)
+                    path_receiver_class_name = resolved
+                  end
                   path_receiver_class_name_found = true
                 elsif enum_member_path?(full_path)
                   # `Sig::A.m` is an instance call on an enum VALUE, not a class
@@ -102822,6 +103931,22 @@ module Adamas::HIR
 
           if path_receiver_class_name_found
             class_name_str = path_receiver_class_name
+          end
+
+          # All type-literal spellings share the same semantic dispatch owner.
+          # In particular an arrow-shaped Proc alias is not a class named `->`.
+          # Keep its complete signature separately from the generic source owner.
+          if receiver_name = class_name_str
+            resolved_receiver_name = resolve_type_alias_chain(receiver_name)
+            if receiver_proc_type = proc_type_ref_for_name(resolved_receiver_name)
+              if receiver_descriptor = @module.get_type_descriptor(receiver_proc_type)
+                if receiver_descriptor.kind == TypeKind::Proc
+                  proc_return_type_name = resolved_receiver_name if method_name == "new"
+                  class_name_str = "Proc"
+                  path_receiver_class_name = "Proc" if path_receiver_class_name_found
+                end
+              end
+            end
           end
 
           unless class_name_str.nil?
@@ -106853,6 +107978,27 @@ module Adamas::HIR
         end
       end
 
+      # Captured blocks must be validated before any inline-yield path can
+      # return. The selected source contract, rather than the name `.new`,
+      # distinguishes Proc capture from ordinary blocks that may return.
+      if block_expr && block_pass_expr.nil?
+        if selected_proc_def = selected_call_entry_def
+          selected_proc_target = SelectedCallTarget.new(
+            selected_call_entry_name || mangled_method_name,
+            selected_proc_def, selected_call_entry_arena,
+          )
+          if proc_constructor_block_contract_for_target(selected_proc_target, node, call_arena)
+            if captured_block = node_for_call_expr(call_arena, block_expr).as?(Adamas::Compiler::Frontend::BlockNode)
+              captured_arena = @block_node_arenas[captured_block.object_id]? ||
+                               resolve_arena_for_block(captured_block, call_arena) || call_arena
+              if with_arena(captured_arena) { contains_return?(captured_block.body) }
+                raise LoweringError.new("can't return from captured block, use next", captured_block)
+              end
+            end
+          end
+        end
+      end
+
       # Handle yield-functions with inline expansion FIRST (before lowering block)
       # Must check with mangled name since that's how yield functions are registered.
       @pending_inline_class_receiver = nil
@@ -106870,7 +108016,7 @@ module Adamas::HIR
             base_method_name,
             receiver_id ? ctx.type_of(receiver_id) : nil,
             arg_types,
-            !!call_has_named_args
+            !!call_has_named_args, node, call_arena
           )
           if method_name == "try" && receiver_id
             if non_nil = non_nil_type_for_union(ctx.type_of(receiver_id))
@@ -106889,7 +108035,7 @@ module Adamas::HIR
           base_method_name,
           receiver_id ? ctx.type_of(receiver_id) : nil,
           arg_types,
-          !!call_has_named_args
+          !!call_has_named_args, node, call_arena
         )
         if method_name == "try" && receiver_id
           if non_nil = non_nil_type_for_union(ctx.type_of(receiver_id))
@@ -106990,7 +108136,7 @@ module Adamas::HIR
                  selected_base,
                  receiver_id ? ctx.type_of(receiver_id) : nil,
                  arg_types,
-                 !!call_has_named_args
+                 !!call_has_named_args, node, call_arena
                )
               block_param_types_inline = selected_block_types
             end
@@ -107445,42 +108591,20 @@ module Adamas::HIR
         end
       end
 
-      # Check for block (ExprId -> must lower to BlockNode) - for non-inline calls only
-      # This is after yield function check so we don't emit dead block code
+      # A non-inlined literal callback is lowered once into its standalone
+      # function below. Lowering a detached copy in the caller first can hoist
+      # capture boxes into unreachable blocks and publish their ValueIds to the
+      # real callback. A forwarded Proc still needs its existing block carrier.
       block_pass_callback_value : ValueId? = nil
       block_id = if block_expr
-                   blk_node = node_for_call_expr(call_arena, block_expr)
-                   if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
-                     block_param_types = block_param_types_for_call(
-                       mangled_method_name,
-                       base_method_name,
-                       receiver_id ? ctx.type_of(receiver_id) : nil,
-                       arg_types,
-                       !!call_has_named_args
-                     )
-                     if method_name == "try" && receiver_id
-                       if non_nil = non_nil_type_for_union(ctx.type_of(receiver_id))
-                         block_param_types = [non_nil]
-                       elsif block_param_types.nil?
-                         block_param_types = [ctx.type_of(receiver_id)]
-                       end
-                     end
-                     if debug_hook_filter_match?(method_name, base_method_name, mangled_method_name)
-                       types_str = block_param_types ? block_param_types.map { |t| get_type_name_from_ref(t) }.join(",") : ""
-                       debug_hook("block.param.result", "method=#{base_method_name} mangled=#{mangled_method_name} types=#{types_str}")
-                     end
-                     lower_block_to_block_id(ctx, blk_node, block_param_types)
-                   else
-                     # Block is some other expression - should not happen in well-formed AST
-                     nil
-                   end
+                   nil.as(BlockId?)
                  elsif block_pass_expr
                    block_param_types = block_param_types_for_call(
                      mangled_method_name,
                      base_method_name,
                      receiver_id ? ctx.type_of(receiver_id) : nil,
                      arg_types,
-                     !!call_has_named_args
+                     !!call_has_named_args, node, call_arena
                    )
                    if method_name == "try" && receiver_id
                      if non_nil = non_nil_type_for_union(ctx.type_of(receiver_id))
@@ -107672,6 +108796,7 @@ module Adamas::HIR
                 block_for_inline.not_nil!,
                 block_param_types_inline,
                 block_return_name,
+                raw_callback_callsite(block_target_arg_types, callsite_arg_literals, callsite_arg_enum_names, has_named_args, call_named_arg_names),
               )
                 raw_callback_target = registered_target
                 raw_callback_source_def = block_entry[1]
@@ -107686,6 +108811,43 @@ module Adamas::HIR
           remember_callsite_arg_types(mangled_method_name, callsite_arg_types, callsite_arg_literals, callsite_arg_enum_names, has_block_call, has_named_args, call_named_arg_names)
         end
         record_block_return_type_for_call(mangled_method_name, base_method_name, block_return_name)
+      end
+
+      # An annotated self callback is dependent on the concrete type-literal
+      # receiver. Instantiate that parameter on the exact selected source Def
+      # before return probing can lower its body with an unspecialized Proc.
+      # This gives `block` its real type inside the callee; its body still owns
+      # the method result (a user .new may return something other than block).
+      if block_expr && block_pass_expr.nil?
+        if selected_proc_def = selected_call_entry_def
+          selected_proc_name = selected_call_entry_name || mangled_method_name
+          selected_proc_target = SelectedCallTarget.new(
+            selected_proc_name, selected_proc_def, selected_call_entry_arena,
+          )
+          if proc_contract = proc_constructor_block_contract_for_target(
+               selected_proc_target, node, call_arena,
+             )
+            descriptor = @module.get_type_descriptor(proc_contract.proc_type).not_nil!
+            callback_result = descriptor.type_params.last
+            # A discarded Void result has a unit ABI. Retain Void in the
+            # semantic Proc signature carried by the source block parameter.
+            callback_result = TypeRef::NIL if callback_result == TypeRef::VOID
+            source_arena = proc_contract.source_arena
+            raw_contract = RawCallbackAbi.new(
+              proc_contract.input_types, callback_result, proc_contract.proc_type,
+              proc_contract.source_def, source_arena,
+            )
+            target = register_raw_callback_contract_target(
+              mangled_method_name, raw_contract, proc_contract.source_def, source_arena, arg_types,
+              raw_callback_callsite(arg_types, callsite_arg_literals, callsite_arg_enum_names, has_named_args, call_named_arg_names),
+            )
+            raw_callback_target = target
+            raw_callback_source_def = proc_contract.source_def
+            raw_callback_source_arena = source_arena
+            mangled_method_name = target
+            primary_mangled_name = target
+          end
+        end
       end
 
       # Canonicalize the instantiated callee signature before we snapshot the
@@ -108120,7 +109282,10 @@ module Adamas::HIR
       base_signature_exists = @function_types.has_key?(base_method_name)
       # A generated allocator body is already a concrete call target even if
       # it has no source-level return signature in @function_types.
-      if base_signature_exists && !@function_types.has_key?(mangled_method_name) &&
+      # A selected callback contract is a concrete specialization even when
+      # there are no ordinary arguments and the block has no returning path.
+      # Falling back to the family name would erase its source parameter type.
+      if raw_callback_target.nil? && base_signature_exists && !@function_types.has_key?(mangled_method_name) &&
          mangled_method_name != base_method_name && !@module.has_function_with_body?(mangled_method_name)
         unless block_return_name || has_typed_args
           return_type = get_function_return_type(base_method_name, return_def_arg_count)
@@ -110129,7 +111294,18 @@ module Adamas::HIR
       # Lazy lowering can defer the callee body while still leaving an early
       # pre-lowering return type in the cache. If the target is still pending,
       # force it now before we freeze the call instruction type.
-      force_return_type_needed = (allocator_explicit_new_call && !has_block_call) ||
+      # A callback annotated as self has a source-dependent parameter type.
+      # Its unmaterialized body's provisional result (for example bare Proc)
+      # cannot answer a containing call's argument check. Demand the exact
+      # authenticated target before consuming its method result; the method may
+      # return the callback or a completely different value.
+      dependent_callback_return_pending = raw_callback_target.try do |target|
+        contract = raw_callback_abi_for(target)
+        contract && contract.self_source_def &&
+          !@module.has_function_with_body?(target)
+      end
+      force_return_type_needed = !!dependent_callback_return_pending ||
+                                 (allocator_explicit_new_call && !has_block_call) ||
                                  return_type == TypeRef::VOID ||
                                  is_union_type?(return_type) ||
                                  unresolved_generic_return_type?(return_type) ||
@@ -110563,12 +111739,24 @@ module Adamas::HIR
       if block_expr
         blk_node = node_for_call_expr(call_arena, block_expr)
         if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
+          proc_constructor_type = nil.as(TypeRef?)
+          if selected_proc_def = selected_call_entry_def
+            selected_proc_name = selected_call_entry_name || mangled_method_name
+            selected_proc_target = SelectedCallTarget.new(
+              selected_proc_name, selected_proc_def, selected_call_entry_arena,
+            )
+            if proc_contract = proc_constructor_block_contract_for_target(
+                 selected_proc_target, node, call_arena,
+               )
+              proc_constructor_type = proc_contract.proc_type
+            end
+          end
           block_param_types_for_proc = block_param_types_for_call(
             mangled_method_name,
             base_method_name,
             receiver_id ? ctx.type_of(receiver_id) : nil,
             arg_types,
-            !!call_has_named_args
+            !!call_has_named_args, node, call_arena
           )
           # The inline-yield probe above already resolved the block parameter
           # contract for this exact call site. Recomputing it here can drift
@@ -110586,11 +111774,14 @@ module Adamas::HIR
               block_param_types_for_proc = [ctx.type_of(receiver_id)]
             end
           end
-          # Late fallback: if the block callback wasn't materialized earlier
-          # (cross-arena or deferred resolution path), materialize it here to
-          # avoid emitting `...$$block(..., null)` calls.
-          block_id ||= lower_block_to_block_id(ctx, blk_node, block_param_types_for_proc)
-          if block_id
+          if constructor_type = proc_constructor_type
+            descriptor = @module.get_type_descriptor(constructor_type).not_nil!
+            block_param_types_for_proc = descriptor.type_params[0, descriptor.type_params.size - 1]
+            validate_proc_constructor_block_parameters(blk_node, block_param_types_for_proc)
+          end
+          # The callback owns its body and parameter ValueIds. Materialize it
+          # directly instead of first lowering that body in the caller's CFG.
+          begin
             owner_arena = call_arena
             block_arena_for_proc : Adamas::Compiler::Frontend::ArenaLike = @block_node_arenas[blk_node.object_id]? || resolve_arena_for_block(blk_node, owner_arena) || owner_arena
             selected_call_arena = selected_call_entry_name.try do |entry_name|
@@ -110652,7 +111843,11 @@ module Adamas::HIR
             end
             callback_return_hint = raw_callback_abi_for(mangled_method_name).try(&.return_type)
             hint_return_type = block_proc_expected_return_type || callback_return_hint || proc_materialize_hint_return_type(ctx)
-            proc_id = lower_block_to_proc(ctx, blk_node, block_param_types_for_proc, block_arena_for_proc, heap_block_proc, hint_return_type)
+            proc_id = lower_block_to_proc(
+              ctx, blk_node, block_param_types_for_proc, block_arena_for_proc,
+              heap_block_proc, hint_return_type, proc_constructor_type,
+              constructor_observed_return_type,
+            )
             if raw_callback_target && raw_callback_source_def && raw_callback_source_arena
               expected_callback = raw_callback_abi_for(raw_callback_target)
               unless expected_callback
@@ -110676,6 +111871,7 @@ module Adamas::HIR
                   raw_callback_source_def.not_nil!,
                   raw_callback_source_arena.not_nil!,
                   callsite_arg_types,
+                  raw_callback_callsite(callsite_arg_types, callsite_arg_literals, callsite_arg_enum_names, has_named_args, call_named_arg_names),
                 )
                 raw_callback_target = late_target
                 mangled_method_name = late_target
@@ -110733,8 +111929,6 @@ module Adamas::HIR
             if env_get("DEBUG_WITH_BRACE_CALL") && (method_name == "with_brace_newlines_skipped" || base_method_name.includes?("with_brace_newlines_skipped") || mangled_method_name.includes?("with_brace_newlines_skipped"))
               STDERR.puts "[WITH_BRACE_FALLBACK] stage=proc_appended method=#{method_name} base=#{base_method_name} mangled=#{mangled_method_name} block_id=#{block_id} args=#{args.size}"
             end
-          elsif env_get("DEBUG_WITH_BRACE_CALL") && (method_name == "with_brace_newlines_skipped" || base_method_name.includes?("with_brace_newlines_skipped") || mangled_method_name.includes?("with_brace_newlines_skipped"))
-            STDERR.puts "[WITH_BRACE_FALLBACK] stage=block_missing method=#{method_name} base=#{base_method_name} mangled=#{mangled_method_name} args=#{args.size}"
           end
         elsif env_get("DEBUG_WITH_BRACE_CALL") && (method_name == "with_brace_newlines_skipped" || base_method_name.includes?("with_brace_newlines_skipped") || mangled_method_name.includes?("with_brace_newlines_skipped"))
           node_kind = blk_node ? blk_node.class.name : "nil"
@@ -110748,7 +111942,7 @@ module Adamas::HIR
       # receivers keep their separate discriminator-based lowering below.
       class_union_receiver = receiver_id &&
                              @module.get_type_descriptor(ctx.type_of(receiver_id.not_nil!)).try(&.kind) == TypeKind::Class
-      if (!call_virtual || class_union_receiver) && block_id.nil?
+      if (!call_virtual || class_union_receiver) && block_id.nil? && block_expr.nil?
         if uad = try_emit_union_arg_dispatch(ctx, receiver_id, base_method_name,
              mangled_method_name, args, arg_types, return_type, has_block_call,
              has_splat, splat_packed, has_named_args)
@@ -110764,7 +111958,7 @@ module Adamas::HIR
       # Module-owned class methods (Frontend.node_literal) are flagged
       # call_virtual even with a nil receiver, where the flag is inert at emit
       # time; they still need class-arg overload dispatch.
-      if call_virtual && receiver_id.nil? && block_id.nil?
+      if call_virtual && receiver_id.nil? && block_id.nil? && block_expr.nil?
         if cad = try_emit_class_arg_overload_dispatch(ctx, receiver_id, base_method_name,
              mangled_method_name, args, arg_types, return_type, has_block_call)
           return cad
@@ -112952,7 +114146,9 @@ module Adamas::HIR
           ctx.register_boxed_local(var_name, alloc.id, alloc_type, alloc.id)
         end
       end
-      return alloc.id if is_lib_out
+      # Both storage forms denote the destination address. Keep the local
+      # binding as T, but expose Pointer(T) to the C argument contract; a raw
+      # lib-struct Allocate carries T even though its runtime value is an address.
       pointer_for_boxed_local(ctx, alloc.id, alloc_type)
     end
 
@@ -112978,11 +114174,21 @@ module Adamas::HIR
             pointee_type = out_pointee_type_for_extern_arg(extern_func, parameter_index, arg_node)
             result << lower_out_arg(ctx, arg_node, pointee_type)
           elsif arg_node.is_a?(Adamas::Compiler::Frontend::ProcLiteralNode)
-            # Proc literal passed to C function — generate a standalone callback
-            # function and pass its address as a raw function pointer.
+            # Type the source callback against the selected C parameter before
+            # extracting its code pointer at the external-call boundary.
             result << lower_proc_as_c_callback(ctx, arg_node, extern_func, parameter_index)
           else
-            arg_val = lower_expr(ctx, arg_expr)
+            expected_inputs = if parameter_index < extern_func.param_types.size
+                                source_extern_proc_parts(extern_func.param_types.unsafe_fetch(parameter_index)).try(&.[0])
+                              else
+                                nil
+                              end
+            arg_val = if arg_node.is_a?(Adamas::Compiler::Frontend::UnaryNode) &&
+                         safe_unary_operator_string(arg_node) == "->"
+                        lower_method_pointer(ctx, arg_node, expected_inputs)
+                      else
+                        lower_expr(ctx, arg_expr)
+                      end
             if parameter_index < extern_func.param_types.size
               arg_val = materialize_source_extern_argument(
                 ctx,
@@ -113035,81 +114241,21 @@ module Adamas::HIR
       arg_val
     end
 
-    # Lower a ProcLiteralNode as a C-compatible callback function.
-    # Instead of creating a Proc object (MakeClosure), generates a standalone
-    # top-level function and returns a FuncPointer to it.
+    # Share Proc typing and capture analysis with ordinary literals. The C
+    # declaration supplies omitted input restrictions; transport is handled only
+    # after the resulting source signature has passed fixed-parameter validation.
     private def lower_proc_as_c_callback(
       ctx : LoweringContext,
       proc_node : Adamas::Compiler::Frontend::ProcLiteralNode,
       extern_func : ExternFunction,
       arg_idx : Int32,
     ) : ValueId
-      # Give each callback literal a module-wide function identity.
-      callback_name_prefix = "__crystal_callback_#{extern_func.real_name}_#{arg_idx}"
-
-      # Determine param types from the extern function's expected callback signature.
-      # The C function parameter at arg_idx should be a function pointer type.
-      # We use the proc literal's declared params to build the callback.
-      param_types = extern_func.param_types
-
-      # Determine return type — C callbacks for GC are void
-      return_type = TypeRef::VOID
-
-      # Create a top-level function with a fresh name for this callback literal.
-      callback_func = @module.create_generated_function(callback_name_prefix, return_type)
-      callback_ctx = LoweringContext.new(callback_func, @module, @arena)
-
-      # Add parameters from the proc literal
-      if params = proc_node.params
-        each_param_with_index(params) do |param, idx|
-          if param_name = param.name
-            name = (safe_slice_to_string(param_name) || "")
-            param_type = if ta = param.type_annotation
-                           type_ref_for_name((safe_slice_to_string(ta) || ""))
-                         else
-                           # Infer from C function signature if possible
-                           TypeRef::POINTER
-                         end
-            hir_param = callback_func.add_param(name, param_type)
-            callback_ctx.register_local(name, hir_param.id)
-            callback_ctx.mark_block_parameter_binding(name, hir_param.id)
-            callback_ctx.register_type(hir_param.id, param_type)
-          end
-        end
-      end
-
-      # Lower the proc body into the callback function
-      saved_class = @current_class
-      saved_typeof_locals = @current_typeof_locals
-      saved_typeof_local_names = @current_typeof_local_names
-      @current_typeof_locals = nil
-      @current_typeof_local_names = nil
-      begin
-        body = proc_node.body
-        if body && !body.empty?
-          last_value = lower_body(callback_ctx, body)
-          # Terminate the callback function
-          block = callback_func.get_block(callback_ctx.current_block)
-          unless block.terminator.is_a?(Return) || block.terminator.is_a?(Unreachable)
-            callback_ctx.terminate(Return.new(last_value))
-          end
-        else
-          # Empty body — just return void
-          nil_lit = Literal.new(callback_ctx.next_id, TypeRef::NIL, nil)
-          callback_ctx.emit(nil_lit)
-          callback_ctx.terminate(Return.new(nil_lit.id))
-        end
-      ensure
-        @current_class = saved_class
-        @current_typeof_locals = saved_typeof_locals
-        @current_typeof_local_names = saved_typeof_local_names
-      end
-
-      # Emit a FuncPointer in the CALLER's context referencing the callback
-      fp = FuncPointer.new(ctx.next_id, TypeRef::POINTER, callback_func.name)
-      ctx.emit(fp)
-      ctx.register_type(fp.id, TypeRef::POINTER)
-      fp.id
+      expected_inputs = if expected = extern_func.param_types[arg_idx]?
+                          source_extern_proc_parts(expected).try(&.[0])
+                        else
+                          nil
+                        end
+      lower_proc_literal(ctx, proc_node, expected_inputs)
     end
 
     private def expand_splat_args(
@@ -114136,7 +115282,7 @@ module Adamas::HIR
       # The selected generic `Proc.new` Def returns `self`, but its attached
       # return contract can be the unspecialized `Struct Proc`. Preserve the
       # concrete Proc signature written on the call's type-literal receiver.
-      concrete_proc_type = proc_constructor_receiver_type(call_node)
+      concrete_proc_type = proc_constructor_receiver_type(call_node, arena_for_expr?(call_node.callee))
       make_proc_type = concrete_proc_type || result_type
       make_proc = MakeProc.new(ctx.next_id, make_proc_type, args.unsafe_fetch(0), args.unsafe_fetch(1))
       ctx.emit(make_proc)
@@ -114144,17 +115290,61 @@ module Adamas::HIR
       make_proc.id
     end
 
+    # Crystal's `Proc.new(&block : self)` specializes the block's input
+    # contract from the concrete Proc type-literal receiver. Authenticate the
+    # selected source method and its `self` block annotation before using that
+    # receiver; ordinary constructors keep their existing inference path.
+    private def proc_constructor_self_block_input_types(
+      func_def,
+      mangled_name : String,
+      call_node : Adamas::Compiler::Frontend::CallNode?,
+      call_arena : Adamas::Compiler::Frontend::ArenaLike?,
+    ) : Array(TypeRef)?
+      return nil unless func_def && call_node
+      owner = method_owner(mangled_name)
+      return nil unless strip_generic_args(owner) == "Proc"
+      return nil unless method_part(mangled_name) == "new" && method_separator(mangled_name) == '.'
+
+      block_param = func_def.params.try { |params| find_param(params) { |param| param.is_block } }
+      return nil unless block_param
+      block_type_annotation = block_param.type_annotation
+      return nil unless block_type_annotation
+      annotation_text = safe_slice_to_string(block_type_annotation)
+      return nil unless annotation_text && annotation_text.not_nil!.strip == "self"
+
+      concrete_proc_type = proc_constructor_receiver_type(call_node, call_arena)
+      return nil unless concrete_proc_type
+      descriptor = @module.get_type_descriptor(concrete_proc_type.not_nil!)
+      return nil unless descriptor && descriptor.kind == TypeKind::Proc
+      return nil if descriptor.type_params.empty?
+
+      inputs = [] of TypeRef
+      input_count = descriptor.type_params.size - 1
+      index = 0
+      while index < input_count
+        inputs << descriptor.type_params.unsafe_fetch(index)
+        index += 1
+      end
+      inputs
+    end
+
     private def proc_constructor_receiver_type(
       call_node : Adamas::Compiler::Frontend::CallNode,
+      preferred_arena : Adamas::Compiler::Frontend::ArenaLike? = nil,
     ) : TypeRef?
-      return nil if call_node.callee.invalid? || call_node.callee.index < 0 || call_node.callee.index >= @arena.size
-      callee = @arena[call_node.callee]
+      callee = if arena = preferred_arena
+        node_for_expr(call_node.callee, arena)
+      else
+        node_for_expr(call_node.callee)
+      end
+      return nil unless callee
       return nil unless callee.is_a?(Adamas::Compiler::Frontend::MemberAccessNode)
       return nil unless member_access_name_text(callee) == "new"
 
       receiver_name = stringify_type_expr(callee.object)
       return nil unless receiver_name && !receiver_name.not_nil!.empty?
-      receiver_type = type_ref_for_name(receiver_name.not_nil!)
+      resolved_receiver_name = resolve_type_alias_chain(receiver_name.not_nil!)
+      receiver_type = proc_type_ref_for_name(resolved_receiver_name) || type_ref_for_name(resolved_receiver_name)
       descriptor = @module.get_type_descriptor(receiver_type)
       return nil unless descriptor && descriptor.kind == TypeKind::Proc && !descriptor.type_params.empty?
       receiver_type
@@ -114870,7 +116060,22 @@ module Adamas::HIR
       end
       return nil unless t
       return nil unless call_target_matches_call_shape?(input, t[1])
-      SelectedCallTarget.new(t[0], t[1])
+      SelectedCallTarget.new(t[0], t[1], registered_arena_for_def(t[1]))
+    end
+
+    # Analysis-only overload query. It reuses the production scorer and full
+    # CallResolutionInput shape without materializing generic owners or emitting
+    # HIR/pending bodies. Resolver indexes and memo tables may be populated; the
+    # caller must provide the same lexical, arena, type-parameter, and normalized
+    # call-shape context as the eventual lowering site.
+    private def resolve_call_target_for_analysis(input : CallResolutionInput) : SelectedCallTarget?
+      previous_suppression = @suppress_monomorphization
+      @suppress_monomorphization = true
+      begin
+        resolve_call_target(input)
+      ensure
+        @suppress_monomorphization = previous_suppression
+      end
     end
 
     private def semantic_call_target(
@@ -114904,7 +116109,51 @@ module Adamas::HIR
       unless symbol_name
         raise LoweringError.new("semantic call target has no registered HIR serialization for #{base_name}")
       end
-      SelectedCallTarget.new(symbol_name, def_node)
+      SelectedCallTarget.new(symbol_name, def_node, @arena)
+    end
+
+    # Resolve the typed block contract from one already selected source target.
+    # Do not infer authority from a serialized method name or a fallback arena.
+    private def proc_constructor_block_contract_for_target(
+      target : SelectedCallTarget,
+      call_node : Adamas::Compiler::Frontend::CallNode,
+      call_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : ProcConstructorBlockContract?
+      source_arena = target.source_arena
+      unless source_arena && arena_fits_def?(source_arena.not_nil!, target.def_node)
+        source_arena = registered_arena_for_def(target.def_node)
+      end
+      return nil unless source_arena
+      return nil unless arena_fits_def?(source_arena.not_nil!, target.def_node)
+
+      inputs = proc_constructor_self_block_input_types(
+        target.def_node, target.symbol_name, call_node, call_arena,
+      )
+      return nil unless inputs
+
+      proc_type = proc_constructor_receiver_type(call_node, call_arena)
+      return nil unless proc_type
+      descriptor = @module.get_type_descriptor(proc_type.not_nil!)
+      return nil unless descriptor && descriptor.kind == TypeKind::Proc
+      return nil unless descriptor.type_params.size == inputs.not_nil!.size + 1
+
+      ProcConstructorBlockContract.new(
+        proc_type.not_nil!, inputs.not_nil!, target.def_node, source_arena.not_nil!,
+      )
+    end
+
+    # Pre-emission query for owner-body planning. A nil result means the exact
+    # call shape did not resolve to the admitted Proc.new(&block : self) source
+    # contract; callers must leave capture storage unresolved rather than guess.
+    private def resolve_proc_constructor_block_contract_for_analysis(
+      input : CallResolutionInput,
+      call_node : Adamas::Compiler::Frontend::CallNode,
+      call_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : ProcConstructorBlockContract?
+      return nil unless input.has_block
+      target = resolve_call_target_for_analysis(input)
+      return nil unless target
+      proc_constructor_block_contract_for_target(target, call_node, call_arena)
     end
 
     # Legacy {name, def} adapter for callers not yet moved to SelectedCallTarget.
@@ -116207,7 +117456,11 @@ module Adamas::HIR
         if arg_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
           name = (safe_slice_to_string(arg_node.name) || "")
           if local_id = ctx.lookup_local(name)
-            ctx.type_of(local_id)
+            if box_info = ctx.lookup_boxed_local_for_local(name, local_id)
+              box_info.payload_type
+            else
+              ctx.capture_parameter_storage_type(local_id) || ctx.type_of(local_id)
+            end
           else
             infer_type_from_expr(arg_expr, @current_class) || TypeRef::VOID
           end
@@ -117103,7 +118356,27 @@ module Adamas::HIR
       ctx : LoweringContext,
       name : String,
       value_id : ValueId,
+      block_node : Adamas::Compiler::Frontend::BlockNode? = nil,
     ) : Nil
+      if block_node
+        if params = block_node.params
+          caller_arena = @arena
+          block_arena = cached_block_arena(block_node.object_id) ||
+                        resolve_arena_for_block(block_node, caller_arena) || caller_arena
+          slot = nil.as(Int32?)
+          with_arena(block_arena) do
+            each_param_with_index(params) do |param, index|
+              if parameter_name_string(param, block_arena) == name
+                slot = index
+                break
+              end
+            end
+          end
+          if found_slot = slot
+            return if bind_block_unpack_pattern_for_node(ctx, block_node, found_slot, value_id)
+          end
+        end
+      end
       ctx.register_local(name, value_id)
       ctx.mark_block_parameter_binding(name, value_id)
     end
@@ -117197,7 +118470,7 @@ module Adamas::HIR
         # Body block
         ctx.current_block = body_block
         ctx.push_scope(ScopeKind::Block)
-        register_inline_block_parameter(ctx, param_name, counter_phi.id)
+        register_inline_block_parameter(ctx, param_name, counter_phi.id, block)
 
         # Lower block body
         pushed_inline = false
@@ -117375,7 +118648,7 @@ module Adamas::HIR
 
       ctx.current_block = body_block
       ctx.push_scope(ScopeKind::Block)
-      register_inline_block_parameter(ctx, param_name, iter_phi.id)
+      register_inline_block_parameter(ctx, param_name, iter_phi.id, block)
       pushed_inline = false
       if !inline_vars.empty?
         @inline_loop_vars_stack << inline_vars
@@ -117552,7 +118825,7 @@ module Adamas::HIR
       # Body block
       ctx.current_block = body_block
       ctx.push_scope(ScopeKind::Block)
-      register_inline_block_parameter(ctx, param_name, counter_phi.id)
+      register_inline_block_parameter(ctx, param_name, counter_phi.id, block)
       pushed_inline = false
       if !inline_vars.empty?
         @inline_loop_vars_stack << inline_vars
@@ -117755,15 +119028,15 @@ module Adamas::HIR
               elem_extract = IndexGet.new(ctx.next_id, elem_type, index_get.id, idx_lit.id)
               ctx.emit(elem_extract)
               ctx.register_type(elem_extract.id, elem_type)
-              register_inline_block_parameter(ctx, name, elem_extract.id)
+              register_inline_block_parameter(ctx, name, elem_extract.id, block)
             end
           end
         else
           # Single parameter - bind whole element
-          register_inline_block_parameter(ctx, param_name, index_get.id)
+          register_inline_block_parameter(ctx, param_name, index_get.id, block)
         end
       else
-        register_inline_block_parameter(ctx, param_name, index_get.id)
+        register_inline_block_parameter(ctx, param_name, index_get.id, block)
       end
 
       pushed_inline = false
@@ -117969,15 +119242,15 @@ module Adamas::HIR
               elem_extract = IndexGet.new(ctx.next_id, elem_type, index_get.id, idx_lit.id)
               ctx.emit(elem_extract)
               ctx.register_type(elem_extract.id, elem_type)
-              register_inline_block_parameter(ctx, name, elem_extract.id)
+              register_inline_block_parameter(ctx, name, elem_extract.id, block)
             end
           end
         else
           # Single parameter - bind whole element
-          register_inline_block_parameter(ctx, param_name, index_get.id)
+          register_inline_block_parameter(ctx, param_name, index_get.id, block)
         end
       else
-        register_inline_block_parameter(ctx, param_name, index_get.id)
+        register_inline_block_parameter(ctx, param_name, index_get.id, block)
       end
 
       pushed_inline = false
@@ -118432,13 +119705,13 @@ module Adamas::HIR
 
       if params = block.params
         if params.size >= 2
-          register_inline_block_parameter(ctx, key_param, key_val.id)
-          register_inline_block_parameter(ctx, val_param, val_val.id)
+          register_inline_block_parameter(ctx, key_param, key_val.id, block)
+          register_inline_block_parameter(ctx, val_param, val_val.id, block)
         elsif params.size == 1
           # Hash#each yields one Tuple(K, V) to a single block parameter. The
           # two-parameter form above remains the separate key/value yield path.
           pair_val = build_multiple_assign_tuple_value(ctx, [key_val.id, val_val.id])
-          register_inline_block_parameter(ctx, key_param, pair_val)
+          register_inline_block_parameter(ctx, key_param, pair_val, block)
         end
       end
 
@@ -118786,7 +120059,7 @@ module Adamas::HIR
       index_get = IndexGet.new(ctx.next_id, element_type, array_id, index_phi.id)
       ctx.emit(index_get)
       ctx.register_type(index_get.id, element_type)
-      register_inline_block_parameter(ctx, elem_param_name, index_get.id)
+      register_inline_block_parameter(ctx, elem_param_name, index_get.id, block)
 
       # Tuple destructuring: extract fields from the element and register each as a local
       # Same pattern as lower_array_each_dynamic (line 54611+)
@@ -118798,12 +120071,12 @@ module Adamas::HIR
           elem_extract = IndexGet.new(ctx.next_id, elem_type, index_get.id, idx_lit.id)
           ctx.emit(elem_extract)
           ctx.register_type(elem_extract.id, elem_type)
-          register_inline_block_parameter(ctx, name, elem_extract.id)
+          register_inline_block_parameter(ctx, name, elem_extract.id, block)
         end
       end
 
       # Register index parameter with INT32 type
-      register_inline_block_parameter(ctx, index_param_name, index_phi.id)
+      register_inline_block_parameter(ctx, index_param_name, index_phi.id, block)
       ctx.register_type(index_phi.id, TypeRef::INT32)
 
       # Separate phi per loop-carried var, materialized in the increment block.
@@ -118965,13 +120238,13 @@ module Adamas::HIR
               elem_extract = IndexGet.new(ctx.next_id, elem_type, element_id, idx_lit.id)
               ctx.emit(elem_extract)
               ctx.register_type(elem_extract.id, elem_type)
-              register_inline_block_parameter(ctx, name, elem_extract.id)
+              register_inline_block_parameter(ctx, name, elem_extract.id, block)
             end
           end
           return
         end
       end
-      register_inline_block_parameter(ctx, fallback_name, element_id)
+      register_inline_block_parameter(ctx, fallback_name, element_id, block)
     end
 
     # Specialized Array#map lowerers inline a block body without going through
@@ -119320,10 +120593,10 @@ module Adamas::HIR
       if destruct_count = elem_destruct_count
         bind_array_block_element_params(ctx, block, index_get.id, element_type, elem_param_name, destruct_count)
       else
-        register_inline_block_parameter(ctx, elem_param_name, index_get.id)
+        register_inline_block_parameter(ctx, elem_param_name, index_get.id, block)
       end
 
-      register_inline_block_parameter(ctx, index_param_name, index_phi.id)
+      register_inline_block_parameter(ctx, index_param_name, index_phi.id, block)
       ctx.register_type(index_phi.id, TypeRef::INT32)
 
       result_value = lower_array_map_block_body(ctx, block)
@@ -120515,13 +121788,13 @@ module Adamas::HIR
             elem_extract = IndexGet.new(ctx.next_id, elem_type, index_get.id, idx_lit.id)
             ctx.emit(elem_extract)
             ctx.register_type(elem_extract.id, elem_type)
-            register_inline_block_parameter(ctx, name, elem_extract.id)
+            register_inline_block_parameter(ctx, name, elem_extract.id, block)
           end
         else
-          register_inline_block_parameter(ctx, param_name, index_get.id)
+          register_inline_block_parameter(ctx, param_name, index_get.id, block)
         end
       else
-        register_inline_block_parameter(ctx, param_name, index_get.id)
+        register_inline_block_parameter(ctx, param_name, index_get.id, block)
       end
 
       predicate_exit_block = ctx.create_block
@@ -120664,13 +121937,13 @@ module Adamas::HIR
             elem_extract = IndexGet.new(ctx.next_id, elem_type, index_get.id, idx_lit.id)
             ctx.emit(elem_extract)
             ctx.register_type(elem_extract.id, elem_type)
-            register_inline_block_parameter(ctx, name, elem_extract.id)
+            register_inline_block_parameter(ctx, name, elem_extract.id, block)
           end
         else
-          register_inline_block_parameter(ctx, param_name, index_get.id)
+          register_inline_block_parameter(ctx, param_name, index_get.id, block)
         end
       else
-        register_inline_block_parameter(ctx, param_name, index_get.id)
+        register_inline_block_parameter(ctx, param_name, index_get.id, block)
       end
 
       predicate_exit_block = ctx.create_block
@@ -120904,8 +122177,8 @@ module Adamas::HIR
       ctx.register_type(curr_elem.id, element_type)
 
       # Register block parameters
-      register_inline_block_parameter(ctx, acc_name, acc_phi.id)
-      register_inline_block_parameter(ctx, elem_name, curr_elem.id)
+      register_inline_block_parameter(ctx, acc_name, acc_phi.id, block)
+      register_inline_block_parameter(ctx, elem_name, curr_elem.id, block)
 
       # Lower block body - result becomes new accumulator
       new_acc = lower_body(ctx, block.body)
@@ -121012,7 +122285,7 @@ module Adamas::HIR
       char_val = ExternCall.new(ctx.next_id, TypeRef::CHAR, "__adamas_string_byte_at", [string_id, index_phi.id])
       ctx.emit(char_val)
       ctx.register_type(char_val.id, TypeRef::CHAR)
-      register_inline_block_parameter(ctx, param_name, char_val.id)
+      register_inline_block_parameter(ctx, param_name, char_val.id, block)
 
       pushed_inline = false
       if !inline_vars.empty?
@@ -121415,7 +122688,7 @@ module Adamas::HIR
       ctx.push_scope(ScopeKind::Block)
 
       # Register the block parameter "io" as the builder instance
-      register_inline_block_parameter(ctx, io_name, builder_call.id)
+      register_inline_block_parameter(ctx, io_name, builder_call.id, block)
       ctx.register_type(builder_call.id, builder_type)
       update_typeof_local(io_name, builder_type)
       update_typeof_local_name(io_name, "String::Builder")
@@ -121458,10 +122731,11 @@ module Adamas::HIR
                          "_block_param_#{i}"
                        end
           block_parameters << param_name
-          register_inline_block_parameter(ctx, param_name, receiver_id)
+          register_inline_block_parameter(ctx, param_name, receiver_id, block_node)
           ctx.register_type(receiver_id, ctx.type_of(receiver_id))
         end
       end
+      block_parameters.concat(block_unpack_leaf_names(block_node).to_a)
 
       # Execute block body
       if body = block_node.body
@@ -121564,10 +122838,11 @@ module Adamas::HIR
                          "_block_param_#{i}"
                        end
           block_parameters << param_name
-          register_inline_block_parameter(ctx, param_name, param_value)
+          register_inline_block_parameter(ctx, param_name, param_value, block_node)
           ctx.register_type(param_value, ctx.type_of(param_value))
         end
       end
+      block_parameters.concat(block_unpack_leaf_names(block_node).to_a)
 
       value_id = if body = block_node.body
                    lower_body(ctx, body)
@@ -122870,9 +124145,16 @@ module Adamas::HIR
 
         # Lower function body with yield substitution
         if inline_body = func_def.body
-          result_value = lower_body(ctx, inline_body)
+          saved_inline_callee_return_owner = @captured_block_return_owner
+          @captured_block_return_owner = false
+          begin
+            result_value = lower_body(ctx, inline_body)
+          ensure
+            @captured_block_return_owner = saved_inline_callee_return_owner
+          end
         end
       end
+      @inline_yield_caller_return_owner_stack << @captured_block_return_owner
       @inline_active_caller_locals_index_stack << (@inline_caller_locals_stack.size - 1)
       begin
         if inline_param_map.empty?
@@ -122892,6 +124174,7 @@ module Adamas::HIR
         end
       ensure
         @inline_active_caller_locals_index_stack.pop?
+        @inline_yield_caller_return_owner_stack.pop?
       end
 
       unless should_stop_sequential_lowering?(ctx)
@@ -123212,7 +124495,7 @@ module Adamas::HIR
                      end
         param_types = @inline_yield_block_param_types_stack.last?
         if block_params = block.params
-          if block_params.size > yield_args.size &&
+          if !block.unpacks && block_params.size > yield_args.size &&
              yield_args.size >= 1 &&
              (param_types.nil? || param_types.size < block_params.size)
             # Tuple destructuring: |(a, b), c| with yield(tuple, c)
@@ -123407,18 +124690,26 @@ module Adamas::HIR
                        caller_locals_before_params = ctx.save_locals.locals
                        param_names = [] of String
                        if params = block.params
-                         each_param(params) do |param|
+                         each_param_with_index(params) do |param, idx|
+                           next if block_unpack_pattern_for_slot(block, idx)
                            if pname = param.name
                              param_names << (safe_slice_to_string(pname) || "")
                            end
                          end
                        end
+                       param_names.concat(block_unpack_leaf_names(block).to_a)
 
                        # Bind block parameters to yield arguments (in caller scope).
                        saved_block_parameter_bindings = ctx.save_block_parameter_bindings
-                       param_names.each_with_index do |param_name, idx|
-                         next unless idx < yield_args.size
-                         arg_id = yield_args[idx]
+                       if params = block.params
+                         each_param_with_index(params) do |param, idx|
+                           next unless idx < yield_args.size
+                           arg_id = yield_args[idx]
+                           if bind_block_unpack_pattern_for_node(ctx, block, idx, arg_id)
+                             next
+                           end
+                           next unless pname = param.name
+                           param_name = safe_slice_to_string(pname) || ""
                          if param_types && (param_type = param_types[idx]?) && param_type != TypeRef::VOID
                            # When the yield arg already has a concrete type, prefer it over the
                            # pre-computed hint from block_param_types_for_call. The hint can be
@@ -123442,6 +124733,7 @@ module Adamas::HIR
                            ctx.register_type(arg_id, ctx.type_of(arg_id))
                          end
                          ctx.mark_block_parameter_binding(param_name, arg_id)
+                         end
                        end
 
                        body_result = begin
@@ -123503,9 +124795,12 @@ module Adamas::HIR
                              )
                              pushed_break_target = true
                            end
+                           saved_inlined_block_return_owner = @captured_block_return_owner
+                           @captured_block_return_owner = @inline_yield_caller_return_owner_stack.last? || false
                            block_body_lr = begin
                              lower_body(ctx, block.body)
                            ensure
+                             @captured_block_return_owner = saved_inlined_block_return_owner
                              @inline_block_break_stack.pop? if pushed_break_target
                              if pushed_yield_loop
                                @loop_cond_stack.pop?
@@ -127366,7 +128661,11 @@ module Adamas::HIR
       store.id
     end
 
-    private def lower_assign(ctx : LoweringContext, node : Adamas::Compiler::Frontend::AssignNode) : ValueId
+    private def lower_assign(
+      ctx : LoweringContext,
+      node : Adamas::Compiler::Frontend::AssignNode,
+      expr_id : Adamas::Compiler::Frontend::ExprId = Adamas::Compiler::Frontend::ExprId.new(-1),
+    ) : ValueId
       value_id = lower_expr(ctx, node.value)
       target_node = @arena[node.target]
       target_kind = Adamas::Compiler::Frontend.node_kind(target_node)
@@ -127482,14 +128781,22 @@ module Adamas::HIR
           end
           copy.id
         else
-          # New variable
-          local = Local.new(ctx.next_id, value_type, name, ctx.current_scope)
+          # New variable. A pre-emission join is used only when the visitor
+          # authenticated this exact source binding and every relevant callback
+          # write; otherwise the original inferred type remains authoritative.
+          storage_type = if planned_type = ctx.capture_storage_type(@arena, expr_id)
+                           union_type_for_values(value_type, planned_type)
+                         else
+                           value_type
+                         end
+          stored_value = storage_type == value_type ? value_id : coerce_value_to_type(ctx, value_id, storage_type)
+          local = Local.new(ctx.next_id, storage_type, name, ctx.current_scope)
           ctx.emit(local)
           record_hir_value_source_location(ctx, local.id, @arena, node)
           ctx.register_debug_local(name, local.id)
           ctx.register_local(name, local.id)
           # Also emit copy
-          copy = Copy.new(ctx.next_id, value_type, value_id)
+          copy = Copy.new(ctx.next_id, storage_type, stored_value)
           ctx.emit(copy)
           ctx.register_local(name, copy.id)
           ctx.propagate_runtime_type_identity(value_id, local.id)
@@ -127511,14 +128818,14 @@ module Adamas::HIR
           if @regex_match_results.includes?(value_id)
             @regex_match_results.add(copy.id)
           end
-          update_typeof_local(name, value_type)
-          if concrete_name = concrete_type_name_for(value_type)
+          update_typeof_local(name, storage_type)
+          if concrete_name = concrete_type_name_for(storage_type)
             update_typeof_local_name(name, concrete_name)
           end
           if ctx.entry_box_required?(name) && !ctx.lookup_boxed_local(name)
-            hoist_box_for_local(ctx, name, value_type, copy.id) unless value_type == TypeRef::VOID
+            hoist_box_for_local(ctx, name, storage_type, copy.id) unless storage_type == TypeRef::VOID
           end
-          copy.id
+          storage_type == value_type ? copy.id : value_id
         end
       when Adamas::Compiler::Frontend::NodeKind::InstanceVar
         target_ivar = target_node.unsafe_as(Adamas::Compiler::Frontend::InstanceVarNode)
@@ -129232,6 +130539,7 @@ module Adamas::HIR
         @block_owner_self_ids[node.object_id] = self_id
       end
       assigned_vars = collect_assigned_var_set(node.body)
+      assigned_vars.concat(block_unpack_leaf_names(node).to_a)
       if params = node.params
         each_param(params) do |param|
           next unless param_name = param.name
@@ -129286,10 +130594,11 @@ module Adamas::HIR
       # Add block parameters (params can be nil)
       # Default to POINTER type since block parameters are typically objects (IO, etc.)
       if params = node.params
-        effective_param_types = expand_flat_block_param_types(params, param_types)
+        effective_param_types = node.unpacks ? param_types : expand_flat_block_param_types(params, param_types)
         each_param_with_index(params) do |param, idx|
           if param_name = param.name
-            name = (safe_slice_to_string(param_name) || "")
+            unpack_pattern = block_unpack_pattern_for_slot(node, idx)
+            name = unpack_pattern ? "__arg#{idx}" : (safe_slice_to_string(param_name) || "")
             param_type = if ta = param.type_annotation
                            type_ref_for_name((safe_slice_to_string(ta) || ""))
                          elsif effective_param_types && (resolved = effective_param_types[idx]?)
@@ -129315,6 +130624,7 @@ module Adamas::HIR
             if param_type != TypeRef::VOID
               track_enum_value(param_val.id, get_type_name_from_ref(param_type))
             end
+            bind_block_unpack_pattern_for_node(ctx, node, idx, param_val.id) if unpack_pattern
           end
         end
       end
@@ -129769,6 +131079,7 @@ module Adamas::HIR
         names.add(safe_slice_to_string(node.name) || "")
       when Adamas::Compiler::Frontend::BlockNode
         names.concat(parameter_name_set(node.params))
+        names.concat(block_unpack_leaf_names(node).to_a)
       when Adamas::Compiler::Frontend::ProcLiteralNode
         names.concat(parameter_name_set(node.params))
       when Adamas::Compiler::Frontend::ForNode
@@ -130812,10 +132123,16 @@ module Adamas::HIR
         )
       end
 
+      planned_parameter_type = ctx.capture_parameter_storage_type(parent_vid)
+      box_payload_type = planned_parameter_type || cap_type
+      if planned_parameter_type && box_payload_type != cap_type
+        box_payload_type = union_type_for_values(box_payload_type, cap_type)
+      end
       box_ptr = if box_info = ctx.lookup_boxed_local_for_local(cap_name, parent_vid)
+                  box_payload_type = box_info.payload_type
                   box_info.box_ptr
                 else
-                  hoist_box_for_local(ctx, cap_name, cap_type, parent_vid)
+                  hoist_box_for_local(ctx, cap_name, box_payload_type, parent_vid)
                 end
 
       CapturedVar.new(
@@ -130823,7 +132140,7 @@ module Adamas::HIR
         cap_name,
         by_reference: true,
         env_slot_type: TypeRef::POINTER,
-        payload_type: cap_type,
+        payload_type: box_payload_type,
         boxed: true
       )
     end
@@ -130962,6 +132279,10 @@ module Adamas::HIR
         return existing.box_ptr
       end
 
+      # Preserve the lexical owner identity before coercing its seed value to
+      # the widened shared-cell payload type. Later reads resolve the box by
+      # that original owner ValueId.
+      owner_local = ctx.lookup_local(name) || initial_value
       box_ptr = if ctx.entry_box_required?(name)
                   emit_capture_box(ctx, payload_type)
                 else
@@ -130971,8 +132292,214 @@ module Adamas::HIR
       seed = PointerStore.new(ctx.next_id, payload_type, box_ptr, initial_value)
       ctx.emit(seed)
       ctx.register_type(seed.id, payload_type)
-      ctx.register_boxed_local(name, box_ptr, payload_type, initial_value)
+      ctx.register_boxed_local(name, box_ptr, payload_type, owner_local)
       box_ptr
+    end
+
+    # Resolve Proc literal annotations in their lexical owner and local typeof
+    # environment, then require source identity before permissive type interning.
+    private def proc_literal_annotation_type_ref(
+      ctx : LoweringContext,
+      node : Adamas::Compiler::Frontend::ProcLiteralNode,
+      type_name : String,
+    ) : TypeRef
+      owner = @block_owner[node.object_id]?
+      owner_name = owner.try(&.class_name) ||
+                   owner.try(&.namespace_override) ||
+                   @current_class ||
+                   @current_namespace_override
+      saved_class = @current_class
+      saved_method = @current_method
+      saved_method_is_class = @current_method_is_class
+      saved_namespace = @current_namespace_override
+
+      begin
+        if owner
+          @current_class = owner.class_name
+          @current_method = owner.method_name
+          @current_method_is_class = owner.is_class
+          @current_namespace_override = owner.namespace_override
+        end
+
+        bindings = @type_param_map
+        if owner_name
+          if owner_bindings = type_param_map_for_receiver_name("#{owner_name}#_")
+            bindings = owner_bindings unless owner_bindings.empty?
+          end
+        end
+
+        with_isolated_type_param_map(bindings) do
+          with_typeof_local_bindings(ctx) do
+            # annotation_type_ref_cache_key intentionally has no local-binding
+            # dimension. Resolve typeof while those bindings are active and pass
+            # this same concrete text to validation and the cached interner.
+            resolved_name = resolve_typeof_in_type_string(type_name).strip
+            validate_proc_literal_source_annotation(resolved_name, owner_name, node)
+            annotation_type_ref(resolved_name, owner_name)
+          end
+        end
+      ensure
+        @current_class = saved_class
+        @current_method = saved_method
+        @current_method_is_class = saved_method_is_class
+        @current_namespace_override = saved_namespace
+      end
+    end
+
+    # These are the types constructed by Crystal 1.20.1 Program.initialize,
+    # including its built-in annotation types. This list is source-language
+    # identity, unlike the compiler's broader fallback alias tables.
+    private def proc_literal_predefined_source_type?(name : String) : Bool
+      normalized = name.strip
+      normalized = normalized[2..] if normalized.starts_with?("::")
+      case normalized
+      when "Object", "Reference", "Value", "Number",
+           "NoReturn", "Void", "Nil", "Bool", "Char", "Int",
+           "Int8", "UInt8", "Int16", "UInt16", "Int32", "UInt32",
+           "Int64", "UInt64", "Int128", "UInt128",
+           "Float", "Float32", "Float64", "Symbol", "Pointer",
+           "Tuple", "NamedTuple", "StaticArray", "String", "Class",
+           "Struct", "Enumerable", "Indexable", "Array", "Hash",
+           "Regex", "Range", "Slice", "Exception", "Enum", "Proc",
+           "Union", "Crystal", "GC", "AlwaysInline", "CallConvention",
+           "Extern", "Flags", "Link", "Naked", "NoInline", "Packed",
+           "Primitive", "Raises", "ReturnsTwice", "ThreadLocal",
+           "Deprecated", "Experimental", "TargetFeature"
+        true
+      else
+        false
+      end
+    end
+
+    private def proc_literal_source_type_identity?(name : String) : Bool
+      normalized = name.strip
+      normalized = normalized[2..] if normalized.starts_with?("::")
+      proc_literal_predefined_source_type?(normalized) || type_name_exists?(normalized)
+    end
+
+    # Unlike type_ref_for_name, this walk never treats a failed nominal lookup
+    # as a usable pointer placeholder. It follows source aliases and checks all
+    # type children before annotation_type_ref is allowed to intern anything.
+    private def validate_proc_literal_source_annotation(
+      source_name : String,
+      owner_name : String?,
+      node : Adamas::Compiler::Frontend::ProcLiteralNode,
+      depth : Int32 = 0,
+    ) : Nil
+      if depth > 64
+        raise LoweringError.new("recursive Proc literal annotation #{source_name}", node)
+      end
+
+      name = strip_fully_grouped_type_name(source_name.strip)
+      name = static_array_sugar_type_name(name) || name
+      name = normalize_tuple_literal_type_name(name)
+      name = resolve_typeof_in_type_string(name).strip
+      name = normalize_tuple_literal_type_name(name)
+      if name.empty?
+        raise LoweringError.new("undefined constant #{source_name}", node)
+      end
+
+      if mapped = @type_param_map[name]?
+        unless mapped == name
+          validate_proc_literal_source_annotation(mapped, owner_name, node, depth + 1)
+          return
+        end
+      end
+
+      if name == "self" || name == "Self"
+        if owner_name
+          validate_proc_literal_source_annotation(owner_name, owner_name, node, depth + 1)
+          return
+        end
+        raise LoweringError.new("undefined constant #{name}", node)
+      end
+
+      if name.ends_with?('?')
+        validate_proc_literal_source_annotation(name[0, name.bytesize - 1], owner_name, node, depth + 1)
+        return
+      end
+      if name.ends_with?('*') && proc_type_argument_names(name).nil?
+        validate_proc_literal_source_annotation(name[0, name.bytesize - 1].strip, owner_name, node, depth + 1)
+        return
+      end
+
+      if proc_arguments = proc_type_argument_names(name)
+        # Proc(...) and arrow signatures are alternate spellings of the Proc
+        # generic type; validate its source base as well as every input/result.
+        validate_proc_literal_source_annotation("Proc", owner_name, node, depth + 1)
+        proc_arguments.each do |argument|
+          validate_proc_literal_source_annotation(argument, owner_name, node, depth + 1)
+        end
+        return
+      end
+
+      union_members = split_union_type_name(name)
+      if union_members.size > 1
+        union_members.each do |member|
+          validate_proc_literal_source_annotation(member, owner_name, node, depth + 1)
+        end
+        return
+      end
+
+      if generic = split_generic_base_and_args(name)
+        # Compiler generic-base tables are fallback resolution hints, not proof
+        # that the Crystal source program declared a usable base type.
+        validate_proc_literal_source_annotation(generic.base, owner_name, node, depth + 1)
+        split_generic_type_args(generic.args).each do |argument|
+          if generic.base == "NamedTuple" && (entry = split_named_tuple_entry(argument))
+            validate_proc_literal_source_annotation(entry[1], owner_name, node, depth + 1)
+          elsif !value_literal_name?(argument) && numeric_constant_type_arg(argument).nil?
+            validate_proc_literal_source_annotation(argument, owner_name, node, depth + 1)
+          end
+        end
+        return
+      end
+
+      if owner_name && !name.includes?("::")
+        if nested_name = nested_type_full_name_in_namespace_chain(owner_name, name)
+          validate_proc_literal_source_annotation(nested_name, owner_name, node, depth + 1)
+          return
+        end
+      end
+
+      if alias_target = @type_aliases[name]?
+        validate_proc_literal_source_annotation(alias_target, owner_name, node, depth + 1)
+        return
+      end
+      if contextual_alias = resolve_contextual_type_alias_name(name)
+        validate_proc_literal_source_annotation(contextual_alias, owner_name, node, depth + 1)
+        return
+      end
+      if included_name = resolve_included_type_name(name)
+        validate_proc_literal_source_annotation(included_name, owner_name, node, depth + 1)
+        return
+      end
+
+      # Bare Short/Long spellings are only valid when the source program has
+      # actually declared that alias; the compiler's C fallback table is not
+      # evidence of a Crystal source type.
+      if LIBC_TYPE_ALIASES.has_key?(name) && !type_name_exists?(name)
+        raise LoweringError.new("undefined constant #{name}", node)
+      end
+
+      return if proc_literal_source_type_identity?(name)
+
+      resolved = resolve_type_name_in_context(name)
+      if resolved != name
+        if LIBC_TYPE_ALIASES.has_key?(resolved) && !type_name_exists?(resolved)
+          raise LoweringError.new("undefined constant #{name}", node)
+        end
+        # A fallback resolver must not launder an undeclared source spelling
+        # into a real builtin. Exact source predefs such as ::Int32 were handled
+        # by proc_literal_source_type_identity? above.
+        if proc_literal_predefined_source_type?(resolved) && !proc_literal_source_type_identity?(name)
+          raise LoweringError.new("undefined constant #{name}", node)
+        end
+        validate_proc_literal_source_annotation(resolved, owner_name, node, depth + 1)
+        return
+      end
+
+      raise LoweringError.new("undefined constant #{name}", node)
     end
 
     private def lower_proc_literal(
@@ -130984,14 +132511,15 @@ module Adamas::HIR
       proc_func_name = "__crystal_proc_#{@proc_function_counter}"
       @proc_function_counter += 1
 
-      # Determine param types
+      # Resolve source Proc annotations before the permissive type-name interner
+      # can turn an unresolved annotation into an ABI placeholder.
       proc_param_types = [] of TypeRef
       if params = node.params
         effective_param_types = expand_flat_block_param_types(params, param_type_override)
         each_param_with_index(params) do |param, idx|
           if param_name = param.name
             param_type = if ta = param.type_annotation
-                           type_ref_for_name((safe_slice_to_string(ta) || ""))
+                           proc_literal_annotation_type_ref(ctx, node, safe_slice_to_string(ta) || "")
                          elsif effective_param_types && (override = effective_param_types[idx]?)
                            override
                          else
@@ -131004,13 +132532,15 @@ module Adamas::HIR
 
       # Pre-determine return type (may be refined after lowering)
       proc_return_type = if rt = node.return_type
-                           type_ref_for_name((safe_slice_to_string(rt) || ""))
+                           proc_literal_annotation_type_ref(ctx, node, safe_slice_to_string(rt) || "")
                          else
                            TypeRef::VOID # Will be updated after body lowering
                          end
 
-      # Create standalone function for the proc body
-      proc_func = @module.create_function(proc_func_name, proc_return_type)
+      # Lower source results before applying an explicit Proc annotation.
+      # The annotation constrains admission; it must not coerce invalid values
+      # into apparently compatible types before that check.
+      proc_func = @module.create_function(proc_func_name, TypeRef::VOID)
       proc_ctx = LoweringContext.new(proc_func, @module, @arena)
 
       # Collect proc param names (to exclude from capture detection)
@@ -131174,15 +132704,27 @@ module Adamas::HIR
       # signature still includes both source branches. Preserve that semantic
       # union independently of the optimized body representation.
       semantic_return_type = nil.as(TypeRef?)
-      if proc_return_type == TypeRef::VOID
-        if semantic_name = inline_proc_return_type_name(node, proc_param_types, @current_class)
-          semantic_type = type_ref_for_name(semantic_name)
-          semantic_return_type = semantic_type if is_union_type?(semantic_type)
-        end
+      if semantic_name = inline_proc_return_type_name(node, proc_param_types, @current_class)
+        semantic_type = type_ref_for_name(semantic_name)
+        semantic_return_type = semantic_type if node.return_type || is_union_type?(semantic_type)
       end
+      proc_body_arena = @arena
+      seed_entry_box_requirements_for_body(proc_ctx, node.body, proc_body_arena)
+      owner_capture_storage_types(proc_ctx, node.body, proc_body_arena).each do |(assignment_id, storage_type)|
+        proc_ctx.set_capture_storage_type(proc_body_arena, assignment_id, storage_type)
+      end
+      # A literal owns a distinct function result contract. Its explicit
+      # returns must never be coerced to the enclosing method's annotation.
+      # Keep lexical self/yield captures, but isolate this function-local state.
+      saved_proc_literal_return_owner = @captured_block_return_owner
+      saved_proc_literal_return_type = @current_def_return_type
+      @captured_block_return_owner = false
+      @current_def_return_type = TypeRef::VOID
       last_value = begin
         lower_body(proc_ctx, node.body)
       ensure
+        @captured_block_return_owner = saved_proc_literal_return_owner
+        @current_def_return_type = saved_proc_literal_return_type
         @explicit_yield_target_stack.pop? if pushed_explicit_yield_target
         @inline_yield_proc_depth -= 1
         @inline_yield_return_stack = saved_return_stack_pl
@@ -131198,18 +132740,31 @@ module Adamas::HIR
         @loop_break_value_stack = saved_loop_break_value_stack_pl
       end
 
-      # Terminate the proc function — always add Return unless already terminated with Return
-      block = proc_func.get_block(proc_ctx.current_block)
-      unless block.terminator.is_a?(Return)
+      # A Return expression yields a dummy Nil to the lowering caller, while
+      # its CFG terminator carries the real result. Derive the Proc signature
+      # from every reachable return, never from that bookkeeping value. A
+      # terminal NoReturn path must remain terminal instead of returning Nil.
+      unless should_stop_sequential_lowering?(proc_ctx)
         proc_ctx.terminate(Return.new(last_value))
       end
 
-      # Update return type from actual lowered body type. A source union
-      # may be wider than the optimized last value; retain it only when every
-      # actual return is an admitted member, then normalize the return ABI.
-      if proc_return_type == TypeRef::VOID
-        actual_return_type = proc_ctx.type_of(last_value)
-        preserved_semantic_union = false
+      # Both Proc literals and Proc.new validate uncoerced source results.
+      # Only a validated contract can determine the public result ABI.
+      if node.return_type
+        validate_proc_result(proc_ctx, node, proc_return_type, semantic_return_type)
+        proc_func.return_type = proc_return_type
+        normalize_function_return_terminators(proc_ctx, proc_return_type)
+      else
+        # Source typing may retain a union wider than an optimized CFG. Keep
+        # that union only when it admits every actual return, then normalize
+        # those exits to the one published Proc result representation.
+        return_types = [] of TypeRef
+        reachable_blocks(proc_func).each do |return_block|
+          if return_node = return_block.terminator.as?(Return)
+            return_types << (return_node.value.try { |value| proc_ctx.type_of(value) } || TypeRef::NIL)
+          end
+        end
+        actual_return_type = merge_return_types(return_types) || type_ref_for_name("NoReturn")
         if semantic_type = semantic_return_type
           compatible_returns = proc_func.blocks.all? do |return_block|
             return_node = return_block.terminator.as?(Return)
@@ -131218,13 +132773,12 @@ module Adamas::HIR
           end
           if compatible_returns && exact_union_call_type_subset?(actual_return_type, semantic_type)
             actual_return_type = semantic_type
-            preserved_semantic_union = true
           end
         end
         if actual_return_type != TypeRef::VOID
           proc_return_type = actual_return_type
           proc_func.return_type = proc_return_type
-          normalize_function_return_terminators(proc_ctx, proc_return_type) if preserved_semantic_union
+          normalize_function_return_terminators(proc_ctx, proc_return_type)
         end
       end
 
@@ -131279,6 +132833,448 @@ module Adamas::HIR
       strip_type_suffix(ctx.function.name) == "Slice(UInt8).cmp" ? TypeRef::INT32 : nil
     end
 
+    # A selected Proc.new(&block : self) owns the whole callback contract.
+    # Source bindings may ignore ABI inputs, but cannot invent additional ones.
+    private def validate_proc_constructor_block_parameters(
+      block_node : Adamas::Compiler::Frontend::BlockNode,
+      inputs : Array(TypeRef),
+    ) : Nil
+      params = block_node.params
+      return unless params
+      splat_index = params.index { |param| param.is_splat }
+      maximum = inputs.size
+      supplied = params.size
+      # Proc.new uses &block : self, a concrete Proc restriction. Crystal's
+      # ProcNotation-only splat packing does not apply to this branch.
+      if block_node.unpacks.nil? && maximum == 1 && supplied > 1 && splat_index.nil?
+        if tuple = @module.get_type_descriptor(inputs[0])
+          maximum = tuple.type_params.size if tuple.kind == TypeKind::Tuple
+        end
+      end
+      if supplied > maximum
+        raise LoweringError.new(
+          "too many block parameters (given #{supplied}, expected maximum #{maximum})",
+          block_node,
+        )
+      end
+    end
+
+    private def block_unpack_pattern_for_slot(
+      block_node : Adamas::Compiler::Frontend::BlockNode,
+      slot : Int32,
+    ) : Adamas::Compiler::Frontend::ExprId?
+      if patterns = block_node.unpacks
+        patterns.each do |entry|
+          return entry[1] if entry[0] == slot
+        end
+      end
+      nil
+    end
+
+    private def collect_block_unpack_pattern_names(
+      pattern_id : Adamas::Compiler::Frontend::ExprId,
+      names : Set(String),
+    ) : Nil
+      case node = @arena[pattern_id]
+      when Adamas::Compiler::Frontend::IdentifierNode
+        name = safe_slice_to_string(node.name) || ""
+        names.add(name) unless name.empty? || name == "_"
+      when Adamas::Compiler::Frontend::SplatNode
+        collect_block_unpack_pattern_names(node.expr, names)
+      when Adamas::Compiler::Frontend::TupleLiteralNode
+        node.elements.each { |child| collect_block_unpack_pattern_names(child, names) }
+      end
+    end
+
+    private def block_unpack_leaf_names(
+      block_node : Adamas::Compiler::Frontend::BlockNode,
+    ) : Set(String)
+      names = Set(String).new
+      return names unless block_node.unpacks
+      caller_arena = @arena
+      block_arena = cached_block_arena(block_node.object_id) ||
+                    resolve_arena_for_block(block_node, caller_arena) || caller_arena
+      with_arena(block_arena) do
+        block_node.unpacks.not_nil!.each do |entry|
+          collect_block_unpack_pattern_names(entry[1], names)
+        end
+      end
+      names
+    end
+
+    private def bind_block_unpack_identifier(
+      ctx : LoweringContext,
+      node : Adamas::Compiler::Frontend::IdentifierNode,
+      value_id : ValueId,
+      pattern_capture_names : Set(String)? = nil,
+    ) : Nil
+      name = safe_slice_to_string(node.name) || ""
+      return if name.empty? || name == "_"
+      value_type = ctx.type_of(value_id)
+      raise LoweringError.new("block destructuring produced an unknown value for #{name}", node) if value_type == TypeRef::VOID
+      if pattern_capture_names && pattern_capture_names.includes?(name)
+        if current_local = ctx.lookup_local(name)
+          if box_info = ctx.lookup_boxed_local_for_local(name, current_local)
+            stored_value = coerce_value_to_type(ctx, value_id, box_info.payload_type)
+            store = PointerStore.new(ctx.next_id, box_info.payload_type, box_info.box_ptr, stored_value)
+            ctx.emit(store)
+            ctx.register_type(store.id, box_info.payload_type)
+            ctx.discard_boxed_local_narrowing(name, current_local)
+            return
+          end
+        end
+        if ref_cell = @closure_ref_cells[name]?
+          cell_class, cell_name, cell_type = ref_cell
+          stored_value = coerce_value_to_type(ctx, value_id, cell_type)
+          store = ClassVarSet.new(ctx.next_id, cell_type, cell_class, cell_name, stored_value)
+          ctx.emit(store)
+          ctx.register_type(store.id, cell_type)
+          return
+        end
+        raise LoweringError.new("captured block destructuring target #{name} has no closure storage", node)
+      end
+      ctx.register_local(name, value_id)
+      ctx.mark_block_parameter_binding(name, value_id)
+      ctx.register_type(value_id, value_type)
+      update_typeof_local(name, value_type)
+      update_typeof_local_name(name, get_type_name_from_ref(value_type))
+      track_enum_value(value_id, get_type_name_from_ref(value_type))
+    end
+
+    private def bind_block_unpack_pattern(
+      ctx : LoweringContext,
+      pattern_id : Adamas::Compiler::Frontend::ExprId,
+      value_id : ValueId,
+      pattern_capture_names : Set(String)? = nil,
+    ) : Nil
+      value_type = ctx.type_of(value_id)
+      case node = @arena[pattern_id]
+      when Adamas::Compiler::Frontend::IdentifierNode
+        bind_block_unpack_identifier(ctx, node, value_id, pattern_capture_names)
+      when Adamas::Compiler::Frontend::SplatNode
+        bind_block_unpack_pattern(ctx, node.expr, value_id, pattern_capture_names)
+      when Adamas::Compiler::Frontend::TupleLiteralNode
+        tuple_size = multiple_assign_tuple_size(value_type)
+        array_element_type = multiple_assign_array_element_type(value_type)
+        unless tuple_size || array_element_type
+          raise LoweringError.new("block destructuring requires Tuple or Array, got #{get_type_name_from_ref(value_type)}", node)
+        end
+        elements = node.elements
+        splat_index = elements.index { |child| @arena[child].is_a?(Adamas::Compiler::Frontend::SplatNode) }
+        suffix_count = splat_index ? (elements.size - splat_index - 1) : 0
+        if tuple_size
+          if splat_index
+            if tuple_size < splat_index + suffix_count
+              raise LoweringError.new("not enough elements in block tuple destructuring", node)
+            end
+          elsif elements.size > tuple_size
+            raise LoweringError.new("too many elements in block tuple destructuring", node)
+          end
+          elements.each_with_index do |child_id, child_index|
+            if child_node = @arena[child_id].as?(Adamas::Compiler::Frontend::SplatNode)
+              rest_stop = tuple_size - suffix_count
+              rest_values = [] of ValueId
+              idx = child_index
+              while idx < rest_stop
+                rest_values << emit_multiple_assign_static_index_value(ctx, value_id, value_type, idx)
+                idx += 1
+              end
+              rest_id = build_multiple_assign_tuple_value(ctx, rest_values)
+              bind_block_unpack_pattern(ctx, child_node.expr, rest_id, pattern_capture_names)
+            else
+              source_index = if splat_index && child_index > splat_index
+                               tuple_size - suffix_count + (child_index - splat_index - 1)
+                             else
+                               child_index
+                             end
+              next if source_index < 0 || source_index >= tuple_size
+              child_value = emit_multiple_assign_static_index_value(ctx, value_id, value_type, source_index)
+              bind_block_unpack_pattern(ctx, child_id, child_value, pattern_capture_names)
+            end
+          end
+        else
+          if splat_index
+            size_id = emit_multiple_assign_array_size_call(ctx, value_id, value_type)
+          end
+          elements.each_with_index do |child_id, child_index|
+            if child_node = @arena[child_id].as?(Adamas::Compiler::Frontend::SplatNode)
+              size_id = emit_multiple_assign_array_size_call(ctx, value_id, value_type)
+              count_id = emit_multiple_assign_int32_sub(ctx, size_id, emit_multiple_assign_int32_literal(ctx, child_index + suffix_count))
+              rest_id = emit_multiple_assign_array_tail_value(ctx, value_id, value_type, child_index, count_id)
+              bind_block_unpack_pattern(ctx, child_node.expr, rest_id, pattern_capture_names)
+            else
+              source_index = if splat_index && child_index > splat_index
+                               size_id = emit_multiple_assign_array_size_call(ctx, value_id, value_type)
+                               emit_multiple_assign_int32_add(ctx,
+                                 emit_multiple_assign_int32_sub(ctx, size_id, emit_multiple_assign_int32_literal(ctx, suffix_count)),
+                                 emit_multiple_assign_int32_literal(ctx, child_index - splat_index - 1))
+                             else
+                               emit_multiple_assign_int32_literal(ctx, child_index)
+                             end
+              child_value = emit_multiple_assign_dynamic_index_value(ctx, value_id, value_type, source_index)
+              bind_block_unpack_pattern(ctx, child_id, child_value, pattern_capture_names)
+            end
+          end
+        end
+      else
+        raise LoweringError.new("unsupported block destructuring pattern", node)
+      end
+    end
+
+    private def bind_block_unpack_pattern_for_node(
+      ctx : LoweringContext,
+      block_node : Adamas::Compiler::Frontend::BlockNode,
+      slot : Int32,
+      value_id : ValueId,
+      pattern_capture_names : Set(String)? = nil,
+    ) : Bool
+      pattern = block_unpack_pattern_for_slot(block_node, slot)
+      return false unless pattern
+      caller_arena = @arena
+      block_arena = cached_block_arena(block_node.object_id) ||
+                    resolve_arena_for_block(block_node, caller_arena) || caller_arena
+      with_arena(block_arena) { bind_block_unpack_pattern(ctx, pattern.not_nil!, value_id, pattern_capture_names) }
+      true
+    end
+
+    private def seed_block_unpack_pattern_type(
+      pattern_id : Adamas::Compiler::Frontend::ExprId,
+      value_type : TypeRef,
+      local_map : Hash(String, TypeRef),
+    ) : Nil
+      case node = @arena[pattern_id]
+      when Adamas::Compiler::Frontend::IdentifierNode
+        name = safe_slice_to_string(node.name) || ""
+        local_map[name] = value_type unless name.empty? || name == "_" || value_type == TypeRef::VOID
+      when Adamas::Compiler::Frontend::SplatNode
+        seed_block_unpack_pattern_type(node.expr, value_type, local_map)
+      when Adamas::Compiler::Frontend::TupleLiteralNode
+        if tuple_size = multiple_assign_tuple_size(value_type)
+          desc = @module.get_type_descriptor(value_type)
+          return unless desc
+          splat_index = node.elements.index { |child| @arena[child].is_a?(Adamas::Compiler::Frontend::SplatNode) }
+          suffix_count = splat_index ? (node.elements.size - splat_index - 1) : 0
+          if splat_index
+            return if tuple_size < splat_index + suffix_count
+          else
+            return if node.elements.size > tuple_size
+          end
+          node.elements.each_with_index do |child_id, child_index|
+            child = @arena[child_id]
+            if child.is_a?(Adamas::Compiler::Frontend::SplatNode)
+              rest_stop = tuple_size - suffix_count
+              rest_types = [] of TypeRef
+              idx = child_index
+              while idx < rest_stop
+                rest_type = desc.type_params[idx]?
+                rest_types << rest_type if rest_type && rest_type != TypeRef::VOID
+                idx += 1
+              end
+              rest_name = rest_types.empty? ? "Tuple()" : "Tuple(#{rest_types.map { |t| get_type_name_from_ref(t) }.join(", ")})"
+              seed_block_unpack_pattern_type(child.expr, type_ref_for_name(rest_name), local_map)
+            else
+              source_index = if splat_index && child_index > splat_index
+                               tuple_size - suffix_count + (child_index - splat_index - 1)
+                             else
+                               child_index
+                             end
+              if child_type = desc.type_params[source_index]?
+                seed_block_unpack_pattern_type(child_id, child_type, local_map)
+              end
+            end
+          end
+        elsif element_type = multiple_assign_array_element_type(value_type)
+          node.elements.each do |child_id|
+            child = @arena[child_id]
+            if child.is_a?(Adamas::Compiler::Frontend::SplatNode)
+              seed_block_unpack_pattern_type(child.expr, value_type, local_map)
+            else
+              seed_block_unpack_pattern_type(child_id, element_type, local_map)
+            end
+          end
+        end
+      end
+    end
+
+    private def register_inline_block_parameter_for_node(
+      ctx : LoweringContext,
+      block_node : Adamas::Compiler::Frontend::BlockNode,
+      name : String,
+      value_id : ValueId,
+    ) : Nil
+      if params = block_node.params
+        caller_arena = @arena
+        block_arena = cached_block_arena(block_node.object_id) ||
+                      resolve_arena_for_block(block_node, caller_arena) || caller_arena
+        slot = nil.as(Int32?)
+        with_arena(block_arena) do
+          each_param_with_index(params) do |param, index|
+            if parameter_name_string(param, block_arena) == name
+              slot = index
+              break
+            end
+          end
+        end
+        if found_slot = slot
+          return if bind_block_unpack_pattern_for_node(ctx, block_node, found_slot, value_id)
+        end
+      end
+      register_inline_block_parameter(ctx, name, value_id)
+      value_type = ctx.type_of(value_id)
+      update_typeof_local(name, value_type)
+      update_typeof_local_name(name, get_type_name_from_ref(value_type)) if value_type != TypeRef::VOID
+      track_enum_value(value_id, get_type_name_from_ref(value_type)) if value_type != TypeRef::VOID
+    end
+
+    private def bind_proc_constructor_block_local(
+      ctx : LoweringContext,
+      param : Adamas::Compiler::Frontend::Parameter,
+      value : ValueId,
+    ) : Nil
+      return unless name_slice = param.name
+      name = safe_slice_to_string(name_slice) || ""
+      type = ctx.type_of(value)
+      ctx.register_local(name, value)
+      ctx.mark_block_parameter_binding(name, value)
+      update_typeof_local(name, type)
+      update_typeof_local_name(name, get_type_name_from_ref(type))
+      track_enum_value(value, get_type_name_from_ref(type))
+    end
+
+    private def bind_proc_constructor_block_parameters(
+      ctx : LoweringContext,
+      block_node : Adamas::Compiler::Frontend::BlockNode,
+      inputs : Array(TypeRef),
+      pattern_capture_names : Set(String) = Set(String).new,
+    ) : Nil
+      validate_proc_constructor_block_parameters(block_node, inputs)
+      # Keep all input slots even when the source has fewer parameter names.
+      values = inputs.map_with_index do |type, index|
+        param = ctx.function.add_param("__arg#{index}", type)
+        ctx.register_type(param.id, type)
+        param.id
+      end
+      params = block_node.params
+      return unless params
+      if block_node.unpacks.nil? && inputs.size == 1 && params.size > 1 && !params.any?(&.is_splat) &&
+         (tuple = @module.get_type_descriptor(inputs[0])) &&
+         tuple.kind == TypeKind::Tuple
+        # Crystal automatically unpacks a sole Tuple input for multiple
+        # source parameters. The callback itself still takes one Tuple.
+        params.each_with_index do |param, index|
+          index_value = Literal.new(ctx.next_id, TypeRef::INT32, index.to_i64)
+          ctx.emit(index_value)
+          ctx.register_type(index_value.id, TypeRef::INT32)
+          element = IndexGet.new(ctx.next_id, tuple.type_params[index], values[0], index_value.id)
+          ctx.emit(element)
+          ctx.register_type(element.id, element.type)
+          bind_proc_constructor_block_local(ctx, param, element.id)
+        end
+      else
+        params.each_with_index do |param, index|
+          if pattern = block_unpack_pattern_for_slot(block_node, index)
+            value = values[index]?
+            raise LoweringError.new("missing callback input for block destructuring slot #{index}", block_node) unless value
+            bind_block_unpack_pattern_for_node(ctx, block_node, index, value.not_nil!, pattern_capture_names)
+          else
+            bind_proc_constructor_block_local(ctx, param, values[index]) if values[index]?
+          end
+        end
+      end
+    end
+
+    private def proc_result_type_assignable?(actual : TypeRef, expected : TypeRef, depth : Int32 = 0) : Bool
+      return true if actual == expected
+      return false if actual == TypeRef::VOID
+      return false if depth > 32
+      return true if get_type_name_from_ref(actual) == "NoReturn"
+      actual_desc = @module.get_type_descriptor(actual)
+      expected_desc = @module.get_type_descriptor(expected)
+      if actual_desc.try(&.kind) == TypeKind::Union
+        return false unless ensure_union_descriptor_for_type_ref(actual)
+        union = union_descriptor_from_sidecar(actual)
+        return false unless union
+        return union.variants.all? do |variant|
+          proc_result_type_assignable?(mir_to_hir_type_ref(variant.type_ref), expected, depth + 1)
+        end
+      end
+      if expected_desc.try(&.kind) == TypeKind::Union
+        return false unless ensure_union_descriptor_for_type_ref(expected)
+        union = union_descriptor_from_sidecar(expected)
+        return false unless union
+        return union.variants.any? do |variant|
+          proc_result_type_assignable?(actual, mir_to_hir_type_ref(variant.type_ref), depth + 1)
+        end
+      end
+      if actual_desc && expected_desc
+        if actual_desc.kind == TypeKind::Tuple && expected_desc.kind == TypeKind::Tuple
+          return false unless actual_desc.type_params.size == expected_desc.type_params.size
+          return actual_desc.type_params.each_with_index.all? do |type, index|
+            proc_result_type_assignable?(type, expected_desc.type_params[index], depth + 1)
+          end
+        end
+        if actual_desc.kind == TypeKind::NamedTuple && expected_desc.kind == TypeKind::NamedTuple
+          actual_entries = concrete_named_tuple_entries(actual)
+          expected_entries = concrete_named_tuple_entries(expected)
+          return false unless actual_entries && expected_entries && actual_entries.size == expected_entries.size
+          return expected_entries.all? do |entry|
+            source = actual_entries.find { |candidate| candidate[0] == entry[0] }
+            source && proc_result_type_assignable?(source[2], entry[2], depth + 1)
+          end
+        end
+        if actual_desc.kind == TypeKind::Proc && expected_desc.kind == TypeKind::Proc
+          return false if actual_desc.type_params.empty? || expected_desc.type_params.empty?
+          actual_inputs = actual_desc.type_params[0, actual_desc.type_params.size - 1]
+          expected_inputs = expected_desc.type_params[0, expected_desc.type_params.size - 1]
+          return false unless actual_inputs == expected_inputs
+          actual_result = actual_desc.type_params.last
+          expected_result = expected_desc.type_params.last
+          return actual_result == expected_result || expected_result == TypeRef::NIL ||
+                 expected_result == TypeRef::VOID || get_type_name_from_ref(actual_result) == "NoReturn"
+        end
+        if !actual_desc.type_params.empty? && !expected_desc.type_params.empty? &&
+           actual_desc.name == expected_desc.name
+          return false unless actual_desc.type_params == expected_desc.type_params
+        end
+      end
+      statically_is_a_type?(actual, expected) == true
+    end
+
+    private def validate_proc_result(
+      ctx : LoweringContext,
+      node : Adamas::Compiler::Frontend::BlockNode | Adamas::Compiler::Frontend::ProcLiteralNode,
+      expected : TypeRef,
+      semantic_return_type : TypeRef?,
+    ) : Nil
+      # Nil explicitly discards a result. Proc.new also maps its Void result
+      # contract to Nil; a literal's explicit annotation remains a constraint.
+      return if expected == TypeRef::NIL ||
+                (expected == TypeRef::VOID && node.is_a?(Adamas::Compiler::Frontend::BlockNode))
+      result_owner = node.is_a?(Adamas::Compiler::Frontend::ProcLiteralNode) ? "Proc" : "block"
+      if semantic = semantic_return_type
+        # Source result typing includes unreachable tail expressions. A known
+        # result must satisfy the contract independently of runtime CFG exits.
+        if semantic != TypeRef::VOID && !proc_result_type_assignable?(semantic, expected)
+          raise LoweringError.new(
+            "expected #{result_owner} to return #{get_type_name_from_ref(expected)}, not #{get_type_name_from_ref(semantic)}",
+            node,
+          )
+        end
+      end
+      # A terminal NoReturn path contributes no result. Check every reachable
+      # Return before normalization can coerce it to the expected ABI type.
+      reachable_blocks(ctx.function).each do |block|
+        ret = block.terminator.as?(Return)
+        next unless ret
+        actual = ret.value.try { |value| ctx.type_of(value) } || TypeRef::NIL
+        next if proc_result_type_assignable?(actual, expected)
+        raise LoweringError.new(
+          "expected #{result_owner} to return #{get_type_name_from_ref(expected)}, not #{get_type_name_from_ref(actual)}",
+          node,
+        )
+      end
+    end
+
     # Convert a BlockNode into a Proc (FuncPointer). This is used when a method
     # takes `&block : T ->` and the block must be stored/captured rather than
     # yielded inline.
@@ -131289,7 +133285,19 @@ module Adamas::HIR
       block_arena : Adamas::Compiler::Frontend::ArenaLike,
       heap_proc : Bool = false,
       expected_return_type : TypeRef? = nil,
+      proc_constructor_type : TypeRef? = nil,
+      semantic_return_type : TypeRef? = nil,
     ) : ValueId
+      if constructor_type = proc_constructor_type
+        descriptor = @module.get_type_descriptor(constructor_type)
+        unless descriptor && descriptor.kind == TypeKind::Proc && !descriptor.type_params.empty?
+          raise LoweringError.new("selected Proc.new has no concrete callback contract", block_node)
+        end
+        param_types = descriptor.type_params[0, descriptor.type_params.size - 1]
+        expected_return_type = descriptor.type_params.last
+        expected_return_type = TypeRef::NIL if expected_return_type == TypeRef::VOID
+        validate_proc_constructor_block_parameters(block_node, param_types)
+      end
       debug_trace_each = env_get("DEBUG_TRACE_EACH_WITH_INDEX") &&
                          ctx.function.name.includes?("each_with_index")
       proc_func_name = "__crystal_block_proc_#{@proc_function_counter}"
@@ -131298,12 +133306,14 @@ module Adamas::HIR
       # Determine param types from annotation or override
       proc_param_types = [] of TypeRef
       tuple_destruct_info = nil.as({Int32, Array(TypeRef)}?)
-      if param_types
+      if proc_constructor_type && param_types
+        proc_param_types = param_types.dup
+      elsif param_types
         # Keep callback registration and standalone proc materialization on the
         # same effective signature resolver, including tuple destructuring and
         # the POINTER fallback for an untyped block parameter.
         if params = block_node.params
-          tuple_destruct_info = leading_tuple_destruct_info(params, param_types)
+          tuple_destruct_info = leading_tuple_destruct_info(params, param_types) unless block_node.unpacks
         end
         proc_param_types = raw_callback_param_types_for(block_node, param_types) || [] of TypeRef
       elsif params = block_node.params
@@ -131378,12 +133388,14 @@ module Adamas::HIR
       # Collect block param names (to exclude from capture detection)
       block_param_names = Set(String).new
       if params = block_node.params
-        each_param(params) do |param|
+        each_param_with_index(params) do |param, idx|
+          next if block_unpack_pattern_for_slot(block_node, idx)
           if pname = param.name
             block_param_names.add((safe_slice_to_string(pname) || ""))
           end
         end
       end
+      block_param_names.concat(block_unpack_leaf_names(block_node))
 
       # Detect captures: scan block body for identifiers referencing parent locals
       saved_arena = @arena
@@ -131434,6 +133446,20 @@ module Adamas::HIR
         unless parent_locals.has_key?(param.name)
           parent_locals[param.name] = param.id
           ctx.register_type(param.id, param.type)
+        end
+      end
+      # Proc.new's normalized tuple-pattern assignments target an already
+      # visible outer local. Capture only colliding leaves in this constructor
+      # path; inline-yield block parameters keep their own binding.
+      pattern_capture_names = Set(String).new
+      if proc_constructor_type
+        block_unpack_leaf_names(block_node).each do |name|
+          if parent_value_id = parent_locals[name]?
+            next if ctx.type_of(parent_value_id) == TypeRef::VOID
+            pattern_capture_names.add(name)
+            block_param_names.delete(name)
+            referenced_names.add(name)
+          end
         end
       end
       captures = [] of {String, ValueId, TypeRef}
@@ -131495,6 +133521,7 @@ module Adamas::HIR
       capture_names = capture_name_set(captures)
       written_values = {} of String => Array({ExprId, Int32})
       written_captures = detect_written_captures(block_node.body, capture_names, block_arena, written_values)
+      pattern_capture_names.each { |name| written_captures.add(name) }
       captures = widen_written_capture_types(ctx, captures, written_values, block_node.params, param_types || proc_param_types, block_arena, parent_locals)
       previous_capture_cells = {} of String => {String, String, TypeRef}
       new_capture_cells = Set(String).new
@@ -131552,8 +133579,28 @@ module Adamas::HIR
       end
 
       # Add parameters to the standalone function
-      if params = block_node.params
-        if tuple_destruct = tuple_destruct_info
+      if proc_constructor_type
+        bind_proc_constructor_block_parameters(proc_ctx, block_node, proc_param_types, pattern_capture_names)
+      elsif params = block_node.params
+        if block_node.unpacks
+          proc_param_types.each_with_index do |expected_type, idx|
+            param = params[idx]?
+            pattern = block_unpack_pattern_for_slot(block_node, idx)
+            source_name = param.try(&.name).try { |name| safe_slice_to_string(name) }
+            name = pattern ? "__arg#{idx}" : (source_name || "__arg#{idx}")
+            hir_param = proc_func.add_param(name, expected_type)
+            proc_ctx.register_local(name, hir_param.id)
+            proc_ctx.register_type(hir_param.id, expected_type)
+            unless pattern
+              if source_name
+                proc_ctx.mark_block_parameter_binding(name, hir_param.id)
+                update_typeof_local(name, expected_type)
+                update_typeof_local_name(name, get_type_name_from_ref(expected_type)) if expected_type != TypeRef::VOID
+              end
+            end
+            bind_block_unpack_pattern_for_node(proc_ctx, block_node, idx, hir_param.id) if pattern
+          end
+        elsif tuple_destruct = tuple_destruct_info
           destruct_count, tuple_elem_types = tuple_destruct
           tuple_param_type = proc_param_types[0]? || TypeRef::VOID
           tuple_param = proc_func.add_param("__tuple_arg0", tuple_param_type)
@@ -131745,9 +133792,12 @@ module Adamas::HIR
         @expected_proc_return_type_hint_stack << expected_return_type
         pushed_return_type_hint = true
       end
+      saved_block_return_owner = @captured_block_return_owner
+      @captured_block_return_owner = saved_block_return_owner || !proc_constructor_type.nil?
       last_value = begin
         lower_body(proc_ctx, block_node.body)
       ensure
+        @captured_block_return_owner = saved_block_return_owner
         @expected_proc_return_type_hint_stack.pop? if pushed_return_type_hint
         unless heap_proc
           captures.each do |cap_name, _, _|
@@ -131791,59 +133841,73 @@ module Adamas::HIR
         @type_param_map = saved_type_param_map
       end
 
-      # Terminate the proc function
-      fn_block = proc_func.get_block(proc_ctx.current_block)
-      return_value = last_value
-      if expected_return_type == TypeRef::NIL && !fn_block.terminator.is_a?(Return)
-        nil_lit = Literal.new(proc_ctx.next_id, TypeRef::NIL, nil)
-        proc_ctx.emit(nil_lit)
-        proc_ctx.register_type(nil_lit.id, TypeRef::NIL)
-        return_value = nil_lit.id
-        proc_return_type = TypeRef::NIL
-        proc_func.return_type = TypeRef::NIL
-      end
-      unless fn_block.terminator.is_a?(Return)
-        proc_ctx.terminate(Return.new(return_value))
-      end
+      if proc_constructor_type
+        # Preserve terminal NoReturn paths instead of manufacturing a Nil
+        # return, and validate real results before ABI normalization.
+        unless should_stop_sequential_lowering?(proc_ctx)
+          proc_ctx.terminate(Return.new(last_value))
+        end
+        result_type = expected_return_type.not_nil!
+        validate_proc_result(proc_ctx, block_node, result_type, semantic_return_type)
+        proc_return_type = result_type
+        proc_func.return_type = result_type
+        normalize_function_return_terminators(proc_ctx, result_type)
+      else
+        # Terminate the proc function
+        fn_block = proc_func.get_block(proc_ctx.current_block)
+        return_value = last_value
+        if expected_return_type == TypeRef::NIL && !fn_block.terminator.is_a?(Return)
+          nil_lit = Literal.new(proc_ctx.next_id, TypeRef::NIL, nil)
+          proc_ctx.emit(nil_lit)
+          proc_ctx.register_type(nil_lit.id, TypeRef::NIL)
+          return_value = nil_lit.id
+          proc_return_type = TypeRef::NIL
+          proc_func.return_type = TypeRef::NIL
+        end
+        unless fn_block.terminator.is_a?(Return)
+          proc_ctx.terminate(Return.new(return_value))
+        end
 
-      # Update return type
-      if expected_return_type == TypeRef::NIL
-        proc_return_type = TypeRef::NIL
-        proc_func.return_type = TypeRef::NIL
-        normalize_function_return_terminators(proc_ctx, TypeRef::NIL)
-      elsif proc_return_type == TypeRef::VOID
-        actual_return_type = proc_ctx.type_of(last_value)
-        if actual_return_type == TypeRef::VOID || actual_return_type == TypeRef::NIL
-          # last_value is nil_lit when lower_return ran inside the proc body
-          # (because @inline_yield_proc_depth > 0 makes lower_return emit
-          # Return.new(value_id) and return nil_lit.id as the dummy result).
-          # Scan the actual Return terminators for the real value type so that
-          # blocks containing `return X` get a non-void proc signature.
-          proc_func.blocks.each do |blk|
-            ret = blk.terminator.as?(Return)
-            next unless ret
-            if ret_value = ret.value
-              val_type = proc_ctx.type_of(ret_value)
-              if val_type != TypeRef::VOID && val_type != TypeRef::NIL
-                actual_return_type = val_type
-                break
+        # Update return type
+        if expected_return_type == TypeRef::NIL
+          proc_return_type = TypeRef::NIL
+          proc_func.return_type = TypeRef::NIL
+          normalize_function_return_terminators(proc_ctx, TypeRef::NIL)
+        elsif proc_return_type == TypeRef::VOID
+          actual_return_type = proc_ctx.type_of(last_value)
+          if actual_return_type == TypeRef::VOID || actual_return_type == TypeRef::NIL
+            # last_value is nil_lit when lower_return ran inside the proc body
+            # (because @inline_yield_proc_depth > 0 makes lower_return emit
+            # Return.new(value_id) and return nil_lit.id as the dummy result).
+            # Scan the actual Return terminators for the real value type so that
+            # blocks containing `return X` get a non-void proc signature.
+            proc_func.blocks.each do |blk|
+              ret = blk.terminator.as?(Return)
+              next unless ret
+              if ret_value = ret.value
+                val_type = proc_ctx.type_of(ret_value)
+                if val_type != TypeRef::VOID && val_type != TypeRef::NIL
+                  actual_return_type = val_type
+                  break
+                end
               end
             end
           end
+          # Final fallback: caller-provided expected return type. Used when the
+          # proc's body is a yield-forwarding shape (`yield via captured` whose
+          # return type collapsed to VOID because the captured target is a
+          # POINTER) — without this, MIR/LLVM lower the call as `call void` and
+          # the caller derefs garbage as a typed pointer.
+          if (actual_return_type == TypeRef::VOID || actual_return_type == TypeRef::NIL) &&
+             expected_return_type && expected_return_type != TypeRef::VOID
+            actual_return_type = expected_return_type
+          end
+          if actual_return_type != TypeRef::VOID
+            proc_return_type = actual_return_type
+            proc_func.return_type = proc_return_type
+          end
         end
-        # Final fallback: caller-provided expected return type. Used when the
-        # proc's body is a yield-forwarding shape (`yield via captured` whose
-        # return type collapsed to VOID because the captured target is a
-        # POINTER) — without this, MIR/LLVM lower the call as `call void` and
-        # the caller derefs garbage as a typed pointer.
-        if (actual_return_type == TypeRef::VOID || actual_return_type == TypeRef::NIL) &&
-           expected_return_type && expected_return_type != TypeRef::VOID
-          actual_return_type = expected_return_type
-        end
-        if actual_return_type != TypeRef::VOID
-          proc_return_type = actual_return_type
-          proc_func.return_type = proc_return_type
-        end
+
       end
 
       @current_class = saved_class

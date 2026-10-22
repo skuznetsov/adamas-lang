@@ -1,0 +1,151 @@
+{
+  "schema": "adamas_original_first_oracle_v1",
+  "purpose": "Distinguish Proc.new unpack capture binding from ordinary yield-block unpack shadowing, with outer reads around invocation and separate body reference captures.",
+  "qualification": {
+    "status": "pending_original_first",
+    "compiler_execution_during_preparation": false,
+    "rule": "The runner executes every pinned Crystal original case serially before any candidate case. Candidate runs only after all original stdout bytes equal the explicit expected files.",
+    "note": "Expected bytes are explicit predictions grounded in original-first Proc.new capture cases from lavin11777; the new fixtures remain unqualified until the root oracle run."
+  },
+  "pinned_crystal": "/Users/sergey/Projects/Adamas/sol_help_20261012/tools/pinned_crystal_1201/crystal-1.20.1-1/bin/crystal",
+  "candidate_source_context": "/Users/sergey/Projects/Adamas/sol_help_20261012/source_s1_lavin11835_proc_literal_result_validation",
+  "source_anchors": [
+    {
+      "path": "tools/pinned_crystal_1201/crystal-1.20.1-1/src/compiler/crystal/semantic/normalizer.cr",
+      "lines": "432-512",
+      "fact": "Block unpack is rewritten into a synthetic block argument and prepended MultiAssign statements; this transformation alone does not decide outer-flow visibility."
+    },
+    {
+      "path": "tools/pinned_crystal_1201/crystal-1.20.1-1/src/compiler/crystal/semantic/main_visitor.cr",
+      "lines": "1036-1055,1086-1089,1106-1118",
+      "fact": "The ordinary Block visitor binds unpack leaves as block variables and ignores them when propagating block vars after the block."
+    },
+    {
+      "path": "tools/pinned_crystal_1201/crystal-1.20.1-1/src/compiler/crystal/semantic/call.cr",
+      "lines": "874-959",
+      "fact": "When a block is consumed as a function pointer, semantic call handling constructs a ProcLiteral using the block body. In this conversion path, the normalized body assignments are passed to the Def body; Block unpacks metadata is not copied."
+    },
+    {
+      "path": "tools/pinned_crystal_1201/crystal-1.20.1-1/src/compiler/crystal/semantic/main_visitor.cr",
+      "lines": "1145-1201",
+      "fact": "ProcLiteral typing visits its Def body in a function visitor; the converted normalized assignments are analyzed there."
+    },
+    {
+      "path": "tools/pinned_crystal_1201/crystal-1.20.1-1/src/proc.cr",
+      "lines": "110-125",
+      "fact": "Proc.new captures and returns the given block."
+    }
+  ],
+  "prior_original_first_evidence": [
+    {
+      "packet": "OUT/lavin11777_proc_complete_contract_matrix/unpack/block_unpack_contract",
+      "fixture": "proc_new_capture_u8_to_i32.cr",
+      "expected_ascii": "A",
+      "observation": "A typed overload distinguishes whether the outer UInt8 binding remains visible; original expected A proves the Proc.new unpack assignment changes the captured binding to Int32."
+    },
+    {
+      "packet": "OUT/lavin11777_proc_complete_contract_matrix/unpack/block_unpack_contract",
+      "fixture": "proc_new_capture_i32_to_string.cr",
+      "expected_ascii": "C",
+      "observation": "A typed overload distinguishes the outer Int32 binding from the String unpack assignment; original expected C demonstrates capture mutation."
+    },
+    {
+      "packet": "OUT/lavin11777_proc_complete_contract_matrix/unpack/block_unpack_contract",
+      "fixture": "proc_literal_capture_multiassign_control.cr",
+      "expected_ascii": "E",
+      "observation": "A direct ProcLiteral multiassignment control confirms that assignments in its body can update a captured outer binding."
+    },
+    {
+      "packet": "OUT/lavin11777_proc_complete_contract_matrix/unpack/block_unpack_contract",
+      "fixture": "inline_yield_second_slot_shadow.cr",
+      "expected_ascii": "NOPNM",
+      "observation": "An ordinary yield block with unpacked leaves reports the original outer value after the block, consistent with block-local shadowing."
+    }
+  ],
+  "cases": [
+    {
+      "name": "proc_new_flat_collisions",
+      "fixture": "fixtures/proc_new_flat_collisions.cr",
+      "expected": "fixtures/proc_new_flat_collisions.expected",
+      "expected_ascii": "ABABB !\\n",
+      "checks": [
+        "flat unpack leaf names collide with outer locals",
+        "body separately captures bias",
+        "reads outer values before Proc.new, after construction, and after invocation"
+      ],
+      "expected_stdout_hex": "414241424220210a",
+      "expected_stdout_sha256": "4db5f0602cdf71e83e273488f45f025b6c061917ad49f5343e57499bf82478b6"
+    },
+    {
+      "name": "proc_new_nested_collisions",
+      "fixture": "fixtures/proc_new_nested_collisions.cr",
+      "expected": "fixtures/proc_new_nested_collisions.expected",
+      "expected_ascii": "ABABL !\\n",
+      "checks": [
+        "nested unpack leaves collide with outer locals",
+        "body separately captures bias",
+        "reads outer values before Proc.new, after construction, and after invocation"
+      ],
+      "expected_stdout_hex": "414241424c20210a",
+      "expected_stdout_sha256": "3b602d55eaee038fe158dc4910e371ed2e7c0a924efe951d32a6625eb9efe03c"
+    },
+    {
+      "name": "proc_literal_parameter_shadow",
+      "fixture": "fixtures/proc_literal_parameter_shadow.cr",
+      "expected": "fixtures/proc_literal_parameter_shadow.expected",
+      "expected_ascii": "AA!A\\n",
+      "checks": [
+        "ProcLiteral parameter has same name as outer local",
+        "body separately captures bias",
+        "reads outer local before construction, before invocation, and after invocation"
+      ],
+      "expected_stdout_hex": "414121410a",
+      "expected_stdout_sha256": "deeaa1cbccee76af298c2ca4e225e5408cfce4f403ae86dcf6a046cf27d3de34"
+    },
+    {
+      "name": "ordinary_block_unpack_shadow",
+      "fixture": "fixtures/ordinary_block_unpack_shadow.cr",
+      "expected": "fixtures/ordinary_block_unpack_shadow.expected",
+      "expected_ascii": "ABBAB\\n",
+      "checks": [
+        "ordinary yield block has colliding flat unpack leaves",
+        "body separately captures bias",
+        "reads outer values before and after block invocation"
+      ],
+      "expected_stdout_hex": "41424241420a",
+      "expected_stdout_sha256": "f1174ada64cf3fcb9d9caf81938ef22912bff0813c689874779fd4c2601761f6"
+    }
+  ],
+  "runner": {
+    "path": "run.py",
+    "original_first": true,
+    "serial_cases": true,
+    "safe_runner": "scripts/run_safe.sh for compiler and native executables",
+    "compiler_cache_isolation": "one CRYSTAL_CACHE_DIR per compiler and case; ADAMAS_LLVM_CACHE=0",
+    "candidate_flags": [
+      "--no-prelude",
+      "--no-debug",
+      "--no-ast-cache",
+      "--no-llvm-cache"
+    ],
+    "original_flags": [
+      "build",
+      "--no-debug",
+      "--prelude=empty"
+    ],
+    "run_output_env": "PROC_UNPACK_SHADOW_OUTPUT_DIR"
+  },
+  "source_anchor_base": "/Users/sergey/Projects/Adamas/sol_help_20261012",
+  "files": {
+    "README.md": "bd6f7287988b16a7c4aa0b8f7d6c27b6618c14b8601bd931578a099b8d2f09bd",
+    "fixtures/ordinary_block_unpack_shadow.cr": "0ebe385545f1f0aa5467a4abd2390aceefdd13849e5c7b87230771379fe9a699",
+    "fixtures/ordinary_block_unpack_shadow.expected": "f1174ada64cf3fcb9d9caf81938ef22912bff0813c689874779fd4c2601761f6",
+    "fixtures/proc_literal_parameter_shadow.cr": "243c6e18d5b22714b07051ab7be02824925ef12140cf9051b28a98e52903d6e3",
+    "fixtures/proc_literal_parameter_shadow.expected": "deeaa1cbccee76af298c2ca4e225e5408cfce4f403ae86dcf6a046cf27d3de34",
+    "fixtures/proc_new_flat_collisions.cr": "ba9a8232ea76bea993895fb67c64b8041dd9aa1c8b66f4f018cf22387c9107e8",
+    "fixtures/proc_new_flat_collisions.expected": "4db5f0602cdf71e83e273488f45f025b6c061917ad49f5343e57499bf82478b6",
+    "fixtures/proc_new_nested_collisions.cr": "9a88a105b221a0480d0c3ea7782abbc4629deb09e7b6f46656032f33545ae58a",
+    "fixtures/proc_new_nested_collisions.expected": "3b602d55eaee038fe158dc4910e371ed2e7c0a924efe951d32a6625eb9efe03c",
+    "run.py": "cab6aa564156784953630432445ba01c4e1ddea67c807ff030b548ceccfc9ca0"
+  }
+}

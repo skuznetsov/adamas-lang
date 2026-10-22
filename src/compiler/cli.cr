@@ -2328,7 +2328,7 @@ module Adamas
             bootstrap_trace_puts "[LIB_ARENA_CLI] idx=#{i + 1}/#{lib_count} lib=#{lib_name} arena=#{entry_arena.class.name.split("::").last}@#{entry_arena.object_id}:size=#{entry_arena.size} path=#{arena_path}"
           end
           hir_converter.arena = entry.arena
-          hir_converter.register_lib(entry.node, entry.annotations)
+          hir_converter.register_lib(entry.node, entry.annotations, :types)
           bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_lib_registered idx=#{i}"; STDERR.flush
           i += 1
         end
@@ -2526,6 +2526,17 @@ module Adamas
           bootstrap_trace_puts "[CONST_MAP] phase=class_module_register_done literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
         end
         bootstrap_trace_puts if options.progress
+
+        # Extern signatures are resolved after top-level aliases, enums, and classes
+        # have been registered. Crystal records extern signatures during top-level
+        # visitation and resolves their declared types in its later type pass.
+        i = 0
+        while i < lib_nodes.size
+          entry = lib_nodes.unsafe_fetch(i)
+          hir_converter.arena = entry.arena
+          hir_converter.register_lib(entry.node, entry.annotations, :externs)
+          i += 1
+        end
 
         constant_count = constant_exprs.size
         stage2_debug("[STAGE2_DEBUG] constant register start count=#{constant_count}", err_io)

@@ -21805,3 +21805,23 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Explicit super actual normalization, Proc.new capture storage, full-prelude
   runtime, unchanged LavinMQ parity and a fresh bootstrap remain separate
   obligations. No application or stdlib files are changed.
+
+
+### Preserve block syntax and validate Proc construction before ABI coercion (2026-10-22)
+- [x] Preserve nested tuple/splat binding patterns independently of callback
+  input slots through parsing, AST caches, macro rendering and lowering. Share
+  arrow return-type parsing and keep a following arrow out of the preceding
+  command call. Reject duplicate bindings and invalid splat declarations.
+- [x] Validate selected Proc.new source argument/result contracts before ABI
+  adaptation; retain lexical return ownership, capture binding/flow, declared
+  external types and explicit source annotations. Do not coerce a wrong result
+  into the requested type or silently replace an unknown annotation.
+- [x] Sealed11863 passes all 164 original-first cases in 14 suites in run11877,
+  plus 27 shared-parser controls (11879), 11 member/shorthand controls (11883),
+  and six parser/cache specs (11875). Runtime positives compare exact bytes;
+  negatives require semantic rejection and no executable. Five exception-flow
+  cases stop at semantic/HIR output and do not certify native exceptions.
+- [ ] Follow-up probes expose source metaclass/instance identity loss, dynamic
+  class-valued captures, exact numeric Proc#call admission and nullable C Proc
+  ABI adaptation. Keep these obligations separate from this bounded matrix.
+  Unchanged LavinMQ runtime/spec parity and fresh bootstrap remain open.

@@ -1657,13 +1657,17 @@ module Adamas
         @params_storage : Array(Parameter)
         @has_params : Bool
         getter body : Array(ExprId)
+        # A destructuring pattern consumes one input at its top-level slot.
+        # Its recursive TupleLiteral/Identifier/Splat AST retains nested names
+        # independently of the callback's calling convention.
+        getter unpacks : Array(Tuple(Int32, ExprId))?
 
-        def initialize(@span : Span, params : Nil, @body : Array(ExprId))
+        def initialize(@span : Span, params : Nil, @body : Array(ExprId), @unpacks : Array(Tuple(Int32, ExprId))? = nil)
           @params_storage = [] of Parameter
           @has_params = false
         end
 
-        def initialize(@span : Span, params : Array(Parameter), @body : Array(ExprId))
+        def initialize(@span : Span, params : Array(Parameter), @body : Array(ExprId), @unpacks : Array(Tuple(Int32, ExprId))? = nil)
           @params_storage = params
           @has_params = true
         end
