@@ -11715,6 +11715,8 @@ module Adamas::HIR
     @enum_cvar_types : Hash(String, Hash(String, String))?
     # Track active class-var inference to avoid recursion.
     @class_var_infer_stack : Set(String)
+    # Def whose body class-var inference is scanning, for parameter guesses.
+    @class_var_guess_def : Adamas::Compiler::Frontend::DefNode? = nil
 
     private def source_text_for_arena_or_file(
       arena : Adamas::Compiler::Frontend::ArenaLike?,
@@ -73506,8 +73508,14 @@ module Adamas::HIR
                     end
                   end
                   if def_body = member.body
-                    def_body.each do |child|
-                      collect_class_var_assignment_types(child, cvar_name, owner_name, types)
+                    old_guess_def = @class_var_guess_def
+                    @class_var_guess_def = member
+                    begin
+                      def_body.each do |child|
+                        collect_class_var_assignment_types(child, cvar_name, owner_name, types)
+                      end
+                    ensure
+                      @class_var_guess_def = old_guess_def
                     end
                   end
                 when Adamas::Compiler::Frontend::AssignNode,
@@ -73552,7 +73560,41 @@ module Adamas::HIR
           end
         end
       end
+      if value_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
+        if guessed = guess_class_var_type_from_def_param(value_node, self_type_name)
+          return guessed
+        end
+      end
       infer_type_from_expr(value_id, self_type_name)
+    end
+
+    # A class var assigned from a parameter of the enclosing def is guessed as
+    # original Crystal does (type_guess_visitor.cr): from the restriction, else
+    # the default value, else an unrestricted block parameter is a `-> Void`.
+    private def guess_class_var_type_from_def_param(
+      value_node : Adamas::Compiler::Frontend::IdentifierNode,
+      self_type_name : String?,
+    ) : TypeRef?
+      def_node = @class_var_guess_def
+      return nil unless def_node
+      params = def_node.params
+      return nil unless params
+      name = safe_slice_to_string(value_node.name)
+      return nil unless name
+      params.each do |param|
+        param_name = param.name
+        next unless param_name && safe_slice_to_string(param_name) == name
+        return nil if param.is_splat || param.is_double_splat
+        if restriction = parameter_type_annotation_string(param, @arena, false)
+          ref = annotation_type_ref(restriction, self_type_name)
+          return ref unless ref == TypeRef::VOID
+        end
+        if default_id = param.default_value
+          return infer_type_from_expr(default_id, self_type_name)
+        end
+        return param.is_block ? type_ref_for_name("Proc(Void)") : nil
+      end
+      nil
     end
 
     private def collect_class_var_assignment_types(
@@ -73595,7 +73637,13 @@ module Adamas::HIR
         end
       when Adamas::Compiler::Frontend::DefNode
         if body = expr_node.body
-          body.each { |child| collect_class_var_assignment_types(child, cvar_name, self_type_name, output) }
+          old_guess_def = @class_var_guess_def
+          @class_var_guess_def = expr_node
+          begin
+            body.each { |child| collect_class_var_assignment_types(child, cvar_name, self_type_name, output) }
+          ensure
+            @class_var_guess_def = old_guess_def
+          end
         end
       when Adamas::Compiler::Frontend::BlockNode
         if body = expr_node.body
@@ -129282,6 +129330,13 @@ module Adamas::HIR
           STDERR.puts "[CLASSVAR_SET] Emitting ClassVarSet: class=#{class_name} cvar=#{name} func=#{ctx.function.name} block=#{ctx.current_block} next_id=#{next_id}"
         end
         if cvar_type == TypeRef::VOID
+          # The guessed declaration type, as reads see it, wins over the first
+          # lowered assignment so the slot type does not depend on lowering order.
+          if inferred = infer_class_var_type_from_owner(@current_class, name)
+            cvar_type = inferred
+          end
+        end
+        if cvar_type == TypeRef::VOID
           value_type = ctx.type_of(value_id)
           record_class_var_type(class_name, name, value_type, nil, source_location_for_node(@arena, target_cvar))
           cvar_type = value_type unless value_type == TypeRef::VOID
@@ -130460,6 +130515,13 @@ module Adamas::HIR
         assignment_result_id = value_id
         cvar_type = get_class_var_type(name)
         class_name = @current_class || ""
+        if cvar_type == TypeRef::VOID
+          # The guessed declaration type, as reads see it, wins over the first
+          # lowered assignment so the slot type does not depend on lowering order.
+          if inferred = infer_class_var_type_from_owner(@current_class, name)
+            cvar_type = inferred
+          end
+        end
         if cvar_type == TypeRef::VOID
           value_type = ctx.type_of(value_id)
           record_class_var_type(class_name, name, value_type, nil, source_location_for_node(@arena, target_cvar))
