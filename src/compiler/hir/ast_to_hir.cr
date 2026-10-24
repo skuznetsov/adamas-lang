@@ -76760,7 +76760,13 @@ module Adamas::HIR
                      # callsite specialization the call itself lowered, as
                      # call lowering does; the bare arity key carries no
                      # parameter types and would lower its body with Void.
-                     prefer_callsite_over_arity(entry[0], base_name, args.types, signature.has_block)
+                     resolved_entry = prefer_callsite_over_arity(entry[0], base_name, args.types, signature.has_block)
+                     # A def whose restrictions need a callsite body (a bare
+                     # generic `Pointer` or a forall variable) has no valid
+                     # declared-key body: its parameters would stay
+                     # uninstantiated. The call itself lowered that body.
+                     next if prefer_callsite_specialization(base_name, resolved_entry, args.types, signature.has_block)
+                     resolved_entry
                    else
                      mangle_function_name(base_name, args.types, signature.has_block)
                    end
