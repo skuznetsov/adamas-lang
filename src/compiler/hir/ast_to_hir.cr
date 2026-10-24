@@ -81591,11 +81591,14 @@ module Adamas::HIR
       current = left_type
       visited = Set(String).new
       visited.add(current)
+      value_ancestry = @class_info[current]?.try(&.is_struct) || false
       100.times do
         parent = @class_info[current]?.try(&.parent_name) || @module.class_parents[current]?
         break unless parent
         break if visited.includes?(parent)
         return true if parent == right_type
+        value_ancestry ||= parent == "Value" || parent == "Struct" || parent == "Enum" ||
+                           @class_info[parent]?.try(&.is_struct) || false
         visited.add(parent)
         current = parent
       end
@@ -81656,6 +81659,11 @@ module Adamas::HIR
         return number_primitives.includes?(left_type) ||
           left_type == "Bool" || left_type == "Char" || left_type == "Symbol"
       when "Reference", "Object"
+        # Only the direct parent is classified below, so a value type with an
+        # intermediate abstract parent (`Int32` < `Int`) would pass as a
+        # Reference; the stdlib `t < Reference` predicates (Atomic, Box) then
+        # took their reference branch for Int32.
+        return false if right_type == "Reference" && (value_ancestry || number_primitives.includes?(left_type))
         return left_type == "String" || left_type == "Array" || left_type == "Hash" ||
           @class_info[left_type]?.try { |info|
             p = info.parent_name
