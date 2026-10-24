@@ -202,6 +202,25 @@ describe "Adamas::Compiler::Frontend::Parser" do
       Adamas::Compiler::Frontend.node_kind(proc_arg).should eq(Adamas::Compiler::Frontend::NodeKind::ProcLiteral)
     end
 
+    it "passes a proc literal as a command-call argument" do
+      # Crystal starts a command argument at `->`; the prelude registers
+      # `LibGC.set_start_callback -> do ... end`.
+      ["LibGC.set_start_callback -> do\n  1\nend", "reg -> { 1 }", "reg -> do\n  1\nend"].each do |source|
+        parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
+        program = parser.parse_program
+
+        parser.diagnostics.should be_empty
+        program.roots.size.should eq(1)
+        arena = program.arena
+
+        call = arena[program.roots[0]]
+        Adamas::Compiler::Frontend.node_kind(call).should eq(Adamas::Compiler::Frontend::NodeKind::Call)
+        args = Adamas::Compiler::Frontend.node_args(call).not_nil!
+        args.size.should eq(1)
+        Adamas::Compiler::Frontend.node_kind(arena[args[0]]).should eq(Adamas::Compiler::Frontend::NodeKind::ProcLiteral)
+      end
+    end
+
     it "parses typed array of proc type with no return" do
       parser = Adamas::Compiler::Frontend::Parser.new(
         Adamas::Compiler::Frontend::Lexer.new("arr = [] of ->")

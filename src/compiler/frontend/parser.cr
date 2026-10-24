@@ -9433,15 +9433,21 @@ module Adamas
               return PREFIX_ERROR
             end
             # No space after operator: unary prefix in argument (foo -1)
+          when Token::Kind::ThinArrow
+            # Crystal starts a command argument at `->` (a proc literal or proc
+            # pointer: `LibGC.set_start_callback -> do ... end`). A constant is
+            # never a command call, so `[] of A -> << x` keeps `A ->` as proc
+            # type notation (Phase 103Q).
+            if callee_slice.size > 0 && callee_slice[0] >= 'A'.ord && callee_slice[0] <= 'Z'.ord
+              return PREFIX_ERROR
+            end
             # Don't parse as call if followed by binary/logical operators that can't start an argument
             # Phase 103K: Slash and FloorDiv can't be unary, always return error
-            # Phase 103Q: ThinArrow is proc type notation, not call argument
           when Token::Kind::Slash, Token::Kind::FloorDiv,
                Token::Kind::Percent, # Percent literal uses different token
                Token::Kind::OrOr, Token::Kind::AndAnd,
-               Token::Kind::Question,  # ternary operator
-               Token::Kind::Arrow,     # hash arrow =>
-               Token::Kind::ThinArrow, # proc type -> (Phase 103Q)
+               Token::Kind::Question, # ternary operator
+               Token::Kind::Arrow,    # hash arrow =>
           # Comparison operators
                Token::Kind::EqEq, Token::Kind::EqEqEq, Token::Kind::NotEq, # Phase 50: === case equality
                Token::Kind::Less, Token::Kind::Greater,
