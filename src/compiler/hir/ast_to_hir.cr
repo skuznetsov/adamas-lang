@@ -80493,6 +80493,12 @@ module Adamas::HIR
         members.each { |member| validate_extern_declared_type(member, depth + 1) }
         return
       end
+      # `T[N]` names `StaticArray(T, N)` (e.g. `times : Timespec[2]` in LibC);
+      # validate it through that form so the element type is still checked.
+      if static_array_name = static_array_sugar_type_name(name)
+        validate_extern_declared_type(static_array_name, depth + 1)
+        return
+      end
       if info = split_generic_base_and_args(name)
         base = resolve_type_name_in_context(info.base)
         unless BUILTIN_GENERIC_BASES.includes?(base) || type_name_exists?(base)
