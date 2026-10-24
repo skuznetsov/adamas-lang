@@ -66414,17 +66414,37 @@ module Adamas::HIR
         right_idx = idx + param_name.bytesize
         right_ok = right_idx >= result.bytesize || !ident_char?(result.byte_at(right_idx))
         if left_ok && right_ok
-          result = String.build(result.bytesize - param_name.bytesize + actual_name.bytesize) do |io|
+          replacement = arrow_type_operand_name(result, idx, right_idx, actual_name)
+          result = String.build(result.bytesize - param_name.bytesize + replacement.bytesize) do |io|
             io.write(result.to_slice[0, idx])
-            io << actual_name
+            io << replacement
             io.write(result.to_slice[right_idx, result.bytesize - right_idx])
           end
-          search_from = idx + actual_name.bytesize
+          search_from = idx + replacement.bytesize
         else
           search_from = idx + param_name.bytesize
         end
       end
       result
+    end
+
+    # Arrow notation bound to a type parameter (`V = Int32 ->`) must stay one
+    # operand when spliced beside a type operator: `V?` is `(Int32 ->)?`, not
+    # the proc `Int32 -> ?`, and `V | Nil` for `Int32 -> Int32` is not a proc
+    # returning `Int32 | Nil`.
+    private def arrow_type_operand_name(type_name : String, start : Int32, stop : Int32, actual_name : String) : String
+      return actual_name unless find_top_level_arrow(actual_name)
+      left = start - 1
+      while left >= 0 && type_name.byte_at(left) == ' '.ord.to_u8
+        left -= 1
+      end
+      right = stop
+      while right < type_name.bytesize && type_name.byte_at(right) == ' '.ord.to_u8
+        right += 1
+      end
+      left_operator = left >= 0 && type_name.byte_at(left) == '|'.ord.to_u8
+      right_operator = right < type_name.bytesize && {'?'.ord, '*'.ord, '['.ord, '|'.ord, '-'.ord}.includes?(type_name.byte_at(right))
+      left_operator || right_operator ? "(#{actual_name})" : actual_name
     end
 
     @[AlwaysInline]
