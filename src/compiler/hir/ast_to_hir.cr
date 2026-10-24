@@ -12291,10 +12291,21 @@ module Adamas::HIR
 
     private def enum_tracked_type(ctx : LoweringContext, value_id : ValueId) : TypeRef
       if enum_name = enum_value_name_for(ctx, value_id)
-        enum_ref = type_ref_for_name(enum_name)
+        enum_ref = enum_type_ref(enum_name)
         return enum_ref unless enum_ref == TypeRef::VOID
       end
       ctx.type_of(value_id)
+    end
+
+    # A tracked enum name that is an `@enum_info` key is a canonical identity.
+    # Resolving it in the current namespace rebound top-level `Signal` inside
+    # `Crystal::System::Sigset` to the module `Crystal::System::Signal`.
+    private def enum_type_ref(enum_name : String) : TypeRef
+      if @enum_info.try(&.has_key?(enum_name))
+        canonical_bound_type_ref(enum_name)
+      else
+        type_ref_for_name(enum_name)
+      end
     end
 
     private def coerce_enum_tracked_value_to_type(
@@ -12305,7 +12316,7 @@ module Adamas::HIR
       return value_id if target_type == TypeRef::VOID
 
       if enum_name = enum_value_name_for(ctx, value_id)
-        enum_ref = type_ref_for_name(enum_name)
+        enum_ref = enum_type_ref(enum_name)
         if enum_ref != TypeRef::VOID && enum_ref == target_type
           raw_type = ctx.type_of(value_id)
           unless raw_type == target_type
@@ -12595,7 +12606,7 @@ module Adamas::HIR
         enum_name = enum_value_name_for(ctx, value.union_value, seen)
         return nil unless enum_name
 
-        enum_ref = type_ref_for_name(enum_name)
+        enum_ref = enum_type_ref(enum_name)
         enum_ref != TypeRef::VOID && value.type == enum_ref ? enum_name : nil
       when Call
         enum_return_name_for(value.method_name) || enum_name_for_type_ref(value.type)
@@ -12648,7 +12659,7 @@ module Adamas::HIR
         return raw_type
       end
 
-      enum_ref = type_ref_for_name(enum_name)
+      enum_ref = enum_type_ref(enum_name)
       return raw_type if enum_ref == TypeRef::VOID
       return enum_ref if raw_type == enum_ref
 
@@ -12712,7 +12723,7 @@ module Adamas::HIR
       value_type : TypeRef,
       enum_name : String,
     ) : Bool
-      enum_ref = type_ref_for_name(enum_name)
+      enum_ref = enum_type_ref(enum_name)
       return false if enum_ref == TypeRef::VOID
       return true if value_type == enum_ref
       return true if @enum_base_types.try(&.[enum_name]?) == value_type
@@ -12773,7 +12784,7 @@ module Adamas::HIR
       incoming_values.each do |value_id|
         enum_name = enum_value_name_for(ctx, value_id)
         return nil unless enum_name
-        enum_ref = type_ref_for_name(enum_name)
+        enum_ref = enum_type_ref(enum_name)
         return nil if enum_ref == TypeRef::VOID
         raw_type = ctx.type_of(value_id)
         return nil unless raw_type == enum_ref || @enum_base_types.try(&.[enum_name]?) == raw_type
@@ -27543,7 +27554,7 @@ module Adamas::HIR
           if enum_name = resolve_enum_name(enum_candidate)
             if enum_info = @enum_info
               if enum_info[enum_name]?.try(&.has_key?(member))
-                enum_ref = type_ref_for_name(enum_name)
+                enum_ref = enum_type_ref(enum_name)
                 return enum_ref == TypeRef::VOID ? enum_base_type(enum_name) : enum_ref
               end
             end
@@ -106829,7 +106840,7 @@ module Adamas::HIR
       if callsite_arg_enum_names
         callsite_arg_enum_names.each_with_index do |enum_name, idx|
           next unless enum_name
-          enum_ref = type_ref_for_name(enum_name)
+          enum_ref = enum_type_ref(enum_name)
           next if enum_ref == TypeRef::VOID
           if idx < arg_types.size
             arg_types[idx] = enum_ref
@@ -137372,7 +137383,10 @@ module Adamas::HIR
       # e.g., "Pointer(LibC::Kevent)" stays as is
       # e.g., "LibC__Kevent" -> "LibC::Kevent"
       type_name = unmangle_suffix_type_part(part)
-      type_ref_for_name(type_name)
+      # Suffix components are canonical type names. Resolving them in the
+      # lowering owner's namespace rebound a top-level `Signal` argument of
+      # `Crystal::System::Sigset#delete$Signal` to `Crystal::System::Signal`.
+      canonical_bound_type_ref(type_name)
     end
 
     private def suffix_part_count(suffix : String) : Int32
