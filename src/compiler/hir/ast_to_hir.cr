@@ -2789,6 +2789,8 @@ module Adamas::HIR
     # class-shaped placeholder. Keep the source spelling to re-resolve during
     # the final layout pass after all declarations are registered.
     @declared_ivar_type_names : Hash(String, Hash(String, String)) = {} of String => Hash(String, String)
+    # Lexical namespace of each spelling above when it differs from the owner.
+    @declared_ivar_type_namespaces : Hash(String, Hash(String, String)) = {} of String => Hash(String, String)
     @class_info_version : Int32
     @classes_with_subclasses : Set(String)
     @children_by_parent : Hash(String, Set(String))
@@ -7848,6 +7850,7 @@ module Adamas::HIR
       @active_class_declaration_frames = [] of ActiveClassDeclarationFrame
       @declared_typed_ivars = {} of String => Set(String)
       @declared_ivar_type_names = {} of String => Hash(String, String)
+      @declared_ivar_type_namespaces = {} of String => Hash(String, String)
       @class_info_version = 0
       @classes_with_subclasses = Set(String).new
       @children_by_parent = {} of String => Set(String)
@@ -18246,6 +18249,11 @@ module Adamas::HIR
       )
       cache_context = effective_context || ""
       cache_key = "#{type_name}\0#{cache_context}\0#{@subst_cache_gen}\0#{@resolved_type_name_cache_epoch}"
+      # Context resolution honors the namespace override (module bodies
+      # registered for an includer), so it is part of the lookup scope.
+      if namespace = @current_namespace_override
+        cache_key = "#{cache_key}\0ns=#{namespace}"
+      end
       cache_key = "#{cache_key}\0unspecialized" unless specialize_bare_generics
       if cached = @normalize_decl_cache[cache_key]?
         if trace_normalize_decl
@@ -24308,6 +24316,12 @@ module Adamas::HIR
         return
       end
       names[ivar_name] = normalized
+      # An ivar declared in an included module is spelled in that module's
+      # lexical scope (`EventLoop::Polling::Arena::Index` inside
+      # Crystal::System::FileDescriptor), not its includer's.
+      if (namespace = @current_namespace_override) && namespace != class_name
+        (@declared_ivar_type_namespaces[class_name] ||= {} of String => String)[ivar_name] = namespace
+      end
     end
 
     private def declared_ivar_type_name(class_name : String, ivar_name : String) : String?
@@ -24324,9 +24338,12 @@ module Adamas::HIR
         # placeholder before a sibling alias was registered. Force this
         # source-authority retry at the final layout boundary. Resolve only the
         # nominal type here; storage sizing below materializes value structs.
-        @annotation_type_ref_cache.delete(annotation_type_ref_cache_key(declared_name, owner_name))
-        refreshed = without_generic_materialization do
-          resolve_explicit_ivar_annotation_type(declared_name, owner_name)
+        namespace = @declared_ivar_type_namespaces[owner_name]?.try(&.[ivar.name]?)
+        refreshed = with_namespace_override_or_clear(namespace) do
+          @annotation_type_ref_cache.delete(annotation_type_ref_cache_key(declared_name, owner_name))
+          without_generic_materialization do
+            resolve_explicit_ivar_annotation_type(declared_name, owner_name)
+          end
         end
         return canonical_ivar_storage_type_ref(refreshed, owner_name, ivar.name) if refreshed != TypeRef::VOID
       end
@@ -24484,6 +24501,12 @@ module Adamas::HIR
           io << owner_name
         else
           io << -1
+        end
+        # Module bodies resolve under their own namespace for each includer;
+        # the same spelling and owner can name different types.
+        io.write_byte(0_u8)
+        if namespace = @current_namespace_override
+          io << namespace
         end
       end
     end
