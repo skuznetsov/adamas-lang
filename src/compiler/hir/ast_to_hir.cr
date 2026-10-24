@@ -131425,15 +131425,16 @@ module Adamas::HIR
       case node
       when Adamas::Compiler::Frontend::IdentifierNode
         # A bare identifier that is not a param/local is a zero-arg self call.
+        # A capitalized identifier is a constant (`GC.lock_write`), never a call.
         name = safe_slice_to_string(node.name) || ""
-        return true unless name.empty? || proc_param_names.includes?(name) || parent_locals.has_key?(name)
+        return true unless name.empty? || name[0].uppercase? || proc_param_names.includes?(name) || parent_locals.has_key?(name)
       when Adamas::Compiler::Frontend::InstanceVarNode
         return true
       when Adamas::Compiler::Frontend::CallNode
         callee = @arena[node.callee]
         if callee.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
           name = safe_slice_to_string(callee.name) || ""
-          return true unless proc_param_names.includes?(name) || parent_locals.has_key?(name)
+          return true unless name.empty? || name[0].uppercase? || proc_param_names.includes?(name) || parent_locals.has_key?(name)
         end
 
         return true if proc_expr_has_implicit_receiver_call?(node.callee, proc_param_names, parent_locals)
