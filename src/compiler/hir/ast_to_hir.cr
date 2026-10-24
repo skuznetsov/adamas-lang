@@ -81216,7 +81216,18 @@ module Adamas::HIR
       type_name = macro_condition_type_name(member_access.object)
       return nil unless type_name
       resolved = resolve_type_alias_chain(type_name)
-      members = split_union_type_name(resolved)
+      members = [] of String
+      # `R?` is the union `R | Nil`; without expanding it, `union_types.any? { |t| t == Nil }`
+      # was false for a nilable type argument.
+      split_union_type_name(resolved).each do |member|
+        if member.ends_with?('?')
+          members << member.byte_slice(0, member.bytesize - 1).strip
+          members << "Nil"
+        else
+          members << member
+        end
+      end
+      members.uniq!
       return nil if members.empty?
       members
     end
