@@ -86120,7 +86120,10 @@ module Adamas::HIR
         end
         # An alias to a generic instance (`alias AG = G(Foo)`) resolves to a
         # name that is not registered until monomorphized; it is still a type.
-        if type_name_exists?(resolved) || generic_template_instance_name?(resolved)
+        # Void is predefined by the compiler without a source declaration;
+        # `T.to_s` in `Pointer(Void)#to_s` reads it as a value.
+        if type_name_exists?(resolved) || generic_template_instance_name?(resolved) ||
+           resolved == "Void"
           return lower_type_literal_from_name(ctx, resolved)
         end
       end
