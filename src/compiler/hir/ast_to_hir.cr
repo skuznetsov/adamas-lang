@@ -76698,7 +76698,11 @@ module Adamas::HIR
                      end
                      selected_target
                    elsif entry = lookup_function_def_for_call(base_name, args.types.size, signature.has_block, args.types, has_splat_def)
-                     entry[0]
+                     # Resolve an untyped def's shared arity key to the
+                     # callsite specialization the call itself lowered, as
+                     # call lowering does; the bare arity key carries no
+                     # parameter types and would lower its body with Void.
+                     prefer_callsite_over_arity(entry[0], base_name, args.types, signature.has_block)
                    else
                      mangle_function_name(base_name, args.types, signature.has_block)
                    end
