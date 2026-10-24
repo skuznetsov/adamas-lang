@@ -88178,7 +88178,10 @@ module Adamas::HIR
     private def generic_template_instance_name?(name : String) : Bool
       return false unless info = split_generic_base_and_args(name)
       _, lookup_base_name = resolve_generic_base_names(info.base)
-      @generic_templates.has_key?(lookup_base_name)
+      # Builtin generics (`Tuple(UInt64, UInt64)` bound to a type parameter)
+      # are types before any value of the instance has registered them.
+      BUILTIN_GENERIC_BASES.includes?(lookup_base_name) ||
+        @generic_templates.has_key?(lookup_base_name)
     end
 
     private def lower_type_literal_from_name(ctx : LoweringContext, type_name : String) : ValueId
