@@ -27675,7 +27675,11 @@ module Adamas::HIR
         # Iterator.stop through the same-name INSTANCE method Iterator(T)#stop
         # (whose body calls Iterator.stop again) — inference dies and the Stop
         # return silently drops out of Char|Stop unions (L6 iterator floor).
-        if object_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode) ||
+        # A lowercase identifier is a local or a call, never a type literal;
+        # stringify_type_expr would print a typeof-bound local as its type, and
+        # `entry.hash` then resolved as `Hash::Entry.hash` (Object#hash, UInt64).
+        if (object_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode) &&
+           !object_node.name[0]?.try { |byte| byte.unsafe_chr.lowercase? || byte == '_'.ord.to_u8 }) ||
            object_node.is_a?(Adamas::Compiler::Frontend::PathNode) ||
            object_node.is_a?(Adamas::Compiler::Frontend::ConstantNode)
           if type_str = stringify_type_expr(expr_node.object)
