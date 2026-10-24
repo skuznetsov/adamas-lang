@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# A proc literal sent to a C function must not be a closure. A constant
-# receiver (`GC.lock_write`) was taken for an implicit self call, so `self` was
-# captured and the plain proc was rejected with "can't send closure to C
-# function"; prelude hello hits this at boehm.cr
-# `LibGC.set_start_callback -> do GC.lock_write end`. A proc that really
-# captures a local, or an instance method's `self`, must still be rejected
-# exactly as original Crystal does.
+# A proc literal sent to a C function must not be a closure. Two false `self`
+# captures turned plain procs into closures and were rejected with "can't send
+# closure to C function"; prelude hello hits this at boehm.cr
+# `LibGC.set_start_callback -> do GC.lock_write end` inside `def self.init`:
+# - a constant receiver (`GC.lock_write`) was taken for an implicit self call;
+# - a class method's `self` is a type literal, and original Crystal never
+#   closures it (`check_self_closured` skips a non-virtual metaclass scope).
+# A proc that really captures a local, or an instance method's `self`, must
+# still be rejected exactly as original Crystal does.
 #
 # Usage: ADAMAS_BIN=path/to/adamas [CRYSTAL_BIN=path/to/original/crystal] $0
 set -euo pipefail
@@ -58,6 +60,36 @@ end
 N.init
 LibC.exit(9)'
 
+write_case class_method_implicit_self '
+module N
+  def self.hit : Nil
+    LibC._exit(6)
+  end
+
+  def self.init : Nil
+    LibC.atexit -> do
+      hit
+    end
+  end
+end
+N.init
+LibC.exit(9)'
+
+write_case class_method_explicit_self '
+module N
+  def self.hit : Nil
+    LibC._exit(5)
+  end
+
+  def self.init : Nil
+    LibC.atexit -> do
+      self.hit
+    end
+  end
+end
+N.init
+LibC.exit(9)'
+
 write_case instance_method_constant_receiver '
 class C
   def go : Nil
@@ -94,7 +126,8 @@ end
 C.new.go
 LibC.exit(9)'
 
-POSITIVE_CASES=(class_method_constant_receiver:7 instance_method_constant_receiver:7)
+POSITIVE_CASES=(class_method_constant_receiver:7 class_method_implicit_self:6
+  class_method_explicit_self:5 instance_method_constant_receiver:7)
 NEGATIVE_CASES=(captured_local instance_method_implicit_self)
 NEGATIVE_DIAGNOSTIC="can't send closure to C function"
 

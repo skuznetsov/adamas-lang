@@ -132907,6 +132907,7 @@ module Adamas::HIR
         if parent_value_id = parent_locals[name]?
           parent_type = ctx.type_of(parent_value_id)
           next if parent_type == TypeRef::VOID
+          next if name == "self" && ctx.type_literal?(parent_value_id)
           captures << {name, parent_value_id, parent_type}
         end
       end
@@ -132923,9 +132924,16 @@ module Adamas::HIR
         end
         parent_self_id = parent_self_param.try(&.id)
       end
+      # A class method's `self` is a type literal, not a runtime value.
+      # Original Crystal never closures it (`check_self_closured` skips a
+      # non-virtual metaclass scope), so the proc stays a plain function that
+      # may be sent to C; it is rebound inside the proc below instead.
+      proc_class_self_type = nil.as(TypeRef?)
       if (referenced_names.includes?("self") || implicit_receiver_call) && (parent_self = parent_self_id)
         parent_self_type = ctx.type_of(parent_self)
-        if parent_self_type != TypeRef::VOID && !captures.any? { |name, _, _| name == "self" }
+        if parent_self_type != TypeRef::VOID && ctx.type_literal?(parent_self)
+          proc_class_self_type = parent_self_type
+        elsif parent_self_type != TypeRef::VOID && !captures.any? { |name, _, _| name == "self" }
           captures << {"self", parent_self, parent_self_type}
         end
       end
@@ -132957,6 +132965,14 @@ module Adamas::HIR
         proc_ctx.register_local("__closure_env", env_param.id)
         proc_ctx.register_type(env_param.id, TypeRef::POINTER)
         materialize_env_captures(proc_ctx, env_param.id, captured_vars)
+      end
+      if class_self_type = proc_class_self_type
+        self_literal = Literal.new(proc_ctx.next_id, class_self_type, nil)
+        proc_ctx.emit(self_literal)
+        proc_ctx.register_local("self", self_literal.id)
+        proc_ctx.register_type(self_literal.id, class_self_type)
+        proc_ctx.mark_type_literal(self_literal.id)
+        @type_literal_values.add(self_literal.id)
       end
 
       # Add parameters to the standalone function
