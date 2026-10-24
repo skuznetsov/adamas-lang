@@ -55977,6 +55977,16 @@ module Adamas::HIR
       return if annotated_type.empty? || concrete.empty?
       return if concrete == "Void" || concrete == "Unknown"
 
+      # A type literal argument carries its instance type (`X.class`
+      # restrictions resolve to the instance TypeRef as well), so
+      # `type : U.class` binds U from that type.
+      if annotated_type.ends_with?(".class") && !concrete.ends_with?(".class")
+        collect_type_param_substitutions(
+          annotated_type[0, annotated_type.bytesize - 6].strip, concrete, substitutions, declared_formals
+        )
+        return
+      end
+
       if (declared_formals && declared_formals.includes?(annotated_type)) ||
          ((declared_formals.nil? || declared_formals.empty?) && unresolved_type_param_annotation?(annotated_type))
         substitutions[annotated_type] ||= concrete
