@@ -70838,7 +70838,8 @@ module Adamas::HIR
         expected_literal = descriptor.proc_type_literal_slot?(index)
         next true if actual_literal != expected_literal
 
-        actual = ctx.type_of(value)
+        # An enum argument travels on its integer carrier; admit its enum.
+        actual = enum_tracked_type(ctx, value)
         compatible = if actual == expected
                        true
                      elsif actual_literal
@@ -70850,7 +70851,7 @@ module Adamas::HIR
       end
 
       if mismatch_index
-        actual_names = args.map { |value| proc_source_type_name(ctx.type_of(value), ctx.type_literal?(value)) }
+        actual_names = args.map { |value| proc_source_type_name(enum_tracked_type(ctx, value), ctx.type_literal?(value)) }
         actual_description = actual_names.size == 1 ? "type #{actual_names.first}" : "types #{actual_names.join(", ")}"
         raise LoweringError.new(
           "no overload matches '#{proc_source_signature_name(descriptor)}#call' with #{actual_description}", node,
