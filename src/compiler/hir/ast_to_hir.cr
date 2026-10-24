@@ -118135,7 +118135,16 @@ module Adamas::HIR
                   elsif default = param.default_value
                     restriction = param.type_annotation.try { |type_node| normalize_declared_type_name(type_node, context) }
                     expected = restriction ? type_ref_for_name(restriction) : TypeRef::VOID
-                    lower_arg_with_expected_type(ctx, default, expected, restriction, context, def_arena)
+                    default_value = lower_arg_with_expected_type(ctx, default, expected, restriction, context, def_arena)
+                    # An integer literal default is typed by its restriction
+                    # when it fits (`size : UInt64 = 0`), as positional calls do.
+                    default_node = node_for_expr(default, def_arena)
+                    if default_node.is_a?(Adamas::Compiler::Frontend::NumberNode) &&
+                       ctx.type_of(default_value) != expected &&
+                       integer_literal_representable_as?(default_node, expected)
+                      default_value = coerce_value_to_type(ctx, default_value, expected)
+                    end
+                    default_value
                   else
                     raise LoweringError.new("missing argument #{param.name} for #{strip_type_suffix(func_name)}")
                   end
