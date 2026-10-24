@@ -23263,6 +23263,17 @@ module Adamas::HIR
       init_params
     end
 
+    # A field declared by an output-less `&@f : T ->` stores `Proc(T, Void)`;
+    # the callback materialized for it returns Nil. Both discard the result.
+    private def nil_normalized_proc_storage?(existing : TypeDescriptor, callback : TypeDescriptor) : Bool
+      return false unless callback.type_params.last == TypeRef::NIL
+      stored = existing.type_params.last
+      return false unless stored == TypeRef::NIL || stored == TypeRef::VOID
+      existing.type_params.size == callback.type_params.size &&
+        existing.type_params[0, existing.type_params.size - 1] ==
+          callback.type_params[0, callback.type_params.size - 1]
+    end
+
     private def refine_captured_initializer_proc_type(
       class_name : String,
       proc_type : TypeRef,
@@ -23327,8 +23338,7 @@ module Adamas::HIR
             next if existing_desc.type_params.empty?
             # The callback has already normalized its result to the declared
             # Nil ABI. Its discarded body value does not change that contract.
-            next if existing_desc.type_params == proc_desc.type_params &&
-                    existing_desc.type_params.last == TypeRef::NIL
+            next if nil_normalized_proc_storage?(existing_desc, proc_desc)
             if observed_return_type &&
                observed_return_type != TypeRef::VOID &&
                existing_desc.type_params.last != observed_return_type
@@ -23349,8 +23359,7 @@ module Adamas::HIR
             next if existing_desc.type_params.empty?
             # The callback has already normalized its result to the declared
             # Nil ABI. Its discarded body value does not change that contract.
-            next if existing_desc.type_params == proc_desc.type_params &&
-                    existing_desc.type_params.last == TypeRef::NIL
+            next if nil_normalized_proc_storage?(existing_desc, proc_desc)
             if observed_return_type &&
                observed_return_type != TypeRef::VOID &&
                existing_desc.type_params.last != observed_return_type
@@ -66342,7 +66351,9 @@ module Adamas::HIR
       arguments = proc_type_argument_names(type_name) || return false
       return false if arguments.empty?
       ret_name = arguments.last.strip
-      ret_name == "Nil" || ret_name == "nil"
+      # An output-less `T ->` spells its result as Void; like `T -> Nil`, the
+      # captured block's value is discarded.
+      ret_name == "Nil" || ret_name == "nil" || ret_name == "Void"
     end
 
     private def expected_nil_block_return_type_for_def(
