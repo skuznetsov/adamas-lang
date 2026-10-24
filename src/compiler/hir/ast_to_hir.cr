@@ -44956,6 +44956,7 @@ module Adamas::HIR
               resolved_return = annotated
             end
           else
+            merged_return_name = substitute_forall_bindings(merged_return_name, node, extra_type_params)
             resolved_return = annotation_type_ref(merged_return_name, signature_owner)
           end
         end
@@ -68782,6 +68783,7 @@ module Adamas::HIR
         return resolved
       end
 
+      return_type_name = substitute_forall_bindings(return_type_name, func_def, merged)
       with_type_param_map(merged) do
         resolved = annotation_type_ref(return_type_name, owner_override.empty? ? nil : owner_override)
         if debug_env_filter_match?("DEBUG_RETURN_DEF", mangled_method_name, base_method_name)
@@ -69450,6 +69452,25 @@ module Adamas::HIR
         names << name unless name.empty? || names.includes?(name)
       end
       names
+    end
+
+    # annotation_type_ref binds an owner's receiver map in place of the active
+    # map, which drops the method's free variables: in `class Bx(T)`,
+    # `def conv(x : U) : Bx(U) forall U` resolved its return to Bx(T).
+    # Substitute the bound forall names before resolving against the owner.
+    private def substitute_forall_bindings(
+      type_name : String,
+      def_node : Adamas::Compiler::Frontend::DefNode,
+      bindings : Hash(String, String),
+    ) : String
+      return type_name if bindings.empty? || def_node.forall_type_params.empty?
+      forall_bindings = {} of String => String
+      forall_type_param_names(def_node).each do |name|
+        if actual = bindings[name]?
+          forall_bindings[name] = actual unless actual == name
+        end
+      end
+      forall_bindings.empty? ? type_name : substitute_type_params(type_name, forall_bindings)
     end
 
     # Bind a bare method-forall annotation to its corresponding actual only for
@@ -109460,6 +109481,7 @@ module Adamas::HIR
             end
             _forall_params = function_param_infos(def_node)
             _forall_call_idx = 0
+            _forall_bound = Set(String).new
             _forall_params.each do |_fp|
               next if named_only_separator?(_fp) || _fp.is_block || _fp.is_double_splat
               if _ann = _fp.type_annotation
@@ -109470,6 +109492,7 @@ module Adamas::HIR
                     if !_ct_name.empty? && _ct_name != "Void" && _ct_name != "Unknown"
                       record_pending_type_param_map(mangled_method_name, {_ann => _ct_name})
                       record_pending_type_param_map(base_method_name, {_ann => _ct_name})
+                      _forall_bound << _ann
                     end
                   end
                 elsif v2_string_object_header?(_ann) && ascii_suffix_bytes?(_ann, "*") && _forall_call_idx < arg_types.size
@@ -109485,6 +109508,7 @@ module Adamas::HIR
                         if !_elem_name.empty? && _elem_name != "Void" && _elem_name != "Unknown"
                           record_pending_type_param_map(mangled_method_name, {_base_ann => _elem_name})
                           record_pending_type_param_map(base_method_name, {_base_ann => _elem_name})
+                          _forall_bound << _base_ann
                         end
                       end
                     end
@@ -109492,6 +109516,14 @@ module Adamas::HIR
                 end
               end
               _forall_call_idx += 1 unless _fp.is_splat
+            end
+            # The loop above binds only bare `T` and `T*` restrictions. Free
+            # variables under `U.class` or a generic shape (`Bx(U)`) come from
+            # the overload binder, else `: Bx(U)` resolves without U.
+            _structural_bindings = method_forall_call_bindings(def_node, arg_types).reject { |name, _| _forall_bound.includes?(name) }
+            unless _structural_bindings.empty?
+              record_pending_type_param_map(mangled_method_name, _structural_bindings)
+              record_pending_type_param_map(base_method_name, _structural_bindings)
             end
           end
           if def_node.return_type
