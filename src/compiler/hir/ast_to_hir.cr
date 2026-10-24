@@ -112324,6 +112324,12 @@ module Adamas::HIR
         rt = ctx.type_of(receiver_id)
         rd = @module.get_type_descriptor(rt)
         if rd && rd.kind == TypeKind::Union
+          if !has_block_call && block_id.nil? && block_expr.nil?
+            mvd_method = base_method_name.includes?('#') ? base_method_name.split('#', 2).last : base_method_name
+            if mvd = try_emit_module_value_union_dispatch(ctx, receiver_id, rt, rd, mvd_method, args, arg_types)
+              return mvd
+            end
+          end
           if urd = try_emit_union_receiver_dispatch(ctx, receiver_id, rt, rd,
                base_method_name, mangled_method_name, args, arg_types,
                return_type, has_block_call, block_id)
@@ -113795,6 +113801,73 @@ module Adamas::HIR
     end
 
     # Union receiver dispatch: branch on receiver variant for primitive unions
+    # A union whose every arm is a module that nothing includes can only hold
+    # type values: such a module has no instances, and each arm's runtime value
+    # is that module's singleton carrying its type id. A call on it dispatches
+    # to the arm's class-side method, as a Crystal metaclass union does
+    # (Crystal::MachO#endianness : LittleEndian | BigEndian feeding
+    # `format.decode(self, io)` in Int.from_io).
+    private def try_emit_module_value_union_dispatch(
+      ctx : LoweringContext, receiver_id : ValueId, recv_type : TypeRef, recv_desc,
+      method_name : String, args : Array(ValueId), arg_types : Array(TypeRef),
+    ) : ValueId?
+      variants = split_union_type_name(recv_desc.name)
+      return nil if variants.size < 2
+      targets = [] of {String, Int32, TypeRef}
+      variants.each do |variant_name|
+        variant_ref = type_ref_for_name(variant_name)
+        return nil if variant_ref == TypeRef::VOID
+        variant_desc = @module.get_type_descriptor(variant_ref)
+        return nil unless variant_desc && variant_desc.kind == TypeKind::Module
+        return nil if @module_includers[variant_name]?.try { |includers| !includers.empty? }
+        variant_id = get_union_variant_id(recv_type, variant_ref)
+        return nil if variant_id < 0
+        base = "#{variant_name}.#{method_name}"
+        return nil unless entry = lookup_function_def_for_call(base, arg_types.size, false, arg_types)
+        return nil unless params_compatible_with_args?(entry[1], arg_types, function_context_from_name(entry[0]))
+        target = mangle_function_name(base, arg_types, false)
+        lower_required_virtual_target_function(target, exact_demand: true)
+        force_lower_function_for_return_type(target) unless @module.has_function_with_body?(target)
+        return nil unless @module.has_function_with_body?(target)
+        return nil unless function = @module.function_by_name(target)
+        targets << {target, variant_id, function.return_type}
+      end
+      # Arms that disagree on the return need a union result; leave those to
+      # the ordinary diagnostics rather than picking one arm's ABI.
+      return_type = targets.first[2]
+      return nil if return_type == TypeRef::VOID
+      return nil unless targets.all? { |target| target[2] == return_type }
+
+      saved_locals = ctx.save_locals
+      merge = ctx.create_block
+      incoming = [] of {BlockId, ValueId}
+      targets.each_with_index do |(target, variant_id, _), index|
+        last_arm = index == targets.size - 1
+        next_block : BlockId? = nil
+        unless last_arm
+          is_arm = UnionIs.new(ctx.next_id, receiver_id, variant_id, recv_type)
+          ctx.emit(is_arm); ctx.register_type(is_arm.id, TypeRef::BOOL)
+          arm_block = ctx.create_block
+          next_block = ctx.create_block
+          ctx.terminate(Branch.new(is_arm.id, arm_block, next_block))
+          ctx.current_block = arm_block
+          ctx.restore_locals(saved_locals)
+        end
+        call = Call.without_receiver(ctx.next_id, return_type, target, args)
+        ctx.emit(call); ctx.register_type(call.id, return_type)
+        incoming << {ctx.current_block, call.id}
+        ctx.terminate(Jump.new(merge))
+        if next_block
+          ctx.current_block = next_block
+          ctx.restore_locals(saved_locals)
+        end
+      end
+      ctx.current_block = merge
+      phi = Phi.new(ctx.next_id, return_type, incoming)
+      ctx.emit(phi); ctx.register_type(phi.id, return_type)
+      phi.id
+    end
+
     private def try_emit_union_receiver_dispatch(
       ctx : LoweringContext, receiver_id : ValueId, recv_type : TypeRef, recv_desc,
       base_method_name : String, mangled_method_name : String?, args : Array(ValueId),
@@ -128972,6 +129045,9 @@ module Adamas::HIR
         _rt = ctx.type_of(object_id)
         _rd = @module.get_type_descriptor(_rt)
         if _rd && _rd.kind == TypeKind::Union
+          if _mvd = try_emit_module_value_union_dispatch(ctx, object_id, _rt, _rd, member_name, args, arg_types)
+            return _mvd
+          end
           _bmn = actual_name.includes?('#') ? actual_name : (base_method_name || actual_name)
           if _urd = try_emit_union_receiver_dispatch(ctx, object_id, _rt, _rd,
                _bmn, actual_name, args, arg_types,
