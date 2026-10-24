@@ -2279,6 +2279,29 @@ module Adamas
           end
           i += 1
         end
+        # Top-level literal constants as well: a class body registered below can
+        # branch on one (`{% if USE_LIBICONV %}` in Crystal::Iconv), and the
+        # regular constant pass only runs after every class is registered.
+        i = 0
+        while i < constant_exprs.size
+          expr_id, arena = constant_exprs.unsafe_fetch(i)
+          node = arena[expr_id]
+          case node
+          when Frontend::ConstantNode
+            if arena.is_a?(Frontend::AstArena) && simple_pre_scan_constant.call(arena, node.value)
+              hir_converter.arena = arena
+              hir_converter.register_constant(node)
+            end
+          when Frontend::AssignNode
+            target = arena[node.target]
+            if target.is_a?(Frontend::ConstantNode) && arena.is_a?(Frontend::AstArena) &&
+               simple_pre_scan_constant.call(arena, node.value)
+              hir_converter.arena = arena
+              hir_converter.register_constant_value(String.new(target.name), node.value, arena)
+            end
+          end
+          i += 1
+        end
         stage2_debug("[STAGE2_DEBUG] pre-scan constants done", err_io)
         if debug_profile
           timings["dbg_ms_hir_prescan_const"] = (Time.instant - hir_phase_start.not_nil!).total_milliseconds

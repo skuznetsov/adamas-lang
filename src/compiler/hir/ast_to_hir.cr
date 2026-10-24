@@ -80950,6 +80950,15 @@ module Adamas::HIR
         return cond_node.value
       when Adamas::Compiler::Frontend::NilNode
         return false
+      when Adamas::Compiler::Frontend::PathNode, Adamas::Compiler::Frontend::ConstantNode
+        # `{% if USE_LIBICONV %}` reads the constant's recorded literal, as the
+        # macro interpreter does. Leaving it unevaluated made class bodies take
+        # both branches (Crystal::Iconv declared @iconv twice).
+        if name = resolve_path_like_name(condition_id)
+          if literal = constant_literal_value_for_name(resolve_constant_name_in_context(name) || name)
+            return literal.truthy?
+          end
+        end
       when Adamas::Compiler::Frontend::MacroExpressionNode
         return try_evaluate_macro_condition(cond_node.expression)
       when Adamas::Compiler::Frontend::GroupingNode
