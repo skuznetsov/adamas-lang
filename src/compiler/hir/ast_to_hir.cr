@@ -17138,6 +17138,17 @@ module Adamas::HIR
         node.indexes.all? { |idx| type_like_expr_id?(idx) }
       when Adamas::Compiler::Frontend::CallNode
         type_like_call_expr?(node)
+      when Adamas::Compiler::Frontend::UnaryNode
+        # Only postfix type suffixes (`Void*`, `String?`) qualify; a prefix
+        # splat is a SplatNode. `stringify_type_expr` already renders these, so
+        # rejecting them lowered `Ns::Cache(Void*, String?)` as value args.
+        op = unary_operator_text(node)
+        return false unless op == "*" || op == "**" || op == "?"
+        return false unless node.span.start_offset == @arena[node.operand].span.start_offset
+        type_like_expr_id?(node.operand)
+      when Adamas::Compiler::Frontend::BinaryNode
+        return false unless (safe_slice_to_string(node.operator) || "") == "|"
+        type_like_expr_id?(node.left) && type_like_expr_id?(node.right)
       else
         false
       end
