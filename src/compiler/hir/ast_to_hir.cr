@@ -80694,12 +80694,14 @@ module Adamas::HIR
         return
       end
 
-      if name.ends_with?('*') || name.ends_with?('?')
-        validate_extern_declared_type(name[0, name.size - 1], depth + 1)
-        return
-      end
+      # The proc arrow binds loosest: `Void* -> Void*` is a proc returning
+      # `Void*`, not a pointer to `Void* -> Void`.
       if arguments = proc_type_argument_names(name)
         arguments.each { |argument| validate_extern_declared_type(argument, depth + 1) }
+        return
+      end
+      if name.ends_with?('*') || name.ends_with?('?')
+        validate_extern_declared_type(name[0, name.size - 1], depth + 1)
         return
       end
       if (members = split_union_type_name(name)).size > 1
@@ -80746,7 +80748,10 @@ module Adamas::HIR
       # particular, an alias of NoReturn has a void ABI and a separate effect.
       type_name = resolve_type_alias_chain(type_name.strip)
 
-      if type_name.ends_with?('*')
+      # A trailing `*` of a top-level proc type belongs to its return type:
+      # `start : Void* -> Void*` in `LibGC.pthread_create` became
+      # `Pointer(Proc(Pointer(Void), Void))`.
+      if type_name.ends_with?('*') && proc_type_argument_names(type_name).nil?
         base_name = type_name
         star_count = 0
         while base_name.ends_with?('*')
