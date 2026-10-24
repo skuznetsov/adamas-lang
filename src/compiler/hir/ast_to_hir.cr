@@ -13692,6 +13692,46 @@ module Adamas::HIR
       nil
     end
 
+    # Crystal's `Macro#matches?` rejects a macro whose mandatory parameters the
+    # call cannot cover; the call then resolves as an ordinary method. Without
+    # this, `spawn do ... end` expands `macro spawn(call, ...)` instead of
+    # calling `def spawn(*, ..., &block)`, and the macro body's own
+    # `spawn do ... end` recurses until the compiler stack overflows.
+    #
+    # The parser drops a bare `*` from the declaration, so parameters after it
+    # look positional here; that only ever admits more calls, never fewer.
+    private def macro_call_misses_mandatory_param?(
+      macro_def : Adamas::Compiler::Frontend::MacroDefNode,
+      call_arena : Adamas::Compiler::Frontend::ArenaLike,
+      call_args : Array(ExprId),
+      named_args : Array(Adamas::Compiler::Frontend::NamedArgument)?,
+    ) : Bool
+      params = macro_def.params
+      return false if params.empty?
+      call_args.each do |arg|
+        return false if node_for_call_expr(call_arena, arg).is_a?(Adamas::Compiler::Frontend::SplatNode)
+      end
+
+      positional_index = 0
+      after_splat = false
+      params.each do |param|
+        case param.prefix
+        when "*"
+          after_splat = true
+          next
+        when "**", "&"
+          next
+        end
+        covered_positionally = !after_splat && positional_index < call_args.size
+        positional_index += 1 unless after_splat
+        next if covered_positionally || param.default_source
+        external = param.external_name || param.name
+        covered_by_name = named_args.try(&.any? { |named| named.name == external.to_slice }) || false
+        return true unless covered_by_name
+      end
+      false
+    end
+
     private def lookup_macro_entry_with_inheritance(method_name : String, scope_name : String, allow_global : Bool = true)
       if entry = lookup_macro_entry(method_name, scope_name, allow_global)
         return entry
@@ -85909,7 +85949,8 @@ module Adamas::HIR
         return emit_constant_get(ctx, full_name)
       end
 
-      if macro_lookup = lookup_macro_entry(name, @current_class)
+      if (macro_lookup = lookup_macro_entry(name, @current_class)) &&
+         !macro_call_misses_mandatory_param?(macro_lookup[0][0], @arena, [] of ExprId, nil)
         macro_entry, macro_key = macro_lookup
         macro_def, macro_arena = macro_entry
         return expand_macro(ctx, macro_def, macro_arena, [] of ExprId, nil, nil, macro_key)
@@ -102901,6 +102942,9 @@ module Adamas::HIR
                          else
                            lookup_macro_entry(method_name, nil) || lookup_macro_entry(method_name, "Object")
                          end
+          if macro_lookup && macro_call_misses_mandatory_param?(macro_lookup[0][0], call_arena, call_args, node.named_args)
+            macro_lookup = nil
+          end
           if macro_lookup
             macro_entry, macro_key = macro_lookup
             macro_def, macro_arena = macro_entry
@@ -104485,7 +104529,8 @@ module Adamas::HIR
             # An explicit type receiver only admits that owner's macros (and
             # inherited macros). A global macro of the same short name must
             # not intercept ordinary class-method resolution.
-            if macro_lookup = lookup_macro_entry_with_inheritance(method_name, class_name_str, allow_global: false)
+            if (macro_lookup = lookup_macro_entry_with_inheritance(method_name, class_name_str, allow_global: false)) &&
+               !macro_call_misses_mandatory_param?(macro_lookup[0][0], call_arena, call_args, node.named_args)
               macro_entry, macro_key = macro_lookup
               macro_def, macro_arena = macro_entry
               return expand_macro_for_owner(ctx, macro_def, macro_arena, call_args, node.named_args, block_expr, macro_key, class_name_str)
@@ -125636,7 +125681,8 @@ module Adamas::HIR
                            else
                              static_owner_name
                            end
-        if macro_lookup = lookup_macro_entry_with_inheritance("[]", macro_scope_name)
+        if (macro_lookup = lookup_macro_entry_with_inheritance("[]", macro_scope_name)) &&
+           !macro_call_misses_mandatory_param?(macro_lookup[0][0], @arena, node.indexes, nil)
           macro_entry, macro_key = macro_lookup
           macro_def, macro_arena = macro_entry
           return expand_macro_for_owner(ctx, macro_def, macro_arena, node.indexes, nil, nil, macro_key, static_owner_name)
