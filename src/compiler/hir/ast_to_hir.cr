@@ -54706,10 +54706,12 @@ module Adamas::HIR
       declared_args.each_with_index do |restriction, index|
         if declared_base == "Proc" && index == declared_args.size - 1
           # Crystal permits discarding a Proc's result at a Nil-return boundary,
-          # and NoReturn satisfies every declared Proc result restriction.
+          # and NoReturn satisfies every declared Proc result restriction. An
+          # arrow restriction without an output (`T ->`) is read as a Void
+          # result and, like Nil, admits any result.
           result_restriction = resolve_type_alias_chain(restriction.strip, preserve_abstract_int: true)
           result_actual = resolve_type_alias_chain(actual_args[index].strip, preserve_abstract_int: true)
-          next if result_restriction == "Nil" || result_actual == "NoReturn"
+          next if result_restriction == "Nil" || result_restriction == "Void" || result_actual == "NoReturn"
         end
         matched = source_generic_argument_matches?(actual_args[index], restriction)
         return false if matched == false
