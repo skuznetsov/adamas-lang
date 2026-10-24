@@ -132960,6 +132960,12 @@ module Adamas::HIR
       captures = widen_written_capture_types(ctx, captures, written_values, node.params, proc_param_types, proc_literal_arena, parent_locals)
       captured_vars = captured_vars_for_env(ctx, captures, written_captures)
 
+      # Enum value tracking is per-function, as in lower_method: the literal's
+      # ValueIds restart at zero and must neither read nor clobber the
+      # enclosing function's ledger.
+      saved_enum_value_types_pl = @enum_value_types
+      @enum_value_types = nil
+
       unless captured_vars.empty?
         env_param = proc_func.add_param("__closure_env", TypeRef::POINTER)
         proc_ctx.register_local("__closure_env", env_param.id)
@@ -133116,7 +133122,8 @@ module Adamas::HIR
         return_types = [] of TypeRef
         reachable_blocks(proc_func).each do |return_block|
           if return_node = return_block.terminator.as?(Return)
-            return_types << (return_node.value.try { |value| proc_ctx.type_of(value) } || TypeRef::NIL)
+            # An enum result travels on its integer carrier; publish the enum.
+            return_types << (return_node.value.try { |value| enum_tracked_type(proc_ctx, value) } || TypeRef::NIL)
           end
         end
         actual_return_type = merge_return_types(return_types) || type_ref_for_name("NoReturn")
@@ -133124,7 +133131,7 @@ module Adamas::HIR
           compatible_returns = proc_func.blocks.all? do |return_block|
             return_node = return_block.terminator.as?(Return)
             return_value = return_node.try(&.value)
-            !return_value || exact_union_call_type_subset?(proc_ctx.type_of(return_value), semantic_type)
+            !return_value || exact_union_call_type_subset?(enum_tracked_type(proc_ctx, return_value), semantic_type)
           end
           if compatible_returns && exact_union_call_type_subset?(actual_return_type, semantic_type)
             actual_return_type = semantic_type
@@ -133144,6 +133151,8 @@ module Adamas::HIR
       @current_typeof_locals = saved_typeof_locals
       @current_typeof_local_names = saved_typeof_local_names
       @type_param_map = saved_type_param_map
+      retain_function_enum_value_types(proc_func.name)
+      @enum_value_types = saved_enum_value_types_pl
 
       # Compute proc type (user-visible, does NOT include captures)
       proc_type = intern_proc_source_contract(
@@ -133630,7 +133639,7 @@ module Adamas::HIR
       reachable_blocks(ctx.function).each do |block|
         ret = block.terminator.as?(Return)
         next unless ret
-        actual = ret.value.try { |value| ctx.type_of(value) } || TypeRef::NIL
+        actual = ret.value.try { |value| enum_tracked_type(ctx, value) } || TypeRef::NIL
         actual_type_literal = ret.value.try { |value| ctx.type_literal?(value) } || false
         next if get_type_name_from_ref(actual) == "NoReturn"
         next if actual_type_literal == expected_type_literal && proc_result_type_assignable?(actual, expected)
@@ -134163,6 +134172,7 @@ module Adamas::HIR
       end
       saved_block_return_owner = @captured_block_return_owner
       @captured_block_return_owner = saved_block_return_owner || !proc_constructor_type.nil?
+      block_proc_enum_value_types = nil.as(Hash(ValueId, String)?)
       last_value = begin
         lower_body(proc_ctx, block_node.body)
       ensure
@@ -134206,6 +134216,7 @@ module Adamas::HIR
         @loop_break_info_stack = saved_loop_break_info_stack
         @loop_break_inline_locals_stack = saved_loop_break_inline_locals_stack
         @loop_break_value_stack = saved_loop_break_value_stack
+        block_proc_enum_value_types = @enum_value_types
         @enum_value_types = saved_enum_value_types
         @type_param_map = saved_type_param_map
       end
@@ -134218,7 +134229,10 @@ module Adamas::HIR
         end
         result_type = expected_return_type.not_nil!
         result_type_literal = constructor_contract.not_nil!.proc_type_literal_slot?(proc_param_types.size)
+        # Results are read through the block function's own enum ledger.
+        @enum_value_types = block_proc_enum_value_types
         validate_proc_result(proc_ctx, block_node, result_type, semantic_return_type, result_type_literal)
+        @enum_value_types = saved_enum_value_types
         proc_return_type = result_type
         proc_func.return_type = result_type
         normalize_function_return_terminators(proc_ctx, result_type)
