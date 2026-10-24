@@ -139465,8 +139465,8 @@ module Adamas::HIR
 
     # Create a nullable union type (T | Nil) from a concrete type
     private def create_union_type_for_nullable(concrete_type : TypeRef) : TypeRef
-      # Get the name of the concrete type
-      type_name = get_type_name_from_ref(concrete_type)
+      # Get the name of the concrete type; a Proc keeps its signature.
+      type_name = generic_param_type_name_from_ref(concrete_type)
       union_name = type_name == "Nil" ? "Nil" : "Nil | #{type_name}"
 
       # Create the union type via the string-based method
