@@ -44048,6 +44048,25 @@ module Adamas::HIR
         return
       end
 
+      # The pending annotation above exists only while the def is registered in
+      # source order. A demand-driven lowering (e.g. a constant initializer in
+      # lower_main asking for `UInt64#unsafe_div$Int32` before lower_call reaches
+      # its intrinsic) arrives without it; a body-less def registered as a
+      # primitive still has no source body to lower.
+      if (node.body.nil? || node.body.not_nil!.empty?) && (prim = @module.primitive_for(base_name))
+        stop_after_pending_target_lower_method_phase(
+          "lower_method_primitive_terminal",
+          "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_PRIMITIVE_TERMINAL",
+          class_name,
+          method_name,
+          base_name,
+          "",
+          effective_full_name_override,
+          "primitive=#{prim}"
+        )
+        return
+      end
+
       # Skip pointer primitives with no body (handled via call-site intrinsics).
       if class_name.starts_with?("Pointer(") || class_name.starts_with?("Pointer_")
         if node.body.nil?
