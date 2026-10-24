@@ -84821,10 +84821,12 @@ module Adamas::HIR
       name_map = old_names ? old_names.dup : {} of String => String
       ctx.all_locals.each do |name, value|
         next if ctx.runtime_type_identity?(value)
+        # An enum local is carried by its base integer; its source type is
+        # the enum (`at = AT::A` passed to `initialize(@at : AT)`).
         local_type = if boxed = ctx.lookup_boxed_local_for_local(name, value)
                        boxed.payload_type
                      else
-                       ctx.type_of(value)
+                       enum_tracked_type(ctx, value)
                      end
         next if local_type == TypeRef::VOID
         local_map[name] = local_type
