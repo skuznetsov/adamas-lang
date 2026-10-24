@@ -3290,9 +3290,15 @@ module Adamas
                 if is_block
                   # Block parameter: parse full proc type (supports: A, B -> C, Tuple(K,V), etc.)
                   type_start_token = current_token
+                  type_start_index = @index
+                  type_start_previous = @previous_token
                   parsed_type = parse_bare_proc_type
                   if parsed_type.nil?
-                    # Fallback to general type annotation parser (should rarely happen)
+                    # Fallback to general type annotation parser (should rarely happen).
+                    # Rewind first: the failed parse may have consumed part of
+                    # the type, and resuming mid-type yields corrupt text.
+                    @index = type_start_index
+                    @previous_token = type_start_previous
                     parsed_type = parse_type_annotation
                   end
 
@@ -3310,9 +3316,14 @@ module Adamas
                 else
                   # Regular parameter - parse full type including unions/proc types
                   type_start_token = current_token
+                  type_start_index = @index
+                  type_start_previous = @previous_token
                   parsed_type = parse_union_type_for_annotation
                   if parsed_type.nil?
-                    # Fallback to generic type annotation parser to avoid regressions
+                    # Fallback to generic type annotation parser to avoid regressions;
+                    # rewind past whatever the failed parse consumed.
+                    @index = type_start_index
+                    @previous_token = type_start_previous
                     parsed_type = parse_type_annotation
                   end
 
@@ -17785,8 +17796,11 @@ current_token.kind == Token::Kind::Identifier &&
                 advance # consume ->
                 skip_trivia
 
-                return_type = parse_union_type_for_annotation
-                return nil if return_type.nil?
+                # `& : (A, B) ->` yields with no return type.
+                if proc_return_type_follows?
+                  return_type = parse_union_type_for_annotation
+                  return nil if return_type.nil?
+                end
               end
 
               end_token = previous_token.not_nil!
@@ -17812,8 +17826,11 @@ current_token.kind == Token::Kind::Identifier &&
                 advance # consume ->
                 skip_trivia
 
-                return_type = parse_union_type_for_annotation
-                return nil if return_type.nil?
+                # `& : (A, B) ->` yields with no return type.
+                if proc_return_type_follows?
+                  return_type = parse_union_type_for_annotation
+                  return nil if return_type.nil?
+                end
 
                 skip_trivia
               end
@@ -17827,8 +17844,11 @@ current_token.kind == Token::Kind::Identifier &&
                 advance # consume ->
                 skip_trivia
 
-                return_type = parse_union_type_for_annotation
-                return nil if return_type.nil?
+                # `& : (A, B) ->` yields with no return type.
+                if proc_return_type_follows?
+                  return_type = parse_union_type_for_annotation
+                  return nil if return_type.nil?
+                end
               end
 
               end_token = previous_token.not_nil!
@@ -17841,6 +17861,19 @@ current_token.kind == Token::Kind::Identifier &&
           else
             # Unknown type start
             return nil
+          end
+        end
+
+        # A proc type's return type is optional (`A, B ->`); only parse one
+        # when the next token can start a type.
+        private def proc_return_type_follows? : Bool
+          case current_token.kind
+          when Token::Kind::Identifier, Token::Kind::Self,
+               Token::Kind::Typeof, Token::Kind::LParen,
+               Token::Kind::LBrace, Token::Kind::ColonColon
+            true
+          else
+            false
           end
         end
 
