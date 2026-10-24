@@ -67511,11 +67511,15 @@ module Adamas::HIR
       return type_name if owner_name.empty?
 
       qualified_entry = "#{owner_name}::Entry"
-      qualified_ref = type_ref_for_name(qualified_entry)
-      return type_name if qualified_ref == TypeRef::VOID
+      # type_ref_for_name interns a placeholder for an unknown path, so only a
+      # declared nested Entry may qualify anything.
+      return type_name unless type_name_exists?(qualified_entry)
       return type_name if type_name.includes?("#{qualified_entry}(")
 
-      type_name.gsub(/\bEntry\(/, "#{qualified_entry}(")
+      # Only a bare `Entry(` is relative to the receiver. A qualified
+      # `Arena::Entry(` in a `Slice(Pointer(Arena::Entry(T)))` element type
+      # became the phantom `Arena::Slice::Entry(T)`.
+      type_name.gsub(/(?<![\w:])Entry\(/, "#{qualified_entry}(")
     end
 
     private def fallback_type_param_map_for_current : Hash(String, String)?
