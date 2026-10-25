@@ -9,6 +9,7 @@ require "./hir"
 require "./debug_hooks"
 require "./lowering_binary_trace"
 require "./memory_strategy"
+require "./type_hierarchy"
 require "../layout_probe"
 require "../frontend/ast"
 require "../frontend/dispatch"
@@ -2198,14 +2199,7 @@ module Adamas::HIR
 
     @[AlwaysInline]
     private def strip_generic_args(name : String) : String
-      i = 0
-      while i < name.bytesize
-        if name.to_unsafe[i] == '('.ord
-          return name.byte_slice(0, i)
-        end
-        i += 1
-      end
-      name
+      TypeHierarchy.strip_generic_args(name)
     end
 
     private def strip_generic_args_from_namespace_path(name : String) : String
@@ -2797,7 +2791,8 @@ module Adamas::HIR
     @declared_ivar_type_namespaces : Hash(String, Hash(String, String)) = {} of String => Hash(String, String)
     @class_info_version : Int32
     @classes_with_subclasses : Set(String)
-    @children_by_parent : Hash(String, Set(String))
+    # Class parent and module include graphs (see type_hierarchy.cr).
+    @hierarchy : TypeHierarchy
     # Module-level class vars (modules don't have ClassInfo entries)
     getter module_class_vars : Hash(String, Array(ClassVarInfo))
     @module_class_vars : Hash(String, Array(ClassVarInfo))
@@ -7258,7 +7253,6 @@ module Adamas::HIR
     @module_defs : Hash(String, Array({Adamas::Compiler::Frontend::ModuleNode, Adamas::Compiler::Frontend::ArenaLike}))
     # Track concrete types that include a module for module-typed receiver fallback.
     @module_includers : Hash(String, Set(String))
-    @module_includer_keys_by_suffix : Hash(String, Set(String))
     @module_includers_version : Int32
     # Reverse mapping: track which modules each class includes (for method lookup)
     @class_included_modules : Hash(String, Array(String))
@@ -7622,8 +7616,6 @@ module Adamas::HIR
     # These blocks are synthetic and must not be treated as flowing branches.
     @control_flow_dead_blocks : Set({FunctionId, BlockId}) = Set({FunctionId, BlockId}).new
     @virtual_targets_lowered : Set({String, String, UInt64, UInt8}) = Set({String, String, UInt64, UInt8}).new
-    # Cache for collect_subclasses — class hierarchy doesn't change during compilation.
-    @subclasses_cache : Hash(String, Array(String)) = {} of String => Array(String)
     @descendant_block_param_types_active : Bool = false
     # Track assigned local names for the current def (used to disambiguate
     # bare identifier receivers vs top-level function calls).
@@ -7861,7 +7853,6 @@ module Adamas::HIR
       @declared_ivar_type_namespaces = {} of String => Hash(String, String)
       @class_info_version = 0
       @classes_with_subclasses = Set(String).new
-      @children_by_parent = {} of String => Set(String)
       @module_class_vars = {} of String => Array(ClassVarInfo)
       @class_var_infer_stack = Set(String).new
       @lib_structs = Set(String).new
@@ -7981,8 +7972,8 @@ module Adamas::HIR
       @macro_params = {} of String => Array(MacroParamInfo)
       @class_accessor_entries = {} of String => ClassAccessorEntry
       @module_defs = {} of String => Array({Adamas::Compiler::Frontend::ModuleNode, Adamas::Compiler::Frontend::ArenaLike})
-      @module_includers = {} of String => Set(String)
-      @module_includer_keys_by_suffix = {} of String => Set(String)
+      @hierarchy = TypeHierarchy.new(@class_info, @module_defs)
+      @module_includers = @hierarchy.module_includers
       @module_includers_version = 0
       @class_included_modules = {} of String => Array(String)
       @class_included_module_seen = {} of String => Set(String)
@@ -9528,35 +9519,9 @@ module Adamas::HIR
       if debug_env_filter_match?("DEBUG_MODULE_INCLUDE", module_name, class_name, resolved_module_name)
         STDERR.puts "[DEBUG_MODULE_INCLUDE] #{class_name} <= #{module_name} (resolved: #{resolved_module_name})"
       end
-      cache_bump = false
-      set = @module_includers[resolved_module_name]?
-      new_module_entry = false
-      unless set
-        set = Set(String).new
-        @module_includers[resolved_module_name] = set
-        new_module_entry = true
-      end
-      new_includer = false
-      unless set.includes?(class_name)
-        set.add(class_name)
-        cache_bump = true
-        new_includer = true
-      end
+      new_includer = @hierarchy.add_inclusion(resolved_module_name, class_name)
+      cache_bump = new_includer
       @module.register_module_includer(resolved_module_name, class_name) if new_includer
-      module_base = strip_generic_args(resolved_module_name)
-      # Suffix index is keyed only by module name, so populate it once per module.
-      if new_module_entry
-        suffix_start = 0
-        loop do
-          suffix = module_base[suffix_start..]
-          break unless suffix
-          (@module_includer_keys_by_suffix[suffix] ||= Set(String).new) << resolved_module_name
-
-          next_sep = module_base.index("::", suffix_start)
-          break unless next_sep
-          suffix_start = next_sep + 2
-        end
-      end
       # Also record reverse mapping (class -> modules it includes)
       class_list = @class_included_modules[class_name]? || begin
         new_list = [] of String
@@ -10336,24 +10301,8 @@ module Adamas::HIR
       if short_name != parent_name
         @classes_with_subclasses.add(short_name)
       end
-      parent_base = strip_generic_args(parent_name)
-      keys = Set(String).new
-      keys << parent_name
-      keys << parent_base if parent_base != parent_name
-      short = last_namespace_component(parent_name)
-      keys << short if short != parent_name
-      short_base = last_namespace_component(parent_base)
-      keys << short_base if short_base != parent_base
-      edge_added = false
-      keys.each do |key|
-        children = (@children_by_parent[key] ||= Set(String).new)
-        unless children.includes?(child_name)
-          children << child_name
-          edge_added = true
-        end
-      end
-
-      invalidate_hierarchy_caches_for_edge(child_name, parent_name, keys) if edge_added
+      # The hierarchy drops its own stale subclass sets for a new edge.
+      invalidate_ancestor_chains_for_edge(child_name) if @hierarchy.add_parent_edge(child_name, parent_name)
 
       # Do not replay virtual targets here. `record_class_parent` also runs from
       # generic/runtime parent stitching (for example Array(T) interning), where
@@ -10362,21 +10311,7 @@ module Adamas::HIR
       # registration via `replay_virtual_targets_for_registered_class`.
     end
 
-    private def invalidate_hierarchy_caches_for_edge(
-      child_name : String,
-      parent_name : String,
-      parent_keys : Set(String),
-    ) : Nil
-      # A new edge changes the descendant set for the parent and every cached
-      # ancestor that already contained one of the parent's aliases.  Keep the
-      # invalidation bounded to those roots instead of dropping the whole cache.
-      stale_subclass_roots = [] of String
-      @subclasses_cache.each do |root, descendants|
-        next unless parent_keys.includes?(root) || descendants.any? { |name| parent_keys.includes?(name) }
-        stale_subclass_roots << root
-      end
-      stale_subclass_roots.each { |root| @subclasses_cache.delete(root) }
-
+    private def invalidate_ancestor_chains_for_edge(child_name : String) : Nil
       # An ancestor chain changes for the new child and its descendants.  The
       # cache can contain exact, generic, or short-name aliases, so remove any
       # entry whose key/chain witnesses one of those names.
@@ -10406,7 +10341,7 @@ module Adamas::HIR
       # These caches assume the parent graph is stable after class registration.
       # Parameterized reference-like types (Array/Hash) are interned later, so
       # refresh the hierarchy caches when we splice them under Reference.
-      @subclasses_cache.clear
+      @hierarchy.clear_subclass_cache
       @ancestor_chain_cache.try(&.clear)
       bump_class_info_version
     end
@@ -11106,31 +11041,11 @@ module Adamas::HIR
     end
 
     private def collect_subclasses(parents : Array(String)) : Array(String)
-      results = [] of String
-      visited = Set(String).new
-      queue = Array(String).new(parents.size) # BFS queue — must be a fresh copy since we append during traversal
-      parents.each { |p| queue << p }
-      queue.each { |parent| visited.add(parent) }
-      idx = 0
-      while idx < queue.size
-        parent = queue[idx]
-        idx += 1
-        if children = @children_by_parent[parent]?
-          children.each do |child|
-            next if visited.includes?(child)
-            visited.add(child)
-            results << child
-            queue << child
-          end
-        end
-      end
-      results
+      @hierarchy.subclasses_of(parents)
     end
 
-    # Cached version of collect_subclasses for a single parent.
-    # Class hierarchy is fixed after registration, so results are stable.
     private def collect_subclasses_cached(parent : String) : Array(String)
-      @subclasses_cache[parent] ||= collect_subclasses([parent])
+      @hierarchy.subclasses(parent)
     end
 
     private def owner_indexes_instance_method?(owner : String, method_name : String) : Bool
@@ -26115,11 +26030,11 @@ module Adamas::HIR
 
       base = strip_generic_args(name)
       return true if @module_defs.has_key?(base)
-      return true if @module_includers.has_key?(base) || @module_includer_keys_by_suffix.has_key?(base)
+      return true if @hierarchy.includer_key?(base)
 
       short_name = last_namespace_component(base)
       return true if @module_defs.has_key?(short_name)
-      return true if @module_includers.has_key?(short_name) || @module_includer_keys_by_suffix.has_key?(short_name)
+      return true if @hierarchy.includer_key?(short_name)
 
       false
     end
@@ -51987,31 +51902,9 @@ module Adamas::HIR
                     else
                       module_type_name
                     end
-      includers = @module_includers[module_base]?
-      if includers.nil? || includers.empty?
-        if matches = @module_includer_keys_by_suffix[module_base]?
-          if matches.size == 1
-            module_base = matches.first
-            includers = @module_includers[module_base]?
-          end
-        end
-      end
-      # Fallback: try short name if full name has no includers
-      # e.g., "Crystal::EventLoop::FileDescriptor" -> "FileDescriptor"
-      if includers.nil? || includers.empty?
-        short_name = last_namespace_component(module_base)
-        if short_name != module_base
-          includers = @module_includers[short_name]?
-          if includers.nil? || includers.empty?
-            if matches = @module_includer_keys_by_suffix[short_name]?
-              if matches.size == 1
-                module_base = matches.first
-                includers = @module_includers[module_base]?
-              end
-            end
-          end
-        end
-      end
+      includer_lookup = @hierarchy.includer_lookup(module_base)
+      module_base = includer_lookup.module_base
+      includers = includer_lookup.includers
       if includers.nil? || includers.empty?
         if prefer_class
           includers = Set(String).new
@@ -52156,27 +52049,7 @@ module Adamas::HIR
       has_block : Bool,
     ) : TypeRef?
       module_base = strip_generic_args(module_type_name)
-      includers = @module_includers[module_base]?.try(&.to_a)
-      if includers.nil? || includers.empty?
-        if matches = @module_includer_keys_by_suffix[module_base]?
-          if matches.size == 1
-            module_base = matches.first
-            includers = @module_includers[module_base]?.try(&.to_a)
-          end
-        end
-      end
-      if includers.nil? || includers.empty?
-        short_name = last_namespace_component(module_base)
-        if short_name != module_base
-          includers = @module_includers[short_name]?.try(&.to_a)
-          if (includers.nil? || includers.empty?) && (matches = @module_includer_keys_by_suffix[short_name]?)
-            if matches.size == 1
-              module_base = matches.first
-              includers = @module_includers[module_base]?.try(&.to_a)
-            end
-          end
-        end
-      end
+      includers = @hierarchy.includer_lookup(module_base).includers.try(&.to_a)
       return nil if includers.nil? || includers.empty?
 
       candidates = includers.not_nil!.dup
@@ -54809,14 +54682,9 @@ module Adamas::HIR
       return false if class_like_namespace?(name)
       return false if @enum_info.try(&.has_key?(name))
 
-      return true if @module_includers.has_key?(name)
+      return true if @hierarchy.includer_key?(name)
 
-      return true if @module_includer_keys_by_suffix.has_key?(name)
-
-      short_name = last_namespace_component(name)
-      return true if @module_includers.has_key?(short_name)
-
-      @module_includer_keys_by_suffix.has_key?(short_name)
+      @hierarchy.includer_key?(last_namespace_component(name))
     end
 
     private def resolve_short_type_in_namespace_chain(name : String) : String?
@@ -54855,29 +54723,9 @@ module Adamas::HIR
                     else
                       module_type_name
                     end
-      includers = @module_includers[module_base]?
-      if includers.nil? || includers.empty?
-        if matches = @module_includer_keys_by_suffix[module_base]?
-          if matches.size == 1
-            module_base = matches.first
-            includers = @module_includers[module_base]?
-          end
-        end
-      end
-      if includers.nil? || includers.empty?
-        short_name = last_namespace_component(module_base)
-        if short_name != module_base
-          includers = @module_includers[short_name]?
-          if includers.nil? || includers.empty?
-            if matches = @module_includer_keys_by_suffix[short_name]?
-              if matches.size == 1
-                module_base = matches.first
-                includers = @module_includers[module_base]?
-              end
-            end
-          end
-        end
-      end
+      includer_lookup = @hierarchy.includer_lookup(module_base)
+      module_base = includer_lookup.module_base
+      includers = includer_lookup.includers
       if includers.nil? || includers.empty?
         if prefer_class
           includers = Set(String).new
@@ -61322,7 +61170,7 @@ module Adamas::HIR
       return true if constructed_types.includes?(owner_base)
 
       # Parent of a constructed type (for virtual dispatch)
-      if children = @children_by_parent[owner]?
+      if children = @hierarchy.direct_children(owner)
         children.each do |child|
           child_base = if paren = child.index('(')
                          child[0, paren]
@@ -71133,33 +70981,6 @@ module Adamas::HIR
       end
     end
 
-    # Concrete types a virtual call on `owner` can dispatch to: subclasses of
-    # a class, and for a module its (transitive) includers and their
-    # subclasses.
-    private def virtual_dispatch_descendant_names(owner : String) : Array(String)
-      results = collect_subclasses_cached(owner).dup
-      seen = results.to_set
-      queue = [owner]
-      base = strip_generic_args(owner)
-      queue << base unless base == owner
-      visited = Set(String).new
-      while module_name = queue.shift?
-        next unless visited.add?(module_name)
-        includers = @module_includers[module_name]? || next
-        includers.each do |includer|
-          if !@class_info.has_key?(includer) && @module_defs.has_key?(strip_generic_args(includer))
-            queue << includer
-          else
-            results << includer if seen.add?(includer)
-            collect_subclasses_cached(includer).each do |name|
-              results << name if seen.add?(name)
-            end
-          end
-        end
-      end
-      results
-    end
-
     # A virtual call through a module or class that declares no body of its
     # own reaches only descendant definitions, and its block is typed once for
     # all of them: each parameter is the union of what the reachable
@@ -71175,7 +70996,7 @@ module Adamas::HIR
       method = base_method_name[(hash + 1)..]
       recv_desc = @module.get_type_descriptor(receiver_type) || return nil
       return nil if recv_desc.kind == TypeKind::Union
-      targets = virtual_dispatch_descendant_names(recv_desc.name)
+      targets = @hierarchy.dispatch_targets(recv_desc.name)
       return nil if targets.empty?
       columns = [] of Array(TypeRef)
       @descendant_block_param_types_active = true
@@ -78152,23 +77973,12 @@ module Adamas::HIR
     # another module, or as a subclass of an includer) declares the instance
     # method, i.e. a virtual call through the module type can reach it.
     private def module_includer_defines_instance_method?(module_name : String, method_name : String) : Bool
-      queue = [module_name]
-      base = strip_generic_args(module_name)
-      queue << base unless base == module_name
-      visited = Set(String).new
-      while owner = queue.shift?
-        next if visited.includes?(owner)
-        visited.add(owner)
-        includers = @module_includers[owner]? || next
-        includers.each do |includer|
-          next if visited.includes?(includer)
-          if !@class_info.has_key?(includer) && @module_defs.has_key?(strip_generic_args(includer))
-            return true if source_module_declared_instance_method_family?(includer, method_name)
-            queue << includer
-          else
-            return true if qualified_source_method_family_exists?(includer, method_name, '#')
-            return true if descendant_defines_instance_method?(includer, method_name)
-          end
+      @hierarchy.each_transitive_includer(module_name) do |includer, is_module|
+        if is_module
+          return true if source_module_declared_instance_method_family?(includer, method_name)
+        else
+          return true if qualified_source_method_family_exists?(includer, method_name, '#')
+          return true if descendant_defines_instance_method?(includer, method_name)
         end
       end
       false
@@ -113662,29 +113472,9 @@ module Adamas::HIR
         if type_desc.kind == TypeKind::Generic
           module_base = strip_generic_args(module_base)
         end
-        includers = @module_includers[module_base]?
-        if includers.nil? || includers.empty?
-          if matches = @module_includer_keys_by_suffix[module_base]?
-            if matches.size == 1
-              module_base = matches.first
-              includers = @module_includers[module_base]?
-            end
-          end
-        end
-        if includers.nil? || includers.empty?
-          short_name = last_namespace_component(module_base)
-          if short_name != module_base
-            includers = @module_includers[short_name]?
-            if includers.nil? || includers.empty?
-              if matches = @module_includer_keys_by_suffix[short_name]?
-                if matches.size == 1
-                  module_base = matches.first
-                  includers = @module_includers[module_base]?
-                end
-              end
-            end
-          end
-        end
+        includer_lookup = @hierarchy.includer_lookup(module_base)
+        module_base = includer_lookup.module_base
+        includers = includer_lookup.includers
         fanout_trace = debug_env_filter_match?(
           "DEBUG_VIRTUAL_FANOUT",
           ctx.function.name,
@@ -138020,16 +137810,7 @@ module Adamas::HIR
     # before those String specializations are stable.
     @[AlwaysInline]
     private def last_namespace_component(name : String) : String
-      i = name.bytesize - 2
-      while i >= 0
-        if name.to_unsafe[i] == ':'.ord && name.to_unsafe[i + 1] == ':'.ord
-          start = i + 2
-          return "" if start >= name.bytesize
-          return name.byte_slice(start, name.bytesize - start)
-        end
-        i -= 1
-      end
-      name
+      TypeHierarchy.last_namespace_component(name)
     end
 
     @[AlwaysInline]
