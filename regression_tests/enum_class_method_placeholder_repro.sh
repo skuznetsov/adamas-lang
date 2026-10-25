@@ -72,8 +72,43 @@ end
 LibC.exit(Day.from_value(7_i64).value.to_i + 35)
 CR
 
+cat > "$WORK_DIR/inherited_self_return.cr" <<'CR'
+lib LibC
+  fun exit(status : Int32) : NoReturn
+end
+
+fun __crystal_raise_overflow : NoReturn
+  LibC.exit(99)
+end
+
+struct Int32
+  @[Primitive(:binary)]
+  def ==(other : Int32) : Bool
+  end
+
+  @[Primitive(:binary)]
+  def +(other : Int32) : Int32
+  end
+end
+
+abstract struct Enum
+  def self.ident(value : self) : self
+    value
+  end
+end
+
+enum Day
+  Mon = 1
+  Tue = 2
+  Sun = 7
+end
+
+LibC.exit(Day.ident(Day::Sun).value + 35)
+CR
+
 CASES=(
   "inherited_int64:42"
+  "inherited_self_return:42"
 )
 
 exit_code_of() {

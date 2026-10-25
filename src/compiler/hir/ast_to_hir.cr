@@ -45263,7 +45263,13 @@ module Adamas::HIR
       end
       ctx = LoweringContext.new(func, @module, @arena)
       source_return_name = readable_explicit_return_type_name || explicit_return_type_for_registration(node, @arena)
-      ctx.source_self_return_type = return_type if source_return_name == "self"
+      if source_return_name == "self"
+        # `self` in an enum method names the enum, while the function's
+        # return type is the enum's base-integer carrier (its placeholder
+        # ClassInfo); Enum.from_value returns the enum itself.
+        enum_self = enum_base_type_by_name?(class_name) ? type_ref_for_name(class_name) : TypeRef::VOID
+        ctx.source_self_return_type = enum_self == TypeRef::VOID ? return_type : enum_self
+      end
 
       # Add implicit 'self' binding.
       # Instance methods receive a runtime self parameter.
@@ -96375,6 +96381,7 @@ module Adamas::HIR
     private def source_self_return_type_admits?(actual_type : TypeRef, target_type : TypeRef) : Bool
       return false if actual_type == TypeRef::VOID || target_type == TypeRef::VOID
       return true if actual_type == target_type
+      return true if enum_carrier_of?(target_type, actual_type)
       target_name = get_type_name_from_ref(target_type)
       return true if class_union_upcast_compatible?(actual_type, target_name)
       actual_name = get_type_name_from_ref(actual_type)
