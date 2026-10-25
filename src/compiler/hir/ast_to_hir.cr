@@ -35423,7 +35423,14 @@ module Adamas::HIR
                                 else
                                   @module_extend_self.includes?(full_name)
                                 end
-              next unless is_class_method
+              unless is_class_method
+                # Instance methods (abstract ones included) belong to the
+                # module, as for a top-level module body: a call on a value of
+                # the module type (`ExecutionContext.each(&.stack_pool?)` in
+                # `module Fiber::ExecutionContext`) needs the source family.
+                register_type_method_from_def(member, full_name)
+                next
+              end
               bootstrap_trace_puts "[CLASS_FRONTIER] nested_module_def_after_class_method #{full_name}.#{method_name}" if trace_nested_float_def
               if env_has?("DEBUG_MODULE_LOOKUP") && full_name == "Crystal::System::Signal"
                 STDERR.puts "[DEBUG_MODULE_LOOKUP] register #{full_name}.#{method_name}"
