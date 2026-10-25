@@ -12259,6 +12259,13 @@ module Adamas::HIR
       @enum_base_types.try(&.[enum_name]?) || TypeRef::INT32
     end
 
+    # Enums have no ClassInfo; their methods are lowered against a placeholder
+    # whose type is the enum's base type, the type its values are carried in
+    # (`enum Day : Int64` -> `def self.from_value(...) : self` returns Int64).
+    private def enum_placeholder_class_info(enum_name : String) : ClassInfo
+      ClassInfo.new(enum_name, enum_base_type(enum_name), [] of IVarInfo, [] of ClassVarInfo, 0, false, nil)
+    end
+
     # Resolve an UNQUALIFIED capitalized name (`A`, `Void`) to a sibling member of
     # the ENCLOSING enum, mirroring the qualified `TK::A` path in lower_path. Inside
     # an enum instance method, `case self when A` / `self == A` reference members by
@@ -102408,8 +102415,7 @@ module Adamas::HIR
                 materialization_producer_path = "instance_enum_lower_method"
                 old_class = @current_class
                 @current_class = owner
-                dummy_info = ClassInfo.new(owner, TypeRef::INT32, [] of IVarInfo, [] of ClassVarInfo, 0, false, nil)
-                lower_method(owner, dummy_info, resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, name, force_class_method: force_class_method)
+                lower_method(owner, enum_placeholder_class_info(owner), resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, name, force_class_method: force_class_method)
                 @current_class = old_class
               else
                 # Modules don't have ClassInfo entries, but we still need to lower
@@ -102596,8 +102602,7 @@ module Adamas::HIR
                 materialization_producer_path = "class_enum_lower_method"
                 old_class = @current_class
                 @current_class = owner
-                dummy_info = ClassInfo.new(owner, TypeRef::INT32, [] of IVarInfo, [] of ClassVarInfo, 0, false, nil)
-                lower_method(owner, dummy_info, resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, target_for_lower)
+                lower_method(owner, enum_placeholder_class_info(owner), resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, target_for_lower)
                 @current_class = old_class
               else
                 # Apply type param map for generic module methods
