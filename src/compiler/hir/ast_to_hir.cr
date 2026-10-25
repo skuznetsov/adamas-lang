@@ -125609,6 +125609,49 @@ module Adamas::HIR
       caller_locals_index
     end
 
+    # A block splat parameter (`|a, *rest, b|`) collects the yield arguments
+    # between its fixed neighbours into one Tuple. Crystal does not auto-unpack
+    # a single yielded tuple for such a block, so packing is purely positional.
+    private def pack_block_splat_yield_args(
+      ctx : LoweringContext,
+      block_params : Array(Adamas::Compiler::Frontend::Parameter),
+      splat_index : Int32,
+      yield_args : Array(ValueId),
+      param_types : Array(TypeRef)?,
+    ) : Tuple(Array(ValueId), Array(TypeRef)?)
+      trailing = block_params.size - splat_index - 1
+      return {yield_args, param_types} if yield_args.size < splat_index + trailing
+
+      splat_end = yield_args.size - trailing
+      splat_args = yield_args[splat_index, splat_end - splat_index]
+      tuple_id = if splat_args.empty?
+                   allocate_empty_tuple(ctx)
+                 else
+                   tuple_type = tuple_type_from_arg_types(splat_args.map { |arg| ctx.type_of(arg) }, allow_void: true)
+                   tuple_alloc = Allocate.new(ctx.next_id, tuple_type, splat_args)
+                   ctx.emit(tuple_alloc)
+                   ctx.register_type(tuple_alloc.id, tuple_type)
+                   tuple_alloc.id
+                 end
+      packed = yield_args[0, splat_index]
+      packed << tuple_id
+      packed.concat(yield_args[splat_end, trailing])
+
+      # Per-argument hints line up with the unpacked yield; the packed slot
+      # takes the tuple's own type.
+      packed_types = if param_types && param_types.size == yield_args.size
+                       types = param_types[0, splat_index]
+                       types << ctx.type_of(tuple_id)
+                       types.concat(param_types[splat_end, trailing])
+                       types
+                     elsif param_types && param_types.size == block_params.size
+                       types = param_types.dup
+                       types[splat_index] = ctx.type_of(tuple_id)
+                       types
+                     end
+      {packed, packed_types}
+    end
+
     private def inline_block_body(
       ctx : LoweringContext,
       yield_node : Adamas::Compiler::Frontend::YieldNode,
@@ -125662,15 +125705,23 @@ module Adamas::HIR
         @inline_yield_return_override_stack << InlineReturnOverride.new(true, base_override)
         pushed_override = true
 
-        # Lower yield arguments
+        # Lower yield arguments. `yield *args` spreads a tuple into separate
+        # block arguments, exactly as a splat call argument does.
         yield_args = if args = yield_node.args
-                       args.reject(&.invalid?).map { |arg| lower_expr(ctx, arg) }
+                       valid_args = args.reject(&.invalid?)
+                       if valid_args.any? { |arg| @arena[arg].is_a?(Adamas::Compiler::Frontend::SplatNode) }
+                         expand_splat_args(ctx, valid_args, @arena)
+                       else
+                         valid_args.map { |arg| lower_expr(ctx, arg) }
+                       end
                      else
                        [] of ValueId
                      end
         param_types = @inline_yield_block_param_types_stack.last?
         if block_params = block.params
-          if !block.unpacks && block_params.size > yield_args.size &&
+          if block_splat_index = block_params.index { |param| param.is_splat && !param.is_double_splat }
+            yield_args, param_types = pack_block_splat_yield_args(ctx, block_params, block_splat_index, yield_args, param_types)
+          elsif !block.unpacks && block_params.size > yield_args.size &&
              yield_args.size >= 1 &&
              (param_types.nil? || param_types.size < block_params.size)
             # Tuple destructuring: |(a, b), c| with yield(tuple, c)
