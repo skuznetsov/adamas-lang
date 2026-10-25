@@ -78078,6 +78078,32 @@ module Adamas::HIR
     # Source calls may be declared below their caller. Check only after all
     # pending, macro and missing-target passes have reached closure; codegen
     # must not turn a demanded undefined qualified/free call into an abort stub.
+    # True when some type that includes `module_name` (directly, through
+    # another module, or as a subclass of an includer) declares the instance
+    # method, i.e. a virtual call through the module type can reach it.
+    private def module_includer_defines_instance_method?(module_name : String, method_name : String) : Bool
+      queue = [module_name]
+      base = strip_generic_args(module_name)
+      queue << base unless base == module_name
+      visited = Set(String).new
+      while owner = queue.shift?
+        next if visited.includes?(owner)
+        visited.add(owner)
+        includers = @module_includers[owner]? || next
+        includers.each do |includer|
+          next if visited.includes?(includer)
+          if !@class_info.has_key?(includer) && @module_defs.has_key?(strip_generic_args(includer))
+            return true if source_module_declared_instance_method_family?(includer, method_name)
+            queue << includer
+          else
+            return true if qualified_source_method_family_exists?(includer, method_name, '#')
+            return true if descendant_defines_instance_method?(includer, method_name)
+          end
+        end
+      end
+      false
+    end
+
     private def validate_unresolved_free_source_calls : Nil
       @module.functions.each do |caller|
         value_types = Hash(ValueId, TypeRef).new
@@ -78095,7 +78121,8 @@ module Adamas::HIR
             # owner/side declaration check below. A virtual call does reach
             # descendant bodies, so a subclass declaration (direct or through
             # an included module) is authority for it: a class-restricted
-            # parameter keeps one body typed by its restriction.
+            # parameter keeps one body typed by its restriction. For a module
+            # owner the descendants are its (transitive) includers.
             name = call.method_name
             next if name.empty? || @module.has_function_with_body?(name)
             base = strip_type_suffix(name)
@@ -78107,7 +78134,8 @@ module Adamas::HIR
               next if backend_owned_qualified_intrinsic_call?(call, name, parts, value_types)
               next if qualified_source_call_family_exists?(parts)
               next if call.virtual && separator == '#' &&
-                      descendant_defines_instance_method?(parts.owner, method_name)
+                      (descendant_defines_instance_method?(parts.owner, method_name) ||
+                      module_includer_defines_instance_method?(parts.owner, method_name))
               next if @module.extern_functions.any? do |external|
                         external.name == name || external.name == base ||
                           external.real_name == name || external.real_name == base
