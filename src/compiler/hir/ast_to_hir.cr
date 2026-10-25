@@ -7624,6 +7624,7 @@ module Adamas::HIR
     @virtual_targets_lowered : Set({String, String, UInt64, UInt8}) = Set({String, String, UInt64, UInt8}).new
     # Cache for collect_subclasses — class hierarchy doesn't change during compilation.
     @subclasses_cache : Hash(String, Array(String)) = {} of String => Array(String)
+    @descendant_block_param_types_active : Bool = false
     # Track assigned local names for the current def (used to disambiguate
     # bare identifier receivers vs top-level function calls).
     @assigned_vars_stack : Array(Set(String)) = [] of Set(String)
@@ -69394,7 +69395,12 @@ module Adamas::HIR
         return [TypeRef::CHAR]
       end
 
-      return fallback_block_param_types(resolved_base, receiver_type_value) if !func_def
+      if !func_def
+        if descendant_types = descendant_block_param_types(resolved_base, receiver_type_value, call_arg_types, call_has_named_args)
+          return descendant_types
+        end
+        return fallback_block_param_types(resolved_base, receiver_type_value)
+      end
 
       # Hot-path: internal_to_s yields (Pointer(UInt8), Int32, Bool)
       if resolved_base.ends_with?("internal_to_s")
@@ -71125,6 +71131,70 @@ module Adamas::HIR
       else
         [entry_ref]
       end
+    end
+
+    # Concrete types a virtual call on `owner` can dispatch to: subclasses of
+    # a class, and for a module its (transitive) includers and their
+    # subclasses.
+    private def virtual_dispatch_descendant_names(owner : String) : Array(String)
+      results = collect_subclasses_cached(owner).dup
+      seen = results.to_set
+      queue = [owner]
+      base = strip_generic_args(owner)
+      queue << base unless base == owner
+      visited = Set(String).new
+      while module_name = queue.shift?
+        next unless visited.add?(module_name)
+        includers = @module_includers[module_name]? || next
+        includers.each do |includer|
+          if !@class_info.has_key?(includer) && @module_defs.has_key?(strip_generic_args(includer))
+            queue << includer
+          else
+            results << includer if seen.add?(includer)
+            collect_subclasses_cached(includer).each do |name|
+              results << name if seen.add?(name)
+            end
+          end
+        end
+      end
+      results
+    end
+
+    # A virtual call through a module or class that declares no body of its
+    # own reaches only descendant definitions, and its block is typed once for
+    # all of them: each parameter is the union of what the reachable
+    # definitions yield in that position.
+    private def descendant_block_param_types(
+      base_method_name : String,
+      receiver_type : TypeRef,
+      call_arg_types : Array(TypeRef)?,
+      call_has_named_args : Bool,
+    ) : Array(TypeRef)?
+      return nil if receiver_type == TypeRef::VOID || @descendant_block_param_types_active
+      hash = base_method_name.rindex('#') || return nil
+      method = base_method_name[(hash + 1)..]
+      recv_desc = @module.get_type_descriptor(receiver_type) || return nil
+      return nil if recv_desc.kind == TypeKind::Union
+      targets = virtual_dispatch_descendant_names(recv_desc.name)
+      return nil if targets.empty?
+      columns = [] of Array(TypeRef)
+      @descendant_block_param_types_active = true
+      begin
+        targets.each do |target|
+          resolved = resolve_method_with_inheritance(target, method) || next
+          types = block_param_types_for_call(
+            resolved, resolved, type_ref_for_name(target), call_arg_types, call_has_named_args,
+          ) || next
+          types.each_with_index do |type, index|
+            columns << [] of TypeRef if index == columns.size
+            columns[index] << type
+          end
+        end
+      ensure
+        @descendant_block_param_types_active = false
+      end
+      return nil if columns.empty?
+      columns.map { |column| union_type_for_value_set(column) || TypeRef::VOID }
     end
 
     private def fallback_block_param_types(
