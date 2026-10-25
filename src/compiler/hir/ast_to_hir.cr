@@ -7183,6 +7183,9 @@ module Adamas::HIR
     @pending_inline_class_receiver : Tuple(String, String)? = nil
     # Track which module provided the current _super body (to avoid infinite recursion)
     @current_super_source_module : String?
+    # `K.m_super_from_P` body name => ancestor `P` whose class method it lowers,
+    # so a `super` inside that body continues above `P` instead of re-entering it.
+    @class_method_super_owners = Hash(String, String).new
     # Current def node (used for parameter type inference in bodies).
     @current_def_node : Adamas::Compiler::Frontend::DefNode?
 
@@ -87588,6 +87591,10 @@ module Adamas::HIR
                invocation_context.forward_arg_ids
              end
 
+      if invocation_context.method_is_class
+        return lower_class_method_super(ctx, node, invocation_context, class_name, method_name, args)
+      end
+
       # Get argument types for mangling
       arg_types = args.map { |arg| ctx.type_of(arg) }
       previous_base = "#{class_name}##{method_name}_previous"
@@ -87991,6 +87998,76 @@ module Adamas::HIR
       ctx.emit(call)
       ctx.register_type(call.id, return_type)
       call.id
+    end
+
+    # `super` inside `def self.m` targets the nearest ancestor class method `m`
+    # (declared there or acquired through `extend`). Class methods are
+    # specialized per receiver class, so the ancestor body is lowered under the
+    # current class: a `self.new` inside it must still build the subclass, as
+    # in `File::Error.new_from_os_error` -> `SystemError::ClassMethods`.
+    private def lower_class_method_super(
+      ctx : LoweringContext,
+      node : Adamas::Compiler::Frontend::SuperNode,
+      invocation_context : InvocationContext,
+      class_name : String,
+      method_name : String,
+      args : Array(ValueId),
+    ) : ValueId
+      class_info = @class_info[class_name]? || @class_info[strip_generic_args(class_name)]?
+      unless class_info
+        raise LoweringError.new("super in class method '#{method_name}' of unknown class #{class_name}", node)
+      end
+      start_owner = @class_method_super_owners[invocation_context.function_name]? || class_name
+      start_info = @class_info[start_owner]? || @class_info[strip_generic_args(start_owner)]?
+      probe_owner = start_info.try(&.parent_name) || @module.class_parents[start_owner]?
+      seen_owners = Set(String).new
+      arg_types = args.map { |arg| ctx.type_of(arg) }
+
+      while probe_owner && seen_owners.add?(probe_owner)
+        owner = probe_owner
+        if entry = lookup_function_def_for_call("#{owner}.#{method_name}", args.size, false, arg_types)
+          def_name, target_def = entry
+          def_arena = function_def_arena_or_current(def_name)
+          call_args = args.dup
+          if params = target_def.params
+            param_idx = 0
+            each_param(params) do |param|
+              next if param.is_block || named_only_separator?(param)
+              if param_idx >= call_args.size
+                default_val = param.default_value
+                unless default_val
+                  raise LoweringError.new(
+                    "super in #{class_name}.#{method_name} passes #{args.size} argument(s); #{def_name} requires parameter '#{param.name.try { |name| safe_slice_to_string(name) } || ""}'",
+                    node,
+                  )
+                end
+                call_args << lower_super_default_argument(ctx, target_def, default_val, def_arena)
+              end
+              param_idx += 1
+            end
+          end
+          call_arg_types = call_args.map { |arg| ctx.type_of(arg) }
+          target_owner = method_owner(def_name)
+          target_owner = owner if target_owner.empty?
+          super_base = "#{class_name}.#{method_name}_super_from_#{module_super_name_fragment(target_owner)}"
+          super_name = mangle_function_name(super_base, call_arg_types)
+          unless @module.has_function?(super_name)
+            @class_method_super_owners[super_name] = target_owner
+            with_arena(resolve_arena_for_def(target_def, def_arena)) do
+              lower_method(class_name, class_info, target_def, call_arg_types, nil, nil, super_name, force_class_method: true)
+            end
+          end
+          return_type = @function_types[super_name]? || TypeRef::VOID
+          call = Call.without_receiver(ctx.next_id, return_type, super_name, call_args)
+          ctx.emit(call)
+          ctx.register_type(call.id, return_type)
+          return call.id
+        end
+        owner_info = @class_info[owner]? || @class_info[strip_generic_args(owner)]?
+        probe_owner = owner_info.try(&.parent_name) || @module.class_parents[owner]?
+      end
+
+      raise LoweringError.new("undefined method '#{method_name}' for super of #{start_owner} class method", node)
     end
 
     private def lower_previous_def(ctx : LoweringContext, node : Adamas::Compiler::Frontend::PreviousDefNode) : ValueId
