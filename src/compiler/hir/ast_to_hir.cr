@@ -77863,6 +77863,30 @@ module Adamas::HIR
       false
     end
 
+    # Instance accessors (`property`, `getter`, `setter`) declared in a module
+    # body are synthesized per includer and never registered under the module
+    # itself, so the function registry alone misses them. Scan the module's
+    # own declarations, which also cover its plain defs.
+    private def source_module_declared_instance_method_family?(module_name : String, method_name : String) : Bool
+      ensure_module_defs_stripped_lookup
+      keys = [module_name]
+      if generic_key = module_defs_stripped_lookup(strip_generic_args(module_name))
+        keys << generic_key unless generic_key == module_name
+      end
+      keys.each do |key|
+        entries = @module_defs[key]? || next
+        entries.each do |mod_node, mod_arena|
+          body = mod_node.body || next
+          defined_instance, _ = collect_defined_method_full_names(key, body, mod_arena)
+          defined_instance.each do |full_name|
+            parts = parse_method_name_compact(strip_type_suffix(full_name))
+            return true if parts.separator == '#' && parts.method == method_name
+          end
+        end
+      end
+      false
+    end
+
     private def source_included_instance_method_family?(owner_name : String, method_name : String) : Bool
       queue = [] of String
       owner_base = strip_generic_args(owner_name)
@@ -77885,6 +77909,7 @@ module Adamas::HIR
         if find_module_def_recursive(mod, method_name, -1, Set(String).new)
           return true
         end
+        return true if source_module_declared_instance_method_family?(mod, method_name)
         mod_base = strip_generic_args(mod)
         if included = @class_included_modules[mod]?
           included.each { |submod| queue << submod }
@@ -77905,6 +77930,7 @@ module Adamas::HIR
         candidates.each do |candidate|
           return true if source_method_family_at_owner?(candidate, method_name, '#')
           return true if source_generic_template_method_family?(candidate, method_name, '#')
+          return true if source_module_declared_instance_method_family?(candidate, method_name)
           return true if source_included_instance_method_family?(candidate, method_name)
         end
         return false
