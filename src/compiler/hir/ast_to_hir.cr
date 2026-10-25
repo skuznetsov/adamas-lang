@@ -102628,16 +102628,25 @@ module Adamas::HIR
             # Program mixins use bare emitted symbols, but their registered
             # lexical module still owns constant lookup and protected access.
             namespace_override = function_namespace_override_for(target_name, base_target_name, name)
-            with_namespace_override_or_clear(namespace_override) do
-              if extra_type_params && !extra_type_params.empty?
-                materialization_producer_path = "def_lower_def"
-                with_isolated_type_param_map(extra_type_params) do
+            # A top-level def resolves names from the program scope, not from
+            # the class whose method demanded it: `Fiber` in a def called from
+            # Crystal::System::Sig must not become Crystal::System::Fiber.
+            old_class = @current_class
+            @current_class = nil
+            begin
+              with_namespace_override_or_clear(namespace_override) do
+                if extra_type_params && !extra_type_params.empty?
+                  materialization_producer_path = "def_lower_def"
+                  with_isolated_type_param_map(extra_type_params) do
+                    lower_def(resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, override_name)
+                  end
+                else
+                  materialization_producer_path = "def_lower_def"
                   lower_def(resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, override_name)
                 end
-              else
-                materialization_producer_path = "def_lower_def"
-                lower_def(resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, override_name)
               end
+            ensure
+              @current_class = old_class
             end
           end
         end
