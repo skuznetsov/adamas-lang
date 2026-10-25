@@ -78066,7 +78066,10 @@ module Adamas::HIR
             next unless call
             # `virtual` controls runtime dispatch only. It never grants source
             # authority: abstract and concrete calls pass through the same
-            # owner/side declaration check below.
+            # owner/side declaration check below. A virtual call does reach
+            # descendant bodies, so a subclass declaration (direct or through
+            # an included module) is authority for it: a class-restricted
+            # parameter keeps one body typed by its restriction.
             name = call.method_name
             next if name.empty? || @module.has_function_with_body?(name)
             base = strip_type_suffix(name)
@@ -78077,6 +78080,8 @@ module Adamas::HIR
               next if method_name.empty?
               next if backend_owned_qualified_intrinsic_call?(call, name, parts, value_types)
               next if qualified_source_call_family_exists?(parts)
+              next if call.virtual && separator == '#' &&
+                      descendant_defines_instance_method?(parts.owner, method_name)
               next if @module.extern_functions.any? do |external|
                         external.name == name || external.name == base ||
                           external.real_name == name || external.real_name == base
