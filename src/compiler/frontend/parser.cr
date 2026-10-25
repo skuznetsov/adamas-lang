@@ -9594,7 +9594,7 @@ module Adamas
                 return PREFIX_ERROR
               end
               span = star_token.span.cover(@arena[value_expr].span)
-              arg = @arena.add_typed(SplatNode.new(span, value_expr))
+              arg = @arena.add_typed(SplatNode.new(span, value_expr, star_token.kind == Token::Kind::StarStar))
             else
               # Parse one argument
               # For typed macro callees (e.g., record), allow name : Type [= value]
@@ -10778,7 +10778,7 @@ module Adamas
             value_expr = parse_op_assign
             return PREFIX_ERROR if value_expr.invalid?
             span = star_token.span.cover(@arena[value_expr].span)
-            return @arena.add_typed(SplatNode.new(span, value_expr))
+            return @arena.add_typed(SplatNode.new(span, value_expr, star_token.kind == Token::Kind::StarStar))
           end
           parse_op_assign
         end
@@ -12679,7 +12679,7 @@ module Adamas
                   value_expr = with_pointer_suffix { parse_op_assign }
                   return PREFIX_ERROR if value_expr.invalid?
                   span = star_token.span.cover(@arena[value_expr].span)
-                  arg_expr = @arena.add_typed(SplatNode.new(span, value_expr))
+                  arg_expr = @arena.add_typed(SplatNode.new(span, value_expr, star_token.kind == Token::Kind::StarStar))
                   have_arg_expr = true
                   args_b << arg_expr
                   pushed = true
@@ -13108,7 +13108,7 @@ module Adamas
                 value = parse_op_assign
                 return PREFIX_ERROR if value.invalid?
                 span = star_tok.span.cover(@arena[value].span)
-                arg = @arena.add_typed(SplatNode.new(span, value))
+                arg = @arena.add_typed(SplatNode.new(span, value, star_tok.kind == Token::Kind::StarStar))
                 indexes_b << arg
               elsif named_arg_start? || ( # Fallback: inside indexer, treat `name: value` as a named argument
                     # even if generic named_arg_start? guard fails for some reason.

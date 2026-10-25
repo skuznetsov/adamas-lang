@@ -114988,6 +114988,11 @@ module Adamas::HIR
               @arena = call_arena
               inner_type = ctx.type_of(inner_val)
               desc = @module.get_type_descriptor(inner_type)
+              if arg_node.double? && desc && desc.name == "NamedTuple"
+                # An empty `**opts` contributes no argument at all. Passing it
+                # positionally would bind it to a parameter it does not name.
+                next
+              end
               if desc && (desc.kind == TypeKind::Tuple || desc.name.starts_with?("Tuple("))
                 # Tuple splat: extract each element as a separate argument
                 elem_types = desc.type_params.reject { |t| t == TypeRef::VOID }
@@ -115147,15 +115152,25 @@ module Adamas::HIR
       trailing_positional_count = 0
       param_index = 0
       saw_splat = false
+      double_splat_after_splat = false
       params.each do |param|
         next if param.is_block || named_only_separator?(param)
         if param.is_splat && !param.is_double_splat
           splat_index = param_index
           saw_splat = true
+        elsif saw_splat && param.is_double_splat
+          double_splat_after_splat = true
         elsif saw_splat
           trailing_positional_count += 1
         end
         param_index += 1
+      end
+      # `**opts` takes no positional argument: ensure_double_splat_arg appends
+      # its NamedTuple after packing. Only an already-present NamedTuple slot
+      # stays outside the splat.
+      if double_splat_after_splat && (last_arg = args.last?)
+        last_name = @module.get_type_descriptor(ctx.type_of(last_arg)).try(&.name) || ""
+        trailing_positional_count += 1 if last_name == "NamedTuple" || last_name.starts_with?("NamedTuple(")
       end
 
       return {args, false} unless splat_index

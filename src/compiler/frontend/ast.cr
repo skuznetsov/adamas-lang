@@ -1034,8 +1034,11 @@ module Adamas
         end
 
         getter expr : ExprId
+        # `**expr`: the operand is a NamedTuple whose entries are named
+        # arguments, not one positional argument.
+        getter? double : Bool
 
-        def initialize(@span : Span, @expr : ExprId)
+        def initialize(@span : Span, @expr : ExprId, @double : Bool = false)
         end
       end
 
