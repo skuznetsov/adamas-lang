@@ -88107,6 +88107,11 @@ module Adamas::HIR
       args : Array(ValueId),
     ) : ValueId
       class_info = @class_info[class_name]? || @class_info[strip_generic_args(class_name)]?
+      # time.cr's `Time::DayOfWeek.from_value` -> `super(value)` reaches
+      # Enum.from_value from an enum, which has no ClassInfo.
+      if class_info.nil? && @enum_info.try(&.has_key?(class_name))
+        class_info = enum_placeholder_class_info(class_name)
+      end
       unless class_info
         raise LoweringError.new("super in class method '#{method_name}' of unknown class #{class_name}", node)
       end

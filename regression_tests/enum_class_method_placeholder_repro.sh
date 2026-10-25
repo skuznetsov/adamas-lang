@@ -106,9 +106,99 @@ end
 LibC.exit(Day.ident(Day::Sun).value + 35)
 CR
 
+cat > "$WORK_DIR/super_int32.cr" <<'CR'
+lib LibC
+  fun exit(status : Int32) : NoReturn
+end
+
+fun __crystal_raise_overflow : NoReturn
+  LibC.exit(99)
+end
+
+struct Int32
+  @[Primitive(:binary)]
+  def ==(other : Int32) : Bool
+  end
+
+  @[Primitive(:binary)]
+  def +(other : Int32) : Int32
+  end
+end
+
+abstract struct Enum
+  def self.from_value(value : Int32) : self
+    new(value)
+  end
+end
+
+enum Day
+  Mon = 1
+  Tue = 2
+  Sun = 7
+
+  def self.from_value(value : Int32) : self
+    value = 7 if value == 0
+    super(value)
+  end
+end
+
+LibC.exit(Day.from_value(0).value + 35)
+CR
+
+cat > "$WORK_DIR/super_int64.cr" <<'CR'
+lib LibC
+  fun exit(status : Int32) : NoReturn
+end
+
+fun __crystal_raise_overflow : NoReturn
+  LibC.exit(99)
+end
+
+struct Int32
+  @[Primitive(:binary)]
+  def ==(other : Int32) : Bool
+  end
+
+  @[Primitive(:binary)]
+  def +(other : Int32) : Int32
+  end
+end
+
+struct Int64
+  @[Primitive(:binary)]
+  def ==(other : Int64) : Bool
+  end
+
+  @[Primitive(:convert)]
+  def to_i : Int32
+  end
+end
+
+abstract struct Enum
+  def self.from_value(value : Int64) : self
+    new(value)
+  end
+end
+
+enum Day : Int64
+  Mon = 1
+  Tue = 2
+  Sun = 7
+
+  def self.from_value(value : Int64) : self
+    value = 7_i64 if value == 0_i64
+    super(value)
+  end
+end
+
+LibC.exit(Day.from_value(0_i64).value.to_i + 35)
+CR
+
 CASES=(
   "inherited_int64:42"
   "inherited_self_return:42"
+  "super_int32:42"
+  "super_int64:42"
 )
 
 exit_code_of() {
