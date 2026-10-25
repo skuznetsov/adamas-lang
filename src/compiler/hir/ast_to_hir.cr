@@ -35682,6 +35682,29 @@ module Adamas::HIR
                 @deferred_classvar_inits << DeferredClassvarInit.new(expr_id, @arena, full_name)
                 STDERR.puts "[DEFERRED_CLASSVAR] nested module #{full_name} cvar=#{cvar_name} (assign)" if env_has?("DEBUG_DEFERRED_CLASSVAR")
               end
+            # Class accessors, as registered for a top-level module body: a
+            # module nested in a class (Fiber::ExecutionContext's
+            # `protected class_getter execution_contexts = ...`) reaches only
+            # this pass.
+            when Adamas::Compiler::Frontend::NodeKind::Getter
+              member = member.unsafe_as(Adamas::Compiler::Frontend::GetterNode)
+              next unless member.is_class?
+              member.specs.each do |spec|
+                register_class_accessor_entry(full_name, spec, :getter, member.visibility)
+              end
+            when Adamas::Compiler::Frontend::NodeKind::Setter
+              member = member.unsafe_as(Adamas::Compiler::Frontend::SetterNode)
+              next unless member.is_class?
+              member.specs.each do |spec|
+                register_class_accessor_entry(full_name, spec, :setter, member.visibility)
+              end
+            when Adamas::Compiler::Frontend::NodeKind::Property
+              member = member.unsafe_as(Adamas::Compiler::Frontend::PropertyNode)
+              next unless member.is_class?
+              member.specs.each do |spec|
+                register_class_accessor_entry(full_name, spec, :getter, member.visibility)
+                register_class_accessor_entry(full_name, spec, :setter, member.visibility)
+              end
             end
           ensure
             @current_class = old_class
