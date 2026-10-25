@@ -26468,6 +26468,7 @@ module Adamas::HIR
       preferred_arena : Adamas::Compiler::Frontend::ArenaLike? = nil,
       source_tag : Symbol = :unknown,
       node_expr_id : Adamas::Compiler::Frontend::ExprId? = nil,
+      callsite_bound : Bool = false,
     ) : TypeRef?
       # Skip expensive body inference when we're inside ensure_monomorphized_type.
       # Return types will be inferred lazily when the method is actually called.
@@ -26479,7 +26480,10 @@ module Adamas::HIR
       if env_get("DEBUG_INFER_BODY") && method_name.includes?("internal_representation")
         STDERR.puts "[INFER_BODY] method=#{method_name} body_size=#{body.try(&.size) || 0} self=#{self_type_name || "nil"}"
       end
-      return nil unless body && !body.empty?
+      unless body && !body.empty?
+        return nil if method_name == "initialize"
+        return ivar_param_only_body_return_type(node, self_type_name, callsite_bound)
+      end
 
       old_body_context = @infer_body_context
       old_method = @current_method
@@ -26601,6 +26605,41 @@ module Adamas::HIR
     private def note_return_inference_unproven_local_read : Nil
       index = @return_infer_unproven_local_reads.size - 1
       @return_infer_unproven_local_reads[index] = true if index >= 0
+    end
+
+    # A bodiless def still evaluates its implicit `@x = x` parameter
+    # assignments, so it returns the last ivar parameter. That value has the
+    # argument's type: a callsite binding (only trusted when the callsite
+    # inference bound this def's params) wins, otherwise only a concrete
+    # annotation is a sound answer (a module restriction is instantiated with
+    # the argument type, which is unknown here).
+    private def ivar_param_only_body_return_type(
+      node : Adamas::Compiler::Frontend::DefNode,
+      self_type_name : String?,
+      callsite_bound : Bool,
+    ) : TypeRef?
+      params = node.params
+      return nil unless params
+      last_ivar_param = nil.as(Adamas::Compiler::Frontend::Parameter?)
+      each_param(params) do |param|
+        next if param.is_block || named_only_separator?(param)
+        last_ivar_param = param if param.is_instance_var
+      end
+      return nil unless param = last_ivar_param
+      if name_slice = param.name
+        param_name = safe_slice_to_string(name_slice) || ""
+        param_name = param_name.lchop('@')
+        if callsite_bound && (locals = @current_typeof_locals)
+          bound = locals[param_name]? || locals["@#{param_name}"]?
+          return bound if bound && bound != TypeRef::VOID
+        end
+      end
+      return nil if param.is_splat || param.is_double_splat
+      return nil unless restriction = param.type_annotation
+      annotation_name = safe_slice_to_string(restriction) || ""
+      return nil if annotation_name.empty? || module_like_type_name?(annotation_name)
+      resolved = annotation_type_ref(annotation_name, self_type_name)
+      resolved == TypeRef::VOID ? nil : resolved
     end
 
     private def infer_concrete_return_type_from_body_inner(
@@ -45530,6 +45569,19 @@ module Adamas::HIR
         end
       ensure
         restore_method_body_lowering_scope(body_scope_snapshot)
+      end
+
+      # `def x=(@x : T); end` has no source body, but its implicit `@x = x`
+      # assignments are the body: the call evaluates to the last assigned
+      # parameter, not Nil (`Fiber.current.execution_context = new(...)` is the
+      # result of `Parallel.default : self`).
+      if last_value.nil? && !is_initialize_method
+        source_body = node.body
+        if source_body.nil? || source_body.empty?
+          if last_auto_assign = auto_assign_params.last?
+            last_value = last_auto_assign[1]
+          end
+        end
       end
 
       if debug_env_filter_match?("DEBUG_L9_BODYLOOP", method_name, base_name, full_name)
@@ -68362,7 +68414,7 @@ module Adamas::HIR
             end
           end
         end
-        inferred = infer_concrete_return_type_from_body(node, owner_name)
+        inferred = infer_concrete_return_type_from_body(node, owner_name, callsite_bound: true)
         if env_get("DEBUG_INFER_CALLSITE")
           method_name = (safe_slice_to_string(node.name) || "")
           if method_name.includes?(env_get("DEBUG_INFER_CALLSITE").to_s)
@@ -129905,6 +129957,22 @@ module Adamas::HIR
       end
     end
 
+    private def bodiless_ivar_param_setter?(method_name : String, arg_types : Array(TypeRef)) : Bool
+      # The specialization (`x=$Arg`) is keyed apart from the restriction
+      # overload (`x=$M`); select the def the call will lower.
+      entry = lookup_function_def_for_call(method_name, 1, false, arg_types)
+      return false unless entry
+      def_node = entry[1]
+      return false if def_node.return_type
+      if body = def_node.body
+        return false unless body.empty?
+      end
+      return false unless params = def_node.params
+      positional = params.reject { |param| param.is_block || named_only_separator?(param) }
+      positional.size == 1 && positional[0].is_instance_var &&
+        !positional[0].is_splat && !positional[0].is_double_splat
+    end
+
     # Assignment receivers can be modules, unions, or class hierarchies just
     # like ordinary calls. Reuse their target-demand path instead of emitting a
     # direct call to a module accessor that has no standalone implementation.
@@ -129927,6 +129995,16 @@ module Adamas::HIR
       end
       remember_callsite_arg_types(method_name, arg_types)
       lower_function_if_needed(method_name)
+      # An unannotated setter (`def x=(@x : M); end`) has no registered return
+      # type until its specialization is lowered, and that lowering may be
+      # deferred. Its implicit `@x = x` body returns the argument, so the
+      # assignment expression has the argument type, not Void.
+      if return_type == TypeRef::VOID
+        return_type = get_function_return_type(method_name)
+        if return_type == TypeRef::VOID && bodiless_ivar_param_setter?(method_name, arg_types)
+          return_type = arg_types[0]
+        end
+      end
       if call_virtual
         ensure_virtual_call_targets_lowered(ctx, object_id, setter_name, arg_types,
           false, false, false, false)
