@@ -5224,14 +5224,14 @@ module Adamas
                   @no_type_declaration -= 1
                   args_b << arg
                 end
-              elsif current_token.kind == Token::Kind::Star
+              elsif current_token.kind.in?(Token::Kind::Star, Token::Kind::StarStar)
                 star_token = current_token
                 advance
                 skip_trivia
                 value = parse_expression(0)
                 return PREFIX_ERROR if value.invalid?
                 span = star_token.span.cover(@arena[value].span)
-                arg = @arena.add_typed(SplatNode.new(span, value))
+                arg = @arena.add_typed(SplatNode.new(span, value, star_token.kind == Token::Kind::StarStar))
                 args_b << arg
               else
                 # Positional argument
@@ -5322,14 +5322,14 @@ module Adamas
                     args_b << value
                     named_b << NamedArgument.new(name_token.slice, value, name_token.span, @arena[value].span)
                   end
-                elsif current_token.kind == Token::Kind::Star
+                elsif current_token.kind.in?(Token::Kind::Star, Token::Kind::StarStar)
                   star_token = current_token
                   advance
                   skip_trivia
                   value = parse_expression(0)
                   break if value.invalid?
                   span = star_token.span.cover(@arena[value].span)
-                  args_b << @arena.add_typed(SplatNode.new(span, value))
+                  args_b << @arena.add_typed(SplatNode.new(span, value, star_token.kind == Token::Kind::StarStar))
                 else
                   @no_type_declaration += 1
                   arg = parse_expression(0)

@@ -87915,6 +87915,14 @@ module Adamas::HIR
           if callable
             super_method_name = candidate_name
             resolved_args = candidate_args
+            candidate_arg_types = candidate_args.map { |arg| ctx.type_of(arg) }
+            if layout_name = super_double_splat_layout_name(base_method_name, candidate_def, candidate_arg_types)
+              unless @function_defs.has_key?(layout_name)
+                set_function_def_entry(layout_name, candidate_def, false)
+                set_function_def_arena(layout_name, resolve_arena_for_def(candidate_def, candidate_arena))
+              end
+              super_method_name = layout_name
+            end
             break
           end
         end
@@ -88050,7 +88058,8 @@ module Adamas::HIR
           target_owner = method_owner(def_name)
           target_owner = owner if target_owner.empty?
           super_base = "#{class_name}.#{method_name}_super_from_#{module_super_name_fragment(target_owner)}"
-          super_name = mangle_function_name(super_base, call_arg_types)
+          super_name = super_double_splat_layout_name(super_base, target_def, call_arg_types) ||
+                       mangle_function_name(super_base, call_arg_types)
           unless @module.has_function?(super_name)
             @class_method_super_owners[super_name] = target_owner
             with_arena(resolve_arena_for_def(target_def, def_arena)) do
@@ -138545,6 +138554,23 @@ module Adamas::HIR
       entries = concrete_named_tuple_entries(layout_type)
       return nil unless entries && !entries.empty?
       layout_type
+    end
+
+    # An untyped `**opts` body reads its NamedTuple layout back from a
+    # `_double_splat` name (`double_splat_layout_type_from_name`), as the call
+    # path specializes it per layout. A super target needs the same name, or
+    # its body binds `opts` as an empty NamedTuple and drops every entry.
+    private def super_double_splat_layout_name(
+      base : String,
+      func_def : Adamas::Compiler::Frontend::DefNode,
+      arg_types : Array(TypeRef),
+    ) : String?
+      return nil if arg_types.empty?
+      return nil unless def_has_untyped_double_splat_param?(func_def)
+      layout = concrete_named_tuple_entries(arg_types.last)
+      return nil unless layout && !layout.empty?
+      name = mangle_function_name(base, arg_types)
+      name.ends_with?("_double_splat") ? name : "#{name}_double_splat"
     end
 
     private def def_has_untyped_double_splat_param?(func_def : Adamas::Compiler::Frontend::DefNode) : Bool
