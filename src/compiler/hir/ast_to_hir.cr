@@ -14848,6 +14848,9 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::AliasNode
         nested_name = safe_slice_to_string(node.name) || ""
         set << nested_name unless nested_name.empty?
+      when Adamas::Compiler::Frontend::LibNode
+        nested_name = safe_slice_to_string(node.name) || ""
+        set << nested_name unless nested_name.empty?
       end
     end
 
@@ -15120,6 +15123,7 @@ module Adamas::HIR
       node : Adamas::Compiler::Frontend::LibNode,
       annotations : Array(Adamas::Compiler::Frontend::AnnotationNode)? = nil,
       phase : Symbol = :all,
+      qualified_name : String? = nil,
     )
       if phase == :all || phase == :types
         if annotations && !annotations.empty?
@@ -15129,7 +15133,7 @@ module Adamas::HIR
         end
       end
 
-      lib_name = (safe_slice_to_string(node.name) || "")
+      lib_name = qualified_name || (safe_slice_to_string(node.name) || "")
       @module.register_lib_name(lib_name) if phase == :all || phase == :types
       debug_lib_member = if filter = env_get("DEBUG_LIB_MEMBER")
                            filter == "1" || lib_name.includes?(filter)
@@ -15154,6 +15158,17 @@ module Adamas::HIR
       end
 
       register_lib_body(node, lib_name, debug_lib_member, phase)
+    end
+
+    # A lib declared in a class or module body is the nested type
+    # `Owner::LibName`, like a nested struct (mach_o.cr's
+    # Crystal::System::MachO::LibMachO). Its lib-local types are registered
+    # under that qualified name, and the owner's nested-name set lets the
+    # owner's methods spell them `LibMachO::Header`.
+    private def register_nested_lib(node : Adamas::Compiler::Frontend::LibNode, owner_name : String) : Nil
+      lib_name = safe_slice_to_string(node.name) || ""
+      return if lib_name.empty?
+      register_lib(node, nil, :all, qualified_nested_type_name(owner_name, lib_name))
     end
 
     private def register_lib_body(
@@ -30687,6 +30702,8 @@ module Adamas::HIR
             @current_class = old_class
             full_alias_name = qualified_nested_type_name(module_name, alias_name)
             register_type_alias(full_alias_name, target_name)
+          when Adamas::Compiler::Frontend::LibNode
+            register_nested_lib(member, module_name)
           end
         end
       end
@@ -35220,6 +35237,8 @@ module Adamas::HIR
             full_class_name = qualified_nested_type_name(full_name, class_name)
             register_type_alias(full_class_name, full_class_name)
             register_class_aliases(member, full_class_name)
+          elsif member.is_a?(Adamas::Compiler::Frontend::LibNode)
+            register_nested_lib(member, full_name)
           end
         end
         # Generic nested classes are templates, not concrete class bodies. Make
@@ -37174,6 +37193,8 @@ module Adamas::HIR
                   next if nested_name.empty?
                   full_nested_name = qualified_nested_type_name(class_name, nested_name)
                   register_nested_module(member, full_nested_name)
+                when Adamas::Compiler::Frontend::LibNode
+                  register_nested_lib(member, class_name)
                 when Adamas::Compiler::Frontend::MacroDefNode
                   register_macro(member, class_name)
                 end
@@ -37642,6 +37663,8 @@ module Adamas::HIR
             trace_nested_registration LoweringBinaryTrace::Event::NestedRegisterStart, full_nested_name
             register_nested_module(member, full_nested_name)
             trace_nested_registration LoweringBinaryTrace::Event::NestedRegisterDone, full_nested_name
+          when Adamas::Compiler::Frontend::NodeKind::Lib
+            register_nested_lib(member.unsafe_as(Adamas::Compiler::Frontend::LibNode), nested_prefix) unless specialized_class
           when Adamas::Compiler::Frontend::NodeKind::MacroDef
             member = member.unsafe_as(Adamas::Compiler::Frontend::MacroDefNode)
             macro_name = safe_slice_to_string(member.name) || ""
@@ -104460,7 +104483,11 @@ module Adamas::HIR
                   end
                 end
                 if class_name_str.nil?
-                  if class_like_namespace?(resolved) || module_like_type_name?(resolved) ||
+                  # `@module.is_lib?(name)` above only sees top-level libs; a lib
+                  # nested in the caller's namespace (`LibMachO` inside
+                  # Crystal::System::MachO) is a lib only after resolution.
+                  if @module.is_lib?(resolved) ||
+                     class_like_namespace?(resolved) || module_like_type_name?(resolved) ||
                      primitive_self_type(resolved) || @enum_info.try(&.has_key?(resolved))
                     class_name_str = resolved
                   elsif is_module_method?(resolved, method_name)
@@ -104559,7 +104586,8 @@ module Adamas::HIR
                 end
                 # Prefer class/module resolution when the identifier maps to a known type.
                 if class_name_str.nil?
-                  if class_like_namespace?(resolved_name) || module_like_type_name?(resolved_name) ||
+                  if @module.is_lib?(resolved_name) ||
+                     class_like_namespace?(resolved_name) || module_like_type_name?(resolved_name) ||
                      @enum_info.try(&.has_key?(resolved_name)) || primitive_self_type(resolved_name)
                     class_name_str = resolved_name
                   elsif is_module_method?(resolved_name, method_name)
