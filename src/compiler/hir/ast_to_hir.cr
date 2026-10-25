@@ -33833,9 +33833,18 @@ module Adamas::HIR
       init_capture : InitParamsCapture? = nil,
     ) : Nil
       mark_macro_generated_parameter_def(def_node)
+      method_name = def_method_name_from_node(def_node, @arena) || ""
+      # `@[Primitive(:k)]` written before a macro conditional belongs to the def
+      # the macro produces (stdlib `Reference.pre_initialize`). Consuming it
+      # here keeps it from attaching to the next def in the class body.
+      if (prim = @pending_primitive_kind) && !method_name.empty?
+        @pending_primitive_kind = nil
+        separator = def_receiver_is_self_from_node(def_node, @arena) ? "." : "#"
+        @module.register_primitive("#{class_name}#{separator}#{method_name}", prim)
+      end
       register_type_method_from_def(def_node, class_name)
 
-      return unless (def_method_name_from_node(def_node, @arena) || "") == "initialize"
+      return unless method_name == "initialize"
       return unless ivars && offset_ref
 
       if init_capture && init_capture.source == :none
