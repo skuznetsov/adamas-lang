@@ -117,10 +117,13 @@ module Adamas::HIR
     # box. Env-bound entries are owned by their materialized FieldGet;
     # entry-required parent captures are accepted by name because their
     # boxes dominate the function body.
+    # `enum_name` keeps the identity of an enum payload stored in its
+    # base-integer carrier, so a PointerLoad from the box reads back as the enum.
     record BoxedLocal,
       box_ptr : ValueId,
       payload_type : TypeRef,
-      owner_local : ValueId? = nil
+      owner_local : ValueId? = nil,
+      enum_name : String? = nil
 
     # A truthy condition can lend its unwrapped payload to one exact direct read
     # of that captured name. The carrier is either an owner-bound boxed local or
@@ -567,8 +570,9 @@ module Adamas::HIR
       box_ptr : ValueId,
       payload_type : TypeRef,
       owner_local : ValueId? = nil,
+      enum_name : String? = nil,
     ) : Nil
-      @boxed_locals[name] = BoxedLocal.new(box_ptr, payload_type, owner_local)
+      @boxed_locals[name] = BoxedLocal.new(box_ptr, payload_type, owner_local, enum_name)
     end
 
     def lookup_boxed_local(name : String) : BoxedLocal?
@@ -12547,6 +12551,15 @@ module Adamas::HIR
       return false unless numeric_primitive?(receiver_type)
       return false unless enum_name = enum_value_name_for(ctx, value_id)
       enum_base_type(enum_name) == receiver_type
+    end
+
+    # Flow-typed local inference type for a local bound to `value_id`. An enum value
+    # is stored in its base-integer carrier, but `errno = Errno.new(ret)` must still
+    # infer as `Errno` so a later `from_os_error(msg, errno)` matches an
+    # `Errno | WinError | Nil` restriction instead of seeing a bare Int32.
+    private def typeof_local_type_for_value(ctx : LoweringContext, value_id : ValueId, storage_type : TypeRef) : TypeRef
+      return storage_type unless enum_carrier_receiver?(ctx, value_id, storage_type)
+      enum_tracked_type(ctx, value_id)
     end
 
     # Argument type for an operator that lowers to an ordinary method call
@@ -86317,15 +86330,20 @@ module Adamas::HIR
         # Lookup is owner-aware so same-name locals in later lexical scopes
         # do not read a stale box.
         if box_info = ctx.lookup_boxed_local_for_local(name, local_id)
+          box_enum = box_info.enum_name
           if narrowed_id = ctx.take_boxed_local_narrowing(name, local_id)
             copy = Copy.new(ctx.next_id, ctx.type_of(narrowed_id), narrowed_id)
             ctx.emit(copy)
             ctx.propagate_runtime_type_identity(narrowed_id, copy.id)
+            copy_enum = enum_value_name_for(ctx, narrowed_id)
+            copy_enum ||= box_enum if ctx.type_of(narrowed_id) == box_info.payload_type
+            track_enum_value(copy.id, copy_enum) if copy_enum
             return copy.id
           end
           load = PointerLoad.new(ctx.next_id, box_info.payload_type, box_info.box_ptr)
           ctx.emit(load)
           ctx.register_type(load.id, box_info.payload_type)
+          track_enum_value(load.id, box_enum) if box_enum
           return load.id
         end
 
@@ -125751,8 +125769,11 @@ module Adamas::HIR
                                       end
                            ctx.register_local(param_name, arg_id)
                            ctx.register_type(arg_id, use_type)
-                           update_typeof_local(param_name, use_type)
-                           update_typeof_local_name(param_name, get_type_name_from_ref(use_type))
+                           # A yielded enum travels in its base-integer carrier; the
+                           # param still infers as the enum (`yield Errno.new(1)`).
+                           typeof_type = typeof_local_type_for_value(ctx, arg_id, use_type)
+                           update_typeof_local(param_name, typeof_type)
+                           update_typeof_local_name(param_name, get_type_name_from_ref(typeof_type))
                          else
                            ctx.register_local(param_name, arg_id)
                            ctx.register_type(arg_id, ctx.type_of(arg_id))
@@ -129653,6 +129674,25 @@ module Adamas::HIR
     # ASSIGNMENT
     # ═══════════════════════════════════════════════════════════════════════
 
+    # Enum identity of a value stored in a box whose payload is the enum's
+    # base-integer carrier; nil for any other value.
+    private def boxed_enum_name(ctx : LoweringContext, value_id : ValueId, payload_type : TypeRef) : String?
+      enum_carrier_receiver?(ctx, value_id, payload_type) ? enum_value_name_for(ctx, value_id) : nil
+    end
+
+    # A write through a box replaces the box's enum identity with the stored
+    # value's: after `v = Errno::EPERM; ...; v = 3`, reads of `v` are Int32.
+    private def retag_boxed_local_enum(
+      ctx : LoweringContext,
+      name : String,
+      box_info : LoweringContext::BoxedLocal,
+      value_id : ValueId,
+    ) : Nil
+      enum_name = boxed_enum_name(ctx, value_id, box_info.payload_type)
+      return if enum_name == box_info.enum_name
+      ctx.register_boxed_local(name, box_info.box_ptr, box_info.payload_type, box_info.owner_local, enum_name)
+    end
+
     private def rebind_stale_boxed_local(
       ctx : LoweringContext,
       name : String,
@@ -129671,7 +129711,7 @@ module Adamas::HIR
       # local instead of a PointerLoad.
       ctx.register_local(name, value_id)
       ctx.register_debug_local(name, value_id)
-      ctx.register_boxed_local(name, box_info.box_ptr, box_info.payload_type, value_id)
+      ctx.register_boxed_local(name, box_info.box_ptr, box_info.payload_type, value_id, boxed_enum_name(ctx, value_id, box_info.payload_type))
       ctx.propagate_runtime_type_identity(value_id, store.id)
       if enum_name = enum_value_name_for(ctx, value_id)
         enum_map = @enum_value_types ||= {} of ValueId => String
@@ -129683,8 +129723,9 @@ module Adamas::HIR
       if @regex_match_results.includes?(value_id)
         @regex_match_results.add(store.id)
       end
-      update_typeof_local(name, value_type)
-      if concrete_name = concrete_type_name_for(value_type)
+      typeof_type = typeof_local_type_for_value(ctx, value_id, value_type)
+      update_typeof_local(name, typeof_type)
+      if concrete_name = concrete_type_name_for(typeof_type)
         existing_name = lookup_typeof_local_name(name)
         if existing_name.nil? || module_like_type_name?(existing_name)
           update_typeof_local_name(name, concrete_name)
@@ -129718,6 +129759,7 @@ module Adamas::HIR
             ctx.emit(store)
             ctx.register_type(store.id, box_info.payload_type)
             ctx.discard_boxed_local_narrowing(name, current_local)
+            retag_boxed_local_enum(ctx, name, box_info, value_id)
             return store.id
           end
         elsif box_info = ctx.lookup_boxed_local(name)
@@ -129801,8 +129843,9 @@ module Adamas::HIR
           if @regex_match_results.includes?(value_id)
             @regex_match_results.add(copy.id)
           end
-          update_typeof_local(name, value_type)
-          if concrete_name = concrete_type_name_for(value_type)
+          typeof_type = typeof_local_type_for_value(ctx, value_id, value_type)
+          update_typeof_local(name, typeof_type)
+          if concrete_name = concrete_type_name_for(typeof_type)
             existing_name = lookup_typeof_local_name(name)
             if existing_name.nil? || module_like_type_name?(existing_name)
               update_typeof_local_name(name, concrete_name)
@@ -129850,8 +129893,9 @@ module Adamas::HIR
           if @regex_match_results.includes?(value_id)
             @regex_match_results.add(copy.id)
           end
-          update_typeof_local(name, storage_type)
-          if concrete_name = concrete_type_name_for(storage_type)
+          typeof_type = typeof_local_type_for_value(ctx, value_id, storage_type)
+          update_typeof_local(name, typeof_type)
+          if concrete_name = concrete_type_name_for(typeof_type)
             update_typeof_local_name(name, concrete_name)
           end
           if ctx.entry_box_required?(name) && !ctx.lookup_boxed_local(name)
@@ -131028,6 +131072,7 @@ module Adamas::HIR
             ctx.emit(store)
             ctx.register_type(store.id, box_info.payload_type)
             ctx.discard_boxed_local_narrowing(name, current_local)
+            retag_boxed_local_enum(ctx, name, box_info, value_id)
             return store.id
           end
         elsif box_info = ctx.lookup_boxed_local(name)
@@ -131064,8 +131109,9 @@ module Adamas::HIR
             enum_map = @enum_value_types ||= {} of ValueId => String
             enum_map[copy.id] = enum_name
           end
-          update_typeof_local(name, value_type)
-          if concrete_name = concrete_type_name_for(value_type)
+          typeof_type = typeof_local_type_for_value(ctx, value_id, value_type)
+          update_typeof_local(name, typeof_type)
+          if concrete_name = concrete_type_name_for(typeof_type)
             existing_name = lookup_typeof_local_name(name)
             if existing_name.nil? || module_like_type_name?(existing_name)
               update_typeof_local_name(name, concrete_name)
@@ -131086,8 +131132,9 @@ module Adamas::HIR
             enum_map[local.id] = enum_name
             enum_map[copy.id] = enum_name
           end
-          update_typeof_local(name, value_type)
-          if concrete_name = concrete_type_name_for(value_type)
+          typeof_type = typeof_local_type_for_value(ctx, value_id, value_type)
+          update_typeof_local(name, typeof_type)
+          if concrete_name = concrete_type_name_for(typeof_type)
             update_typeof_local_name(name, concrete_name)
           end
           copy.id
@@ -132854,6 +132901,7 @@ module Adamas::HIR
       param_types : Array(TypeRef)?,
       arena : Adamas::Compiler::Frontend::ArenaLike,
       parent_locals : Hash(String, ValueId),
+      write_enums : Hash(String, String?)? = nil,
     ) : Array({String, ValueId, TypeRef})
       return captures if written_values.empty?
       old_locals = @current_typeof_locals
@@ -132888,6 +132936,21 @@ module Adamas::HIR
                          end
             if value_type && element_idx >= 0
               value_type = tuple_element_type(value_type, element_idx)
+            end
+            if write_enums
+              # The enum every write stores, or nil once any write is not that enum.
+              write_enum = if value_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
+                             if element_idx < 0 && (lvid = parent_locals[(safe_slice_to_string(value_node.name) || "")]?)
+                               enum_value_name_for(ctx, lvid)
+                             end
+                           elsif value_type
+                             enum_name_for_type_ref(value_type)
+                           end
+              if !write_enums.has_key?(cap_name)
+                write_enums[cap_name] = write_enum
+              elsif write_enums[cap_name] != write_enum
+                write_enums[cap_name] = nil
+              end
             end
             next unless value_type
             next if null_type_ref?(value_type)
@@ -133156,13 +133219,15 @@ module Adamas::HIR
       ctx : LoweringContext,
       captures : Array({String, ValueId, TypeRef}),
       written_captures : Set(String),
+      write_enums : Hash(String, String?),
     ) : Array(CapturedVar)
       captured_vars = [] of CapturedVar
       idx = 0
       while idx < captures.size
         capture = captures.unsafe_fetch(idx)
         cap_name = capture[0]
-        captured_vars << capture_var_for_env(ctx, cap_name, capture[1], capture[2], written_captures.includes?(cap_name))
+        written = written_captures.includes?(cap_name)
+        captured_vars << capture_var_for_env(ctx, cap_name, capture[1], capture[2], written, written ? write_enums[cap_name]? : nil)
         idx += 1
       end
       captured_vars
@@ -133195,6 +133260,7 @@ module Adamas::HIR
       parent_vid : ValueId,
       cap_type : TypeRef,
       written : Bool,
+      write_enum : String? = nil,
     ) : CapturedVar
       if cap_name == "self"
         return CapturedVar.new(
@@ -133218,6 +133284,15 @@ module Adamas::HIR
                 else
                   hoist_box_for_local(ctx, cap_name, box_payload_type, parent_vid)
                 end
+      # Parent reads after the block see the block's writes. The box keeps its
+      # enum identity only if every block write stores that same enum; after
+      # `syscall { v = 3 }` a parent read of `v` is Int32 again. The block's own
+      # reads stay on the carrier: a closure may run after any later write.
+      if written && (box_info = ctx.lookup_boxed_local_for_local(cap_name, parent_vid))
+        if (box_enum = box_info.enum_name) && write_enum != box_enum
+          ctx.register_boxed_local(cap_name, box_info.box_ptr, box_info.payload_type, box_info.owner_local, nil)
+        end
+      end
 
       CapturedVar.new(
         box_ptr,
@@ -133367,6 +133442,7 @@ module Adamas::HIR
       # the widened shared-cell payload type. Later reads resolve the box by
       # that original owner ValueId.
       owner_local = ctx.lookup_local(name) || initial_value
+      enum_name = boxed_enum_name(ctx, initial_value, payload_type)
       box_ptr = if ctx.entry_box_required?(name)
                   emit_capture_box(ctx, payload_type)
                 else
@@ -133376,7 +133452,7 @@ module Adamas::HIR
       seed = PointerStore.new(ctx.next_id, payload_type, box_ptr, initial_value)
       ctx.emit(seed)
       ctx.register_type(seed.id, payload_type)
-      ctx.register_boxed_local(name, box_ptr, payload_type, owner_local)
+      ctx.register_boxed_local(name, box_ptr, payload_type, owner_local, enum_name)
       box_ptr
     end
 
@@ -133745,8 +133821,9 @@ module Adamas::HIR
       proc_literal_arena : Adamas::Compiler::Frontend::ArenaLike = @arena
       written_values = {} of String => Array({ExprId, Int32})
       written_captures = detect_written_captures(node.body, capture_names, proc_literal_arena, written_values)
-      captures = widen_written_capture_types(ctx, captures, written_values, node.params, proc_param_types, proc_literal_arena, parent_locals)
-      captured_vars = captured_vars_for_env(ctx, captures, written_captures)
+      write_enums = {} of String => String?
+      captures = widen_written_capture_types(ctx, captures, written_values, node.params, proc_param_types, proc_literal_arena, parent_locals, write_enums)
+      captured_vars = captured_vars_for_env(ctx, captures, written_captures, write_enums)
 
       # Enum value tracking is per-function, as in lower_method: the literal's
       # ValueIds restart at zero and must neither read nor clobber the
@@ -134074,6 +134151,7 @@ module Adamas::HIR
             ctx.emit(store)
             ctx.register_type(store.id, box_info.payload_type)
             ctx.discard_boxed_local_narrowing(name, current_local)
+            retag_boxed_local_enum(ctx, name, box_info, stored_value)
             return
           end
         end
@@ -134090,8 +134168,9 @@ module Adamas::HIR
       ctx.register_local(name, value_id)
       ctx.mark_block_parameter_binding(name, value_id)
       ctx.register_type(value_id, value_type)
-      update_typeof_local(name, value_type)
-      update_typeof_local_name(name, get_type_name_from_ref(value_type))
+      typeof_type = typeof_local_type_for_value(ctx, value_id, value_type)
+      update_typeof_local(name, typeof_type)
+      update_typeof_local_name(name, get_type_name_from_ref(typeof_type))
       track_enum_value(value_id, get_type_name_from_ref(value_type))
     end
 
@@ -134274,7 +134353,7 @@ module Adamas::HIR
         end
       end
       register_inline_block_parameter(ctx, name, value_id)
-      value_type = ctx.type_of(value_id)
+      value_type = typeof_local_type_for_value(ctx, value_id, ctx.type_of(value_id))
       update_typeof_local(name, value_type)
       update_typeof_local_name(name, get_type_name_from_ref(value_type)) if value_type != TypeRef::VOID
       track_enum_value(value_id, get_type_name_from_ref(value_type)) if value_type != TypeRef::VOID
@@ -134290,8 +134369,9 @@ module Adamas::HIR
       type = ctx.type_of(value)
       ctx.register_local(name, value)
       ctx.mark_block_parameter_binding(name, value)
-      update_typeof_local(name, type)
-      update_typeof_local_name(name, proc_source_type_name(type, ctx.type_literal?(value)))
+      typeof_type = typeof_local_type_for_value(ctx, value, type)
+      update_typeof_local(name, typeof_type)
+      update_typeof_local_name(name, proc_source_type_name(typeof_type, ctx.type_literal?(value)))
       track_enum_value(value, get_type_name_from_ref(type))
     end
 
@@ -134684,25 +134764,25 @@ module Adamas::HIR
         end
       end
 
+      # Capture typing and the capture boxes and cells work on the enclosing
+      # function, so they must read and extend that function's enum ledger, not
+      # the block function's fresh one; otherwise a captured
+      # `errno = Errno.new(r)` box reads back as a bare Int32 after the block.
+      block_proc_ledger = @enum_value_types
+      @enum_value_types = saved_enum_value_types
       capture_names = capture_name_set(captures)
       written_values = {} of String => Array({ExprId, Int32})
       written_captures = detect_written_captures(block_node.body, capture_names, block_arena, written_values)
       pattern_capture_names.each { |name| written_captures.add(name) }
-      captures = widen_written_capture_types(ctx, captures, written_values, block_node.params, param_types || proc_param_types, block_arena, parent_locals)
+      write_enums = {} of String => String?
+      captures = widen_written_capture_types(ctx, captures, written_values, block_node.params, param_types || proc_param_types, block_arena, parent_locals, write_enums)
       previous_capture_cells = {} of String => {String, String, TypeRef}
       new_capture_cells = Set(String).new
       previous_prefer_cell = {} of String => Bool
       captured_vars = [] of CapturedVar
 
       if heap_proc
-        captured_vars = captured_vars_for_env(ctx, captures, written_captures)
-
-        unless captured_vars.empty?
-          env_param = proc_func.add_param("__closure_env", TypeRef::POINTER)
-          proc_ctx.register_local("__closure_env", env_param.id)
-          proc_ctx.register_type(env_param.id, TypeRef::POINTER)
-          materialize_env_captures(proc_ctx, env_param.id, captured_vars)
-        end
+        captured_vars = captured_vars_for_env(ctx, captures, written_captures, write_enums)
       else
         # Runtime-yield block callbacks are still raw function pointers. Keep the
         # legacy closure-cell path here; heap Proc object materialization is used
@@ -134721,7 +134801,18 @@ module Adamas::HIR
           @closure_ref_cells[cap_name] = {class_name, cell_name, cap_type}
           @closure_ref_prefer_cell.add(cap_name) if written_captures.includes?(cap_name)
         end
+      end
+      saved_enum_value_types = @enum_value_types
+      @enum_value_types = block_proc_ledger
 
+      if heap_proc
+        unless captured_vars.empty?
+          env_param = proc_func.add_param("__closure_env", TypeRef::POINTER)
+          proc_ctx.register_local("__closure_env", env_param.id)
+          proc_ctx.register_type(env_param.id, TypeRef::POINTER)
+          materialize_env_captures(proc_ctx, env_param.id, captured_vars)
+        end
+      else
         # Bind captured lexical `self` into the proc context so implicit receiver
         # calls inside the block resolve as instance calls, not bare extern calls.
         if captures.any? { |name, _, _| name == "self" }
@@ -135177,6 +135268,7 @@ module Adamas::HIR
               ctx.emit(store)
               ctx.register_type(store.id, box_info.payload_type)
               ctx.discard_boxed_local_narrowing(name, local_id)
+              retag_boxed_local_enum(ctx, name, box_info, get.id)
             else
               copy = Copy.new(ctx.next_id, entry.cell_type, get.id)
               ctx.emit(copy)
