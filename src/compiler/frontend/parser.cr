@@ -662,7 +662,10 @@ module Adamas
           # Tolerate stray branch keywords (else/elsif/rescue/ensure/when) that can
           # appear after macro fast-forwarding or partial recovery. Skip them and
           # continue parsing subsequent statements to avoid cascading diagnostics.
-          if @recovery_mode && current_token.kind.in?(Token::Kind::Else, Token::Kind::Elsif, Token::Kind::Rescue, Token::Kind::Ensure, Token::Kind::When)
+          # Followed by ` : ` the keyword is a type declaration name instead
+          # (`when : Int64`, a reparsed `record` macro argument).
+          if @recovery_mode && current_token.kind.in?(Token::Kind::Else, Token::Kind::Elsif, Token::Kind::Rescue, Token::Kind::Ensure, Token::Kind::When) &&
+             !next_comes_colon_space?
             span = current_token.span
             advance
             skip_statement_end
@@ -10635,12 +10638,12 @@ module Adamas
               identifier_token = token
               identifier_slice = stable_identifier_token_slice(identifier_token)
               advance
-              space_consumed = current_token.kind == Token::Kind::Whitespace
               skip_trivia
 
               # Check for type annotation: keyword : Type
-              # After skip_trivia, we should be at the colon
-              if space_consumed && current_token.kind == Token::Kind::Colon && @no_type_declaration == 0
+              # next_comes_colon_space? already proved a same-line gap before
+              # the colon; the default lexer mode emits no whitespace tokens.
+              if current_token.kind == Token::Kind::Colon && @no_type_declaration == 0
                 # This is type declaration: else : Type = value
                 parse_type_declaration_from_identifier(identifier_token.span, identifier_slice)
               else
@@ -13489,6 +13492,20 @@ current_token.kind == Token::Kind::Identifier &&
           token.kind == Token::Kind::LParen
         end
 
+        # `show when : Int64`: a keyword followed by ` : ` starts a typed
+        # argument (Crystal's parse_call_args_space_consumed), as
+        # try_parse_call_args_without_parens already accepts.
+        private def keyword_type_declaration_argument_start?(token : Token) : Bool
+          return false unless token.kind.in?(Token::Kind::If, Token::Kind::Unless,
+                                Token::Kind::Else, Token::Kind::Elsif,
+                                Token::Kind::When, Token::Kind::Then,
+                                Token::Kind::Rescue, Token::Kind::Ensure,
+                                Token::Kind::While, Token::Kind::Until,
+                                Token::Kind::End)
+          return false unless token.span.start_offset == current_token.span.start_offset
+          next_comes_colon_space?
+        end
+
         private def call_without_parens_disallowed?(token : Token, allow_unary_prefix : Bool = false) : Bool
           if allow_unary_prefix && token.kind.in?(Token::Kind::Plus, Token::Kind::Minus)
             next_tok = peek_token(1)
@@ -13508,6 +13525,7 @@ current_token.kind == Token::Kind::Identifier &&
             next_tok = peek_token(1)
             return next_tok.kind != Token::Kind::Greater
           end
+          return false if keyword_type_declaration_argument_start?(token)
           case token.kind
           when Token::Kind::Newline, Token::Kind::EOF,
                Token::Kind::Semicolon, Token::Kind::Then,
