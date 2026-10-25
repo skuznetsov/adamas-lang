@@ -102413,6 +102413,12 @@ module Adamas::HIR
                 if module_ref != TypeRef::VOID
                   if desc = @module.get_type_descriptor(module_ref)
                     if desc.kind == TypeKind::Module || module_like_type_name?(desc.name)
+                      # A value typed as a module whose includers are all classes
+                      # is an includer instance; calls on it dispatch by type id to
+                      # the includers' copies of this def, lowered with their own
+                      # layout. With self = module the body has no ivars, so `@x`
+                      # fell back to unrelated methods named `x`.
+                      return if @hierarchy.class_only_includers?(owner)
                       materialization_producer_path = "instance_module_lower_method"
                       old_class = @current_class
                       @current_class = owner

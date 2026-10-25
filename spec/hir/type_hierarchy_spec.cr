@@ -32,6 +32,38 @@ describe Adamas::HIR::TypeHierarchy do
     h.dispatch_targets("M1").should eq(%w(C D))
   end
 
+  it "reports class-only includers through included modules" do
+    h = build_hierarchy(%w(C), %w(M1 M2 M3))
+    h.add_inclusion("M1", "M2")
+    h.class_only_includers?("M1").should be_false
+    h.class_only_includers?("M3").should be_false
+
+    h.add_inclusion("M2", "C")
+    h.class_only_includers?("M1").should be_true
+    h.class_only_includers?("M1(Int32)").should be_true
+  end
+
+  it "rejects a module with a struct or unknown includer" do
+    class_info = {} of String => Adamas::HIR::ClassInfo
+    {"C" => false, "S" => true}.each do |name, is_struct|
+      class_info[name] = Adamas::HIR::ClassInfo.new(
+        name, Adamas::HIR::TypeRef::VOID, [] of Adamas::HIR::IVarInfo, [] of Adamas::HIR::ClassVarInfo, 0, is_struct)
+    end
+    module_defs = {} of String => ModuleDefList
+    module_defs["M"] = ModuleDefList.new
+    h = Adamas::HIR::TypeHierarchy.new(class_info, module_defs)
+    h.add_inclusion("M", "C")
+    h.class_only_includers?("M").should be_true
+
+    h.add_inclusion("M", "S")
+    h.class_only_includers?("M").should be_false
+
+    h2 = build_hierarchy(%w(C), %w(N))
+    h2.add_inclusion("N", "C")
+    h2.add_inclusion("N", "Unknown")
+    h2.class_only_includers?("N").should be_false
+  end
+
   it "yields a diamond includer once" do
     h = build_hierarchy(%w(C), %w(M1 M2 M3))
     h.add_inclusion("M1", "M2")

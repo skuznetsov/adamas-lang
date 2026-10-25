@@ -207,6 +207,22 @@ module Adamas::HIR
       results
     end
 
+    # True when every concrete (transitive) includer of a module is a class,
+    # and there is at least one. A value typed as such a module is a class
+    # instance whose type id header selects the includer's definition. Struct
+    # values carry no header, so a module with a struct includer is not
+    # dispatchable this way.
+    def class_only_includers?(module_name : String) : Bool
+      found = false
+      each_transitive_includer(module_name) do |includer, is_module|
+        next if is_module
+        info = @class_info[includer]? || return false
+        return false if info.is_struct
+        found = true
+      end
+      found
+    end
+
     @[AlwaysInline]
     def self.strip_generic_args(name : String) : String
       i = 0
