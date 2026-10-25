@@ -16862,28 +16862,8 @@ current_token.kind == Token::Kind::Identifier &&
               ))
             end
 
-            # Phase 103J: Parse method chains: &.value.close
-            call_expr = consume_block_shorthand_postfix(call_expr)
+            call_expr = consume_block_shorthand_chain(call_expr)
             return PREFIX_ERROR if call_expr.invalid?
-
-            # Phase 101: Check for trailing do...end or {...} block (Amp case)
-            # This handles: &.each_value do |x| ... end
-            if current_token.kind == Token::Kind::Do || current_token.kind == Token::Kind::LBrace
-              trailing_block = parse_block
-              return PREFIX_ERROR if trailing_block.invalid?
-
-              # Convert MemberAccess to Call with block argument
-              call_expr_node = @arena[call_expr]
-              call_span = call_expr_node.span.cover(@arena[trailing_block].span)
-              call_expr = @arena.add_typed(
-                CallNode.new(
-                  call_span,
-                  call_expr,
-                  [trailing_block],
-                  nil
-                )
-              )
-            end
           elsif amp_token.kind == Token::Kind::AmpDot
             # AmpDot is a single token, dot already consumed
             # Current token can be: identifier, keyword (select), operator (+), or [ for indexing
@@ -16973,28 +16953,8 @@ current_token.kind == Token::Kind::Identifier &&
               ))
             end
 
-            # Phase 103J: Parse method chains: &.value.close
-            call_expr = consume_block_shorthand_postfix(call_expr)
+            call_expr = consume_block_shorthand_chain(call_expr)
             return PREFIX_ERROR if call_expr.invalid?
-
-            # Phase 101: Check for trailing do...end or {...} block (AmpDot case)
-            # This handles: &.each_value do |x| ... end
-            if current_token.kind == Token::Kind::Do || current_token.kind == Token::Kind::LBrace
-              trailing_block = parse_block
-              return PREFIX_ERROR if trailing_block.invalid?
-
-              # Convert MemberAccess to Call with block argument
-              call_expr_node = @arena[call_expr]
-              call_span = call_expr_node.span.cover(@arena[trailing_block].span)
-              call_expr = @arena.add_typed(
-                CallNode.new(
-                  call_span,
-                  call_expr,
-                  [trailing_block],
-                  nil
-                )
-              )
-            end
           else
             @diagnostics << Diagnostic.new("Expected '&' or '&.' for block shorthand", current_token.span)
             return PREFIX_ERROR
@@ -17050,6 +17010,29 @@ current_token.kind == Token::Kind::Identifier &&
           ))
 
           block_id
+        end
+
+        # Parses the rest of a block shorthand after its first member:
+        # method chains (Phase 103J: &.value.close) and trailing do...end or
+        # {...} blocks (Phase 101: &.each_value do |x| ... end). The chain
+        # continues after a block, as in `&.map { |v| v }.join(",")`; a further
+        # block attaches only to a call the chain extended.
+        private def consume_block_shorthand_chain(call_expr : ExprId) : ExprId
+          call_expr = consume_block_shorthand_postfix(call_expr)
+          return PREFIX_ERROR if call_expr.invalid?
+
+          while current_token.kind == Token::Kind::Do || current_token.kind == Token::Kind::LBrace
+            trailing_block = parse_block
+            return PREFIX_ERROR if trailing_block.invalid?
+
+            # Convert MemberAccess to Call with block argument
+            call_span = @arena[call_expr].span.cover(@arena[trailing_block].span)
+            block_call = @arena.add_typed(CallNode.new(call_span, call_expr, [trailing_block], nil))
+            call_expr = consume_block_shorthand_postfix(block_call)
+            return PREFIX_ERROR if call_expr.invalid?
+            break if call_expr == block_call
+          end
+          call_expr
         end
 
         private def consume_block_shorthand_postfix(call_expr : ExprId) : ExprId
