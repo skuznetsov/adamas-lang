@@ -25582,8 +25582,15 @@ module Adamas::HIR
                            target_name == "self" ? class_name : target_name
                          end
       return unless module_full_name
+      # `extend ::SystemError::ClassMethods` (SystemError's `macro included`)
+      # spells the full name; module bodies are keyed without the `::` prefix.
+      absolute_target = module_full_name.starts_with?("::")
+      if absolute_target
+        module_full_name = strip_absolute_name_prefix(module_full_name)
+        return if module_full_name.empty?
+      end
       # Prefer nested modules under the extending class.
-      if !module_full_name.includes?("::")
+      if !absolute_target && !module_full_name.includes?("::")
         base_owner = strip_generic_args(class_name)
         nested_name = "#{base_owner}::#{module_full_name}"
         if @module_defs.has_key?(nested_name)
