@@ -95783,6 +95783,12 @@ module Adamas::HIR
         end
       end
 
+      # An exhaustive `case ... in` without `else` ends in Crystal's
+      # `Unreachable` (literal_expander): the implicit else must not add Nil.
+      if node.else_branch.nil? && (exhaustive_branches = node.in_branches) && !exhaustive_branches.empty?
+        @control_flow_dead_blocks.add({ctx.function.id, else_exit})
+      end
+
       # Check if else branch flows to merge
       else_block_data = ctx.get_block(ctx.current_block)
       else_has_noreturn = block_has_raise_instruction?(else_block_data)
