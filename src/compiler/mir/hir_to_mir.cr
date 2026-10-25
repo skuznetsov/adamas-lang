@@ -4336,10 +4336,7 @@ module Adamas
         return false unless elem_type
         return false unless elem_type.kind.struct? && elem_type.size > 0
 
-        name = elem_type.name
-        name.starts_with?("Slice(") ||
-          name.starts_with?("StaticArray(") ||
-          name.starts_with?("Hash::Entry(")
+        Adamas::LayoutContract.inline_container_family?(elem_type.name)
       end
 
       private def container_elem_alignment_u32(elem_type : Type?) : UInt32

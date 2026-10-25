@@ -39525,6 +39525,10 @@ module Adamas::HIR
         class_names = @class_info.keys
         class_names.each do |class_name|
           info = @class_info[class_name]? || next
+          if sync_reference_storage_size(class_name, info)
+            realigned += 1
+            next
+          end
           next if info.ivars.empty?
           is_c_struct = info.name.starts_with?("LibC::") || info.name.includes?("::Lib")
 
@@ -39596,10 +39600,33 @@ module Adamas::HIR
       end
     end
 
+    # `ReferenceStorage(T)` (`@[Primitive(:ReferenceStorageType)]`) declares no
+    # ivars: its bytes are exactly the instance layout of the class T, type id
+    # header included, so `pointerof(@type_id).as(T)` views them as a T. Returns
+    # true when the recorded size changed.
+    private def sync_reference_storage_size(class_name : String, info : ClassInfo) : Bool
+      return false unless info.is_struct && info.ivars.empty?
+      prefix = "ReferenceStorage("
+      return false unless class_name.starts_with?(prefix) && class_name.ends_with?(')')
+      ref_info = @class_info[class_name[prefix.size...-1]]?
+      return false unless ref_info && !ref_info.is_struct
+      size = {ref_info.size, 4}.max
+      return false if size == info.size
+      new_info = ClassInfo.new(info.name, info.type_ref, info.ivars, info.class_vars,
+        size, info.is_struct, info.parent_name)
+      probe_class_info_write("sync_reference_storage_size", class_name, new_info)
+      @class_info[class_name] = new_info
+      @class_info_by_type_id[info.type_ref.id] = new_info
+      bump_class_info_version
+      invalidate_lowered_layout_functions(class_name)
+      true
+    end
+
     # Align ivars for a single class (used after late monomorphization)
     private def align_class_ivars(class_name : String) : Nil
       info = @class_info[class_name]?
       return unless info
+      return if sync_reference_storage_size(class_name, info)
       return if info.ivars.empty?
       is_c_struct = info.name.starts_with?("LibC::") || info.name.includes?("::Lib")
       offset = info.is_struct ? 0 : 4
@@ -41508,6 +41535,155 @@ module Adamas::HIR
       {blk, param_types, return_name}
     end
 
+    # Store every ivar's declared default (or its zero value) into the object
+    # `obj_id` of class `class_name`. Shared by the generated allocator and the
+    # `pre_initialize` primitive, which both run inline ivar initializers.
+    private def emit_ivar_default_initializers(
+      ctx : LoweringContext,
+      class_name : String,
+      class_info : ClassInfo,
+      obj_id : ValueId,
+      dead_init_func : Adamas::HIR::Function? = nil,
+    ) : Nil
+      class_info.ivars.each do |ivar|
+        # Check if this is a union type by looking up the type descriptor
+        type_desc = @module.get_type_descriptor(ivar.type)
+        if type_desc && type_desc.kind == TypeKind::Union
+          # A union ivar with no default stays zero (nil); a declared default
+          # (`@x : Bool? = true`) must be stored like any other ivar initializer.
+          emit_union_ivar_default(ctx, obj_id, ivar, class_name)
+          next
+        end
+
+        # If ivar has a non-trivial default expression, evaluate it
+        # BUT skip BlockNode defaults: those are lazy getter patterns
+        # (getter x : T { expr }) where @x starts as nil and the getter
+        # method handles initialization on first access.
+        if (default_expr_id = ivar.default_expr_id) && (default_arena = ivar.default_arena)
+          default_node = default_arena[default_expr_id]
+          is_lazy_getter = default_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
+          unless is_lazy_getter
+            # Try to resolve simple defaults without full lower_expr (avoids
+            # triggering demand-driven compilation for module ivar defaults)
+            # Enums are registered as Struct (no TypeKind::Enum) but are integer
+            # value types: their defaults are plain scalar literals.
+            ivar_is_struct = !!(type_desc && type_desc.kind == TypeKind::Struct) && !enum_type_ref?(ivar.type)
+            resolved_literal = try_resolve_simple_default(default_node, default_arena, ivar.type)
+            # A struct-typed ivar must never be initialized from a scalar literal:
+            # under the inline-struct ABI the field store memcpy's from the value's
+            # address, so a scalar-register source crashes. Route struct ivars to
+            # the zero-struct fallback (below) instead.
+            if resolved_literal && !ivar_is_struct
+              default_val = Literal.new(ctx.next_id, ivar.type, resolved_literal)
+              ctx.emit(default_val)
+              ivar_store = FieldSet.new(ctx.next_id, ivar.type, obj_id, ivar.name, default_val.id, ivar.offset)
+              ctx.emit(ivar_store)
+              next
+            end
+
+            # Handle X.empty patterns (Bytes.empty, Slice.empty) → allocate zero-filled struct
+            # Our compiler heap-allocates structs, so zero-init (null pointer) is wrong.
+            # GC_malloc zero-fills, so allocating a struct gives a valid pointer to zeroed memory.
+            # Handle X.empty patterns (Bytes.empty, Slice.empty) → allocate zero-filled struct
+            # Our compiler heap-allocates structs, so zero-init (null pointer) is wrong.
+            # GC_malloc zero-fills, so allocating a struct gives a valid pointer to zeroed memory.
+            if default_node.is_a?(Adamas::Compiler::Frontend::MemberAccessNode) &&
+               (safe_slice_to_string(default_node.member) || "") == "empty"
+              struct_alloc = Allocate.new(ctx.next_id, ivar.type, [] of ValueId, false)
+              ctx.emit(struct_alloc)
+              ctx.register_type(struct_alloc.id, ivar.type)
+              ivar_store = FieldSet.new(ctx.next_id, ivar.type, obj_id, ivar.name, struct_alloc.id, ivar.offset)
+              ctx.emit(ivar_store)
+              next
+            end
+
+            saved_arena = @arena
+            saved_class = @current_class
+            @arena = default_arena
+            @current_class = class_name
+            default_id = try_lower_enum_symbol_default(ctx, class_name, ivar.type, default_node) || lower_expr(ctx, default_expr_id)
+            # If a struct-typed ivar default degraded to a non-struct scalar — an
+            # unresolvable module struct constant (e.g. Arena::INVALID_INDEX) that
+            # lower_expr collapses to `literal 0 : Int32` — storing it would memcpy
+            # from a scalar register under the inline-struct ABI (SIGSEGV). Fall
+            # back to a zero-filled struct, matching the no-default struct path and
+            # @volatile_fd. The declared default is lost either way (documented:
+            # "default ivar values from modules not yet implemented").
+            if ivar_is_struct
+              lowered_desc = @module.get_type_descriptor(ctx.type_of(default_id))
+              unless lowered_desc && lowered_desc.kind == TypeKind::Struct
+                zero_struct = Allocate.new(ctx.next_id, ivar.type, [] of ValueId, true)
+                ctx.emit(zero_struct)
+                ctx.register_type(zero_struct.id, ivar.type)
+                default_id = zero_struct.id
+              end
+            end
+            ivar_store = FieldSet.new(ctx.next_id, ivar.type, obj_id, ivar.name, default_id, ivar.offset)
+            ctx.emit(ivar_store)
+            @arena = saved_arena
+            @current_class = saved_class
+            next
+          end
+          # Fall through for lazy getters: zero/nil the field below
+        end
+
+        # V2 heap-allocates structs, so Literal(0) creates a null pointer.
+        # Allocate a zero-filled struct instead to prevent null dereferences.
+        is_struct_type = type_desc && type_desc.kind == TypeKind::Struct
+        if is_struct_type
+          # Skip the dead zero-struct when initialize unconditionally overwrites
+          # this ivar first thing (gated; default OFF). The field memory already
+          # exists in `alloc`; initialize writes it before any read/escape.
+          if (dif = dead_init_func) && initialize_unconditionally_sets_ivar?(dif, ivar.name)
+            next
+          end
+          struct_alloc = Allocate.new(ctx.next_id, ivar.type, [] of ValueId, true)
+          ctx.emit(struct_alloc)
+          ctx.register_type(struct_alloc.id, ivar.type)
+          ivar_store = FieldSet.new(ctx.next_id, ivar.type, obj_id, ivar.name, struct_alloc.id, ivar.offset)
+          ctx.emit(ivar_store)
+          next
+        end
+
+        # For reference-typed ivars (Array, Hash, Set, etc.) that have no default_expr_id,
+        # synthesize a .new call to create an empty collection instead of storing null.
+        # This handles cases where the default expression wasn't captured during class body
+        # scanning (e.g., arena mismatches in large classes like AstToHir).
+        if ivar.default_expr_id.nil? && type_desc
+          is_collection = type_desc.kind == TypeKind::Array ||
+                          type_desc.kind == TypeKind::Hash ||
+                          type_desc.kind == TypeKind::Class
+          if is_collection
+            type_name = get_type_name_from_ref(ivar.type)
+            if type_name.starts_with?("Array(") ||
+               type_name.starts_with?("Hash(") ||
+               type_name.starts_with?("Set(")
+              new_call = try_emit_empty_collection_new(ctx, ivar.type, type_name)
+              if new_call
+                ivar_store = FieldSet.new(ctx.next_id, ivar.type, obj_id, ivar.name, new_call, ivar.offset)
+                ctx.emit(ivar_store)
+                next
+              end
+            end
+          end
+        end
+
+        # Use nil for pointer types, 0 for others
+        is_pointer = ivar.type == TypeRef::POINTER ||
+                     (type_desc && type_desc.kind == TypeKind::Pointer) ||
+                     (type_desc && type_desc.name.starts_with?("Pointer"))
+        default_value : (Int64 | Nil) = if is_pointer
+          nil
+        else
+          0_i64
+        end
+        default_val = Literal.new(ctx.next_id, ivar.type, default_value)
+        ctx.emit(default_val)
+        ivar_store = FieldSet.new(ctx.next_id, ivar.type, obj_id, ivar.name, default_val.id, ivar.offset)
+        ctx.emit(ivar_store)
+      end
+    end
+
     # Generate allocator: ClassName.new(...) -> allocates and returns instance
     private def generate_allocator(
       class_name : String,
@@ -41900,143 +42076,7 @@ module Adamas::HIR
         end
       end
 
-      class_info.ivars.each do |ivar|
-        # Check if this is a union type by looking up the type descriptor
-        type_desc = @module.get_type_descriptor(ivar.type)
-        if type_desc && type_desc.kind == TypeKind::Union
-          # A union ivar with no default stays zero (nil); a declared default
-          # (`@x : Bool? = true`) must be stored like any other ivar initializer.
-          emit_union_ivar_default(ctx, alloc.id, ivar, class_name)
-          next
-        end
-
-        # If ivar has a non-trivial default expression, evaluate it
-        # BUT skip BlockNode defaults: those are lazy getter patterns
-        # (getter x : T { expr }) where @x starts as nil and the getter
-        # method handles initialization on first access.
-        if (default_expr_id = ivar.default_expr_id) && (default_arena = ivar.default_arena)
-          default_node = default_arena[default_expr_id]
-          is_lazy_getter = default_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
-          unless is_lazy_getter
-            # Try to resolve simple defaults without full lower_expr (avoids
-            # triggering demand-driven compilation for module ivar defaults)
-            # Enums are registered as Struct (no TypeKind::Enum) but are integer
-            # value types: their defaults are plain scalar literals.
-            ivar_is_struct = !!(type_desc && type_desc.kind == TypeKind::Struct) && !enum_type_ref?(ivar.type)
-            resolved_literal = try_resolve_simple_default(default_node, default_arena, ivar.type)
-            # A struct-typed ivar must never be initialized from a scalar literal:
-            # under the inline-struct ABI the field store memcpy's from the value's
-            # address, so a scalar-register source crashes. Route struct ivars to
-            # the zero-struct fallback (below) instead.
-            if resolved_literal && !ivar_is_struct
-              default_val = Literal.new(ctx.next_id, ivar.type, resolved_literal)
-              ctx.emit(default_val)
-              ivar_store = FieldSet.new(ctx.next_id, ivar.type, alloc.id, ivar.name, default_val.id, ivar.offset)
-              ctx.emit(ivar_store)
-              next
-            end
-
-            # Handle X.empty patterns (Bytes.empty, Slice.empty) → allocate zero-filled struct
-            # Our compiler heap-allocates structs, so zero-init (null pointer) is wrong.
-            # GC_malloc zero-fills, so allocating a struct gives a valid pointer to zeroed memory.
-            # Handle X.empty patterns (Bytes.empty, Slice.empty) → allocate zero-filled struct
-            # Our compiler heap-allocates structs, so zero-init (null pointer) is wrong.
-            # GC_malloc zero-fills, so allocating a struct gives a valid pointer to zeroed memory.
-            if default_node.is_a?(Adamas::Compiler::Frontend::MemberAccessNode) &&
-               (safe_slice_to_string(default_node.member) || "") == "empty"
-              struct_alloc = Allocate.new(ctx.next_id, ivar.type, [] of ValueId, false)
-              ctx.emit(struct_alloc)
-              ctx.register_type(struct_alloc.id, ivar.type)
-              ivar_store = FieldSet.new(ctx.next_id, ivar.type, alloc.id, ivar.name, struct_alloc.id, ivar.offset)
-              ctx.emit(ivar_store)
-              next
-            end
-
-            saved_arena = @arena
-            saved_class = @current_class
-            @arena = default_arena
-            @current_class = class_name
-            default_id = try_lower_enum_symbol_default(ctx, class_name, ivar.type, default_node) || lower_expr(ctx, default_expr_id)
-            # If a struct-typed ivar default degraded to a non-struct scalar — an
-            # unresolvable module struct constant (e.g. Arena::INVALID_INDEX) that
-            # lower_expr collapses to `literal 0 : Int32` — storing it would memcpy
-            # from a scalar register under the inline-struct ABI (SIGSEGV). Fall
-            # back to a zero-filled struct, matching the no-default struct path and
-            # @volatile_fd. The declared default is lost either way (documented:
-            # "default ivar values from modules not yet implemented").
-            if ivar_is_struct
-              lowered_desc = @module.get_type_descriptor(ctx.type_of(default_id))
-              unless lowered_desc && lowered_desc.kind == TypeKind::Struct
-                zero_struct = Allocate.new(ctx.next_id, ivar.type, [] of ValueId, true)
-                ctx.emit(zero_struct)
-                ctx.register_type(zero_struct.id, ivar.type)
-                default_id = zero_struct.id
-              end
-            end
-            ivar_store = FieldSet.new(ctx.next_id, ivar.type, alloc.id, ivar.name, default_id, ivar.offset)
-            ctx.emit(ivar_store)
-            @arena = saved_arena
-            @current_class = saved_class
-            next
-          end
-          # Fall through for lazy getters: zero/nil the field below
-        end
-
-        # V2 heap-allocates structs, so Literal(0) creates a null pointer.
-        # Allocate a zero-filled struct instead to prevent null dereferences.
-        is_struct_type = type_desc && type_desc.kind == TypeKind::Struct
-        if is_struct_type
-          # Skip the dead zero-struct when initialize unconditionally overwrites
-          # this ivar first thing (gated; default OFF). The field memory already
-          # exists in `alloc`; initialize writes it before any read/escape.
-          if (dif = dead_init_func) && initialize_unconditionally_sets_ivar?(dif, ivar.name)
-            next
-          end
-          struct_alloc = Allocate.new(ctx.next_id, ivar.type, [] of ValueId, true)
-          ctx.emit(struct_alloc)
-          ctx.register_type(struct_alloc.id, ivar.type)
-          ivar_store = FieldSet.new(ctx.next_id, ivar.type, alloc.id, ivar.name, struct_alloc.id, ivar.offset)
-          ctx.emit(ivar_store)
-          next
-        end
-
-        # For reference-typed ivars (Array, Hash, Set, etc.) that have no default_expr_id,
-        # synthesize a .new call to create an empty collection instead of storing null.
-        # This handles cases where the default expression wasn't captured during class body
-        # scanning (e.g., arena mismatches in large classes like AstToHir).
-        if ivar.default_expr_id.nil? && type_desc
-          is_collection = type_desc.kind == TypeKind::Array ||
-                          type_desc.kind == TypeKind::Hash ||
-                          type_desc.kind == TypeKind::Class
-          if is_collection
-            type_name = get_type_name_from_ref(ivar.type)
-            if type_name.starts_with?("Array(") ||
-               type_name.starts_with?("Hash(") ||
-               type_name.starts_with?("Set(")
-              new_call = try_emit_empty_collection_new(ctx, ivar.type, type_name)
-              if new_call
-                ivar_store = FieldSet.new(ctx.next_id, ivar.type, alloc.id, ivar.name, new_call, ivar.offset)
-                ctx.emit(ivar_store)
-                next
-              end
-            end
-          end
-        end
-
-        # Use nil for pointer types, 0 for others
-        is_pointer = ivar.type == TypeRef::POINTER ||
-                     (type_desc && type_desc.kind == TypeKind::Pointer) ||
-                     (type_desc && type_desc.name.starts_with?("Pointer"))
-        default_value : (Int64 | Nil) = if is_pointer
-          nil
-        else
-          0_i64
-        end
-        default_val = Literal.new(ctx.next_id, ivar.type, default_value)
-        ctx.emit(default_val)
-        ivar_store = FieldSet.new(ctx.next_id, ivar.type, alloc.id, ivar.name, default_val.id, ivar.offset)
-        ctx.emit(ivar_store)
-      end
+      emit_ivar_default_initializers(ctx, class_name, class_info, alloc.id, dead_init_func)
 
       # Call initialize if it exists, passing through the parameters
       # Use inheritance-aware resolution to find initialize in parent classes
@@ -46700,6 +46740,8 @@ module Adamas::HIR
         lower_primitive_crystal_type_id(ctx, receiver_id)
       when "class_crystal_instance_type_id"
         lower_primitive_class_crystal_instance_type_id(ctx, receiver_id)
+      when "pre_initialize"
+        lower_primitive_pre_initialize(ctx, receiver_id, args, mangled_name)
       when "object_id"
         lower_primitive_object_id(ctx, receiver_id)
       when "allocate"
@@ -47162,6 +47204,83 @@ module Adamas::HIR
       ctx.emit(type_id_lit)
       ctx.register_type(type_id_lit.id, TypeRef::INT32)
       type_id_lit.id
+    end
+
+    # `T.pre_initialize(address)` for a class T: zero T's instance bytes at
+    # `address`, run T's inline ivar initializers, stamp T's type id and return
+    # the address viewed as a T (codegen `pre_initialize_aggregate`). This is
+    # what `Reference.unsafe_construct` builds on for `ReferenceStorage(T)`.
+    private def lower_primitive_pre_initialize(
+      ctx : LoweringContext,
+      receiver_id : ValueId?,
+      args : Array(ValueId),
+      mangled_name : String,
+    ) : ValueId?
+      return nil unless args.size == 1
+      class_name = pre_initialize_owner_name(ctx, receiver_id, mangled_name)
+      return nil unless class_name
+      class_info = @class_info[class_name]?
+      return nil unless class_info && !class_info.is_struct
+      header_ptr_type = type_ref_for_name("Pointer(Int32)")
+      return nil if header_ptr_type == TypeRef::VOID
+
+      address_id = args[0]
+      zero_byte = Literal.new(ctx.next_id, TypeRef::UINT8, 0_i64)
+      ctx.emit(zero_byte)
+      ctx.register_type(zero_byte.id, TypeRef::UINT8)
+      byte_count = Literal.new(ctx.next_id, TypeRef::UINT64, class_info.size.to_i64)
+      ctx.emit(byte_count)
+      ctx.register_type(byte_count.id, TypeRef::UINT64)
+      not_volatile = Literal.new(ctx.next_id, TypeRef::BOOL, false)
+      ctx.emit(not_volatile)
+      ctx.register_type(not_volatile.id, TypeRef::BOOL)
+      emit_mem_intrinsic(ctx, "memset", [address_id, zero_byte.id, byte_count.id, not_volatile.id])
+
+      object = Cast.new(ctx.next_id, class_info.type_ref, address_id, class_info.type_ref, safe: false)
+      ctx.emit(object)
+      ctx.register_type(object.id, class_info.type_ref)
+      emit_ivar_default_initializers(ctx, class_name, class_info, object.id)
+
+      # Store through an Int32* view: `address` is typed by its storage
+      # (`ReferenceStorage(T)*`), whose element store would copy a whole slot.
+      header_ptr = Cast.new(ctx.next_id, header_ptr_type, address_id, header_ptr_type, safe: false)
+      ctx.emit(header_ptr)
+      ctx.register_type(header_ptr.id, header_ptr_type)
+      # Same runtime header id the allocator stamps (see set_crystal_type_id).
+      runtime_type_id = MIR::TypeRef.from_hir(class_info.type_ref).id.to_i64
+      type_id_lit = Literal.new(ctx.next_id, TypeRef::INT32, runtime_type_id)
+      ctx.emit(type_id_lit)
+      ctx.register_type(type_id_lit.id, TypeRef::INT32)
+      store = PointerStore.new(ctx.next_id, TypeRef::VOID, header_ptr.id, type_id_lit.id)
+      ctx.emit(store)
+      ctx.register_type(store.id, TypeRef::VOID)
+      object.id
+    end
+
+    # The class a `pre_initialize` call constructs: the type-literal receiver,
+    # else the owner the call was specialized for, else the lexical class of
+    # the inherited class method (`Mx.unsafe_construct` calls it bare).
+    private def pre_initialize_owner_name(
+      ctx : LoweringContext,
+      receiver_id : ValueId?,
+      mangled_name : String,
+    ) : String?
+      if receiver_id && ctx.type_literal?(receiver_id)
+        name = get_type_name_from_ref(ctx.type_of(receiver_id))
+        return name if pre_initialize_concrete_class?(name)
+      end
+      name = method_owner(mangled_name)
+      return name if pre_initialize_concrete_class?(name)
+      if (current = @current_class) && pre_initialize_concrete_class?(current)
+        return current
+      end
+      nil
+    end
+
+    private def pre_initialize_concrete_class?(name : String) : Bool
+      return false if name.empty? || name == "Reference" || name == "Object"
+      info = @class_info[name]?
+      !info.nil? && !info.is_struct
     end
 
     private def lower_char_ascii_control_predicate(
@@ -57026,12 +57145,7 @@ module Adamas::HIR
       return pointer_word_bytes_i32 unless info.is_struct
       return info.size if @lib_structs.includes?(info.name)
 
-      name = info.name
-      if name.starts_with?("Slice(") ||
-         name.starts_with?("StaticArray(") ||
-         name.starts_with?("Hash::Entry(")
-        return info.size
-      end
+      return info.size if Adamas::LayoutContract.inline_container_family?(info.name)
 
       pointer_word_bytes_i32
     end

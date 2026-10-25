@@ -246,10 +246,14 @@ module Adamas
     # The container-element struct families with an implemented inline ABI
     # (mirrors llvm_backend.cr inline_container_struct_type?, :2796). Step 1c
     # replaces that runtime name match with this clause via the memo bit.
+    # `ReferenceStorage(T)` is raw storage for a T instance: `pointerof(@lock)`
+    # and `@lock.to_reference` must both name the bytes in the slot, so it is
+    # inline at every size (a carrier pointer would be overwritten in place).
     def self.inline_container_family?(name : String) : Bool
       name.starts_with?("Slice(") ||
         name.starts_with?("StaticArray(") ||
-        name.starts_with?("Hash::Entry(")
+        name.starts_with?("Hash::Entry(") ||
+        name.starts_with?("ReferenceStorage(")
     end
   end
 end
