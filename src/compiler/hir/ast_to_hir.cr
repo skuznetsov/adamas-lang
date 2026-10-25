@@ -29026,6 +29026,11 @@ module Adamas::HIR
             if left_type && left_type != TypeRef::VOID
               name = get_type_name_from_ref(left_type)
               return left_type if name.starts_with?("Int") || name.starts_with?("UInt") || name.starts_with?("Float")
+              # A known non-numeric left operand owns `+`/`-`; the right
+              # operand never names the result. `slice? + offset` with an
+              # unnarrowed `Bytes?` left was pre-typed Int32 and rejected
+              # `DWARF.line_sequence_at(debug_line + sequence_offset)`.
+              return left_type == TypeRef::STRING && op == "+" ? TypeRef::STRING : nil
             end
             if right_type && right_type != TypeRef::VOID
               name = get_type_name_from_ref(right_type)
