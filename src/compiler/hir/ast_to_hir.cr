@@ -124624,6 +124624,13 @@ module Adamas::HIR
         inline_param_map = inline_param_map.merge(pending)
         store_function_type_param_map(inline_key, base_inline_name, pending)
       end
+      # Method-forall variables are bound by this call's arguments (`type :
+      # F.class`, `x : F`) and shadow owner/cached maps, as in lower_method;
+      # without them the inlined body sees `F` as an undefined constant.
+      unless call_args.empty?
+        forall_bindings = method_forall_call_bindings(func_def, call_args.map { |arg| ctx.type_of(arg) })
+        inline_param_map = inline_param_map.merge(forall_bindings) unless forall_bindings.empty?
+      end
       # DEBUG PROBE (remove before commit): trace inline type-param map stages.
       if dbg_itpm = env_get("DEBUG_INLINE_TPM")
         if base_inline_name.includes?(dbg_itpm)
