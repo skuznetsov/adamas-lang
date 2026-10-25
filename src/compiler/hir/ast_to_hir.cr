@@ -103142,6 +103142,58 @@ module Adamas::HIR
       ctx.type_literal?(first_arg.not_nil!)
     end
 
+    # `f(a, **nt)` passes each entry of the NamedTuple `nt` as a named
+    # argument, as in the original compiler. Once the operand's layout is
+    # known, rewrite the call to `f(a, k: nt[:k], ...)` so overload selection
+    # and ABI binding see the entry names instead of one positional NamedTuple.
+    # Only a variable operand is rewritten: reading it once per entry is pure
+    # and keeps the source evaluation order of the other arguments.
+    private def expand_call_site_double_splat(
+      ctx : LoweringContext,
+      node : Adamas::Compiler::Frontend::CallNode,
+      call_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Adamas::Compiler::Frontend::CallNode?
+      splat_index = node.args.index do |arg_id|
+        arg_node = call_arena[arg_id]
+        arg_node.is_a?(Adamas::Compiler::Frontend::SplatNode) && arg_node.double?
+      end
+      return nil unless splat_index
+      splat = call_arena[node.args[splat_index]].as(Adamas::Compiler::Frontend::SplatNode)
+      operand = splat.expr
+      return nil if operand.invalid?
+      case operand_node = call_arena[operand]
+      when Adamas::Compiler::Frontend::IdentifierNode
+        return nil unless ctx.lookup_local(safe_slice_to_string(operand_node.name) || "")
+      when Adamas::Compiler::Frontend::InstanceVarNode
+      else
+        return nil
+      end
+
+      operand_type = with_arena(call_arena) { ctx.type_of(lower_expr(ctx, operand)) }
+      info = split_generic_base_and_args(get_type_name_from_ref(operand_type))
+      return nil unless info && info.base == "NamedTuple"
+      keys = [] of String
+      split_generic_type_args(info.args).each do |entry|
+        parsed = split_named_tuple_entry(entry)
+        return nil unless parsed
+        keys << parsed[0]
+      end
+
+      named = node.named_args.try(&.dup) || [] of Adamas::Compiler::Frontend::NamedArgument
+      keys.each do |key|
+        symbol = call_arena.add_typed(Adamas::Compiler::Frontend::SymbolNode.new(splat.span, key.to_slice))
+        value = call_arena.add_typed(Adamas::Compiler::Frontend::IndexNode.new(splat.span, operand, [symbol]))
+        named << Adamas::Compiler::Frontend::NamedArgument.new(key.to_slice, value, splat.span, splat.span)
+      end
+      args = node.args.dup
+      args.delete_at(splat_index)
+      if named.empty?
+        Adamas::Compiler::Frontend::CallNode.new(node.span, node.callee, args, node.block)
+      else
+        Adamas::Compiler::Frontend::CallNode.new(node.span, node.callee, args, node.block, named)
+      end
+    end
+
     private def lower_call(
       ctx : LoweringContext,
       node : Adamas::Compiler::Frontend::CallNode,
@@ -103154,6 +103206,10 @@ module Adamas::HIR
       call_arena : Adamas::Compiler::Frontend::ArenaLike = @arena
       debug_lower_call_arena_phase(ctx, node, "call_arena_set", call_arena)
       debug_lower_call_arena_expr(ctx, node, "call_arena.callee", node.callee, call_arena, "lower_call.call")
+
+      if expanded = expand_call_site_double_splat(ctx, node, call_arena)
+        return lower_call(ctx, expanded, expr_id)
+      end
 
       call_named_arg_names = named_arg_names_for(node.named_args)
       # Stage2 self-hosting has shown unstable nilable-ivar payloads while
