@@ -139399,6 +139399,12 @@ module Adamas::HIR
                 store_type_cache(union_key, provisional_union)
                 provisional_union
               end
+            elsif cycle_info = @class_info[cycle_name]?
+              # Materializing `L(R(Int32))` registers `R(Int32)` from inside this
+              # argument; an included `property previous : ::Pointer(self)` then
+              # names R(Int32) again. The nominal class is already registered, so
+              # the self-reference keeps its identity instead of becoming Void.
+              cycle_info.type_ref
             else
               TypeRef::VOID
             end
