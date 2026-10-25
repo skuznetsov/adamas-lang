@@ -12545,6 +12545,13 @@ module Adamas::HIR
       enum_value_name_for(ctx, value_id, Set(ValueId).new)
     end
 
+    # True when `carrier` is the base-integer storage of the enum `enum_type`.
+    private def enum_carrier_of?(enum_type : TypeRef, carrier : TypeRef) : Bool
+      return false unless numeric_primitive?(carrier)
+      return false unless enum_name = enum_name_for_type_ref(enum_type)
+      enum_base_type(enum_name) == carrier
+    end
+
     # True when `value_id` is an enum value lowered through its base-integer
     # carrier, so its TypeRef names the integer class rather than the enum.
     private def enum_carrier_receiver?(ctx : LoweringContext, value_id : ValueId, receiver_type : TypeRef) : Bool
@@ -62382,7 +62389,11 @@ module Adamas::HIR
       if existing_type && existing_type != TypeRef::VOID
         if func = @module.function_by_name(name)
           func_rt = func.return_type
-          if func_rt != TypeRef::VOID && func_rt != existing_type
+          # A lowered body returns an enum in its base-integer carrier. Keep the
+          # registered enum identity, or `Errno.value` would infer as Errno only
+          # until its body is lowered and as Int32 afterwards.
+          if func_rt != TypeRef::VOID && func_rt != existing_type &&
+             !enum_carrier_of?(existing_type, func_rt)
             set_function_type_entry(name, func_rt)
             set_function_base_return_type(base_name, func_rt) if name == base_name
             existing_type = func_rt
@@ -62626,7 +62637,7 @@ module Adamas::HIR
         if func = @module.function_by_name(name)
           func_rt = func.return_type
           if func_rt != TypeRef::VOID
-            if type != func_rt
+            if type != func_rt && !enum_carrier_of?(type, func_rt)
               # Once a function is lowered, its module return type is the
               # canonical instantiated answer. Cached pre-lowering signatures can
               # drift for branchy tuple returns (for example receive_internal

@@ -254,7 +254,38 @@ end
 
 LibC.exit(run(1))'
 
-CASES=(def_local_new:42 def_local_member:42 reassigned_local:42 multi_assign:42 block_written_local:42 yielded_block_param:42 captured_reassigned_local:42 captured_proc_written_local:42 captured_int_block_write:7 captured_int_parent_write:7 closure_after_parent_reassign:7 int_and_enum_overloads:42)
+# An enum-returning class method infers as its enum even after its body is
+# lowered: the lowered return type is the Int32 carrier, and the block write
+# below is typed from the method's return before the block is lowered.
+write_case lowered_enum_class_method '
+enum Errno
+  def self.make : self
+    Errno.new(1)
+  end
+end
+
+def pick(x : Int32) : Int32
+  7
+end
+
+def pick(x : Errno) : Int32
+  42
+end
+
+def run : Int32
+  e = Errno::NONE
+  r = 0
+  syscall do
+    r = 1
+    e = Errno.make
+  end
+  pick(e)
+end
+
+pre = Errno.make
+LibC.exit(run)'
+
+CASES=(def_local_new:42 def_local_member:42 reassigned_local:42 multi_assign:42 block_written_local:42 yielded_block_param:42 captured_reassigned_local:42 captured_proc_written_local:42 captured_int_block_write:7 captured_int_parent_write:7 closure_after_parent_reassign:7 int_and_enum_overloads:42 lowered_enum_class_method:42)
 
 exit_code_of() {
   grep -o '\[EXIT: [0-9]*\]' "$1" | head -1 | tr -dc '0-9'
