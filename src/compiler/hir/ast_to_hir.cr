@@ -107849,7 +107849,11 @@ module Adamas::HIR
         if class_name = static_class_name || full_method_name.try { |name| method_owner(name) }
           if arg_types.any? { |t| t != TypeRef::VOID }
             if init_base = resolve_method_with_inheritance(class_name, "initialize")
-              init_target = init_base
+              # Pre-lower only an initializer that accepts this call shape.
+              # When none does (the call is served by an explicit `self.new`,
+              # or is a no-overload error), the bare registration alias names
+              # an arbitrary declaration: binding these argument types to its
+              # untyped parameters would lower a body Crystal never types.
               if selected_init = lookup_function_def_for_call(
                    init_base,
                    arg_types.size,
@@ -107873,9 +107877,9 @@ module Adamas::HIR
                     init_target = exact_name
                   end
                 end
+                remember_callsite_arg_types(init_target, arg_types, nil, nil, has_block_call, has_named_args, call_named_arg_names)
+                lower_function_if_needed(init_target)
               end
-              remember_callsite_arg_types(init_target, arg_types, nil, nil, has_block_call, has_named_args, call_named_arg_names)
-              lower_function_if_needed(init_target)
             end
           end
         end
