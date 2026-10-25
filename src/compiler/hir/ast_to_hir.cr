@@ -105883,7 +105883,7 @@ module Adamas::HIR
       arg_binding_full_method_name = constructor_arg_binding_name || full_method_name
       arg_lowering_arena : Adamas::Compiler::Frontend::ArenaLike = call_arena || @arena
       source_named_entry : Tuple(String, Adamas::Compiler::Frontend::DefNode)? = nil
-      source_default_new_entry : Tuple(String, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike)? = nil
+      source_default_entry : Tuple(String, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike)? = nil
       source_named_rest_packed = false
       args = with_arena(call_arena) do
         if DebugHooks::ENABLED && block_pass_expr
@@ -105952,9 +105952,9 @@ module Adamas::HIR
                                                         !has_named_args && !has_splat && !has_block_call
                                                        {args, has_named_args, nil}
                                                      else
-                                                       source_new_entry_out = [] of Tuple(String, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike)
-                                                       default_result = apply_default_args(ctx, args, method_name, arg_binding_full_method_name, has_block_call, has_named_args, receiver_id, source_new_entry_out)
-                                                       source_default_new_entry = source_new_entry_out.first?
+                                                       source_default_entry_out = [] of Tuple(String, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike)
+                                                       default_result = apply_default_args(ctx, args, method_name, arg_binding_full_method_name, has_block_call, has_named_args, receiver_id, source_default_entry_out)
+                                                       source_default_entry = source_default_entry_out.first?
                                                        default_result
                                                      end
       # Allocator calls use positional ABI slots after named/default binding,
@@ -107766,8 +107766,8 @@ module Adamas::HIR
       source_call_rejections = [] of Tuple(String, String)
       selected_target = if source_named_entry
                           SelectedCallTarget.new(source_named_entry[0], source_named_entry[1])
-                        elsif source_default_new_entry
-                          source_entry = source_default_new_entry.not_nil!
+                        elsif source_default_entry
+                          source_entry = source_default_entry.not_nil!
                           SelectedCallTarget.new(source_entry[0], source_entry[1], source_entry[2])
                         else
                           semantic_target
@@ -107953,7 +107953,7 @@ module Adamas::HIR
         # Avoid self-recursive overload capture when another compatible overload exists.
         # This can happen in wrapper-style overloads (instance and class methods),
         # where selecting the current overload again can later be mis-lowered.
-        if !source_default_new_entry &&
+        if !source_default_entry &&
            !semantic_target &&
            !has_splat &&
            entry_name == ctx.function.name
@@ -108351,8 +108351,8 @@ module Adamas::HIR
         end
         explicit_match = if prefer_allocator_new_call
                            nil
-                         elsif source_default_new_entry
-                           source_entry = source_default_new_entry.not_nil!
+                         elsif source_default_entry
+                           source_entry = source_default_entry.not_nil!
                            {source_entry[0], source_entry[1]}
                          else
                            # M3h: convert the explicit_new lookup to the structured
@@ -118886,7 +118886,7 @@ module Adamas::HIR
       has_block_call : Bool,
       call_has_named_args : Bool,
       receiver_id : ValueId? = nil,
-      source_new_entry_out : Array(Tuple(String, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike))? = nil,
+      source_default_entry_out : Array(Tuple(String, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike))? = nil,
     ) : {Array(ValueId), Bool, String?}
       func_name = full_method_name || method_name
       source_arg_count = args.size
@@ -119117,12 +119117,16 @@ module Adamas::HIR
         effective_has_named_args = true
       end
 
-      if source_new_entry_out &&
+      # Defaults filled named-only slots of a call without named args. The
+      # padded positional shape no longer says which slots are named, so a
+      # re-resolution can bind them to an unrelated positional overload
+      # (`slice.fill { }` padded with `offset` matched `fill(range : Range, &)`).
+      # The overload chosen for the source shape stays the call target.
+      if source_default_entry_out &&
          !call_has_named_args && effective_has_named_args &&
          args.size > source_arg_count &&
-         func_name.ends_with?(".new") &&
          strip_type_suffix(func_entry_name) == strip_type_suffix(func_name)
-        source_new_entry_out << {func_entry_name, func_def, def_arena}
+        source_default_entry_out << {func_entry_name, func_def, def_arena}
       end
 
       {args, effective_has_named_args, func_entry_name}
