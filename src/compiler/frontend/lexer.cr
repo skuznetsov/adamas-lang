@@ -18,6 +18,7 @@ module Adamas
         @whitespace_before : Bool       # Track if whitespace preceded current token (for regex disambiguation)
         @macro_expr_depth : Int32       # Track nesting of {{ ... }} macro expressions
         @macro_body_depth : Int32       # Track whether strings may contain macro {{...}} interpolation
+        @macro_control_depth : Int32    # Open {% if/unless/for/begin/verbatim %} bodies
         @block_stack : Array(Int32)     # Token::Kind values; keep bootstrap-safe stack ops off enum Array#pop?
         @block_stack_depth : Int32
         @string_pool : StringPool       # String interning for memory optimization
@@ -44,6 +45,7 @@ module Adamas
           @whitespace_before = false       # Track if whitespace preceded current token
           @macro_expr_depth = 0
           @macro_body_depth = 0
+          @macro_control_depth = 0
           @block_stack = [] of Int32
           @block_stack_depth = 0
           @string_pool = StringPool.new # String interning for memory optimization
@@ -286,6 +288,7 @@ module Adamas
             @at_statement_start = true
             @whitespace_before = false
           else
+            update_macro_control_depth(token)
             @last_token_kind = token.kind
             @at_statement_start = false
             @whitespace_before = false
@@ -298,6 +301,24 @@ module Adamas
 
         private def macro_string_context? : Bool
           @macro_body_depth > 0
+        end
+
+        private def macro_comment_context? : Bool
+          @macro_body_depth > 0 || @macro_control_depth > 0
+        end
+
+        # `{% end %}` closes the body that `{% if %}`, `{% unless %}`,
+        # `{% for %}`, `{% begin %}` or `{% verbatim do %}` opened.
+        private def update_macro_control_depth(token : Token) : Nil
+          return unless @last_token_kind == Token::Kind::LBracePercent
+          case token.kind
+          when Token::Kind::If, Token::Kind::Unless, Token::Kind::For, Token::Kind::Begin
+            @macro_control_depth += 1
+          when Token::Kind::End
+            @macro_control_depth -= 1 if @macro_control_depth > 0
+          when Token::Kind::Identifier
+            @macro_control_depth += 1 if token.slice == "verbatim".to_slice
+          end
         end
 
         private def update_macro_body_depth(token : Token, token_at_statement_start : Bool) : Nil
@@ -1911,11 +1932,13 @@ module Adamas
           while scan < @byte_size
             byte = @bytes_ptr[scan]
             break if byte == NEWLINE
-            # Stop before {% or {{ sequences that follow } (end of interpolation)
-            # so macro body parser sees the closing {% end %}.
-            # Do NOT stop for {%/{{ that appear after space, letters etc.
-            # as those are genuinely inside comments (e.g., `# {%`).
-            if byte == '{'.ord.to_u8 && scan + 1 < @byte_size
+            # Inside a macro body, stop before {% or {{ sequences that follow }
+            # (end of interpolation) so macro body parser sees the closing
+            # {% end %}. Do NOT stop for {%/{{ that appear after space, letters
+            # etc. as those are genuinely inside comments (e.g., `# {%`).
+            # Outside macros a comment runs to the end of the line, as in
+            # original Crystal; this very comment once broke there.
+            if byte == '{'.ord.to_u8 && scan + 1 < @byte_size && macro_comment_context?
               next_b = @bytes_ptr[scan + 1]
               if next_b == '%'.ord.to_u8 || next_b == '{'.ord.to_u8
                 # Only break if preceded by } (typical pattern: #{close}{% end %})

@@ -46,16 +46,30 @@ describe Adamas::Compiler::Frontend::Lexer do
   end
 
   it "breaks comment lexing before macro control after interpolation close" do
-    source = "# }{% end %}\n"
-    lexer = Adamas::Compiler::Frontend::Lexer.new(source)
-    tokens = [] of Adamas::Compiler::Frontend::Token
-    lexer.each_token(skip_trivia: false) { |token| tokens << token }
+    ["{% if x %}# }{% end %}\n", "macro m\n  # }{% end %}\nend\n", "{% verbatim do %}# }{% end %}\n"].each do |source|
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      tokens = [] of Adamas::Compiler::Frontend::Token
+      lexer.each_token(skip_trivia: false) { |token| tokens << token }
 
-    comments = tokens.select { |token| token.kind == Adamas::Compiler::Frontend::Token::Kind::Comment }
-    comments.size.should eq(1)
-    String.new(comments.first.slice).should eq("# }")
-    tokens.any? { |token| token.kind == Adamas::Compiler::Frontend::Token::Kind::LBracePercent && String.new(token.slice) == "{%" }.should be_true
-    tokens.any? { |token| token.kind == Adamas::Compiler::Frontend::Token::Kind::PercentRBrace && String.new(token.slice) == "%}" }.should be_true
+      comments = tokens.select { |token| token.kind == Adamas::Compiler::Frontend::Token::Kind::Comment }
+      comments.size.should eq(1)
+      String.new(comments.first.slice).should eq("# }")
+      tokens.count { |token| token.kind == Adamas::Compiler::Frontend::Token::Kind::PercentRBrace }.should be >= 1
+      tokens.any? { |token| token.kind == Adamas::Compiler::Frontend::Token::Kind::End }.should be_true
+    end
+  end
+
+  it "keeps interpolation-then-macro text inside comments outside macros" do
+    ["# }{% end %})\nx\n", "{% if x %}{% end %}\n# }{% end %})\n"].each do |source|
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      tokens = [] of Adamas::Compiler::Frontend::Token
+      lexer.each_token(skip_trivia: false) { |token| tokens << token }
+
+      comments = tokens.select { |token| token.kind == Adamas::Compiler::Frontend::Token::Kind::Comment }
+      comments.size.should eq(1)
+      String.new(comments.first.slice).should eq("# }{% end %})")
+      tokens.none? { |token| token.kind == Adamas::Compiler::Frontend::Token::Kind::RParen }.should be_true
+    end
   end
 
   it "tokenizes escaped strings to processed payloads" do
