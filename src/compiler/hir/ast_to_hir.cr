@@ -86533,7 +86533,15 @@ module Adamas::HIR
         return emit_constant_get(ctx, full_name)
       end
 
-      if (macro_lookup = lookup_macro_entry(name, @current_class)) &&
+      # A bare identifier resolves macros like an argless call does: a
+      # generic instantiation (`Atomic(UInt32)`) finds the template's private
+      # macros (`check_pointer_type`), and parents/included modules are walked.
+      identifier_macro_lookup = if current_scope = @current_class
+                                  lookup_macro_entry_with_inheritance(name, current_scope)
+                                else
+                                  lookup_macro_entry(name, nil)
+                                end
+      if (macro_lookup = identifier_macro_lookup) &&
          !macro_call_misses_mandatory_param?(macro_lookup[0][0], @arena, [] of ExprId, nil)
         macro_entry, macro_key = macro_lookup
         macro_def, macro_arena = macro_entry
