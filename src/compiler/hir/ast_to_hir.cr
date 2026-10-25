@@ -88350,6 +88350,12 @@ module Adamas::HIR
       # Return a type reference literal (for use as receiver in static calls)
       # We use a nil literal with special type tracking
       type_ref = @class_info[class_name]?.try(&.type_ref) || TypeRef::VOID
+      if type_ref == TypeRef::VOID && BUILTIN_GENERIC_BASES.includes?(lookup_base_name)
+        # Builtin generics such as `Tuple(Int32, UInt8)` are type descriptors
+        # without class_info; as in lower_type_literal_from_name, the literal
+        # still names the instance (a `type : F.class` argument binds F).
+        type_ref = type_ref_for_name(class_name)
+      end
       if env_get("ADAMAS_TYPE_LITERAL_ALLOC")
         if class_info = @class_info[class_name]?
           generate_allocator(class_name, class_info)
