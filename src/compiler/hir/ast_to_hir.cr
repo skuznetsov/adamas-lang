@@ -129860,7 +129860,7 @@ module Adamas::HIR
                   end
                   field_set = FieldSet.new(ctx.next_id, ivar_info.type, field_target, ivar_info.name, store_val, ivar_info.offset)
                   ctx.emit(field_set)
-                  return field_set.id
+                  return value_id
                 end
               end
             end
@@ -129919,7 +129919,10 @@ module Adamas::HIR
             end
             field_set = FieldSet.new(ctx.next_id, ivar_info.type, object_id, ivar_name, store_val, ivar_info.offset)
             ctx.emit(field_set)
-            return field_set.id
+            # `obj.field = v` evaluates to `v`, not to the store typed as the
+            # field (`Fiber.current.execution_context = new(...)` must stay a
+            # Parallel, not widen to the ExecutionContext module).
+            return value_id
           elsif class_info.is_struct && @lib_structs.includes?(class_name)
             if ivar_info = find_ivar_info(class_info.ivars, field_name)
               store_val = value_id
@@ -129937,7 +129940,7 @@ module Adamas::HIR
               end
               field_set = FieldSet.new(ctx.next_id, ivar_info.type, object_id, field_name, store_val, ivar_info.offset)
               ctx.emit(field_set)
-              return field_set.id
+              return value_id
             end
           end
         end
