@@ -72048,6 +72048,64 @@ module Adamas::HIR
       raise ArgumentError.new("cannot infer #{template.name} type arguments from initializer restrictions")
     end
 
+    # A block-taking class method binds its owner's formal from the block
+    # output, not from its positional arguments: `self.new(seed, & : Int32 -> T)`
+    # must not take T from `seed` through `initialize(@v : T)`. Slice's
+    # `self.new(size, *, read_only = false, &)` leaves the block unrestricted,
+    # but its body fills `Pointer.malloc(size) { |i| yield i }`, so T is the
+    # block output as well. A bare `Slice` inside `Slice(T)` names the generic.
+    private def infer_generic_new_type_arg_from_block(
+      class_name : String,
+      args : Array(Adamas::Compiler::Frontend::ExprId)?,
+      block : Adamas::Compiler::Frontend::ExprId,
+    ) : String?
+      template = @generic_templates[class_name]?
+      return nil unless template && template.type_params.size == 1
+      block_node = @arena[block]
+      return nil unless block_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
+      body = template.node.body
+      return nil unless body
+      formal = template.type_params.first
+      positional_count = args.try(&.size) || 0
+      input_names = nil.as(Array(String)?)
+      with_arena(template.arena) do
+        body.each do |expr_id|
+          member = unwrap_visibility_member_in_arena(template.arena[expr_id], template.arena)
+          next unless member.is_a?(Adamas::Compiler::Frontend::DefNode)
+          next unless def_method_name_from_node(member, template.arena) == "new"
+          receiver = member.receiver
+          next unless receiver && class_method_receiver_text?(safe_slice_to_string(receiver) || "")
+          params = function_param_infos(member, template.arena)
+          block_param = params.find(&.is_block)
+          next unless block_param
+          positional = params.take_while do |param|
+            !param.is_block && !param.is_splat && !param.is_double_splat && !named_only_separator?(param)
+          end
+          required = positional.count { |param| param.default_value.nil? }
+          next unless positional_count >= required && positional_count <= positional.size
+          if restriction = block_param.type_annotation
+            next unless extract_proc_return_type_name(restriction).try(&.strip) == formal
+            input_names = proc_input_type_names(restriction) || [] of String
+          elsif class_name == "Slice"
+            input_names = ["Int32"]
+          else
+            next
+          end
+          break
+        end
+      end
+      return nil unless names = input_names
+      # Formal inputs (`& : T -> U`) have no binding yet; leave them untyped.
+      input_types = names.map do |name|
+        name = name.strip
+        type_param_like?(name) ? TypeRef::VOID : type_ref_for_name(name)
+      end
+      inferred = inline_block_return_type_name(block_node, input_types, @current_class)
+      return nil if inferred.nil? || inferred.empty? || inferred == "Void" || inferred == "Unknown"
+      return nil if type_param_like?(inferred)
+      inferred
+    end
+
     private def infer_generic_type_arg(
       class_name : String,
       args : Array(Adamas::Compiler::Frontend::ExprId)?,
@@ -72055,6 +72113,13 @@ module Adamas::HIR
       ctx : LoweringContext,
       named_args : Array(Adamas::Compiler::Frontend::NamedArgument)? = nil,
     ) : String?
+      # Array keeps its dedicated value-producer inference below.
+      if block && class_name != "Array"
+        if inferred = infer_generic_new_type_arg_from_block(class_name, args, block)
+          return inferred
+        end
+      end
+
       # For filled and block Array.new forms, infer only from the value
       # producer. An unsuccessful producer inference is final here: the
       # generic fallback must not reinterpret `size` as Array's element type.
