@@ -64023,6 +64023,7 @@ module Adamas::HIR
       if local_name = @current_typeof_local_names.try(&.[name]?)
         return local_name unless local_name.empty?
       end
+      return name if typeof_type_expression?(name)
       return name if value_literal_name?(name)
 
       if name.includes?('|')
@@ -64088,6 +64089,24 @@ module Adamas::HIR
       name
     end
 
+    # `typeof(expr)` names an expression's type, not a type in the owner. It
+    # stays unqualified until resolve_typeof_in_type_string evaluates it in the
+    # active local environment; qualifying `typeof` as a generic base turned
+    # `typeof(callstack)` into `Owner::Array(Pointer(Void))`.
+    private def typeof_type_expression?(name : String) : Bool
+      return false unless name.starts_with?("typeof(") && name.ends_with?(')')
+      depth = 0
+      name.each_char_with_index do |ch, i|
+        if ch == '('
+          depth += 1
+        elsif ch == ')'
+          depth -= 1
+          return i == name.size - 1 if depth == 0
+        end
+      end
+      false
+    end
+
     private def resolve_type_name_in_context_impl(name : String) : String
       return name if name.empty?
       name = normalize_missing_generic_parens(name)
@@ -64145,6 +64164,7 @@ module Adamas::HIR
       if local_name = @current_typeof_local_names.try(&.[name]?)
         return local_name unless local_name.empty?
       end
+      return name if typeof_type_expression?(name)
       has_ns = !ns_idx.nil?
       has_union = !!ascii_byte_index(name, '|'.ord.to_u8)
       has_open_paren = !!ascii_byte_index(name, '('.ord.to_u8)
