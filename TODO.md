@@ -12,6 +12,16 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
 - [x] 7571c4d4 lib fun call results are inferred from their declared return
   type for generic `.new` (`lib_fun_call_constructor_inference_repro.sh`);
   fixed `Slice(UInt8).new(Pointer(UInt64), UInt32)` in regex/pcre2.cr.
+- [x] ff435891 a positional splat that no positional argument reached binds
+  the empty Tuple (`named_only_call_empty_splat_repro.sh`); fixed
+  `IO#gets(Nil, Bool, chomp:)` in File.read_lines.
+- [ ] Forwarding `gets(*args, **options)` from a non-inlined def segfaults
+  when a positional is given (`fwd(10, chomp: false)`), no prelude.
+- [ ] Prelude `IO::Memory#gets("|")` fails with "Ambiguous MIR call target
+  Symbol#==$Symbol: candidates Symbol#==$Bool, Symbol#==$Errno".
+- [ ] Prelude `IO::Memory#read_line` hangs at runtime.
+- [ ] An unknown named argument is reported as "receiver repair left
+  bodyless target" instead of "no overload matches".
 - [ ] Explicit generic args are not checked against initializer
   restrictions: `Sl(UInt8).new(Pointer(UInt64).malloc(4), 2)` compiles
   (original Crystal: no overload matches).
