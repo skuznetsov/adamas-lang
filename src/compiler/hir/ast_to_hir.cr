@@ -64882,6 +64882,30 @@ module Adamas::HIR
       parts.owner
     end
 
+    # A method registered from an included or extended generic module
+    # (`extend ImplInfoMethods(self)` in `ImplInfo_Float64`) keeps the module's
+    # bindings (`D => ImplInfo_Float64`) in its function type-param map, but the
+    # candidate context is the non-generic owner. A restriction through such a
+    # param (`u : D::CarrierUInt`) only resolves under that binding. Returns the
+    # bindings the candidate's restrictions mention that the current map lacks.
+    private def lookup_candidate_restriction_param_map(
+      candidate_name : String,
+      def_node : Adamas::Compiler::Frontend::DefNode,
+    ) : Hash(String, String)?
+      return nil unless stored = function_type_param_map_for(candidate_name)
+      extra = nil.as(Hash(String, String)?)
+      stored.each do |key, value|
+        next if key.starts_with?("__") || value.empty? || value == key
+        next if @type_param_map[key]? == value
+        mentioned = function_param_infos(def_node).any? do |param|
+          (restriction = param.type_annotation) && contains_type_param_token?(restriction, key)
+        end
+        next unless mentioned
+        (extra ||= {} of String => String)[key] = value
+      end
+      extra
+    end
+
     # A candidate's restrictions resolve in the scope that declares it. A
     # top-level def has no owner context, and its `Exception` must stay
     # ::Exception even when the caller's class nests its own Exception.
@@ -118377,7 +118401,14 @@ module Adamas::HIR
               next unless view
               match_arg_types, match_param_infos = view
             end
-            compatible = params_compatible_with_args?(def_node, match_arg_types, func_context, match_param_infos, ovl_trace)
+            candidate_param_map = lookup_candidate_restriction_param_map(name, def_node)
+            compatible = if candidate_param_map
+                           with_type_param_map(candidate_param_map) do
+                             params_compatible_with_args?(def_node, match_arg_types, func_context, match_param_infos, ovl_trace)
+                           end
+                         else
+                           params_compatible_with_args?(def_node, match_arg_types, func_context, match_param_infos, ovl_trace)
+                         end
             STDERR.puts "[OVL]   cand=#{name} pc=#{param_count} req=#{required} ctx=#{func_context} compat=#{compatible}" if ovl_trace
             if compatible && single_candidate_fast_path
               if env_get("DEBUG_JOIN_PICK") && debug_overload_pick_suspicious?(name, arg_count)
@@ -118392,7 +118423,13 @@ module Adamas::HIR
               if !has_block && !call_has_splat && !call_has_named_args && arg_types.none? { |type_ref| type_ref == TypeRef::VOID }
                 candidate_requires_proc_nil_discard = source_proc_nil_result_discard_required_for_def?(def_node, arg_types, func_context)
               end
-              score = params_match_score(def_node, match_arg_types, func_context, match_param_infos)
+              score = if candidate_param_map
+                        with_type_param_map(candidate_param_map) do
+                          params_match_score(def_node, match_arg_types, func_context, match_param_infos)
+                        end
+                      else
+                        params_match_score(def_node, match_arg_types, func_context, match_param_infos)
+                      end
               score += class_method_owner_match_bonus(func_name, name, arg_types)
               score += named_args_match_score(def_node, named_arg_names)
             end
