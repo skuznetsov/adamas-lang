@@ -1,3 +1,17 @@
+### Explicit `self.new` named block call initializer (2026-10-26)
+- [x] Every prelude program failed with `undefined method 'gc_thread_handler='
+  for Fiber::Stack` (fiber.cr:150). `Fiber.new(name: n, &->proc)` is owned by
+  the explicit `def self.new`, but the base allocator applied its `name:`
+  label to the positional initializer types, missed the block initializer
+  and materialized `initialize(stack : Void*, thread)` under its name. The
+  base allocator now treats such calls as positional, including the trailing
+  Proc to block recovery.
+  Regression: `regression_tests/explicit_new_named_block_initializer_repro.sh`.
+- [ ] A label the explicit def does not declare is rejected with
+  "captured initializer Proc ABI conflict" instead of "no overload matches".
+- [ ] Next prelude hello error: `undefined method 'gets' for Decoder`
+  (io.cr:652).
+
 ### Enum identity on `||` merges (2026-10-25)
 - [x] `maybe || E::A` with `maybe : E?` merged the unwrapped enum with the
   constant's Int32 carrier as `E | Int32`; stage 2 failed in lexer.cr with

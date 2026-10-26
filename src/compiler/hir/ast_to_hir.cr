@@ -41351,9 +41351,14 @@ module Adamas::HIR
            true,
            named_names,
          )
-        # Explicit `def self.new` owns this call path. Leave its allocator
-        # preparation semantics unchanged.
-        return call_has_named_args
+        # Explicit `def self.new` owns this call path, so the named labels
+        # bind that def's parameters, not initialize's. The base allocator
+        # body passes positional initializer types; applying the outer labels
+        # to them double-binds a parameter, misses the matching initializer
+        # and falls back to an unrelated same-arity overload
+        # (`Fiber.new(name: n) { }` materialized `initialize(stack : Void*,
+        # thread)` under the block initializer's name).
+        return false
       end
 
       shape_name = allocator_overload_name_for_call(
@@ -41937,8 +41942,8 @@ module Adamas::HIR
                                  false,
                                  allocator_initializer_arg_types,
                                  false,
-                                 call_has_named_args,
-                                 call_named_arg_names,
+                                 base_allocator_has_named_args,
+                                 base_allocator_has_named_args ? call_named_arg_names : nil,
                                )
                              end
           if positional_match.nil? &&
@@ -41948,8 +41953,8 @@ module Adamas::HIR
                true,
                regular_init_types,
                false,
-               call_has_named_args,
-               call_named_arg_names,
+               base_allocator_has_named_args,
+               base_allocator_has_named_args ? call_named_arg_names : nil,
              )
             allocator_initializer_arg_types = regular_init_types
             allocator_initializer_has_block = true
