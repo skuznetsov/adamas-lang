@@ -27886,7 +27886,14 @@ module Adamas::HIR
               end
             end
             if info = @class_info[class_name]?
-              if info.is_struct
+              # A def the struct declares owns the call's type: getter!'s
+              # `def size : UInt64?` raises on nil, so it is never the ivar's
+              # `UInt64?`. A native getter has no DefNode, and the lookup then
+              # reaches an ancestor's def (Object#hash), so only a def that is
+              # not inherited overrides the ivar.
+              if info.is_struct &&
+                 !((getter_def_name = resolve_method_with_inheritance(class_name, member_name)) &&
+                 own_zero_arg_def_for_return?(getter_def_name))
                 if ivar_info = find_ivar_info(info.ivars, "@#{member_name}")
                   if env_get("DEBUG_STRUCT_GETTER_INFER") && member_name == "hash"
                     STDERR.puts "[STRUCT_GETTER_INFER] #{class_name}##{member_name} -> #{get_type_name_from_ref(ivar_info.type)}"
@@ -61866,6 +61873,15 @@ module Adamas::HIR
     # def. With a known positional `call_arg_count` an ancestor def that cannot
     # accept it is skipped instead of returned: a zero-arg `UInt8#hash` must
     # resolve to `Object#hash`, not stop at the nearer `Number#hash(hasher)`.
+    # True when the owner of `name` declares a zero-argument def itself, rather
+    # than the return lookup reaching an included module's or ancestor's def.
+    private def own_zero_arg_def_for_return?(name : String) : Bool
+      found = lookup_function_def_for_return(name, name, 0)
+      return false unless found
+      inherited = lookup_inherited_function_def_for_return(name, 0)
+      !(inherited && inherited.same?(found))
+    end
+
     private def lookup_inherited_function_def_for_return(
       base_name : String,
       call_arg_count : Int32? = nil,
