@@ -1,3 +1,33 @@
+### Prelude hello blockers, second batch (2026-10-26)
+Each fix has its own commit and regression (original Crystal 1.22.1 first).
+- [x] 653c8a09 included-module overloads selected by argument types for
+  call return types (`included_module_overload_return_repro.sh`).
+- [x] 42a1f1e3 replayed virtual targets specialized for the recorded
+  argument types (`virtual_replay_arity_specialization_repro.sh`).
+- [x] 96ffe48a an already resolved `.new` path receiver is not re-resolved
+  (`absolute_path_receiver_new_repro.sh`).
+- [x] 6302039f a pending source target answers for its own return type
+  instead of the name-based pointer guess
+  (`pending_target_name_pointer_guess_repro.sh`).
+- [x] 2502779d untyped module class methods without callsite types are
+  deferred (`untyped_module_method_base_defer_repro.sh`); fixed
+  `check_no_null_byte for Int32`.
+- [x] 544748ff early-exit ensure bodies lower in their owner's context
+  (`inline_block_return_ensure_owner_repro.sh`); fixed `undefined method
+  'unlock'`.
+- [x] 034b79b2 canonical type names are looked up as absolute paths:
+  `::File::Info.new` inside `Crystal::System::File` resolved to
+  `Crystal::DWARF::Info` (`canonical_path_reresolve_repro.sh`).
+- [ ] Next prelude hello error: `undefined method 'index' for Nil`
+  (polling/arena.cr:176). A call to an annotated def is typed by the
+  annotation (`getter! index : Arena::Index?` -> `Arena::Index?`); original
+  Crystal types it by the narrower body type (`def f : Int32 | Nil; 41; end`
+  gives `Int32`).
+- [ ] An inline-yield restricted parameter binds Nil from a union argument.
+- [ ] The name-based return heuristics and
+  `resolve_short_type_in_namespace_chain` fall back by short name to
+  unrelated types; original Crystal rejects instead.
+
 ### Field borrows keep their owner temp alive across blocks (2026-10-26)
 - [x] Per-block ARC released an owned call-result temp at the end of the
   block that loaded a reference field from it, while the borrowed field was
