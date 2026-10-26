@@ -1,3 +1,30 @@
+### S1 -> S2 bootstrap blockers (2026-10-26)
+Each fix has its own commit and regression (original Crystal 1.22.1 first).
+- [x] b2f293b5, 8aa7093c generic instances take constructor arity and ivar
+  layout from deferred included-module initializers (`Hash::KeyIterator.new`).
+- [x] 45f874dc every `&&` conjunct lends a truthy capture proof inside a
+  block proc (`closure_capture_and_narrowing_repro.sh`); fixed
+  `DiagnosticFormatter.extract_lines(Nil | String, Span)`.
+- [x] 6ff06185 module-param path restrictions (`u : D::CarrierUInt` from
+  `extend M(self)`) resolve under the candidate's bindings
+  (`module_param_path_restriction_repro.sh`); fixed dragonbox
+  `extract_exponent_bits(UInt64)` and prelude `puts 1.5`.
+- [x] 7571c4d4 lib fun call results are inferred from their declared return
+  type for generic `.new` (`lib_fun_call_constructor_inference_repro.sh`);
+  fixed `Slice(UInt8).new(Pointer(UInt64), UInt32)` in regex/pcre2.cr.
+- [ ] Explicit generic args are not checked against initializer
+  restrictions: `Sl(UInt8).new(Pointer(UInt64).malloc(4), 2)` compiles
+  (original Crystal: no overload matches).
+- [ ] An unsolvable initializer restriction set reports "cannot infer ...
+  type arguments" where original Crystal reports "no overload matches".
+- [ ] Several reads of a readonly closure capture: a capture proof is single
+  use; original Crystal narrows unless the variable is mutably closured.
+- [ ] A grouped left `(a && b) && c` collects no capture proof.
+- [ ] Top-level `include` raises "Unsupported AST node type IncludeNode".
+- [ ] Prelude hello stubs: `shift?`, `Symbol#!=`, `Symbol#to_s`;
+  print_error `%s` is not substituted; a top-level raise reaches
+  `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
+
 ### Prelude hello blockers, second batch (2026-10-26)
 Each fix has its own commit and regression (original Crystal 1.22.1 first).
 - [x] 653c8a09 included-module overloads selected by argument types for
