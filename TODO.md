@@ -1,3 +1,15 @@
+### Inherited constant lookup through ancestors (2026-10-25)
+- [x] Resolve bare constants in the current type, then its ancestors
+  (superclasses and included modules, not their namespaces), then the enclosing
+  namespace, as Crystal's Type#lookup_path_item does. Stage 2 failed on hir.cr's
+  `@must_alias_with_value : ValueId = NO_MUST_ALIAS` ("undefined constant").
+  Regression: `regression_tests/inherited_constant_lookup_repro.sh`.
+- [ ] OPEN (pre-existing, s1_new70 too): a method whose block body contains a
+  yield used as an `is_a?`/`case` subject (`each do |e| case yield e; when B
+  ...`) is not inlined; the raw-yield call types the result Void
+  (`yield via %1 ... : 0`), so `is_a?(B)` is false and the outer write is lost
+  (exit 0 vs oracle 42). `v = yield e; if v.is_a?(B)` and `if yield e` work.
+
 ### Reject contradicted initializer contracts before allocator recovery (2026-10-21)
 - [x] Prevent positional automatic allocator recovery from reviving an initializer
   when every viable owner-local source candidate has a concrete argument mismatch.

@@ -63417,10 +63417,43 @@ module Adamas::HIR
             end
           end
           return qualified_name if constant_name_exists?(qualified_name)
+          if inherited = resolve_constant_in_ancestors(parts.join("::"), name)
+            return inherited
+          end
           parts.pop
         end
       end
 
+      nil
+    end
+
+    # Original Crystal (Type#lookup_path_item) searches a scope, then the
+    # scope's ancestors -- superclasses and included modules, but not their
+    # enclosing namespaces -- before moving on to the enclosing namespace.
+    private def resolve_constant_in_ancestors(scope : String, name : String) : String?
+      queue = [scope]
+      visited = Set(String).new
+      while owner = queue.shift?
+        next unless visited.add?(owner)
+        owner_base = strip_generics_simple(owner)
+        if owner != scope
+          qualified_name = "#{owner}::#{name}"
+          return qualified_name if constant_name_exists?(qualified_name)
+          if owner_base != owner
+            qualified_name = "#{owner_base}::#{name}"
+            return qualified_name if constant_name_exists?(qualified_name)
+          end
+        end
+        if mods = @class_included_modules[owner]?
+          mods.reverse_each { |mod| queue << mod }
+        end
+        if owner_base != owner && (mods = @class_included_modules[owner_base]?)
+          mods.reverse_each { |mod| queue << mod }
+        end
+        if parent = parent_name_for_hierarchy_lookup(owner) || parent_name_for_hierarchy_lookup(owner_base) || builtin_hierarchy_parent(owner)
+          queue << parent
+        end
+      end
       nil
     end
 
