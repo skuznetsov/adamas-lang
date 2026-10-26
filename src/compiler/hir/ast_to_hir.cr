@@ -136,7 +136,8 @@ module Adamas::HIR
     record ScopedReceiverNarrowing,
       name : String,
       value_id : ValueId,
-      carrier : ScopedReceiverCarrier
+      carrier : ScopedReceiverCarrier,
+      block : BlockId? = nil
 
     # Function-scope predeclaration set for P1 boxed captures.
     #
@@ -623,6 +624,13 @@ module Adamas::HIR
       return nil unless narrowing = @scoped_receiver_narrowings[name]?
       return nil unless narrowing.name == name && narrowing.carrier == {cell_class, cell_name}
 
+      # A block-bound proof holds for every read on its straight-line block;
+      # at a merge the cell may carry another branch's write.
+      if block = narrowing.block
+        return narrowing.value_id if block == @current_block
+        @scoped_receiver_narrowings.delete(name)
+        return nil
+      end
       @scoped_receiver_narrowings.delete(name)
       narrowing.value_id
     end
@@ -634,6 +642,17 @@ module Adamas::HIR
       value_id : ValueId,
     ) : ScopedReceiverNarrowing?
       narrowing = ScopedReceiverNarrowing.new(name, value_id, {cell_class, cell_name})
+      @scoped_receiver_narrowings[name] = narrowing
+      narrowing
+    end
+
+    def register_closure_cell_write_narrowing(
+      name : String,
+      cell_class : String,
+      cell_name : String,
+      value_id : ValueId,
+    ) : ScopedReceiverNarrowing?
+      narrowing = ScopedReceiverNarrowing.new(name, value_id, {cell_class, cell_name}, @current_block)
       @scoped_receiver_narrowings[name] = narrowing
       narrowing
     end
@@ -68259,6 +68278,7 @@ module Adamas::HIR
         return nil if body.empty?
         last_expr = body.last?
         return nil unless last_expr
+        seed_block_straight_line_assignments(body, self_type_name)
         if inferred = infer_type_from_expr(last_expr, self_type_name)
           type_name = get_type_name_from_ref(inferred)
           # DEBUG PROBE (remove before commit): trace inferred block-return type.
@@ -68278,6 +68298,31 @@ module Adamas::HIR
       end
 
       nil
+    end
+
+    # A block body is typed flow-sensitively: after `v = @a` the trailing
+    # `pick(v)` sees A, not the enclosing scope's type of `v`. Seed the typeof
+    # locals from the body's top-level assignments that precede its last
+    # expression. Branch-local writes are left alone; lowering decides those.
+    private def seed_block_straight_line_assignments(
+      body : Array(ExprId),
+      self_type_name : String?,
+    ) : Nil
+      index = 0
+      last_index = body.size - 1
+      while index < last_index
+        if assignment = @arena[body[index]].as?(Adamas::Compiler::Frontend::AssignNode)
+          if ident = @arena[assignment.target].as?(Adamas::Compiler::Frontend::IdentifierNode)
+            name = String.new(ident.name)
+            value_type = infer_type_from_expr(assignment.value, self_type_name)
+            if value_type && value_type != TypeRef::VOID
+              update_typeof_local(name, value_type)
+              update_typeof_local_name(name, get_type_name_from_ref(value_type))
+            end
+          end
+        end
+        index += 1
+      end
     end
 
     private def inline_proc_return_type_name(
@@ -87346,6 +87391,35 @@ module Adamas::HIR
       record_hir_value_source_location(ctx, call.id, @arena, node)
       ctx.register_type(call.id, TypeRef::VOID)
       call.id
+    end
+
+    # Writes a captured local through a raw block thunk's closure cell. The
+    # cell carries the capture's declared (possibly union) type; a raw variant
+    # stored without a union wrap is read back as a garbage type_id. The
+    # assignment expression keeps the RHS value.
+    #
+    # Only raw block thunks own closure cells, and a block body is Crystal's
+    # inlined block: after `v = A.new` reads of `v` see the assigned A, not the
+    # cell's union. The written value is lent to reads on the same straight-line
+    # block until any call or store clears it: a call may run another,
+    # non-inlined thunk that writes the same cell (`wrap { v = nil }`).
+    private def store_closure_cell_assignment(
+      ctx : LoweringContext,
+      name : String,
+      ref_cell : {String, String, TypeRef},
+      value_id : ValueId,
+    ) : ValueId
+      cell_class, cell_name, cell_type = ref_cell
+      ctx.discard_closure_cell_narrowing(name, cell_class, cell_name)
+      stored_id = coerce_value_to_type(ctx, value_id, cell_type)
+      set = ClassVarSet.new(ctx.next_id, cell_type, cell_class, cell_name, stored_id)
+      ctx.emit(set)
+      ctx.register_type(set.id, cell_type)
+      written_type = ctx.type_of(value_id)
+      if written_type != cell_type && written_type != TypeRef::VOID
+        ctx.register_closure_cell_write_narrowing(name, cell_class, cell_name, value_id)
+      end
+      stored_id == value_id ? set.id : value_id
     end
 
     private def lower_closure_ref_cell_identifier(
@@ -130727,16 +130801,7 @@ module Adamas::HIR
         # write through the outer capture cell even when that cell is mutable.
         unless current_local && ctx.block_parameter_binding?(name, current_local)
           if ref_cell = @closure_ref_cells[name]?
-            cell_class, cell_name, cell_type = ref_cell
-            ctx.discard_closure_cell_narrowing(name, cell_class, cell_name)
-            # The cell carries the capture's declared (possibly union) type;
-            # a raw variant stored without a union wrap is read back as a
-            # garbage type_id. The assignment expression keeps the RHS value.
-            stored_id = coerce_value_to_type(ctx, value_id, cell_type)
-            set = ClassVarSet.new(ctx.next_id, cell_type, cell_class, cell_name, stored_id)
-            ctx.emit(set)
-            ctx.register_type(set.id, cell_type)
-            return stored_id == value_id ? set.id : value_id
+            return store_closure_cell_assignment(ctx, name, ref_cell, value_id)
           end
         end
         if debug_name = env_get("DEBUG_ASSIGN_VAR")
@@ -132033,16 +132098,7 @@ module Adamas::HIR
         end
         unless current_local && ctx.block_parameter_binding?(name, current_local)
           if ref_cell = @closure_ref_cells[name]?
-            cell_class, cell_name, cell_type = ref_cell
-            ctx.discard_closure_cell_narrowing(name, cell_class, cell_name)
-            # The cell carries the capture's declared (possibly union) type;
-            # a raw variant stored without a union wrap is read back as a
-            # garbage type_id. The assignment expression keeps the RHS value.
-            stored_id = coerce_value_to_type(ctx, value_id, cell_type)
-            set = ClassVarSet.new(ctx.next_id, cell_type, cell_class, cell_name, stored_id)
-            ctx.emit(set)
-            ctx.register_type(set.id, cell_type)
-            return stored_id == value_id ? set.id : value_id
+            return store_closure_cell_assignment(ctx, name, ref_cell, value_id)
           end
         end
         if debug_name = env_get("DEBUG_ASSIGN_VAR")
