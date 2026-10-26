@@ -7537,6 +7537,16 @@ module Adamas::HIR
       # lowered, so a scope lies between an exit site and its target iff
       # `target < block_mark`.
       getter block_mark : BlockId
+      # Lexical owner where the begin/ensure was opened. A `return` inside a
+      # caller block inlined into `def sync(&); begin; yield; ensure; unlock;
+      # end; end` fires under the caller's owner, but the ensure body's
+      # implicit-self calls and type names belong to the yielding method.
+      getter owner_class : String?
+      getter owner_method : String?
+      getter owner_method_is_class : Bool
+      getter owner_namespace_override : String?
+      getter owner_type_param_map : Hash(String, String)
+      getter owner_inline_def_frame : InlineDefFrame?
       # Re-entrancy guard while this scope's body is being emitted.
       property emitting : Bool
       # True only while lowering the protected body of a begin/rescue scope.
@@ -7549,7 +7559,13 @@ module Adamas::HIR
                      @inline_marker : Int32,
                      @locals : Hash(String, ValueId),
                      @rescue_active : Bool,
-                     @block_mark : BlockId)
+                     @block_mark : BlockId,
+                     @owner_class : String?,
+                     @owner_method : String?,
+                     @owner_method_is_class : Bool,
+                     @owner_namespace_override : String?,
+                     @owner_type_param_map : Hash(String, String),
+                     @owner_inline_def_frame : InlineDefFrame?)
         @emitting = false
       end
     end
@@ -96662,13 +96678,30 @@ module Adamas::HIR
       merged_locals = ctx.all_locals.dup
       ectx.locals.each { |name, value| merged_locals[name] = value }
       ctx.restore_locals(merged_locals)
+      saved_class = @current_class
+      saved_method = @current_method
+      saved_method_is_class = @current_method_is_class
+      saved_namespace_override = @current_namespace_override
+      saved_inline_def_frame = @current_inline_def_frame
+      @current_class = ectx.owner_class
+      @current_method = ectx.owner_method
+      @current_method_is_class = ectx.owner_method_is_class
+      @current_namespace_override = ectx.owner_namespace_override
+      @current_inline_def_frame = ectx.owner_inline_def_frame
       begin
         with_arena(ectx.arena) do
-          ectx.ensure_body.each do |expr_id|
-            lower_expr(ctx, expr_id)
+          with_isolated_type_param_map(ectx.owner_type_param_map) do
+            ectx.ensure_body.each do |expr_id|
+              lower_expr(ctx, expr_id)
+            end
           end
         end
       ensure
+        @current_class = saved_class
+        @current_method = saved_method
+        @current_method_is_class = saved_method_is_class
+        @current_namespace_override = saved_namespace_override
+        @current_inline_def_frame = saved_inline_def_frame
         ctx.restore_locals(saved_locals)
         ectx.emitting = false
       end
@@ -97476,7 +97509,9 @@ module Adamas::HIR
         early_exit_ctx = EarlyExitLoweringContext.new(
           ensure_body, @arena, ctx.function.id,
           @inline_yield_return_stack.size, ctx.save_locals.locals, has_rescue,
-          ctx.function.blocks.size.to_u32)
+          ctx.function.blocks.size.to_u32,
+          @current_class, @current_method, @current_method_is_class,
+          @current_namespace_override, @type_param_map, @current_inline_def_frame)
         @active_early_exit_contexts << early_exit_ctx
       end
 
