@@ -90117,9 +90117,9 @@ module Adamas::HIR
       return [] of String unless member_name == "nil?" || member_name == "null?"
       return [] of String if when_truthy
 
-      recv_node = @arena[node.object]
-      if recv_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
-        [identifier_name_text(recv_node)]
+      # `(value = @index).nil?` (getter!) narrows `value` like a plain local.
+      if var_name = is_a_receiver_var_name(node.object)
+        [var_name]
       else
         [] of String
       end
