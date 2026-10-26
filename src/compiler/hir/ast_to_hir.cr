@@ -10583,6 +10583,22 @@ module Adamas::HIR
       @virtual_target_replay_cursors[cursor_key] = target_idx
     end
 
+    # An untyped Def is registered under its shared `$arityN` name. Lowered
+    # under that name it has no argument types, so its parameters take
+    # whatever the declaration-level inference finds: `IO#gets_peek(..., peek)`
+    # got the un-narrowed `Bytes?` of `peek = self.peek` and an orphan body
+    # with `Nil#index`. The recorded target carries the call's argument
+    # types; specialize for them as lower_call does.
+    private def virtual_replay_specialized_name(
+      resolved_name : String,
+      arg_types : Array(TypeRef),
+      has_block_call : Bool,
+    ) : String
+      return resolved_name unless resolved_name.includes?("$arity")
+      prefer_callsite_specialization(strip_type_suffix(resolved_name), resolved_name, arg_types, has_block_call) ||
+        resolved_name
+    end
+
     private def broad_virtual_replay_declaring_owner(
       owner_name : String,
       replay_parent : String,
@@ -10761,6 +10777,7 @@ module Adamas::HIR
           lower_required_virtual_target_function(candidate, exact_demand: exact_owner_required, replay_source: replay_trace_source)
         elsif !resolved_owner.empty? && strip_generic_args(resolved_owner) != strip_generic_args(owner) &&
               !inherited_wrapper_reusable
+          resolved_name = virtual_replay_specialized_name(resolved_name, arg_types, has_block_call)
           lower_required_virtual_target_function(resolved_name, exact_demand: true, replay_source: replay_trace_source)
           # Nested replay queues the inherited target instead of materializing
           # it synchronously. Do not mistake that temporary missing body for a
@@ -10780,7 +10797,10 @@ module Adamas::HIR
             lower_required_virtual_target_function(base_name, replay_source: replay_trace_source) unless candidate == base_name
           end
         else
-          lower_required_virtual_target_function(resolved_name, replay_source: replay_trace_source)
+          lower_required_virtual_target_function(
+            virtual_replay_specialized_name(resolved_name, arg_types, has_block_call),
+            replay_source: replay_trace_source,
+          )
         end
       else
         # A broad-root call remains inherited when the concrete child only has
