@@ -97395,6 +97395,16 @@ module Adamas::HIR
           end
         end
       end
+      # Outside a block-as-proc body, the yield targets this function's own
+      # block param. When the function is a raw-callback target, its contract is
+      # the exact ABI of that block proc. The name-based lookup below would
+      # strip a late `__rawcb_*` target to the shared def name, whose
+      # `__block_return__` is whatever another call site recorded last.
+      if @inline_yield_proc_depth == 0 && @explicit_yield_target_stack.empty?
+        if contract = raw_callback_abi_for(ctx.function.name)
+          return contract.return_type
+        end
+      end
 
       func_name = ctx.function.name
       if @inline_yield_block_body_depth > 0 && @current_class && @current_method
@@ -136146,6 +136156,12 @@ module Adamas::HIR
           normalize_function_return_terminators(proc_ctx, TypeRef::NIL)
         elsif proc_return_type == TypeRef::VOID
           actual_return_type = proc_ctx.type_of(last_value)
+          # An enum result travels in its base-integer carrier. The proc keeps
+          # the identity recorded in the block's own ledger, so the callee's
+          # yield and its raw-callback contract see `{ NK::B }` as NK, not Int32.
+          @enum_value_types = block_proc_enum_value_types
+          actual_return_type = typeof_local_type_for_value(proc_ctx, last_value, actual_return_type)
+          @enum_value_types = saved_enum_value_types
           if actual_return_type == TypeRef::VOID || actual_return_type == TypeRef::NIL
             # last_value is nil_lit when lower_return ran inside the proc body
             # (because @inline_yield_proc_depth > 0 makes lower_return emit
