@@ -28554,7 +28554,15 @@ module Adamas::HIR
                 exact_owner = recv_name
                 exact_base = resolve_method_with_inheritance(exact_owner, member_name) || "#{exact_owner}##{member_name}"
                 exact_arg_types = infer_arg_types_for_call(expr_node.args, self_type_name)
-                if selected = lookup_function_def_for_call(exact_base, exact_arg_types.size, false, exact_arg_types)
+                if !exact_arg_types.empty? &&
+                   exact_arg_types.none? { |type| type == TypeRef::VOID || type == TypeRef::POINTER } &&
+                   (module_return = included_module_call_return_type(exact_owner, member_name, expr_node.args, exact_arg_types, self_type_name))
+                  if module_type = module_return[0]
+                    return module_type
+                  end
+                  # The family caches below belong to the class's own overloads.
+                  return nil if owner_directly_declares_instance_method?(exact_owner, member_name)
+                elsif selected = lookup_function_def_for_call(exact_base, exact_arg_types.size, false, exact_arg_types)
                   # Unknown positional types cannot discriminate overloaded
                   # declarations. Keep the existing cache path when another
                   # source Def could match this call shape.
@@ -61703,6 +61711,16 @@ module Adamas::HIR
       selected
     end
 
+    private def base_return_def_differs_from_selected?(
+      base_name : String,
+      call_arg_count : Int32?,
+      selected_def : Adamas::Compiler::Frontend::DefNode?,
+    ) : Bool
+      return false unless selected_def
+      base_def = lookup_function_def_for_return(base_name, base_name, call_arg_count)
+      !base_def.nil? && !same_def_node?(base_def, selected_def)
+    end
+
     private def lookup_function_def_for_return(
       name : String,
       base_name : String,
@@ -68293,6 +68311,33 @@ module Adamas::HIR
       nil
     end
 
+    # When an included module's overload is the one these concrete argument
+    # types select on `owner_name` (the class itself declares no compatible
+    # overload), returns that overload's return type as a one-element tuple:
+    # unknown (nil inside) unless its body is unannotated and inferable.
+    # Returns nil when no included-module overload is selected, so callers
+    # fall back to the class's own overloads. The class family name must not
+    # answer such a call: its arity-only lookup picks a class sibling.
+    private def included_module_call_return_type(
+      owner_name : String,
+      member_name : String,
+      args : Array(ExprId),
+      arg_types : Array(TypeRef),
+      self_type_name : String?,
+    ) : Tuple(TypeRef?)?
+      origin = find_included_module_def_origin_for_owner(
+        owner_name,
+        member_name,
+        arg_types.size,
+        false,
+        compatible_arg_types: arg_types,
+      )
+      return nil unless origin
+      return {nil.as(TypeRef?)} if origin[0].return_type
+      ret = infer_return_type_from_callsite(origin[0], owner_name, args, nil, self_type_name)
+      {ret && ret != TypeRef::VOID ? ret : nil}
+    end
+
     # Handle &.method shorthand blocks for try (block has no params, body is implicit receiver call).
     private def infer_try_shorthand_block_return_type(
       block : Adamas::Compiler::Frontend::BlockNode,
@@ -68349,6 +68394,38 @@ module Adamas::HIR
       return nil if owner_name.empty? || owner_name == "Void" || owner_name == "Unknown"
 
       base_name = resolve_method_with_inheritance(owner_name, member_name) || "#{owner_name}##{member_name}"
+      # Known positional argument types select the overload, as for an
+      # explicit receiver. The family name's arity-blind lookup would answer
+      # `&.[code &- 1]?` on an Array with the sibling
+      # `[]?(range : Range) : Array(T)?` instead of the included
+      # `Indexable#[]?(index : Int)`.
+      if expr_node.is_a?(Adamas::Compiler::Frontend::CallNode) && !expr_node.args.empty? &&
+         !expr_node.block && !expr_node.named_args &&
+         !expr_node.args.any? { |arg| node_for_expr(arg).is_a?(Adamas::Compiler::Frontend::SplatNode) }
+        arg_types = infer_arg_types_for_call(expr_node.args, self_type_name)
+        unless arg_types.any? { |type| type == TypeRef::VOID || type == TypeRef::POINTER }
+          if module_return = included_module_call_return_type(owner_name, member_name, expr_node.args, arg_types, self_type_name)
+            if module_type = module_return[0]
+              return module_type
+            end
+            # The family entries below belong to the class's own overloads.
+            return nil if owner_directly_declares_instance_method?(owner_name, member_name)
+          else
+            selected = lookup_function_def_for_call(base_name, arg_types.size, false, arg_types)
+            return nil unless selected
+            selected_name = selected[0]
+            selected_base = strip_type_suffix(selected_name)
+            if selected[1].return_type
+              ret = with_namespace_override(method_owner(selected_base)) do
+                resolve_return_type_from_def(selected_name, selected_base, recv_type, arg_types.size, selected[1])
+              end
+              return ret if ret && ret != TypeRef::VOID
+            end
+            ret = get_function_return_type(selected_name, arg_types.size, selected[1])
+            return ret != TypeRef::VOID ? ret : nil
+          end
+        end
+      end
       if ret = resolve_return_type_from_def(base_name, base_name, recv_type)
         return ret if ret != TypeRef::VOID
       end
@@ -112580,6 +112657,15 @@ module Adamas::HIR
                                       mangled_method_name != base_method_name
       exact_return_target_authoritative = exact_return_target_candidate &&
                                           exact_callsite_return_contract_materialized?(mangled_method_name)
+      # The family name answers for this call only while it resolves to the
+      # selected source definition. Its arity-only lookup can otherwise pick a
+      # sibling overload: `Array#[]?(range : Range) : Array(T)?` for an Int32
+      # call that selected the included `Indexable#[]?(index : Int)`.
+      base_return_def_foreign = base_return_def_differs_from_selected?(
+        base_method_name,
+        return_def_arg_count,
+        selected_return_def,
+      )
 
       # Lazy lowering can defer the callee body while still leaving an early
       # pre-lowering return type in the cache. If the target is still pending,
@@ -112625,7 +112711,7 @@ module Adamas::HIR
          )
         refreshed = get_function_return_type(mangled_method_name, return_def_arg_count, selected_return_def)
         if refreshed == TypeRef::VOID && mangled_method_name != base_method_name &&
-           !exact_return_target_authoritative
+           !exact_return_target_authoritative && !base_return_def_foreign
           refreshed = get_function_return_type(base_method_name, return_def_arg_count)
         end
         if refreshed == TypeRef::VOID && primary_mangled_name != mangled_method_name
@@ -112653,7 +112739,7 @@ module Adamas::HIR
       if return_type == TypeRef::VOID
         return_type = get_function_return_type(mangled_method_name, return_def_arg_count, selected_return_def)
         if return_type == TypeRef::VOID && mangled_method_name != base_method_name &&
-           !exact_return_target_authoritative
+           !exact_return_target_authoritative && !base_return_def_foreign
           return_type = get_function_return_type(base_method_name, return_def_arg_count)
         end
       end
@@ -112712,7 +112798,7 @@ module Adamas::HIR
         end
         # Try base name if still no result
         if return_type == TypeRef::VOID && base_method_name != mangled_method_name &&
-           !exact_return_target_authoritative
+           !exact_return_target_authoritative && !base_return_def_foreign
           if function_state(base_method_name).pending?
             if debug_force
               STDERR.puts "[FORCE_LOWER] trying base=#{base_method_name}"
@@ -112736,7 +112822,7 @@ module Adamas::HIR
       if unresolved_generic_return_type?(return_type)
         [primary_mangled_name, mangled_method_name, base_method_name].uniq.each do |name|
           next if name.empty?
-          next if exact_return_target_authoritative && name == base_method_name
+          next if (exact_return_target_authoritative || base_return_def_foreign) && name == base_method_name
           if function_state(name).pending?
             force_lower_function_for_return_type(name)
           end
@@ -112744,7 +112830,7 @@ module Adamas::HIR
 
         refreshed = get_function_return_type(mangled_method_name, return_def_arg_count, selected_return_def)
         if refreshed == TypeRef::VOID && mangled_method_name != base_method_name &&
-           !exact_return_target_authoritative
+           !exact_return_target_authoritative && !base_return_def_foreign
           refreshed = get_function_return_type(base_method_name, return_def_arg_count)
         end
         if refreshed == TypeRef::VOID && primary_mangled_name != mangled_method_name
@@ -112755,7 +112841,7 @@ module Adamas::HIR
         else
           [mangled_method_name, primary_mangled_name, base_method_name].uniq.each do |name|
             next if name.empty?
-            next if exact_return_target_authoritative && name == base_method_name
+            next if (exact_return_target_authoritative || base_return_def_foreign) && name == base_method_name
             if func = @module.function_by_name(name)
               func_rt = func.return_type
               if func_rt != TypeRef::VOID && !unresolved_generic_return_type?(func_rt)
@@ -112774,7 +112860,7 @@ module Adamas::HIR
       is_nilable_query = NILABLE_QUERY_METHODS.includes?(method_name)
       resolved_return_type = get_function_return_type(mangled_method_name, return_def_arg_count, selected_return_def)
       if resolved_return_type == TypeRef::VOID && mangled_method_name != base_method_name &&
-         !exact_return_target_authoritative
+         !exact_return_target_authoritative && !base_return_def_foreign
         resolved_return_type = get_function_return_type(base_method_name, return_def_arg_count)
       end
       if !return_type_pinned &&
