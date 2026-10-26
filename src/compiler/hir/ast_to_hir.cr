@@ -78042,7 +78042,168 @@ module Adamas::HIR
       false
     end
 
+    # Static argument types callers pass for each (function, parameter index),
+    # the caller parameters forwarded unchanged into one, and functions whose
+    # callers are not all visible (address taken, or an argument shape that
+    # does not map onto the parameters).
+    private record VirtualParamInflow,
+      types : Hash({String, Int32}, Array(TypeRef)),
+      forwards : Hash({String, Int32}, Array({String, Int32})),
+      opaque : Set(String)
+
+    private def build_virtual_param_inflow : VirtualParamInflow
+      types = Hash({String, Int32}, Array(TypeRef)).new
+      forwards = Hash({String, Int32}, Array({String, Int32})).new
+      opaque = Set(String).new
+      @module.functions.each do |caller|
+        param_positions = Hash(ValueId, Int32).new
+        caller.params.each_with_index { |param, index| param_positions[param.id] = index }
+        copy_sources = Hash(ValueId, ValueId).new
+        phi_sources = Hash(ValueId, Array(ValueId)).new
+        value_types = Hash(ValueId, TypeRef).new
+        caller.params.each { |param| value_types[param.id] = param.type }
+        caller.blocks.each do |block|
+          block.instructions.each do |instruction|
+            value_types[instruction.id] = instruction.type
+            if copy = instruction.as?(Copy)
+              copy_sources[copy.id] = copy.source
+            elsif phi = instruction.as?(Phi)
+              phi_sources[phi.id] = phi.incoming_values
+            elsif pointer = instruction.as?(FuncPointer)
+              opaque << pointer.func_name
+            end
+          end
+        end
+
+        caller.blocks.each do |block|
+          block.instructions.each do |instruction|
+            call = instruction.as?(Call)
+            next unless call
+            callee = @module.function_by_name(call.method_name)
+            next unless callee
+            operands = [] of ValueId
+            if receiver = call.receiver
+              operands << receiver
+            end
+            operands.concat(call.args)
+            unless operands.size == callee.params.size
+              opaque << callee.name
+              next
+            end
+            operands.each_with_index do |operand, index|
+              key = {callee.name, index}
+              # A merge contributes each incoming value, so a forwarded
+              # parameter keeps its callers' types instead of the phi type.
+              pending = [operand]
+              seen = Set(ValueId).new
+              while value = pending.pop?
+                source = trace_copy_source(value, copy_sources)
+                next unless seen.add?(source)
+                if incoming = phi_sources[source]?
+                  pending.concat(incoming)
+                elsif position = param_positions[source]?
+                  (forwards[key] ||= [] of {String, Int32}) << {caller.name, position}
+                elsif type = value_types[source]?
+                  (types[key] ||= [] of TypeRef) << type
+                end
+              end
+            end
+          end
+        end
+      end
+      VirtualParamInflow.new(types, forwards, opaque)
+    end
+
+    private def trace_copy_source(value : ValueId, copy_sources : Hash(ValueId, ValueId)) : ValueId
+      current = value
+      copy_sources.size.times do
+        source = copy_sources[current]? || break
+        current = source
+      end
+      current
+    end
+
+    # Original Crystal types a body by the arguments that actually reach it,
+    # so `io.sync?` on `io : Sink` is rejected once a MemSink (which lacks
+    # sync?) is passed. A class-restricted parameter keeps one body typed by
+    # its restriction here, so a virtual call on it is checked against the
+    # concrete types its callers pass. Returns the first such type that
+    # declares no `method_name`, or nil when every visible inflow responds or
+    # the inflow is not fully visible.
+    private def virtual_receiver_inflow_missing_method(
+      caller : Function,
+      call : Call,
+      owner : String,
+      method_name : String,
+      inflow : VirtualParamInflow,
+    ) : String?
+      receiver = call.receiver || return nil
+      copy_sources = Hash(ValueId, ValueId).new
+      caller.blocks.each do |block|
+        block.instructions.each do |instruction|
+          if copy = instruction.as?(Copy)
+            copy_sources[copy.id] = copy.source
+          end
+        end
+      end
+      source = trace_copy_source(receiver, copy_sources)
+      position = caller.params.index { |param| param.id == source } || return nil
+
+      inflow_types = [] of TypeRef
+      queue = [{caller.name, position}]
+      visited = Set({String, Int32}).new
+      while key = queue.shift?
+        next unless visited.add?(key)
+        return nil if inflow.opaque.includes?(key[0])
+        inflow.types[key]?.try { |found| inflow_types.concat(found) }
+        inflow.forwards[key]?.try { |found| queue.concat(found) }
+      end
+
+      # The receiver family: subclasses of a class owner, or the transitive
+      # includers (and their subclasses) of a module owner.
+      owner_base = strip_generics_simple(owner)
+      family = Set(String).new
+      collect_subclasses_cached(owner_base).each { |name| family << name }
+      @hierarchy.each_transitive_includer(owner_base) do |includer, is_module|
+        next if is_module
+        family << includer
+        collect_subclasses_cached(includer).each { |name| family << name }
+      end
+
+      checked = Set(String).new
+      inflow_types.each do |type|
+        inflow_class_names(type).each do |name|
+          concrete = [] of String
+          if name == owner || name == owner_base
+            # A value typed by the restriction may be any concrete member of
+            # its family, as for Crystal's virtual types.
+            concrete << name unless registered_abstract_class_name?(name) || @module_defs.has_key?(owner_base)
+            family.each { |member| concrete << member unless registered_abstract_class_name?(member) }
+          elsif family.includes?(name)
+            concrete << name unless registered_abstract_class_name?(name)
+            collect_subclasses_cached(name).each do |descendant|
+              concrete << descendant unless registered_abstract_class_name?(descendant)
+            end if registered_abstract_class_name?(name)
+          end
+          concrete.each do |candidate|
+            next unless checked.add?(candidate)
+            return candidate unless qualified_source_method_family_exists?(candidate, method_name, '#')
+          end
+        end
+      end
+      nil
+    end
+
+    private def inflow_class_names(type : TypeRef) : Array(String)
+      if (desc = @module.get_type_descriptor(type)) && desc.kind == TypeKind::Union
+        desc.type_params.flat_map { |variant| inflow_class_names(variant) }
+      else
+        [get_type_name_from_ref(type)]
+      end
+    end
+
     private def validate_unresolved_free_source_calls : Nil
+      virtual_inflow : VirtualParamInflow? = nil
       @module.functions.each do |caller|
         value_types = Hash(ValueId, TypeRef).new
         caller.params.each { |param| value_types[param.id] = param.type }
@@ -78060,7 +78221,9 @@ module Adamas::HIR
             # descendant bodies, so a subclass declaration (direct or through
             # an included module) is authority for it: a class-restricted
             # parameter keeps one body typed by its restriction. For a module
-            # owner the descendants are its (transitive) includers.
+            # owner the descendants are its (transitive) includers. Every
+            # concrete type callers pass into that parameter must still
+            # respond, as in Crystal.
             name = call.method_name
             next if name.empty? || @module.has_function_with_body?(name)
             base = strip_type_suffix(name)
@@ -78071,9 +78234,15 @@ module Adamas::HIR
               next if method_name.empty?
               next if backend_owned_qualified_intrinsic_call?(call, name, parts, value_types)
               next if qualified_source_call_family_exists?(parts)
-              next if call.virtual && separator == '#' &&
-                      (descendant_defines_instance_method?(parts.owner, method_name) ||
-                      module_includer_defines_instance_method?(parts.owner, method_name))
+              if call.virtual && separator == '#' &&
+                 (descendant_defines_instance_method?(parts.owner, method_name) ||
+                 module_includer_defines_instance_method?(parts.owner, method_name))
+                inflow = virtual_inflow ||= build_virtual_param_inflow
+                missing_owner = virtual_receiver_inflow_missing_method(caller, call, parts.owner, method_name, inflow)
+                next unless missing_owner
+                next unless location = caller.value_location(call.id)
+                raise LoweringError.new("undefined method '#{method_name}' for #{missing_owner} at #{location}")
+              end
               next if @module.extern_functions.any? do |external|
                         external.name == name || external.name == base ||
                           external.real_name == name || external.real_name == base

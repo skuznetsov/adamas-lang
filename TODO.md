@@ -1,3 +1,13 @@
+### Virtual descendant calls checked against caller inflow (2026-10-25)
+- [x] 14b6e297 accepted `io.sync?` on `io : Sink` whenever any descendant
+  declared sync?, so passing a MemSink (no sync?) compiled and hit
+  `STUB CALLED: Sink#sync?` (GPT review). Final validation now collects the
+  static types callers pass into each parameter (through copies, phis and
+  forwarding parameters) and rejects the call when a concrete inflow type
+  lacks the method, as Crystal does. Regression:
+  `regression_tests/virtual_descendant_method_source_repro.sh` (oracle 1.22.1).
+- [ ] Not yet exercised by stage 2 (it stops before final validation).
+
 ### Enum identity across if/else branch merges (2026-10-25)
 - [x] case/when result phis now get the same tag (lower_case never called
   track_common_enum_merge).
