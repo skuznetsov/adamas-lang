@@ -95841,6 +95841,50 @@ module Adamas::HIR
       end
     end
 
+    # The mirror of case_condition_proven_false?. The type lattice folds an
+    # `is_a?` that every subject type satisfies to a constant true (see
+    # emit_is_a_check_for_type); any constant true comparison is always taken.
+    private def case_condition_proven_true?(
+      ctx : LoweringContext,
+      subject_id : ValueId,
+      condition_id : ValueId,
+    ) : Bool
+      condition = ctx.value_for(condition_id)
+      condition.is_a?(Literal) && condition.type == TypeRef::BOOL && condition.value == true
+    end
+
+    # Union arms a `case` subject can hold. Each `when` that tests arms with
+    # union_is removes them; once none is left, that `when` is always taken.
+    private def case_subject_union_variant_ids(ctx : LoweringContext, subject_id : ValueId?) : Set(Int32)?
+      return nil unless subject_id
+      subject_type = ctx.type_of(subject_id)
+      return nil unless is_union_type?(subject_type)
+      ensure_union_descriptor_for_type_ref(subject_type)
+      descriptor = @union_descriptors[hir_to_mir_type_ref(subject_type)]?
+      return nil unless descriptor && !descriptor.variants.empty?
+      descriptor.variants.map(&.type_id).to_set
+    end
+
+    # Only union_is leaves joined by `||` identify arms: the condition holds
+    # exactly when the subject is in one of them.
+    private def remove_case_union_variants_tested(
+      ctx : LoweringContext,
+      subject_id : ValueId,
+      condition_id : ValueId,
+      uncovered : Set(Int32),
+    ) : Nil
+      case condition = ctx.value_for(condition_id)
+      when UnionIs
+        if condition.union_value == subject_id && condition.union_type == ctx.type_of(subject_id)
+          uncovered.delete(condition.variant_type_id)
+        end
+      when BinaryOperation
+        return unless condition.op == BinaryOp::Or
+        remove_case_union_variants_tested(ctx, subject_id, condition.left, uncovered)
+        remove_case_union_variants_tested(ctx, subject_id, condition.right, uncovered)
+      end
+    end
+
     private def case_union_member_disjoint?(member_type : TypeRef, check_type : TypeRef) : Bool
       return false if member_type == TypeRef::VOID || check_type == TypeRef::VOID
       check_name = get_type_name_from_ref(check_type)
@@ -95895,6 +95939,11 @@ module Adamas::HIR
       incoming = [] of Tuple(BlockId, ValueId)
       branch_locals = [] of Tuple(BlockId, Hash(String, ValueId)) # Track locals for each branch
       nil_was_checked = false                                     # Track if any when branch checks .nil? (for else narrowing)
+      # Set once a `when` type check matches every value the subject can hold.
+      # Later branches and the else body are then unreachable; Crystal types
+      # the subject there as NoReturn and never instantiates their calls.
+      subject_exhausted = false
+      uncovered_union_variants = case_subject_union_variant_ids(ctx, subject_id)
 
       # Combine when_branches and in_branches (case/in exhaustive matching)
       all_branches = node.when_branches.dup
@@ -95914,15 +95963,25 @@ module Adamas::HIR
                 else
                   nil
                 end
+        branch_proven_taken = false
         if sid = subject_id
           next if conds && !conds.empty? && conds.all? { |condition| case_condition_proven_false?(ctx, sid, condition) }
+          if conds
+            branch_proven_taken = conds.any? { |condition| case_condition_proven_true?(ctx, sid, condition) }
+            if uncovered = uncovered_union_variants
+              conds.each { |condition| remove_case_union_variants_tested(ctx, sid, condition, uncovered) }
+              branch_proven_taken ||= uncovered.empty?
+            end
+          end
         end
 
         when_block = ctx.create_block
         next_block = ctx.create_block
 
         # Build condition (any match)
-        if conds
+        if branch_proven_taken
+          ctx.terminate(Jump.new(when_block))
+        elsif conds
           # Combine with OR
           combined = conds.reduce do |acc, c|
             or_op = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Or, acc, c)
@@ -96095,6 +96154,10 @@ module Adamas::HIR
         end
 
         ctx.current_block = next_block
+        if branch_proven_taken
+          subject_exhausted = true
+          break
+        end
       end
 
       # Else branch - restore locals before else branch
@@ -96118,7 +96181,12 @@ module Adamas::HIR
         end
       end
       ctx.push_scope(ScopeKind::Block)
-      else_result = if else_body = node.else_branch
+      else_result = if subject_exhausted
+                      @control_flow_dead_blocks.add({ctx.function.id, ctx.current_block})
+                      nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+                      ctx.emit(nil_lit)
+                      nil_lit.id
+                    elsif else_body = node.else_branch
                       if else_body.empty?
                         nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
                         ctx.emit(nil_lit)
