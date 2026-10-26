@@ -28430,7 +28430,7 @@ module Adamas::HIR
                   end
                 end
               end
-              return type_ref_for_name(type_str)
+              return type_ref_for_resolved_name(type_str)
             else
               if self_type_name
                 obj_node = node_for_expr(callee_node.object)
@@ -43937,7 +43937,7 @@ module Adamas::HIR
       arg_types : Array(TypeRef),
     ) : String?
       return nil if arg_types.empty?
-      owner_ref = type_ref_for_name(owner_name)
+      owner_ref = type_ref_for_resolved_name(owner_name)
       return nil if owner_ref == TypeRef::VOID
       return nil unless arg_types.first == owner_ref
 
@@ -107903,7 +107903,7 @@ module Adamas::HIR
          !@function_defs.has_key?(full_method_name) && !class_method_overload_exists?(full_method_name)
         owner = method_owner(full_method_name)
         if owner && !owner.empty? && type_name_exists?(owner)
-          owner_ref = type_ref_for_name(owner)
+          owner_ref = type_ref_for_resolved_name(owner)
           meta_owner = module_type_ref?(owner_ref) ? "Module" : "Class"
           if meta_method = resolve_method_with_inheritance(meta_owner, method_name)
             literal_id = lower_type_literal_from_name(ctx, owner)
@@ -108192,7 +108192,7 @@ module Adamas::HIR
          !@function_defs.has_key?(base_method_name) && !class_method_overload_exists?(base_method_name)
         owner = method_owner(base_method_name)
         if owner && !owner.empty? && type_name_exists?(owner)
-          owner_ref = type_ref_for_name(owner)
+          owner_ref = type_ref_for_resolved_name(owner)
           meta_owner = module_type_ref?(owner_ref) ? "Module" : "Class"
           if meta_method = resolve_method_with_inheritance(meta_owner, method_name)
             if v2_string_readable?(meta_method)
@@ -109466,7 +109466,7 @@ module Adamas::HIR
         block_for_inline = build_block_from_block_pass(block_pass_expr, block_param_types_inline, node.span)
       end
       if block_param_types_inline.nil? && static_class_name && method_name == "new"
-        block_param_types_inline = [type_ref_for_name(static_class_name)]
+        block_param_types_inline = [type_ref_for_resolved_name(static_class_name)]
       end
 
       disable_inline_yield = env_has?("ADAMAS_DISABLE_INLINE_YIELD")
@@ -112072,7 +112072,7 @@ module Adamas::HIR
         end
 
         if resolved_owner
-          class_type = type_ref_for_name(resolved_owner)
+          class_type = type_ref_for_resolved_name(resolved_owner)
           if class_type == TypeRef::VOID
             if class_info = @class_info[resolved_owner]?
               class_type = class_info.type_ref
@@ -139445,6 +139445,19 @@ module Adamas::HIR
 
       return nil unless best_name && best_def
       {best_name, best_def}
+    end
+
+    # A name returned by resolve_type_name_in_context is canonical. Resolving
+    # it again in the same lexical context can rebind its first component:
+    # `::File::Info` resolves to `File::Info`, which inside
+    # `Crystal::System::File` binds `File` to that module. Look plain
+    # canonical paths up as absolute paths.
+    private def type_ref_for_resolved_name(name : String) : TypeRef
+      if name.includes?("::") && !name.starts_with?("::") && materializable_unknown_named_type?(name)
+        type_ref_for_name("::#{name}")
+      else
+        type_ref_for_name(name)
+      end
     end
 
     private def type_ref_for_name(name : String) : TypeRef
