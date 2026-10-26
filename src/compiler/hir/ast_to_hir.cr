@@ -27451,6 +27451,38 @@ module Adamas::HIR
       end
     end
 
+    # The lib a type-path receiver names (`LibC`, `::LibPCRE2`, an alias of
+    # one), or nil when the receiver is not a lib.
+    private def infer_lib_receiver_name(object_node : Adamas::Compiler::Frontend::Node?) : String?
+      case object_node
+      when Adamas::Compiler::Frontend::ConstantNode
+        resolved = resolve_class_name_in_context((safe_slice_to_string(object_node.name) || ""))
+        resolved = resolve_type_alias_chain(resolved)
+        @module.is_lib?(resolved) ? resolved : nil
+      when Adamas::Compiler::Frontend::IdentifierNode
+        name = (safe_slice_to_string(object_node.name) || "")
+        if name[0]?.try(&.uppercase?)
+          resolved = resolve_class_name_in_context(name)
+          resolved = resolve_type_alias_chain(resolved)
+          @module.is_lib?(resolved) ? resolved : nil
+        end
+      when Adamas::Compiler::Frontend::PathNode
+        raw_path = collect_path_string(object_node)
+        # This is a fixed prefix operation, not a regex replacement.
+        # Keeping it byte-based avoids the block-backed String#sub
+        # corridor in generated stage2, where the captured replacement
+        # can degrade to a null String during eager return inference.
+        full_path = if path_is_absolute?(object_node)
+                      absolute_path_body(raw_path)
+                    else
+                      resolve_path_string_in_context(raw_path)
+                    end
+        @module.is_lib?(full_path) ? full_path : nil
+      else
+        nil
+      end
+    end
+
     private def infer_type_from_expr(expr_id : ExprId, self_type_name : String?) : TypeRef?
       stats_index = active_lower_method_stats_index
       stats_start = stats_index ? Time.instant : nil
@@ -27792,33 +27824,7 @@ module Adamas::HIR
           STDERR.puts "[INFER_MEMBER_ACCESS] member=#{member_name} self_type=#{self_type_name || "nil"}"
         end
         object_node = node_for_expr(expr_node.object)
-        lib_name = case object_node
-                   when Adamas::Compiler::Frontend::ConstantNode
-                     resolved = resolve_class_name_in_context((safe_slice_to_string(object_node.name) || ""))
-                     resolved = resolve_type_alias_chain(resolved)
-                     @module.is_lib?(resolved) ? resolved : nil
-                   when Adamas::Compiler::Frontend::IdentifierNode
-                     name = (safe_slice_to_string(object_node.name) || "")
-                     if name[0]?.try(&.uppercase?)
-                       resolved = resolve_class_name_in_context(name)
-                       resolved = resolve_type_alias_chain(resolved)
-                       @module.is_lib?(resolved) ? resolved : nil
-                     end
-                   when Adamas::Compiler::Frontend::PathNode
-                     raw_path = collect_path_string(object_node)
-                     # This is a fixed prefix operation, not a regex replacement.
-                     # Keeping it byte-based avoids the block-backed String#sub
-                     # corridor in generated stage2, where the captured replacement
-                     # can degrade to a null String during eager return inference.
-                     full_path = if path_is_absolute?(object_node)
-                                   absolute_path_body(raw_path)
-                                 else
-                                   resolve_path_string_in_context(raw_path)
-                                 end
-                     @module.is_lib?(full_path) ? full_path : nil
-                   else
-                     nil
-                   end
+        lib_name = infer_lib_receiver_name(object_node)
         if lib_name
           if extern = @module.get_extern_global(lib_name, member_name)
             return extern.type
@@ -28286,6 +28292,13 @@ module Adamas::HIR
         callee_node = node_for_expr(expr_node.callee)
         if callee_node.is_a?(Adamas::Compiler::Frontend::MemberAccessNode)
           member_name = (safe_slice_to_string(callee_node.member) || "")
+          # A lib fun call (`LibPCRE2.get_ovector_pointer(md)`) has its declared
+          # return type; generic `.new` inference reads arguments through here.
+          if lib_name = infer_lib_receiver_name(node_for_expr(callee_node.object))
+            if extern_func = @module.get_extern_function(lib_name, member_name)
+              return extern_func.return_type
+            end
+          end
           if member_name == "call" && block_expr.nil? && block_pass_expr.nil?
             if receiver_type = infer_type_from_expr(callee_node.object, self_type_name)
               if result_type = proc_descriptor_call_return_type(receiver_type)
