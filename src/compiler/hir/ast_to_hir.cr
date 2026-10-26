@@ -36180,6 +36180,15 @@ module Adamas::HIR
         call_arg_enum_names = binding.callsite.enum_names.try(&.dup)
       end
       # Defer lowering for untyped params until call-site types are available.
+      # Crystal instantiates a def only for argument types that reach it, as
+      # lower_method does for class owners. A module body lowered without them
+      # bound its parameters to a placeholder: the unsuffixed
+      # `Crystal::System::File.exists?(path)` forwarded `path` to
+      # `accessible?$Int32_Int32`, which then rejected `path.check_no_null_byte`.
+      if def_params_untyped?(node) && module_method_lacks_callsite_types?(node, call_arg_types, full_name_override)
+        register_pending_method_effects(base_name, 0)
+        return
+      end
       # Allow typed overrides to seed call_arg_types from the mangled suffix.
       # Enum value tracking is per-function; preserve outer context.
       old_enum_value_types = @enum_value_types
@@ -139131,6 +139140,25 @@ module Adamas::HIR
         next true unless type_name
         next true if type_name == "_"
         type_param_like?(type_name) && !@type_param_map.has_key?(type_name) && short_type_param_name?(type_name)
+      end
+    end
+
+    # True when nothing supplies a type for any regular parameter of an untyped
+    # module def: no callsite types, no positional mangled suffix, and no
+    # default value to infer from.
+    private def module_method_lacks_callsite_types?(
+      node : Adamas::Compiler::Frontend::DefNode,
+      call_arg_types : Array(TypeRef)?,
+      full_name_override : String?,
+    ) : Bool
+      if types = call_arg_types
+        return false if types.any? { |type| type != TypeRef::VOID }
+      end
+      if (override = full_name_override) && (suffix = method_suffix(override)) && !suffix.empty?
+        return false
+      end
+      function_param_infos(node).none? do |param|
+        !named_only_separator?(param) && !param.is_block && !param.is_double_splat && param.default_value
       end
     end
 
