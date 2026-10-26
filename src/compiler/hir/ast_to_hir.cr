@@ -17167,6 +17167,8 @@ module Adamas::HIR
     end
 
     private def type_like_call_expr?(node : Adamas::Compiler::Frontend::CallNode) : Bool
+      # `::g 42` is a global method call, not the generic instance `g(42)`.
+      return false if absolute_global_call_name(@arena[node.callee], @arena)
       base = resolve_path_like_name(node.callee) || stringify_type_expr(node.callee)
       return false unless base
       base = resolve_type_alias_chain(base)
@@ -19175,6 +19177,20 @@ module Adamas::HIR
       end
 
       ""
+    end
+
+    # Method name of an absolute global callee (`::raise`, `::exit`), else nil.
+    # Lowercase heads are methods; `::Foo` stays a type path.
+    private def absolute_global_call_name(
+      callee : Adamas::Compiler::Frontend::TypedNode,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : String?
+      return nil unless callee.is_a?(Adamas::Compiler::Frontend::PathNode) && callee.left.nil?
+      right = arena[callee.right]
+      return nil unless right.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
+      name = identifier_name_text(right, arena)
+      first = name[0]?
+      first && (first.lowercase? || first == '_') ? name : nil
     end
 
     private def identifier_source_name?(name : String) : Bool
@@ -103932,8 +103948,12 @@ module Adamas::HIR
       allocator_explicit_new_call = false
       # Type literal receiver whose class method resolved to an ancestor def.
       class_literal_receiver_name : String? = nil
+      # `::name(args)` calls a top-level method, skipping every enclosing owner.
+      absolute_global_name = absolute_global_call_name(callee_node, call_arena)
 
-      if callee_kind == Adamas::Compiler::Frontend::NodeKind::Identifier
+      if absolute_global_name
+        method_name = absolute_global_name
+      elsif callee_kind == Adamas::Compiler::Frontend::NodeKind::Identifier
         callee_ident = callee_node.unsafe_as(Adamas::Compiler::Frontend::IdentifierNode)
         # Simple function call: foo()
         method_name = identifier_name_text(callee_ident, call_arena)
@@ -107852,10 +107872,11 @@ module Adamas::HIR
         full_method_name || "",
         "[CALL_TRACE] stage=after_arg_types method=#{method_name} arg_types=#{arg_types.map(&.id).join(",")} names=#{arg_types.map { |t| get_type_name_from_ref(t) }.join("|")}",
       )
-      if callee_kind == Adamas::Compiler::Frontend::NodeKind::Identifier &&
+      if (absolute_global_name ||
+         (callee_kind == Adamas::Compiler::Frontend::NodeKind::Identifier &&
          full_method_name.nil? &&
          static_class_name.nil? &&
-         @current_class.nil?
+         @current_class.nil?))
         top_level_candidate = mangle_function_name(method_name, arg_types, has_block_call)
         if @function_defs.has_key?(top_level_candidate) ||
            @function_types.has_key?(top_level_candidate) ||
@@ -108041,9 +108062,10 @@ module Adamas::HIR
           end
         end
       end
-      if callee_kind == Adamas::Compiler::Frontend::NodeKind::Identifier &&
+      if (absolute_global_name ||
+         (callee_kind == Adamas::Compiler::Frontend::NodeKind::Identifier &&
          static_class_name.nil? &&
-         @current_class.nil? &&
+         @current_class.nil?)) &&
          !method_name.empty?
         exact_top_level = mangle_function_name(method_name, arg_types, has_block_call)
         if exact_top_level != method_name &&
@@ -108058,6 +108080,11 @@ module Adamas::HIR
       # Third null guard: method_name may have been reassigned by source_method_name
       # or recovered_method_name paths above; re-sanitize before all downstream string ops.
       method_name = "" unless v2_string_readable?(method_name)
+      if absolute_global_name && top_level_bare_call_target.nil?
+        # No exact overload yet: resolve by the top-level base name, never self.
+        receiver_id = nil
+        full_method_name = method_name
+      end
       debug_lower_call_l10(
         method_name,
         full_method_name || "",

@@ -13760,6 +13760,18 @@ current_token.kind == Token::Kind::Identifier &&
             )
           )
 
+          # A lowercase head is a global method call, which takes command
+          # arguments like a bare identifier: `::raise ::Error.new("x")`.
+          first = slice.empty? ? 0_u8 : slice[0]
+          if (first >= 'a'.ord.to_u8 && first <= 'z'.ord.to_u8) || first == '_'.ord.to_u8
+            call_expr = attach_command_call_arguments(path_expr, slice)
+            # `::name(args)` is completed by the postfix loop. Otherwise a bare
+            # `::name` is still a call (never a local), so give it a call node.
+            return call_expr unless call_expr == path_expr
+            return path_expr if current_token.kind == Token::Kind::LParen
+            return @arena.add_typed(new_call_node(path_span, path_expr, [] of ExprId, nil))
+          end
+
           # Support nested absolute paths like ::JSON::Field
           skip_trivia
           while current_token.kind == Token::Kind::ColonColon

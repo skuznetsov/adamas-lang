@@ -329,5 +329,39 @@ describe "Adamas::Compiler::Frontend::Parser" do
       root.left.should be_nil
       String.new(arena[root.right].as(Adamas::Compiler::Frontend::IdentifierNode).name).should eq("File")
     end
+
+    it "parses an absolute global method with command arguments" do
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new("::raise ::Err.new(\"x\")"))
+      program = parser.parse_program
+
+      parser.diagnostics.should be_empty
+      program.roots.size.should eq(1)
+      arena = program.arena
+      call = arena[program.roots.first].as(Adamas::Compiler::Frontend::CallNode)
+      callee = arena[call.callee].as(Adamas::Compiler::Frontend::PathNode)
+      callee.left.should be_nil
+      String.new(arena[callee.right].as(Adamas::Compiler::Frontend::IdentifierNode).name).should eq("raise")
+      call.args.size.should eq(1)
+      inner = arena[call.args.first].as(Adamas::Compiler::Frontend::CallNode)
+      member = arena[inner.callee].as(Adamas::Compiler::Frontend::MemberAccessNode)
+      String.new(member.member).should eq("new")
+    end
+
+    it "parses absolute global calls nested in arguments and without arguments" do
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new("f(::h \"x\")\n::z\n::Foo::Bar"))
+      program = parser.parse_program
+
+      parser.diagnostics.should be_empty
+      program.roots.size.should eq(3)
+      arena = program.arena
+      outer = arena[program.roots[0]].as(Adamas::Compiler::Frontend::CallNode)
+      nested = arena[outer.args.first].as(Adamas::Compiler::Frontend::CallNode)
+      nested.args.size.should eq(1)
+      bare = arena[program.roots[1]].as(Adamas::Compiler::Frontend::CallNode)
+      bare.args.should be_empty
+      arena[bare.callee].should be_a(Adamas::Compiler::Frontend::PathNode)
+      # An uppercase head stays a type path.
+      arena[program.roots[2]].should be_a(Adamas::Compiler::Frontend::PathNode)
+    end
   end
 end
