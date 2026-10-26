@@ -10468,15 +10468,26 @@ module Adamas
                Token::Kind::Of, Token::Kind::As, Token::Kind::In
             parse_identifier_like(token.span, stable_identifier_token_slice(token))
           when Token::Kind::InstanceVar
-            # Instance variable (@var)
-            id = @arena.add_typed(InstanceVarNode.new(token.span, token.slice))
-            advance
-            id
+            # `@var : Type` is a declaration wherever one may appear, as in
+            # original Crystal's new_node_check_type_declaration: macro output
+            # such as getter!'s `@{{name}}?` is parsed outside a class body.
+            if @no_type_declaration == 0 && next_comes_colon_space?
+              parse_instance_var_decl
+            else
+              # Instance variable (@var)
+              id = @arena.add_typed(InstanceVarNode.new(token.span, token.slice))
+              advance
+              id
+            end
           when Token::Kind::ClassVar
-            # Phase 76: Class variable (@@var)
-            id = @arena.add_typed(ClassVarNode.new(token.span, token.slice))
-            advance
-            id
+            if @no_type_declaration == 0 && next_comes_colon_space?
+              parse_class_var_decl
+            else
+              # Phase 76: Class variable (@@var)
+              id = @arena.add_typed(ClassVarNode.new(token.span, token.slice))
+              advance
+              id
+            end
           when Token::Kind::GlobalVar
             # Phase 75: Global variable ($var)
             id = @arena.add_typed(GlobalNode.new(token.span, token.slice))
