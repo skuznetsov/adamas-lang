@@ -90390,13 +90390,21 @@ module Adamas::HIR
     end
 
     # Lower short-circuiting || and && for condition context (branches directly).
+    #
+    # `capture_sources` collects the direct identifier reads of an `&&` chain:
+    # every one of them is evaluated on each path into `then_block`, so each is a
+    # dominating truthy proof the then-body can lend to a captured box/cell read
+    # (`if source && span` inside a block proc). `||` operands do not dominate
+    # the then-block, so collection stops below an `||`.
     private def lower_short_circuit_condition(
       ctx : LoweringContext,
       node : Adamas::Compiler::Frontend::BinaryNode,
       then_block : BlockId,
       else_block : BlockId,
+      capture_sources : Array({String, ValueId})? = nil,
     ) : Nil
       op_str = node.operator_string
+      capture_sources = nil unless op_str == "&&"
       truthy_targets = truthy_narrowing_targets(node.left)
       falsy_targets = falsy_narrowing_targets(node.left)
       is_a_rhs_targets = op_str == "&&" ? is_a_narrowing_targets(node.left) : [] of IsANarrowingTarget
@@ -90407,11 +90415,11 @@ module Adamas::HIR
           if left_op == "&&" || left_op == "||"
             rhs_block = ctx.create_block
             if op_str == "&&"
-              lower_short_circuit_condition(ctx, left_node, rhs_block, else_block)
+              lower_short_circuit_condition(ctx, left_node, rhs_block, else_block, capture_sources)
               ctx.current_block = rhs_block
               is_a_restores = apply_scoped_is_a_narrowing(ctx, is_a_rhs_targets)
               with_scoped_condition_narrowing(ctx, truthy_targets, node.right, nil) do
-                lower_condition_branch(ctx, node.right, then_block, else_block)
+                lower_condition_branch(ctx, node.right, then_block, else_block, capture_sources)
               end
               restore_scoped_is_a_narrowing(ctx, is_a_restores)
             else
@@ -90430,6 +90438,9 @@ module Adamas::HIR
       left_type = ctx.type_of(left_id)
       left_cond = lower_truthy_check(ctx, left_id, left_type)
       capture_source = direct_capture_truthy_source(node.left, left_id)
+      if capture_sources && capture_source
+        capture_sources << capture_source
+      end
 
       rhs_block = ctx.create_block
       static_left = static_truthy_value(ctx, left_cond)
@@ -90441,7 +90452,7 @@ module Adamas::HIR
             ctx.current_block = rhs_block
             is_a_restores = apply_scoped_is_a_narrowing(ctx, is_a_rhs_targets)
             with_scoped_condition_narrowing(ctx, truthy_targets, node.right, capture_source) do
-              lower_condition_branch(ctx, node.right, then_block, else_block)
+              lower_condition_branch(ctx, node.right, then_block, else_block, capture_sources)
             end
             restore_scoped_is_a_narrowing(ctx, is_a_restores)
           else
@@ -90465,7 +90476,7 @@ module Adamas::HIR
         ctx.current_block = rhs_block
         is_a_restores = apply_scoped_is_a_narrowing(ctx, is_a_rhs_targets)
         with_scoped_condition_narrowing(ctx, truthy_targets, node.right, capture_source) do
-          lower_condition_branch(ctx, node.right, then_block, else_block)
+          lower_condition_branch(ctx, node.right, then_block, else_block, capture_sources)
         end
         restore_scoped_is_a_narrowing(ctx, is_a_restores)
       else
@@ -90534,12 +90545,13 @@ module Adamas::HIR
       expr_id : ExprId,
       then_block : BlockId,
       else_block : BlockId,
+      capture_sources : Array({String, ValueId})? = nil,
     ) : Nil
       expr_node = @arena[expr_id]
       if expr_node.is_a?(Adamas::Compiler::Frontend::BinaryNode)
         op_str = expr_node.operator_string
         if op_str == "&&" || op_str == "||"
-          lower_short_circuit_condition(ctx, expr_node, then_block, else_block)
+          lower_short_circuit_condition(ctx, expr_node, then_block, else_block, capture_sources)
           return
         end
       end
@@ -90556,6 +90568,9 @@ module Adamas::HIR
       end
 
       cond_id = lower_expr(ctx, expr_id)
+      if capture_sources && (capture_source = direct_capture_truthy_source(expr_id, cond_id))
+        capture_sources << capture_source
+      end
       cond_type = ctx.type_of(cond_id)
       cond_bool = lower_truthy_check(ctx, cond_id, cond_type)
       static_val = static_truthy_value(ctx, cond_bool)
@@ -90882,13 +90897,18 @@ module Adamas::HIR
       ctx : LoweringContext,
       body : Array(ExprId),
       targets : Array(String),
-      capture_source : {String, ValueId}?,
+      capture_sources : Array({String, ValueId}),
     ) : ValueId
-      narrowing = register_direct_capture_truthy_narrowing(ctx, targets, capture_source)
+      narrowings = [] of LoweringContext::ScopedReceiverNarrowing
+      capture_sources.each do |capture_source|
+        if narrowing = register_direct_capture_truthy_narrowing(ctx, targets, capture_source)
+          narrowings << narrowing
+        end
+      end
       begin
         lower_body(ctx, body)
       ensure
-        ctx.discard_scoped_receiver_narrowing(narrowing) if narrowing
+        narrowings.each { |narrowing| ctx.discard_scoped_receiver_narrowing(narrowing) }
       end
     end
 
@@ -92591,7 +92611,7 @@ module Adamas::HIR
       # Each test that fails jumps to the next test block (or final else block)
       elsifs = node.elsifs
       has_elsifs = elsifs && !elsifs.empty?
-      then_capture_source = nil.as({String, ValueId}?)
+      then_capture_sources = [] of {String, ValueId}
 
       # Create blocks for the chain
       then_block = ctx.create_block
@@ -92608,11 +92628,13 @@ module Adamas::HIR
       cond_node = @arena[node.condition]
       if cond_node.is_a?(Adamas::Compiler::Frontend::BinaryNode) &&
          (cond_node.operator_string == "&&" || cond_node.operator_string == "||")
-        lower_short_circuit_condition(ctx, cond_node, then_block, next_test_block)
+        lower_short_circuit_condition(ctx, cond_node, then_block, next_test_block, then_capture_sources)
       else
         STDERR.puts "[NILABLE_BRANCH] lower_if before condition expr" if env_has?("ADAMAS_TRACE_NILABLE_BRANCH_REPRO")
         cond_id = lower_expr(ctx, node.condition)
-        then_capture_source = direct_capture_truthy_source(node.condition, cond_id)
+        if then_capture_source = direct_capture_truthy_source(node.condition, cond_id)
+          then_capture_sources << then_capture_source
+        end
         cond_type = ctx.type_of(cond_id)
         if env_has?("ADAMAS_TRACE_NILABLE_BRANCH_REPRO")
           STDERR.puts "[NILABLE_BRANCH] lower_if cond=#{cond_id} type=#{get_type_name_from_ref(cond_type)}(#{cond_type.id})"
@@ -92637,7 +92659,7 @@ module Adamas::HIR
                 ctx,
                 node.then_body,
                 truthy_targets,
-                then_capture_source,
+                then_capture_sources,
               )
             end
           end
@@ -92691,7 +92713,7 @@ module Adamas::HIR
                 ctx,
                 node.then_body,
                 truthy_targets,
-                then_capture_source,
+                then_capture_sources,
               )
             end
           end
@@ -92737,7 +92759,7 @@ module Adamas::HIR
         ctx,
         node.then_body,
         truthy_targets,
-        then_capture_source,
+        then_capture_sources,
       )
       then_exit_block = ctx.current_block
       then_locals = ctx.save_locals.locals
@@ -92786,14 +92808,16 @@ module Adamas::HIR
           elsif_truthy_targets = truthy_narrowing_targets(elsif_branch.condition)
           elsif_falsy_targets = falsy_narrowing_targets(elsif_branch.condition)
           elsif_is_a_targets = is_a_narrowing_targets(elsif_branch.condition)
-          elsif_capture_source = nil.as({String, ValueId}?)
+          elsif_capture_sources = [] of {String, ValueId}
           elsif_cond_node = @arena[elsif_branch.condition]
           if elsif_cond_node.is_a?(Adamas::Compiler::Frontend::BinaryNode) &&
              (elsif_cond_node.operator_string == "&&" || elsif_cond_node.operator_string == "||")
-            lower_short_circuit_condition(ctx, elsif_cond_node, elsif_body_block, next_test_block)
+            lower_short_circuit_condition(ctx, elsif_cond_node, elsif_body_block, next_test_block, elsif_capture_sources)
           else
             elsif_cond_id = lower_expr(ctx, elsif_branch.condition)
-            elsif_capture_source = direct_capture_truthy_source(elsif_branch.condition, elsif_cond_id)
+            if elsif_capture_source = direct_capture_truthy_source(elsif_branch.condition, elsif_cond_id)
+              elsif_capture_sources << elsif_capture_source
+            end
             elsif_cond_type = ctx.type_of(elsif_cond_id)
             elsif_cond_bool = lower_truthy_check(ctx, elsif_cond_id, elsif_cond_type)
             ctx.terminate(Branch.new(elsif_cond_bool, elsif_body_block, next_test_block))
@@ -92809,7 +92833,7 @@ module Adamas::HIR
             ctx,
             elsif_branch.body,
             elsif_truthy_targets,
-            elsif_capture_source,
+            elsif_capture_sources,
           )
           elsif_exit_block = ctx.current_block
           elsif_locals = ctx.save_locals.locals
