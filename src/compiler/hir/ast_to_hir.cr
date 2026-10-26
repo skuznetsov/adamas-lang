@@ -133789,7 +133789,9 @@ module Adamas::HIR
         end
       end
 
-      if alias_target = @type_aliases[name]?
+      # Nested classes and structs are registered as identity aliases; those
+      # entries name the type itself and are checked as types below.
+      if (alias_target = @type_aliases[name]?) && alias_target != name
         validate_proc_literal_source_annotation(alias_target, owner_name, node, depth + 1)
         return
       end
