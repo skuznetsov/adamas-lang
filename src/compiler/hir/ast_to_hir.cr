@@ -108980,12 +108980,21 @@ module Adamas::HIR
       end
       if method_name == "new" && full_method_name
         if class_name = method_owner(full_method_name)
+          # A path receiver was already resolved in its lexical scope, an
+          # absolute `::File::Info` included. Resolving that result again from
+          # the caller's namespace rebinds its head: inside
+          # `Crystal::System::FileDescriptor`, `File` became the enclosing
+          # `Crystal::System::File`, and the short-name fallback then
+          # constructed `Crystal::DWARF::Info` instead.
+          path_resolved_receiver = path_receiver_class_name_found && class_name == path_receiver_class_name
           resolved_class_name = if proc_receiver = proc_constructor_receiver
                                   proc_receiver.dispatch_owner
+                                elsif path_resolved_receiver
+                                  class_name
                                 else
                                   normalize_method_owner_name(resolve_type_name_in_context(class_name))
                                 end
-          if !@class_info.has_key?(resolved_class_name)
+          if !path_resolved_receiver && !@class_info.has_key?(resolved_class_name)
             if resolved_short = resolve_short_type_in_namespace_chain(resolved_class_name)
               resolved_class_name = resolved_short
             end
