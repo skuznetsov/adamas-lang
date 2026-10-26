@@ -69990,6 +69990,29 @@ module Adamas::HIR
       names
     end
 
+    # A bare restriction name is a free variable only when the def declares it
+    # with `forall` or no alias of that name is visible from the def's
+    # namespace. Aliases are keyed by their qualified name, so
+    # `type_param_like?` alone took `node : TypedNode` (`alias TypedNode =
+    # Node`) for a variable and bound it to the argument's concrete type; the
+    # binding then narrowed the restriction for later overload checks.
+    private def bare_restriction_free_variable?(
+      name : String,
+      forall_names : Array(String),
+      declaration_owner : String?,
+    ) : Bool
+      return true if forall_names.includes?(name)
+      old_class = @current_class
+      @current_class = declaration_owner
+      begin
+        with_namespace_override_or_clear(declaration_owner) do
+          resolve_contextual_type_alias_name(name).nil?
+        end
+      ensure
+        @current_class = old_class
+      end
+    end
+
     # annotation_type_ref binds an owner's receiver map in place of the active
     # map, which drops the method's free variables: in `class Bx(T)`,
     # `def conv(x : U) : Bx(U) forall U` resolved its return to Bx(T).
@@ -110805,10 +110828,13 @@ module Adamas::HIR
             _forall_params = function_param_infos(def_node)
             _forall_call_idx = 0
             _forall_bound = Set(String).new
+            _forall_names = forall_type_param_names(def_node)
+            _declaration_owner = return_declaration_owner_for(mangled_method_name, base_method_name)
             _forall_params.each do |_fp|
               next if named_only_separator?(_fp) || _fp.is_block || _fp.is_double_splat
               if _ann = _fp.type_annotation
-                if type_param_like?(_ann) && _forall_call_idx < arg_types.size
+                if type_param_like?(_ann) && _forall_call_idx < arg_types.size &&
+                   bare_restriction_free_variable?(_ann, _forall_names, _declaration_owner)
                   _ct = arg_types[_forall_call_idx]
                   if _ct != TypeRef::VOID
                     _ct_name = get_type_name_from_ref(_ct)
@@ -110821,7 +110847,8 @@ module Adamas::HIR
                 elsif v2_string_object_header?(_ann) && ascii_suffix_bytes?(_ann, "*") && _forall_call_idx < arg_types.size
                   # Pointer-annotated forall param: e.g., "UC*" with call arg UInt8* → bind UC=UInt8.
                   _base_ann = _ann.byte_slice(0, _ann.bytesize - 1).strip
-                  if type_param_like?(_base_ann)
+                  if type_param_like?(_base_ann) &&
+                     bare_restriction_free_variable?(_base_ann, _forall_names, _declaration_owner)
                     _ct = arg_types[_forall_call_idx]
                     if _ct != TypeRef::VOID
                       _ct_name = get_type_name_from_ref(_ct)
