@@ -112101,6 +112101,7 @@ module Adamas::HIR
         end
       end
 
+      name_pointer_fallback_deferred = false
       # For method calls that return void but are likely returning the receiver or a value,
       # use pointer type as fallback to avoid void type errors in LLVM
       if return_type == TypeRef::VOID && receiver_id
@@ -112122,7 +112123,15 @@ module Adamas::HIR
                                            "shuffle", "rotate", "pop", "shift", "slice",
                                            "to_slice", "to_unsafe", "to_h", "to_set", "copy_from"]
         if methods_returning_self_or_value.includes?(method_name)
-          return_type = TypeRef::POINTER
+          # A pending source target answers for itself once the force pass
+          # below lowers it; a name-shaped guess taken now would suppress that
+          # pass. `if row = ln.find(pc)` then saw Pointer instead of `Nil | Row`
+          # while `find` was still deferred.
+          if [primary_mangled_name, mangled_method_name].any? { |name| function_state(name).pending? }
+            name_pointer_fallback_deferred = true
+          else
+            return_type = TypeRef::POINTER
+          end
           if debug_get_cache
             STDERR.puts "[GET_CACHE_RT] 2a. methods_returning_self_or_value => Pointer"
           end
@@ -112880,6 +112889,10 @@ module Adamas::HIR
             end
           end
         end
+      end
+
+      if name_pointer_fallback_deferred && return_type == TypeRef::VOID
+        return_type = TypeRef::POINTER
       end
 
       # If we still have a fallback type, prefer a registered function type when available.
