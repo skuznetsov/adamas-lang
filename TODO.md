@@ -1,3 +1,10 @@
+### Enum identity on `||` merges (2026-10-25)
+- [x] `maybe || E::A` with `maybe : E?` merged the unwrapped enum with the
+  constant's Int32 carrier as `E | Int32`; stage 2 failed in lexer.cr with
+  `Token#initialize (..., NumberKind | Int32, Bool)`. lower_short_circuit now
+  uses the same enum merge typing and coercion as if/case merges.
+  Regression: `regression_tests/enum_branch_merge_carrier_repro.sh`.
+
 ### Virtual descendant calls checked against caller inflow (2026-10-25)
 - [x] 14b6e297 accepted `io.sync?` on `io : Sink` whenever any descendant
   declared sync?, so passing a MemSink (no sync?) compiled and hit

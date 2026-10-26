@@ -89853,51 +89853,26 @@ module Adamas::HIR
           then_type = ctx.type_of(then_value)
           else_type = ctx.type_of(else_value)
           phi_type = union_type_for_values(then_type, else_type)
+          # `m || E::A` with `m : E?` merges the unwrapped enum with an enum
+          # constant lowered through its carrier; both are the same enum.
+          if enum_type = common_enum_merge_type(ctx, [then_value, else_value])
+            phi_type = enum_type
+          end
           if phi_type == TypeRef::VOID || phi_type == TypeRef::NIL
             nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
             ctx.emit(nil_lit)
             return nil_lit.id
           end
 
-          coerced_then_value = then_value
-          then_value_type = ctx.type_of(then_value)
-          if then_value_type != phi_type
-            if is_union_type?(phi_type)
-              variant_id = get_union_variant_id(phi_type, then_value_type)
-              if variant_id >= 0
-                wrap = UnionWrap.new(ctx.next_id, phi_type, then_value, variant_id)
-                ctx.emit_to_block(then_exit, wrap)
-                coerced_then_value = wrap.id
-              end
-            elsif numeric_primitive?(then_value_type) && numeric_primitive?(phi_type)
-              cast = Cast.new(ctx.next_id, phi_type, then_value, phi_type, safe: false)
-              ctx.emit_to_block(then_exit, cast)
-              coerced_then_value = cast.id
-            end
-          end
-
-          coerced_else_value = else_value
-          else_value_type = ctx.type_of(else_value)
-          if else_value_type != phi_type
-            if is_union_type?(phi_type)
-              variant_id = get_union_variant_id(phi_type, else_value_type)
-              if variant_id >= 0
-                wrap = UnionWrap.new(ctx.next_id, phi_type, else_value, variant_id)
-                ctx.emit_to_block(else_exit, wrap)
-                coerced_else_value = wrap.id
-              end
-            elsif numeric_primitive?(else_value_type) && numeric_primitive?(phi_type)
-              cast = Cast.new(ctx.next_id, phi_type, else_value, phi_type, safe: false)
-              ctx.emit_to_block(else_exit, cast)
-              coerced_else_value = cast.id
-            end
-          end
+          coerced_then_value = coerce_branch_local_for_phi(ctx, then_exit, then_value, phi_type)
+          coerced_else_value = coerce_branch_local_for_phi(ctx, else_exit, else_value, phi_type)
 
           phi = Phi.new(ctx.next_id, phi_type)
           phi.add_incoming(then_exit, coerced_then_value)
           phi.add_incoming(else_exit, coerced_else_value)
           ctx.emit(phi)
           ctx.register_type(phi.id, phi_type)
+          track_common_enum_merge(ctx, phi.id, [coerced_then_value, coerced_else_value])
           return phi.id
         elsif then_flows_to_merge
           then_locals.each do |name, val|

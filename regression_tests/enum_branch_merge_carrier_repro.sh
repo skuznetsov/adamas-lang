@@ -4,8 +4,11 @@
 # the same enum must keep that identity, or a later `mode: m` argument is
 # typed Int32 and rejected. Stage 2 failed in cli.cr's memory_config_for with
 # "no overload matches Adamas::HIR::MemoryConfig#initialize for argument
-# types (Int32, UInt32)". A ternary merge already kept it. Merges of an enum
-# with an integer, or of two different enums, must stay rejected.
+# types (Int32, UInt32)". A ternary merge already kept it. The same holds for
+# `maybe || E::A` with `maybe : E?`; stage 2 failed in lexer.cr with
+# "no overload matches Token#initialize for argument types
+# (..., NumberKind | Int32, Bool)". Merges of an enum with an integer, or of
+# two different enums, must stay rejected.
 # Positive cases exit 42 under original Crystal.
 #
 # Usage: ADAMAS_BIN=path/to/adamas [CRYSTAL_BIN=path/to/original/crystal] $0
@@ -69,6 +72,10 @@ module H
   end
 end
 
+def maybe(i : Int32) : H::Cfg::Mode?
+  i == 2 ? H::Cfg::Mode::C : nil
+end
+
 def pick(i : Int32)
 $body
   H::Cfg.new(thr: 40_u32, mode: m)
@@ -110,6 +117,15 @@ write_case case_when "  m = case i
       end"
 # Control: the ternary merge already worked.
 write_case ternary "  m = i == 2 ? H::Cfg::Mode::C : H::Cfg::Mode::A"
+# \`||\` merges the unwrapped nilable enum with an enum constant.
+write_case or_nilable_enum "  m = maybe(i) || H::Cfg::Mode::A"
+# Shape of lexer.cr's number_kind: \`||\` inside an if expression.
+write_case or_inside_if "  n = maybe(i)
+  m = if n
+        n || H::Cfg::Mode::A
+      else
+        H::Cfg::Mode::B
+      end"
 # Negative: Mode | Int32 is not a Mode.
 write_case enum_int_rejected "  m = if i == 2
         H::Cfg::Mode::C
@@ -122,6 +138,10 @@ write_case case_enum_int_rejected "  m = case i
       else
         5
       end"
+# Negative: \`||\` of Mode? and Int32 is not a Mode.
+write_case or_enum_int_rejected "  m = maybe(i) || 5"
+# Negative: \`||\` of Mode? and Other is not a Mode.
+write_case or_two_enums_rejected "  m = maybe(i) || H::Cfg::Other::Y"
 # Negative: Mode | Other is not a Mode.
 write_case two_enums_rejected "  m = if i == 2
         H::Cfg::Mode::C
@@ -129,8 +149,9 @@ write_case two_enums_rejected "  m = if i == 2
         H::Cfg::Other::Y
       end"
 
-POSITIVE=(if_else if_elsif_else nested_if case_when ternary)
-NEGATIVE=(enum_int_rejected case_enum_int_rejected two_enums_rejected)
+POSITIVE=(if_else if_elsif_else nested_if case_when ternary or_nilable_enum or_inside_if)
+NEGATIVE=(enum_int_rejected case_enum_int_rejected or_enum_int_rejected or_two_enums_rejected
+  two_enums_rejected)
 
 exit_code_of() {
   grep -o '\[EXIT: [0-9]*\]' "$1" | head -1 | tr -dc '0-9'
