@@ -68204,13 +68204,14 @@ module Adamas::HIR
       block : Adamas::Compiler::Frontend::BlockNode,
       param_types : Array(TypeRef)?,
       self_type_name : String?,
+      flow_ctx : LoweringContext? = nil,
     ) : String?
       block_id = block.object_id
       return nil if @inline_block_return_infer_stack.includes?(block_id)
 
       @inline_block_return_infer_stack.add(block_id)
       begin
-        inline_block_return_type_name_unchecked(block, param_types, self_type_name)
+        inline_block_return_type_name_unchecked(block, param_types, self_type_name, flow_ctx)
       ensure
         @inline_block_return_infer_stack.delete(block_id)
       end
@@ -68220,6 +68221,7 @@ module Adamas::HIR
       block : Adamas::Compiler::Frontend::BlockNode,
       param_types : Array(TypeRef)?,
       self_type_name : String?,
+      flow_ctx : LoweringContext? = nil,
     ) : String?
       old_arena = @arena
       old_locals = @current_typeof_locals
@@ -68245,6 +68247,9 @@ module Adamas::HIR
         immediate_block_return_name = nil.as(String?)
         local_map = old_locals ? old_locals.dup : {} of String => TypeRef
         name_map = old_names ? old_names.dup : {} of String => String
+        if ctx = flow_ctx
+          overlay_flow_narrowed_typeof_locals(ctx, local_map, name_map)
+        end
 
         if params = block.params
           seed_inline_yield_block_param_type_map(params, param_types, local_map, block)
@@ -68298,6 +68303,35 @@ module Adamas::HIR
       end
 
       nil
+    end
+
+    # The typeof map holds a local's last assigned type, while branch narrowing
+    # (`if body = node.body`, `is_a?`) re-registers only the lowering ctx's
+    # local. A block inferred at this point reads the narrowed value, as
+    # Crystal's inlined block does; without it `wrap { seq(body) }` saw
+    # `Nil | BD`, found no overload, and fell back to another caller's target.
+    # Only a narrowing to one arm of the recorded union is taken.
+    private def overlay_flow_narrowed_typeof_locals(
+      ctx : LoweringContext,
+      local_map : Hash(String, TypeRef),
+      name_map : Hash(String, String),
+    ) : Nil
+      local_map.keys.each do |name|
+        recorded = local_map[name]
+        next unless is_union_type?(recorded)
+        local_id = ctx.lookup_local(name)
+        next unless local_id
+        flow_type = ctx.type_of(local_id)
+        next if flow_type == TypeRef::VOID || flow_type == recorded
+        next if is_union_type?(flow_type)
+        next if get_union_variant_id(recorded, flow_type) < 0
+        local_map[name] = flow_type
+        if concrete_name = concrete_type_name_for(flow_type)
+          name_map[name] = normalize_declared_type_name(concrete_name)
+        else
+          name_map.delete(name)
+        end
+      end
     end
 
     # A block body is typed flow-sensitively: after `v = @a` the trailing
@@ -110582,10 +110616,10 @@ module Adamas::HIR
       if block_id
         block_return_name = block_return_type_name(ctx, block_id)
       elsif block_for_inline
-        block_return_name = inline_block_return_type_name(block_for_inline, block_param_types_inline, @current_class)
+        block_return_name = inline_block_return_type_name(block_for_inline, block_param_types_inline, @current_class, ctx)
       end
       if block_return_name.nil? && block_for_inline
-        block_return_name = inline_block_return_type_name(block_for_inline, block_param_types_inline, @current_class)
+        block_return_name = inline_block_return_type_name(block_for_inline, block_param_types_inline, @current_class, ctx)
       end
       if block_return_name
         receiver_base_for_block_target = nil
@@ -113680,7 +113714,7 @@ module Adamas::HIR
               mangled_method_name, selected_call_entry_def, selected_call_arena,
             )
             if block_return_name.nil?
-              block_return_name = inline_block_return_type_name(blk_node, block_param_types_for_proc, @current_class)
+              block_return_name = inline_block_return_type_name(blk_node, block_param_types_for_proc, @current_class, ctx)
             end
             if block_return_name
               receiver_base_for_return = nil
