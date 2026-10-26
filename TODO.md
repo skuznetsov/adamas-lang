@@ -1,3 +1,19 @@
+### Nested types of later reopenings visible early (2026-10-26)
+- [x] Every prelude program failed with `undefined method 'gets' for Decoder`
+  (io.cr:652): `IO::Decoder` is declared in a later reopening (io/encoding.cr),
+  but nested type names were recorded only when registration reached each
+  reopening, so return-type inference while registering the first `class IO`
+  resolved `Decoder` to a phantom top-level type (a local
+  `d = Decoder.new(30); d.val(5)` silently returned 0). The scoped-macro
+  prescan now records nested type names of every reopening up front.
+  Regression: `regression_tests/forward_nested_type_in_reopen_repro.sh`.
+- [ ] s1 accepts `Ion::Decoder` for a `private class Decoder`; original
+  Crystal rejects "private constant Ion::Decoder referenced".
+- [ ] Next prelude hello error: `undefined method 'tag' for
+  Array(Crystal::DWARF::Abbrev)` (dwarf.cr:54) — root is a use-after-free:
+  per-block ARC frees an owned temp while a field borrowed from it
+  (`ab = @abbrevs`) is used in another block.
+
 ### Explicit `self.new` named block call initializer (2026-10-26)
 - [x] Every prelude program failed with `undefined method 'gc_thread_handler='
   for Fiber::Stack` (fiber.cr:150). `Fiber.new(name: n, &->proc)` is owned by
@@ -9,8 +25,8 @@
   Regression: `regression_tests/explicit_new_named_block_initializer_repro.sh`.
 - [ ] A label the explicit def does not declare is rejected with
   "captured initializer Proc ABI conflict" instead of "no overload matches".
-- [ ] Next prelude hello error: `undefined method 'gets' for Decoder`
-  (io.cr:652).
+- [x] Next prelude hello error: `undefined method 'gets' for Decoder`
+  (io.cr:652) — fixed, see "Nested types of later reopenings" below.
 
 ### Enum identity on `||` merges (2026-10-25)
 - [x] `maybe || E::A` with `maybe : E?` merged the unwrapped enum with the

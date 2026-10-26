@@ -13596,6 +13596,14 @@ module Adamas::HIR
     ) : Nil
       return unless body
 
+      # Crystal declares every type before typing any method, so a type
+      # nested in a later reopening is already visible from an earlier one
+      # (`@decoder ||= Decoder.new` in io.cr before `IO::Decoder` is declared
+      # in io/encoding.cr). Registration records each reopening's nested
+      # names only when it reaches that reopening, which is too late for
+      # return-type inference run while registering the earlier one.
+      record_nested_type_names(owner_name, body)
+
       body.each do |expr_id|
         next if expr_id.invalid?
 
