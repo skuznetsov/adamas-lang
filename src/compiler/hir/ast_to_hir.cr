@@ -119801,6 +119801,7 @@ module Adamas::HIR
         param_types = [] of TypeRef
         param_type_names = [] of String?
         double_splat_index : Int32? = nil
+        splat_index : Int32? = nil
 
         params.each do |p|
           next if p.is_block
@@ -119833,6 +119834,8 @@ module Adamas::HIR
           param_type_names << param_type_name
           if p.is_double_splat
             double_splat_index = param_types.size - 1
+          elsif p.is_splat
+            splat_index = param_types.size - 1
           end
         end
 
@@ -119894,6 +119897,14 @@ module Adamas::HIR
               provided[double_splat_index] = true
               extra_named.clear
             end
+          end
+
+          # A positional splat that no positional argument reached binds the
+          # empty Tuple (`each_line(chomp: c)` to `each_line(*args, **options)`),
+          # not the Nil placeholder that kept later slots in place.
+          if (splat_slot = splat_index) && splat_slot < result.size && !provided[splat_slot]
+            result[splat_slot] = allocate_empty_tuple(ctx)
+            provided[splat_slot] = true
           end
 
           extra_named.each do |named_arg|
