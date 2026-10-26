@@ -12737,6 +12737,38 @@ module Adamas::HIR
       names.any? ? names : nil
     end
 
+    # Enum values flow through their base-integer carrier. A merge of one enum
+    # with other types (`b ? E::A : nil`) must name the enum as the union
+    # variant: a carrier variant (`Int32 | Nil`) erases the enum identity.
+    # Merges whose incoming values share one storage type keep it, so
+    # same-enum merges stay on the common_enum_merge_type path.
+    private def merge_incoming_types(
+      ctx : LoweringContext,
+      values : Array(ValueId),
+      raw_types : Array(TypeRef),
+    ) : Array(TypeRef)
+      distinct = raw_types.reject { |type| type == TypeRef::VOID }.uniq
+      return raw_types if distinct.size <= 1
+      raw_types.map_with_index do |raw_type, index|
+        value_id = values[index]
+        enum_carrier_receiver?(ctx, value_id, raw_type) ? enum_tracked_type(ctx, value_id) : raw_type
+      end
+    end
+
+    # Union variant for a merge incoming value; an enum carrier value selects
+    # the enum variant chosen by merge_incoming_types.
+    private def merge_union_variant_id(
+      ctx : LoweringContext,
+      union_type : TypeRef,
+      value_id : ValueId,
+      value_type : TypeRef,
+    ) : Int32
+      variant_id = get_union_variant_id(union_type, value_type)
+      return variant_id if variant_id >= 0
+      return variant_id unless enum_carrier_receiver?(ctx, value_id, value_type)
+      get_union_variant_id(union_type, enum_tracked_type(ctx, value_id))
+    end
+
     private def track_common_enum_merge(
       ctx : LoweringContext,
       result_id : ValueId,
@@ -90119,7 +90151,8 @@ module Adamas::HIR
 
           then_type = ctx.type_of(then_value)
           else_type = ctx.type_of(else_value)
-          phi_type = union_type_for_values(then_type, else_type)
+          merge_types = merge_incoming_types(ctx, [then_value, else_value], [then_type, else_type])
+          phi_type = union_type_for_values(merge_types[0], merge_types[1])
           # `m || E::A` with `m : E?` merges the unwrapped enum with an enum
           # constant lowered through its carrier; both are the same enum.
           if enum_type = common_enum_merge_type(ctx, [then_value, else_value])
@@ -92884,7 +92917,8 @@ module Adamas::HIR
           incoming_blocks << fb[0]
           incoming_values << fb[1]
         end
-        value_types = incoming_values.map { |val| tuple_static_array_value_type(ctx, val) }.reject { |t| t == TypeRef::VOID }.uniq
+        raw_value_types = incoming_values.map { |val| tuple_static_array_value_type(ctx, val) }
+        value_types = merge_incoming_types(ctx, incoming_values, raw_value_types).reject { |t| t == TypeRef::VOID }.uniq
         # Join only flowing values. A previously registered wider union is a
         # storage option, not evidence that this expression can produce its extra arms.
         phi_type = union_type_for_value_set(value_types) || TypeRef::VOID
@@ -92911,7 +92945,7 @@ module Adamas::HIR
           if val_type == phi_type
             phi.add_incoming(blk, val)
           elsif is_union_type?(phi_type)
-            variant_id = get_union_variant_id(phi_type, val_type)
+            variant_id = merge_union_variant_id(ctx, phi_type, val, val_type)
             if variant_id >= 0
               wrap = UnionWrap.new(ctx.next_id, phi_type, val, variant_id)
               ctx.emit_to_block(blk, wrap)
@@ -93180,7 +93214,8 @@ module Adamas::HIR
         else_type = ctx.type_of(else_val)
         var_type = then_type
         if then_type != else_type
-          var_type = union_type_for_values(then_type, else_type)
+          merge_types = merge_incoming_types(ctx, [then_val, else_val], [then_type, else_type])
+          var_type = union_type_for_values(merge_types[0], merge_types[1])
         end
         if enum_type = common_enum_merge_type(ctx, [then_val, else_val])
           var_type = enum_type
@@ -93223,7 +93258,7 @@ module Adamas::HIR
       end
 
       if is_union_type?(target_type)
-        variant_id = get_union_variant_id(target_type, value_type)
+        variant_id = merge_union_variant_id(ctx, target_type, value_id, value_type)
         if variant_id >= 0
           wrap = UnionWrap.new(ctx.next_id, target_type, value_id, variant_id)
           ctx.emit_to_block(block_id, wrap)
@@ -93298,7 +93333,8 @@ module Adamas::HIR
         # Determine merged type — filter VOID (unregistered type) to prevent
         # spurious X|Void unions that corrupt struct access (e.g. Slice|Void
         # makes Slice#size read the union type_id instead of actual size)
-        var_types = branch_values.map { |(_, v)| ctx.type_of(v) }.uniq
+        branch_ids = branch_values.map { |entry| entry[1] }
+        var_types = merge_incoming_types(ctx, branch_ids, branch_ids.map { |v| ctx.type_of(v) }).uniq
         non_void_types = var_types.reject { |t| t == TypeRef::VOID }
         var_types = non_void_types unless non_void_types.empty?
         var_type = if var_types.size == 1
@@ -93368,7 +93404,8 @@ module Adamas::HIR
         # Determine merged type — filter VOID (unregistered type) to prevent
         # spurious X|Void unions that corrupt struct access (e.g. Slice|Void
         # makes Slice#size read the union type_id instead of actual size)
-        var_types = branch_values.map { |(_, v)| ctx.type_of(v) }.uniq
+        branch_ids = branch_values.map { |entry| entry[1] }
+        var_types = merge_incoming_types(ctx, branch_ids, branch_ids.map { |v| ctx.type_of(v) }).uniq
         non_void_types = var_types.reject { |t| t == TypeRef::VOID }
         var_types = non_void_types unless non_void_types.empty?
         var_type = if var_types.size == 1
@@ -93384,7 +93421,7 @@ module Adamas::HIR
           if val_type == var_type
             {blk, val}
           elsif is_union_type?(var_type)
-            variant_id = get_union_variant_id(var_type, val_type)
+            variant_id = merge_union_variant_id(ctx, var_type, val, val_type)
             if variant_id >= 0
               wrap = UnionWrap.new(ctx.next_id, var_type, val, variant_id)
               ctx.emit_to_block(blk, wrap)
@@ -93450,7 +93487,8 @@ module Adamas::HIR
         # String in one branch and left as the original union in others). We
         # need to unify the types and coerce incoming values, otherwise the
         # phi receives mismatched types and the LLVM backend rejects the IR.
-        var_types = branch_values.map { |(_, v)| ctx.type_of(v) }.uniq
+        branch_ids = branch_values.map { |entry| entry[1] }
+        var_types = merge_incoming_types(ctx, branch_ids, branch_ids.map { |v| ctx.type_of(v) }).uniq
         non_void_types = var_types.reject { |t| t == TypeRef::VOID }
         var_types = non_void_types unless non_void_types.empty?
         var_type = if var_types.size == 1
@@ -93465,7 +93503,7 @@ module Adamas::HIR
           if val_type == var_type
             {blk, val}
           elsif is_union_type?(var_type)
-            variant_id = get_union_variant_id(var_type, val_type)
+            variant_id = merge_union_variant_id(ctx, var_type, val, val_type)
             if variant_id >= 0
               wrap = UnionWrap.new(ctx.next_id, var_type, val, variant_id)
               ctx.emit_to_block(blk, wrap)
@@ -93616,7 +93654,8 @@ module Adamas::HIR
 
           then_type = ctx.type_of(then_value)
           else_type = ctx.type_of(else_value)
-          phi_type = union_type_for_values(then_type, else_type)
+          merge_types = merge_incoming_types(ctx, [then_value, else_value], [then_type, else_type])
+          phi_type = union_type_for_values(merge_types[0], merge_types[1])
 
           # Don't create phi for void types - LLVM doesn't allow phi void
           if phi_type == TypeRef::VOID || phi_type == TypeRef::NIL
@@ -93648,7 +93687,7 @@ module Adamas::HIR
             if val_type == phi_type
               phi.add_incoming(blk, val)
             elsif is_union_type?(phi_type)
-              variant_id = get_union_variant_id(phi_type, val_type)
+              variant_id = merge_union_variant_id(ctx, phi_type, val, val_type)
               if variant_id >= 0
                 wrap = UnionWrap.new(ctx.next_id, phi_type, val, variant_id)
                 ctx.emit_to_block(blk, wrap)
@@ -95380,7 +95419,8 @@ module Adamas::HIR
 
           then_type = ctx.type_of(then_value)
           else_type = ctx.type_of(else_value)
-          phi_type = union_type_for_values(then_type, else_type)
+          merge_types = merge_incoming_types(ctx, [then_value, else_value], [then_type, else_type])
+          phi_type = union_type_for_values(merge_types[0], merge_types[1])
 
           # Don't create phi for void types - LLVM doesn't allow phi void
           if phi_type == TypeRef::VOID || phi_type == TypeRef::NIL
@@ -95395,7 +95435,7 @@ module Adamas::HIR
             if val_type == phi_type
               {blk, val}
             elsif is_union_type?(phi_type)
-              variant_id = get_union_variant_id(phi_type, val_type)
+              variant_id = merge_union_variant_id(ctx, phi_type, val, val_type)
               if variant_id >= 0
                 wrap = UnionWrap.new(ctx.next_id, phi_type, val, variant_id)
                 ctx.emit_to_block(blk, wrap)
@@ -96702,7 +96742,8 @@ module Adamas::HIR
       # Merge locals from branches that flow to merge
       merge_case_locals(ctx, pre_case_locals.locals, branch_locals)
 
-      value_types = incoming.map { |(_, val)| ctx.type_of(val) }.reject { |t| t == TypeRef::VOID }.uniq
+      incoming_ids = incoming.map { |entry| entry[1] }
+      value_types = merge_incoming_types(ctx, incoming_ids, incoming_ids.map { |val| ctx.type_of(val) }).reject { |t| t == TypeRef::VOID }.uniq
       phi_type = union_type_for_value_set(value_types) || TypeRef::VOID
 
       if env_get("DEBUG_UNION_PHI")
@@ -96729,7 +96770,7 @@ module Adamas::HIR
         if val_type == phi_type
           {blk, val}
         elsif is_union_type?(phi_type)
-          variant_id = get_union_variant_id(phi_type, val_type)
+          variant_id = merge_union_variant_id(ctx, phi_type, val, val_type)
           if env_get("DEBUG_UNION_PHI")
             debug_filter = env_get("DEBUG_UNION_PHI")
             should_log = debug_filter == "1" ||
@@ -125981,7 +126022,8 @@ module Adamas::HIR
         elsif inline_return.incoming.size == 1
           inline_return.incoming.first[1]
         else
-          value_types = inline_return.incoming.map { |(_, val)| ctx.type_of(val) }.reject { |t| t == TypeRef::VOID }.uniq
+          return_ids = inline_return.incoming.map { |entry| entry[1] }
+          value_types = merge_incoming_types(ctx, return_ids, return_ids.map { |val| ctx.type_of(val) }).reject { |t| t == TypeRef::VOID }.uniq
           phi_type = union_type_for_value_set(value_types) || TypeRef::VOID
           if value_types.size > 1 && env_has?("DEBUG_INLINE_RETURN")
             value_names = value_types.map { |t| get_type_name_from_ref(t) }.uniq
@@ -125993,7 +126035,7 @@ module Adamas::HIR
             if val_type == phi_type
               {blk, val}
             elsif is_union_type?(phi_type)
-              variant_id = get_union_variant_id(phi_type, val_type)
+              variant_id = merge_union_variant_id(ctx, phi_type, val, val_type)
               if variant_id >= 0
                 wrap = UnionWrap.new(ctx.next_id, phi_type, val, variant_id)
                 ctx.emit_to_block(blk, wrap)
