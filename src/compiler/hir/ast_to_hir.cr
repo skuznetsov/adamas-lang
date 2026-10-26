@@ -12712,7 +12712,14 @@ module Adamas::HIR
       end
 
       if enum_name = common_name
-        return unless enum_metadata_target_compatible?(ctx.type_of(result_id), enum_name)
+        # Enum values flow through their base-integer carrier, so a merge of
+        # them is typed as that carrier; enum_value_name_for accepts the same.
+        result_type = ctx.type_of(result_id)
+        carrier_type = @enum_base_types.try(&.[enum_name]?)
+        unless (carrier_type && result_type == carrier_type) ||
+               enum_metadata_target_compatible?(result_type, enum_name)
+          return
+        end
         (@enum_value_types ||= {} of ValueId => String)[result_id] = enum_name
       end
     end

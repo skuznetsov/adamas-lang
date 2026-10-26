@@ -1,3 +1,10 @@
+### Enum identity across if/else branch merges (2026-10-25)
+- [x] Keep the enum side-table tag on an if/else (or elsif) phi typed as the
+  enum's base-integer carrier; track_common_enum_merge required an enum-typed
+  result while ternaries already kept it. Stage 2 failed in cli.cr
+  memory_config_for: "no overload matches MemoryConfig#initialize for (Int32,
+  UInt32)". Regression: `regression_tests/enum_branch_merge_carrier_repro.sh`.
+
 ### Inherited constant lookup through ancestors (2026-10-25)
 - [x] Resolve bare constants in the current type, then its ancestors
   (superclasses and included modules, not their namespaces), then the enclosing
