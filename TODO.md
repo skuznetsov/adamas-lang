@@ -1,3 +1,11 @@
+### Field borrows keep their owner temp alive across blocks (2026-10-26)
+- [x] Per-block ARC released an owned call-result temp at the end of the
+  block that loaded a reference field from it, while the borrowed field was
+  used in a later block: `Info.new(arr).each` with
+  `(ab = @abbrevs) ? ab[0]? : nil` read the freed Arr (exit 1, not 42). The
+  cross-block backward trace now follows FieldGet to its owner.
+  Regression: `regression_tests/field_borrow_cross_block_owner_alive_repro.sh`.
+
 ### Nested types of later reopenings visible early (2026-10-26)
 - [x] Every prelude program failed with `undefined method 'gets' for Decoder`
   (io.cr:652): `IO::Decoder` is declared in a later reopening (io/encoding.cr),
@@ -10,9 +18,7 @@
 - [ ] s1 accepts `Ion::Decoder` for a `private class Decoder`; original
   Crystal rejects "private constant Ion::Decoder referenced".
 - [ ] Next prelude hello error: `undefined method 'tag' for
-  Array(Crystal::DWARF::Abbrev)` (dwarf.cr:54) — root is a use-after-free:
-  per-block ARC frees an owned temp while a field borrowed from it
-  (`ab = @abbrevs`) is used in another block.
+  Array(Crystal::DWARF::Abbrev)` (dwarf.cr:54).
 
 ### Explicit `self.new` named block call initializer (2026-10-26)
 - [x] Every prelude program failed with `undefined method 'gc_thread_handler='

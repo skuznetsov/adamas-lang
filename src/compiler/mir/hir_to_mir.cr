@@ -4839,6 +4839,9 @@ module Adamas
         # A reference returned by a call without proven +1 ownership is borrowed
         # and may alias its receiver or arguments (`def me; self; end`), so an
         # escaping borrowed result keeps those operands alive as well.
+        # Likewise a reference loaded from a field is borrowed from its owner:
+        # `ab = Info.new(arr).@abbrevs` used in a later block must keep the
+        # owned Info temp alive, or its destructor releases `ab` first.
         changed = true
         while changed
           changed = false
@@ -4849,6 +4852,12 @@ module Adamas
                         when HIR::Copy then [inst.source]
                         when HIR::Cast then [inst.value]
                         when HIR::UnionWrap then [inst.value]
+                        when HIR::FieldGet
+                          if type_needs_rc?(convert_type(inst.type))
+                            [inst.object]
+                          else
+                            [] of HIR::ValueId
+                          end
                         when HIR::Call
                           if !callee_returns_owned?(inst.method_name) && type_needs_rc?(convert_type(inst.type))
                             call_sources = inst.args.dup
