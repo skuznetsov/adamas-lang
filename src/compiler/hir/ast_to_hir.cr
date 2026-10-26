@@ -2737,6 +2737,8 @@ module Adamas::HIR
     # This is used for method resolution when only the base name is known.
     @function_base_return_types : Hash(String, TypeRef)
     @function_base_return_type_revision : UInt64 = 0_u64
+    # Function name => {annotated union, narrower body type, its variant id}.
+    @narrowed_body_returns = {} of String => {TypeRef, TypeRef, Int32}
     # Body-walk return inference is a pure function of the definition, its
     # specialization context and the registered return-type state; memoize it
     # per state revision (see infer_return_type_from_body_without_callsite).
@@ -79819,13 +79821,13 @@ module Adamas::HIR
       # the concrete payload with unsafe_as for hot lowering paths.
       case kind
       when Adamas::Compiler::Frontend::NodeKind::Call
-        return lower_call(ctx, node.unsafe_as(Adamas::Compiler::Frontend::CallNode), expr_id)
+        return narrow_direct_call_result(ctx, lower_call(ctx, node.unsafe_as(Adamas::Compiler::Frontend::CallNode), expr_id))
       when Adamas::Compiler::Frontend::NodeKind::Assign
         return lower_assign(ctx, node.unsafe_as(Adamas::Compiler::Frontend::AssignNode), expr_id)
       when Adamas::Compiler::Frontend::NodeKind::Identifier
-        return lower_identifier(ctx, node.unsafe_as(Adamas::Compiler::Frontend::IdentifierNode))
+        return narrow_direct_call_result(ctx, lower_identifier(ctx, node.unsafe_as(Adamas::Compiler::Frontend::IdentifierNode)))
       when Adamas::Compiler::Frontend::NodeKind::MemberAccess
-        return lower_member_access(ctx, node.as?(Adamas::Compiler::Frontend::MemberAccessNode) || node.unsafe_as(Adamas::Compiler::Frontend::MemberAccessNode))
+        return narrow_direct_call_result(ctx, lower_member_access(ctx, node.as?(Adamas::Compiler::Frontend::MemberAccessNode) || node.unsafe_as(Adamas::Compiler::Frontend::MemberAccessNode)))
       when Adamas::Compiler::Frontend::NodeKind::Number
         return lower_number(ctx, node.unsafe_as(Adamas::Compiler::Frontend::NumberNode))
       when Adamas::Compiler::Frontend::NodeKind::String
@@ -96934,6 +96936,7 @@ module Adamas::HIR
 
     private def normalize_function_return_terminators(ctx : LoweringContext, return_type : TypeRef) : Nil
       saved_block = ctx.current_block
+      @narrowed_body_returns.delete(ctx.function.name)
       return if return_type == TypeRef::VOID
       materialize_raw_proc_returns(ctx, return_type)
 
@@ -96960,10 +96963,80 @@ module Adamas::HIR
                      end
         block.terminator = Return.new(coerced_id)
       end
+      record_narrowed_body_return(ctx, return_type)
     ensure
       if saved = saved_block
         ctx.current_block = saved
       end
+    end
+
+    # Crystal types a call by its body when the body is narrower than the
+    # return annotation: getter!'s `def index : Idx?` never returns nil, so
+    # `e.index` is an `Idx`. The lowered function keeps the annotated ABI.
+    # When every return wraps the same non-nil variant of the annotated
+    # union, record it so direct call sites unwrap the result
+    # (narrow_direct_call_result).
+    private def record_narrowed_body_return(ctx : LoweringContext, return_type : TypeRef) : Nil
+      name = ctx.function.name
+      return unless is_union_type?(return_type)
+
+      wraps = {} of ValueId => UnionWrap
+      ctx.function.blocks.each do |block|
+        block.instructions.each do |inst|
+          if wrap = inst.as?(UnionWrap)
+            wraps[wrap.id] = wrap
+          end
+        end
+      end
+
+      narrow_type = TypeRef::VOID
+      variant_id = -1
+      ctx.function.blocks.each do |block|
+        ret = block.terminator.as?(Return)
+        next unless ret
+        value_id = ret.value
+        return unless value_id
+        wrap = wraps[value_id]?
+        return unless wrap && wrap.type == return_type
+        source_type = ctx.type_of(wrap.value)
+        return if source_type == TypeRef::NIL || source_type == TypeRef::VOID
+        return if is_union_type?(source_type)
+        return unless get_union_variant_id(return_type, source_type) == wrap.variant_type_id
+        if variant_id < 0
+          narrow_type = source_type
+          variant_id = wrap.variant_type_id
+        elsif variant_id != wrap.variant_type_id || narrow_type != source_type
+          return
+        end
+      end
+      return if variant_id < 0
+
+      @narrowed_body_returns[name] = {return_type, narrow_type, variant_id}
+    end
+
+    # Unwraps a direct call whose callee body was recorded as narrower than
+    # its annotated union return (record_narrowed_body_return).
+    private def narrow_direct_call_result(ctx : LoweringContext, value_id : ValueId) : ValueId
+      return value_id if @narrowed_body_returns.empty?
+
+      block = ctx.get_block(ctx.current_block)
+      call = block.instructions.last?.try(&.as?(Call))
+      return value_id unless call && call.id == value_id && !call.virtual
+
+      result_type = ctx.type_of(value_id)
+      return value_id unless is_union_type?(result_type)
+
+      # Only an already lowered body is recorded. Bare top-level callees are
+      # queued while another body lowers, so their calls keep the annotation.
+      return value_id unless narrowed = @narrowed_body_returns[call.method_name]?
+
+      union_type, narrow_type, variant_id = narrowed
+      return value_id unless result_type == union_type
+
+      unwrap = UnionUnwrap.new(ctx.next_id, narrow_type, value_id, variant_id, false)
+      ctx.emit(unwrap)
+      ctx.register_type(unwrap.id, narrow_type)
+      unwrap.id
     end
 
     private def nil_return_value_for(ctx : LoweringContext, return_type : TypeRef) : ValueId?
