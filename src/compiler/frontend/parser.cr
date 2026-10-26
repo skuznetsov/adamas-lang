@@ -241,18 +241,21 @@ module Adamas
             slice_eq?(base, "class_getter") || slice_eq?(base, "class_setter") || slice_eq?(base, "class_property")
         end
 
+        # Names parsed into the lightweight accessor nodes. Those nodes carry no
+        # bang semantics, so `getter!`/`property!` (raise-on-nil getter plus a
+        # `name?` query) stay macro calls and expand through Object's macros.
         private def accessor_macro_name_text(token : Token) : String?
-          if accessor_macro_name?(token.slice)
-            text = String.new(token.slice)
-            return text unless text.empty?
-          end
-
-          text = token_source_text(token)
-          return nil unless text
-          text = text.strip
-          return nil if text.empty?
-          base = accessor_macro_base_text(text)
-          return nil unless accessor_macro_base_name?(base)
+          text = if accessor_macro_name?(token.slice) && !token.slice.empty?
+                   String.new(token.slice)
+                 else
+                   source = token_source_text(token)
+                   return nil unless source
+                   source = source.strip
+                   return nil if source.empty?
+                   return nil unless accessor_macro_base_name?(accessor_macro_base_text(source))
+                   source
+                 end
+          return nil if text.ends_with?('!')
           text
         end
 
