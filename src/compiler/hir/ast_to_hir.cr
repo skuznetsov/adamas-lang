@@ -41216,6 +41216,16 @@ module Adamas::HIR
             return false if accepts_arity
           end
         end
+        # Generic instances defer included-module def registration, so an
+        # initializer that comes from an included module has no function entry
+        # yet. Its source definition still makes this arity callable.
+        if find_included_module_def_origin_for_owner(
+             owner, "initialize", arity, false,
+             respect_direct_declarations: false,
+             search_parents: false,
+           )
+          return false
+        end
       end
       # A class without initialize retains Crystal's implicit zero-argument new.
       return false if !saw_initializer && arity == 0
