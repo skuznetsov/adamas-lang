@@ -24856,6 +24856,44 @@ module Adamas::HIR
         type_name.ends_with?('*')
     end
 
+    # Record the ivars an included module's initializer declares on the
+    # includer's layout, and capture its params for the allocator when no
+    # class or block constructor already owns them.
+    private def capture_included_initializer_layout(
+      member : Adamas::Compiler::Frontend::DefNode,
+      member_arena : Adamas::Compiler::Frontend::ArenaLike,
+      class_name : String,
+      ivars : Array(IVarInfo),
+      offset_ptr : Pointer(Int32),
+      init_capture : InitParamsCapture?,
+    ) : Nil
+      if init_capture && init_capture.source != :class && init_capture.source != :block_ctor
+        if params = member.params
+          parameter_provenance = parameter_provenance_for_def(member, member_arena)
+          source_ivar_params = ivar_param_entries_for_def(
+            member,
+            member_arena,
+            parameter_provenance,
+          )
+          new_params = capture_initialize_params(
+            params,
+            ivars,
+            offset_ptr,
+            class_name,
+            member_arena,
+            source_ivar_params,
+            parameter_provenance: parameter_provenance,
+          )
+          init_capture.params.clear
+          new_params.each { |param| init_capture.params << param }
+          init_capture.source = :include
+        end
+      end
+      if body = member.body
+        infer_ivars_from_body(body, ivars, offset_ptr)
+      end
+    end
+
     private def register_module_instance_methods_for(
       class_name : String,
       include_target : ExprId,
@@ -25128,6 +25166,22 @@ module Adamas::HIR
                     # Keep this guard before name materialization to avoid hot-path
                     # String allocations for methods that will be skipped anyway.
                     if @lazy_module_methods
+                      # Methods resolve on demand, but the instance layout is
+                      # built now: an included initializer still declares the
+                      # ivars its `@x : T` params and body assign.
+                      if member.name == "initialize".to_slice
+                        init_base_name = join_owner_method_name(class_name, '#', "initialize")
+                        unless defined_full_names.includes?(init_base_name)
+                          capture_included_initializer_layout(
+                            member,
+                            registration_member_arena_for(init_base_name, member),
+                            class_name,
+                            ivars,
+                            pointerof(offset),
+                            init_capture,
+                          )
+                        end
+                      end
                       next
                     end
 
@@ -25202,31 +25256,7 @@ module Adamas::HIR
                     end
 
                     if method_name == "initialize"
-                      if init_capture && init_capture.source != :class && init_capture.source != :block_ctor
-                        if params = member.params
-                          parameter_provenance = parameter_provenance_for_def(member, member_arena)
-                          source_ivar_params = ivar_param_entries_for_def(
-                            member,
-                            member_arena,
-                            parameter_provenance,
-                          )
-                          new_params = capture_initialize_params(
-                            params,
-                            ivars,
-                            pointerof(offset),
-                            class_name,
-                            member_arena,
-                            source_ivar_params,
-                            parameter_provenance: parameter_provenance,
-                          )
-                          init_capture.params.clear
-                          new_params.each { |param| init_capture.params << param }
-                          init_capture.source = :include
-                        end
-                      end
-                      if body = member.body
-                        infer_ivars_from_body(body, ivars, pointerof(offset))
-                      end
+                      capture_included_initializer_layout(member, member_arena, class_name, ivars, pointerof(offset), init_capture)
                     end
 
                     full_name = function_full_name_for_def(base_name, param_types, member.params, has_block)
