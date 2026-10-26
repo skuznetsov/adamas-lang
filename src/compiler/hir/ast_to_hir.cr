@@ -64651,6 +64651,24 @@ module Adamas::HIR
       parts.owner
     end
 
+    # A candidate's restrictions resolve in the scope that declares it. A
+    # top-level def has no owner context, and its `Exception` must stay
+    # ::Exception even when the caller's class nests its own Exception.
+    # Returns the caller scope to restore, or nil when nothing changed.
+    private def enter_lookup_candidate_scope(candidate_context : String?) : Tuple(String?, String?)?
+      return nil if candidate_context
+      return nil unless @current_class || @current_namespace_override
+      saved = {@current_class, @current_namespace_override}
+      @current_class = nil
+      @current_namespace_override = nil
+      saved
+    end
+
+    private def leave_lookup_candidate_scope(saved : Tuple(String?, String?)?) : Nil
+      return unless saved
+      @current_class, @current_namespace_override = saved
+    end
+
     private def function_context_for_lookup_candidate(lookup_name : String, candidate_name : String) : String?
       candidate_context = function_context_from_name(candidate_name)
       lookup_context = function_context_from_name(lookup_name)
@@ -109922,11 +109940,18 @@ module Adamas::HIR
         final_context = function_context_for_lookup_candidate(
           lookup_name, selected_call_entry_name || mangled_method_name,
         )
-        source_rejection = final_def ? source_generic_argument_mismatch_for_def(final_def, arg_types, final_context) : nil
-        if prior_rejection = source_call_rejections.first?
-          # A later owner-aware rematch may legitimately find a different Def.
-          # It must establish compatibility before superseding a typed rejection.
-          source_admitted = final_def && params_compatible_with_args?(final_def, arg_types, final_context)
+        candidate_scope = enter_lookup_candidate_scope(final_context)
+        begin
+          source_rejection = final_def ? source_generic_argument_mismatch_for_def(final_def, arg_types, final_context) : nil
+          if prior_rejection = source_call_rejections.first?
+            # A later owner-aware rematch may legitimately find a different Def.
+            # It must establish compatibility before superseding a typed rejection.
+            source_admitted = final_def && params_compatible_with_args?(final_def, arg_types, final_context)
+          end
+        ensure
+          leave_lookup_candidate_scope(candidate_scope)
+        end
+        if prior_rejection
           if !source_admitted && method_name == "new" && !allocator_explicit_new_call
             source_admitted = generated_allocator_source_accepts?(mangled_method_name, arg_types)
           end
@@ -117613,47 +117638,52 @@ module Adamas::HIR
         candidate_requires_proc_nil_discard = false
         if arg_types && !unknown_args
           func_context = function_context_for_lookup_candidate(func_name, name)
-          if collect_source_rejections
-            saw_source_candidate = true
-            if mismatch = source_generic_argument_mismatch_for_def(def_node, arg_types, func_context)
-              source_rejection ||= mismatch
-            else
-              all_source_candidates_rejected = false
+          candidate_scope = enter_lookup_candidate_scope(func_context)
+          begin
+            if collect_source_rejections
+              saw_source_candidate = true
+              if mismatch = source_generic_argument_mismatch_for_def(def_node, arg_types, func_context)
+                source_rejection ||= mismatch
+              else
+                all_source_candidates_rejected = false
+              end
             end
-          end
-          match_arg_types = arg_types
-          match_param_infos : Array(DefParamInfo)? = nil
-          if input.source_named_types
-            next unless raw_count = input.raw_positional_count
-            next unless names = named_arg_names
-            view = named_call_candidate_type_view(def_node, arg_types, raw_count, names, func_context)
-            next unless view
-            match_arg_types, match_param_infos = view
-          end
-          compatible = params_compatible_with_args?(def_node, match_arg_types, func_context, match_param_infos, ovl_trace)
-          STDERR.puts "[OVL]   cand=#{name} pc=#{param_count} req=#{required} ctx=#{func_context} compat=#{compatible}" if ovl_trace
-          if compatible && single_candidate_fast_path
-            if env_get("DEBUG_JOIN_PICK") && debug_overload_pick_suspicious?(name, arg_count)
-              debug_report_overload_pick("fastpath", func_name, name, def_node, arg_types, func_context, arg_count)
+            match_arg_types = arg_types
+            match_param_infos : Array(DefParamInfo)? = nil
+            if input.source_named_types
+              next unless raw_count = input.raw_positional_count
+              next unless names = named_arg_names
+              view = named_call_candidate_type_view(def_node, arg_types, raw_count, names, func_context)
+              next unless view
+              match_arg_types, match_param_infos = view
             end
-            best = def_node
-            best_name = name
-            best_param_count = param_count
-            break
-          end
-          if compatible
-            if !has_block && !call_has_splat && !call_has_named_args && arg_types.none? { |type_ref| type_ref == TypeRef::VOID }
-              candidate_requires_proc_nil_discard = source_proc_nil_result_discard_required_for_def?(def_node, arg_types, func_context)
+            compatible = params_compatible_with_args?(def_node, match_arg_types, func_context, match_param_infos, ovl_trace)
+            STDERR.puts "[OVL]   cand=#{name} pc=#{param_count} req=#{required} ctx=#{func_context} compat=#{compatible}" if ovl_trace
+            if compatible && single_candidate_fast_path
+              if env_get("DEBUG_JOIN_PICK") && debug_overload_pick_suspicious?(name, arg_count)
+                debug_report_overload_pick("fastpath", func_name, name, def_node, arg_types, func_context, arg_count)
+              end
+              best = def_node
+              best_name = name
+              best_param_count = param_count
+              break
             end
-            score = params_match_score(def_node, match_arg_types, func_context, match_param_infos)
-            score += class_method_owner_match_bonus(func_name, name, arg_types)
-            score += named_args_match_score(def_node, named_arg_names)
-          end
-          if debug_merge_sort_lookup
-            param_ann = def_node.params.try { |ps| find_param(ps) { |param| !param.is_block && !named_only_separator?(param) && !param.is_splat && !param.is_double_splat } }
-            param_type = param_ann.try(&.type_annotation).try { |ann| (safe_slice_to_string(ann) || "") } || ""
-            arg_names = arg_types.map { |t| get_type_name_from_ref(t) }.join("|")
-            STDERR.puts "[MERGE_SORT_LOOKUP] func=#{func_name} cand=#{name} ctx=#{func_context || ""} param=#{param_type} compat=#{compatible} score=#{score} args=#{arg_names}"
+            if compatible
+              if !has_block && !call_has_splat && !call_has_named_args && arg_types.none? { |type_ref| type_ref == TypeRef::VOID }
+                candidate_requires_proc_nil_discard = source_proc_nil_result_discard_required_for_def?(def_node, arg_types, func_context)
+              end
+              score = params_match_score(def_node, match_arg_types, func_context, match_param_infos)
+              score += class_method_owner_match_bonus(func_name, name, arg_types)
+              score += named_args_match_score(def_node, named_arg_names)
+            end
+            if debug_merge_sort_lookup
+              param_ann = def_node.params.try { |ps| find_param(ps) { |param| !param.is_block && !named_only_separator?(param) && !param.is_splat && !param.is_double_splat } }
+              param_type = param_ann.try(&.type_annotation).try { |ann| (safe_slice_to_string(ann) || "") } || ""
+              arg_names = arg_types.map { |t| get_type_name_from_ref(t) }.join("|")
+              STDERR.puts "[MERGE_SORT_LOOKUP] func=#{func_name} cand=#{name} ctx=#{func_context || ""} param=#{param_type} compat=#{compatible} score=#{score} args=#{arg_names}"
+            end
+          ensure
+            leave_lookup_candidate_scope(candidate_scope)
           end
           next unless compatible
         end
