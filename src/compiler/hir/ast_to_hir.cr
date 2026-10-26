@@ -96361,6 +96361,7 @@ module Adamas::HIR
       phi = Phi.new(ctx.next_id, phi_type)
       coerced_incoming.each { |(blk, val)| phi.add_incoming(blk, val) }
       ctx.emit(phi)
+      track_common_enum_merge(ctx, phi.id, phi.incoming_values)
       phi.id
     end
 

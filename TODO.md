@@ -1,4 +1,6 @@
 ### Enum identity across if/else branch merges (2026-10-25)
+- [x] case/when result phis now get the same tag (lower_case never called
+  track_common_enum_merge).
 - [x] Keep the enum side-table tag on an if/else (or elsif) phi typed as the
   enum's base-integer carrier; track_common_enum_merge required an enum-typed
   result while ternaries already kept it. Stage 2 failed in cli.cr

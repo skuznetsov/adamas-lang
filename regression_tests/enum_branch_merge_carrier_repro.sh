@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Enum values are lowered through their base-integer carrier and keep their
-# enum identity in a side table. A merge of if/else branches that all yield
+# enum identity in a side table. A merge of if/else or case branches that all yield
 # the same enum must keep that identity, or a later `mode: m` argument is
 # typed Int32 and rejected. Stage 2 failed in cli.cr's memory_config_for with
 # "no overload matches Adamas::HIR::MemoryConfig#initialize for argument
@@ -27,6 +27,13 @@ write_case() {
   cat > "$WORK_DIR/$name.cr" <<CR
 lib LibC
   fun exit(status : Int32) : NoReturn
+end
+
+# No prelude: case/when needs Int32#===.
+struct Int32
+  def ===(other : Int32)
+    self == other
+  end
 end
 
 module H
@@ -94,11 +101,24 @@ write_case nested_if "  m = if i == 0
           H::Cfg::Mode::B
         end
       end"
+# case/when merges carry the same identity.
+write_case case_when "  m = case i
+      when 0 then H::Cfg::Mode::A
+      when 2 then H::Cfg::Mode::C
+      else
+        H::Cfg::Mode::B
+      end"
 # Control: the ternary merge already worked.
 write_case ternary "  m = i == 2 ? H::Cfg::Mode::C : H::Cfg::Mode::A"
 # Negative: Mode | Int32 is not a Mode.
 write_case enum_int_rejected "  m = if i == 2
         H::Cfg::Mode::C
+      else
+        5
+      end"
+# Negative: a case merge of Mode and Int32 is not a Mode.
+write_case case_enum_int_rejected "  m = case i
+      when 2 then H::Cfg::Mode::C
       else
         5
       end"
@@ -109,8 +129,8 @@ write_case two_enums_rejected "  m = if i == 2
         H::Cfg::Other::Y
       end"
 
-POSITIVE=(if_else if_elsif_else nested_if ternary)
-NEGATIVE=(enum_int_rejected two_enums_rejected)
+POSITIVE=(if_else if_elsif_else nested_if case_when ternary)
+NEGATIVE=(enum_int_rejected case_enum_int_rejected two_enums_rejected)
 
 exit_code_of() {
   grep -o '\[EXIT: [0-9]*\]' "$1" | head -1 | tr -dc '0-9'
