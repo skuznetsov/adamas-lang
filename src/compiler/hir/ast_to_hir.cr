@@ -115424,7 +115424,7 @@ module Adamas::HIR
         if idx == vms.size - 1
           uw = UnionUnwrap.new(ctx.next_id, vmr, receiver_id, vmvid, false)
           ctx.emit(uw); ctx.register_type(uw.id, vmr)
-          pi = primitive_intrinsic_for_dispatch(vmr, mb)
+          pi = primitive_intrinsic_for_dispatch(vmr, mb, args.size)
           variant_return_type = explicit_branch_return_types.try(&.[idx]) ||
                                 tuple_static_array_return_type(vmr, mb) ||
                                 static_array_slice_return_type(vmr, mb) || dispatch_return_type
@@ -115457,7 +115457,7 @@ module Adamas::HIR
           ctx.current_block = tb; ctx.restore_locals(pb)
           uw = UnionUnwrap.new(ctx.next_id, vmr, receiver_id, vmvid, false)
           ctx.emit(uw); ctx.register_type(uw.id, vmr)
-          pi2 = primitive_intrinsic_for_dispatch(vmr, mb)
+          pi2 = primitive_intrinsic_for_dispatch(vmr, mb, args.size)
           variant_return_type = explicit_branch_return_types.try(&.[idx]) ||
                                 tuple_static_array_return_type(vmr, mb) ||
                                 static_array_slice_return_type(vmr, mb) || dispatch_return_type
@@ -115506,7 +115506,7 @@ module Adamas::HIR
       if slice_type = static_array_slice_return_type(receiver_type, method_name)
         return slice_type
       end
-      if intrinsic = primitive_intrinsic_for_dispatch(receiver_type, method_name)
+      if intrinsic = primitive_intrinsic_for_dispatch(receiver_type, method_name, call_arg_count)
         return intrinsic[1]
       end
 
@@ -115590,8 +115590,11 @@ module Adamas::HIR
     end
 
     # Returns {intrinsic_name, return_type} for known primitive intrinsics,
-    # or nil if the method should use normal dispatch.
-    private def primitive_intrinsic_for_dispatch(variant_type : TypeRef, method_name : String) : {String, TypeRef}?
+    # or nil if the method should use normal dispatch. Each intrinsic takes
+    # only the receiver, so it stands for the zero-argument form: `to_s(io)`
+    # is the stdlib overload, not a string conversion.
+    private def primitive_intrinsic_for_dispatch(variant_type : TypeRef, method_name : String, call_arg_count : Int32) : {String, TypeRef}?
+      return nil unless call_arg_count == 0
       if variant_type == TypeRef::CHAR
         case method_name
         when "to_s" then return {"__adamas_char_to_string", TypeRef::STRING}
