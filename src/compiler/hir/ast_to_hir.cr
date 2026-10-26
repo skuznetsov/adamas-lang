@@ -2800,6 +2800,11 @@ module Adamas::HIR
     @module_class_vars : Hash(String, Array(ClassVarInfo))
     # Track lib struct/union types for field access lowering.
     @lib_structs : Set(String)
+    # Declared parameter type spellings of lib funs, keyed by {lib, fun} and
+    # recorded in the lib :types phase. Extern signatures are resolved only
+    # after classes are registered, but class layout already needs the
+    # pointee type of `out @ivar` arguments.
+    @lib_fun_declared_params : Hash({String, String}, Array(String))
 
     # Initialize parameters for each class (for new() generation)
     @init_params : Hash(String, Array({String, TypeRef}))
@@ -7874,6 +7879,7 @@ module Adamas::HIR
       @module_class_vars = {} of String => Array(ClassVarInfo)
       @class_var_infer_stack = Set(String).new
       @lib_structs = Set(String).new
+      @lib_fun_declared_params = {} of {String, String} => Array(String)
       @init_params = {} of String => Array({String, TypeRef})
       @current_class = nil
       @current_namespace_override = nil
@@ -15332,7 +15338,10 @@ module Adamas::HIR
           register_class_with_name(node, full_struct_name)
         end
       when Adamas::Compiler::Frontend::FunNode
-        return unless pass == :externs
+        if pass == :types
+          record_lib_fun_declared_params(lib_name, node)
+          return
+        end
         return if register_extern_fun_from_source(lib_name, node.span, node.params)
         register_extern_fun(lib_name, node)
       when Adamas::Compiler::Frontend::GlobalVarDeclNode
@@ -73170,8 +73179,11 @@ module Adamas::HIR
       return unless lib_name
       method_name = (safe_slice_to_string(callee_node.member) || "")
 
+      # Classes are registered before extern signatures, so the fun is usually
+      # known here only by its declared parameter spellings.
       extern_func = @module.get_extern_function(lib_name, method_name)
-      return unless extern_func
+      declared_params = extern_func ? nil : @lib_fun_declared_params[{lib_name, method_name}]?
+      return unless extern_func || declared_params
 
       call.args.each_with_index do |arg_expr, idx|
         arg_node = node_for_expr(arg_expr, arena)
@@ -73183,11 +73195,57 @@ module Adamas::HIR
         seen << ivar_name
 
         # Infer type from extern function parameter (it's a pointer, we want the element type)
-        param_type = extern_func.param_types[idx]?
+        param_type = if extern_func
+                       extern_func.param_types[idx]?
+                     else
+                       declared_lib_fun_param_type(lib_name, declared_params, idx)
+                     end
         if param_type
           alloc_type = out_alloc_type_for_param(param_type)
           result << {ivar_name, alloc_type} unless alloc_type == TypeRef::VOID
         end
+      end
+    end
+
+    private def record_lib_fun_declared_params(
+      lib_name : String,
+      node : Adamas::Compiler::Frontend::FunNode,
+    ) : Nil
+      fun_name = extern_fun_names_from_source(node.span).try(&.[0]) || safe_slice_to_string(node.name) || ""
+      return if fun_name.empty?
+      params = if signature = extern_fun_signature_from_source(node.span)
+                 signature[:params]
+               else
+                 declared = [] of String
+                 if node_params = node.params
+                   each_param(node_params) do |param|
+                     declared << (param.type_annotation.try { |type_ann| safe_slice_to_string(type_ann) } || "")
+                   end
+                 end
+                 declared
+               end
+      @lib_fun_declared_params[{lib_name, fun_name}] ||= params
+    end
+
+    # Resolves one declared lib fun parameter in the lib's namespace ahead of
+    # the extern pass. A spelling naming a type that is not registered yet
+    # gives nil, so the ivar is left to lowering-time registration as before.
+    private def declared_lib_fun_param_type(
+      lib_name : String,
+      declared_params : Array(String)?,
+      index : Int32,
+    ) : TypeRef?
+      return nil unless declared_params
+      type_name = declared_params[index]?
+      return nil if type_name.nil? || type_name.empty?
+      old_class = @current_class
+      @current_class = lib_name
+      begin
+        declared_type_ref_for_c_type(type_name)
+      rescue LoweringError
+        nil
+      ensure
+        @current_class = old_class
       end
     end
 
