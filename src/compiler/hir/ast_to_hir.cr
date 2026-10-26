@@ -130347,6 +130347,14 @@ module Adamas::HIR
           end
         end
       end
+      # A primitive def has no body to call: lower_call's emitter turns it
+      # into an intrinsic, and a no-parens call such as `e.crystal_type_id`
+      # must get the same, or it reaches an abort stub at runtime.
+      if prim_kind = @module.primitive_for(actual_name) || base_method_name.try { |name| @module.primitive_for(name) }
+        if prim_result = lower_primitive_call(ctx, prim_kind, member_name, object_id, args, return_type, actual_name)
+          return prim_result
+        end
+      end
       call = Call.with_receiver_virtual(ctx.next_id, return_type, object_id, actual_name, args, call_virtual)
       ctx.emit(call)
       ctx.register_type(call.id, return_type)
