@@ -6153,6 +6153,11 @@ module Adamas::HIR
     # callee_is_yield_free? guard and could recurse through yield-bearing
     # callees. This flag keeps the guard active for the whole subtree.
     @force_lower_yield_free_only_depth : Int32 = 0
+    # Callees refused by the force-lower depth limit while the current forced
+    # body was lowered, and the yield-free bodies already re-lowered once after
+    # such a refusal (see force_lower_function_for_return_type).
+    @force_lower_depth_refused = [] of String
+    @force_lower_depth_retried = Set(String).new
     # When true, skip expensive infer_concrete_return_type_from_body during
     # monomorphization triggered by ensure_monomorphized_type (lowering path).
     # Return types will be inferred lazily when the method is actually called.
@@ -8432,6 +8437,8 @@ module Adamas::HIR
       @force_lower_return_type_depth = 0
       @suppress_force_lower_return_type_depth = 0
       @force_lower_yield_free_only_depth = 0
+      @force_lower_depth_refused.clear
+      @force_lower_depth_retried.clear
       @defer_body_return_inference = false
       # Phase 1: identity dry-run tracker
       if ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_IDENTITY_DRY_RUN") == "1"
@@ -28674,11 +28681,13 @@ module Adamas::HIR
                   end
                 end
               end
-              if ret_type = @function_base_return_types[base_method]?
-                return ret_type if ret_type != TypeRef::VOID
-              end
-              if ret_type = @function_types[base_method]?
-                return ret_type if ret_type != TypeRef::VOID
+              unless family_slot_rejects_positional_call?(base_method, expr_node.args.size)
+                if ret_type = @function_base_return_types[base_method]?
+                  return ret_type if ret_type != TypeRef::VOID
+                end
+                if ret_type = @function_types[base_method]?
+                  return ret_type if ret_type != TypeRef::VOID
+                end
               end
             end
           end
@@ -28755,6 +28764,7 @@ module Adamas::HIR
               [recv_name, base_recv].each do |owner|
                 next if owner.empty?
                 instance_method = "#{owner}##{member_name}"
+                next if family_slot_rejects_positional_call?(instance_method, expr_node.args.size)
                 if ret_type = @function_base_return_types[instance_method]?
                   def_base = strip_type_suffix(instance_method)
                   needs_callsite = unresolved_generic_return_type?(ret_type)
@@ -61900,12 +61910,29 @@ module Adamas::HIR
       selected
     end
 
+    # The family caches keyed by a bare method name hold the return of the
+    # definition that owns that slot. When the slot owner cannot accept the
+    # call's positional count (`rand : Float64` for `rand(x)`), the cached type
+    # describes a different overload and must not answer the call.
+    private def family_slot_rejects_positional_call?(base_name : String, positional_count : Int32) : Bool
+      return false unless slot_def = @function_defs[base_name]?
+      !return_def_accepts_positional?(slot_def, positional_count)
+    end
+
     private def base_return_def_differs_from_selected?(
       base_name : String,
       call_arg_count : Int32?,
       selected_def : Adamas::Compiler::Frontend::DefNode?,
     ) : Bool
       return false unless selected_def
+      # The family slot is claimed by one definition (a zero-argument def keyed
+      # by its bare name, or the first untyped claimant), and its cached type is
+      # that definition's return. When another definition owns the slot, the
+      # arity lookup below would skip it and find the selected def, letting
+      # `rand : Float64` answer for `rand(max : Int) : Int` or `self.rand(x)`.
+      if slot_def = @function_defs[base_name]?
+        return true unless same_def_node?(slot_def, selected_def)
+      end
       base_def = lookup_function_def_for_return(base_name, base_name, call_arg_count)
       !base_def.nil? && !same_def_node?(base_def, selected_def)
     end
@@ -100312,6 +100339,7 @@ module Adamas::HIR
       max_force_depth = (bypass_inline_yield || in_yield_free_only) ? 2 : 4
       if @force_lower_return_type_depth >= max_force_depth
         STDERR.puts "[FORCE_LOWER_DEPTH_LIMIT] depth=#{@force_lower_return_type_depth} name=#{name}" if env_has?("DEBUG_FORCE_LOWER_DEPTH")
+        @force_lower_depth_refused << name
         return false
       end
       if env_has?("DEBUG_FORCE_LOWER_DEPTH") && @force_lower_return_type_depth > 5
@@ -100367,6 +100395,7 @@ module Adamas::HIR
         @force_lower_yield_free_only_depth += 1
       end
 
+      refused_mark = @force_lower_depth_refused.size
       begin
         lower_function_if_needed_profiled(name, __LINE__)
         made_progress = (!requested_body_before && @module.has_function_with_body?(name)) ||
@@ -100394,7 +100423,53 @@ module Adamas::HIR
         @force_lower_return_type_depth -= 1
       end
 
+      if @force_lower_depth_refused.size > refused_mark
+        refused = @force_lower_depth_refused[refused_mark..].uniq
+        while @force_lower_depth_refused.size > refused_mark
+          @force_lower_depth_refused.pop
+        end
+        if retry_force_lower_after_depth_refusal(name, refused, bypass_inline_yield)
+          made_progress = true
+        end
+      end
+
       made_progress
+    end
+
+    # The depth limit bounds nesting, not knowledge: a callee refused while
+    # `name` was lowered left a Void call result in its body, and an
+    # unannotated `name` then settles on Void (`def self.rand(x)` forwarding to
+    # `rand(max : Int) : Int`). Back at this frame's depth the refused callees
+    # fit under the limit, so lower them in sequence and rebuild `name` once,
+    # before its caller reads the result. Only a Void result is rebuilt:
+    # replacing a settled body re-lowers it against state the first body
+    # already recorded, which is not safe in general.
+    private def retry_force_lower_after_depth_refusal(
+      name : String,
+      refused : Array(String),
+      bypass_inline_yield : Bool,
+    ) : Bool
+      current = @function_types[name]?
+      return false unless current.nil? || current == TypeRef::VOID
+      return false if @force_lower_depth_retried.includes?(name)
+      return false unless callee_is_yield_free?(name)
+      return false unless @module.has_function_with_body?(name)
+      return false if function_state(name).in_progress?
+
+      resolved_any = false
+      refused.each do |callee|
+        next if callee == name
+        force_lower_function_for_return_type(callee, bypass_inline_yield: bypass_inline_yield)
+        callee_type = @function_types[callee]? || @module.function_by_name(callee).try(&.return_type)
+        resolved_any = true if callee_type && callee_type != TypeRef::VOID
+      end
+      return false unless resolved_any
+
+      @force_lower_depth_retried << name
+      return false unless remove_hir_function(name)
+      clear_function_state(name)
+      force_lower_function_for_return_type(name, bypass_inline_yield: bypass_inline_yield)
+      true
     end
 
     # Returns true if the function is provably yield-free: no explicit &-param
