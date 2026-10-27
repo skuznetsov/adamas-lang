@@ -95926,6 +95926,31 @@ module Adamas::HIR
         then_capture_sources << then_capture_source
       end
 
+      # A constant condition lowers only the live branch, as in `lower_if`. A
+      # specialization with a `Nil` argument (`st ? t.it(st) : nil` for
+      # `run(nil)`) must not type the dead branch: Crystal never does, and the
+      # call there has no `Nil` overload.
+      static_val = static_truthy_value(ctx, cond_id)
+      static_val = static_literal_condition_value(node.condition) if static_val.nil?
+      unless static_val.nil?
+        pre_branch_locals = ctx.save_locals
+        pre_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
+        ctx.push_scope(ScopeKind::Block)
+        if static_val
+          apply_truthy_narrowing(ctx, truthy_targets)
+          apply_is_a_narrowing(ctx, is_a_targets)
+          return lower_static_if_branch(ctx, pre_branch_locals, pre_inline_caller_locals) do
+            with_direct_capture_truthy_narrowing(ctx, truthy_targets, then_capture_sources) do
+              lower_expr(ctx, node.true_branch)
+            end
+          end
+        end
+        apply_truthy_narrowing(ctx, falsy_targets)
+        return lower_static_if_branch(ctx, pre_branch_locals, pre_inline_caller_locals) do
+          lower_expr(ctx, node.false_branch)
+        end
+      end
+
       # Save locals before branching
       pre_branch_locals = ctx.save_locals
 
