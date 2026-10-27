@@ -94013,6 +94013,29 @@ module Adamas::HIR
         @infer_body_context = old_body_context
       end
 
+      # A local first assigned in the loop body outlives the loop: Crystal
+      # types it nilable after the loop (zero iterations, or a break before
+      # the assignment). Seed its header phi with nil so the post-loop binding
+      # exists. Only the loop's own lexical level counts; a local first
+      # assigned inside a block body is block-local.
+      body_only_vars = Set(String).new
+      loop_level_values = {} of String => ExprId
+      collect_loop_level_assigned_vars(node.body, loop_level_values).each do |var_name|
+        next if var_name == "self" || initial_values.has_key?(var_name)
+        unless assigned_var_types.has_key?(var_name)
+          # Body inference cannot see the enclosing locals (`last = i`); the
+          # flow-typed locals before the loop can.
+          value_id = loop_level_values[var_name]?
+          value_type = value_id ? infer_type_from_expr(value_id, @current_class) : nil
+          next unless value_type && value_type != TypeRef::VOID
+          assigned_var_types[var_name] = value_type
+        end
+        nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+        ctx.emit_to_block(pre_loop_block, nil_lit)
+        initial_values[var_name] = nil_lit.id
+        body_only_vars << var_name
+      end
+
       cond_block = ctx.create_block
       body_block = ctx.create_block
       exit_block = ctx.create_block
@@ -94303,7 +94326,13 @@ module Adamas::HIR
         # Breaks occurred — create exit phi nodes that merge normal-exit + break paths
         # Use cond_branch_block (NOT cond_block) as the normal-exit predecessor,
         # because condition expression lowering may split cond_block into multiple blocks.
+        normal_exit_live = body_only_vars.empty? || hir_block_has_predecessor?(ctx, cond_branch_block)
         phi_nodes.each do |var_name, cond_phi|
+          if body_only_vars.includes?(var_name)
+            exit_id = body_only_loop_exit_value(ctx, var_name, cond_phi, cond_branch_block, normal_exit_live, break_info)
+            bind_loop_exit_local(ctx, var_name, exit_id, inline_vars, nearest_frame: true)
+            next
+          end
           exit_phi = Phi.new(ctx.next_id, cond_phi.type)
           # Normal exit path: from the block that has the Branch terminator
           exit_phi.add_incoming(cond_branch_block, cond_phi.id)
@@ -94376,6 +94405,127 @@ module Adamas::HIR
         ctx.emit(result_phi)
         ctx.register_type(result_phi.id, result_type)
         result_phi.id
+      end
+    end
+
+    # Exit value of a local first assigned in a `while` body. A break exit
+    # carries the value at the break point; the normal exit carries the header
+    # phi (`T | Nil`). When the normal exit is statically dead (`while true`)
+    # and every break has assigned the local, the exit keeps the narrow `T`,
+    # as in Crystal; the dead edge gets an unwrap that never runs.
+    private def body_only_loop_exit_value(
+      ctx : LoweringContext,
+      var_name : String,
+      cond_phi : Phi,
+      cond_branch_block : BlockId,
+      normal_exit_live : Bool,
+      break_info : Array({BlockId, Hash(String, ValueId)}),
+    ) : ValueId
+      incomings = [{cond_branch_block, cond_phi.id}]
+      break_info.each do |break_block, break_locals|
+        incomings << {break_block, break_locals[var_name]? || cond_phi.id}
+      end
+      live = normal_exit_live ? incomings : incomings[1..]
+      exit_type = cond_phi.type
+      narrow = nil.as(TypeRef?)
+      live.each do |(_, value_id)|
+        value_type = ctx.type_of(value_id)
+        if narrow.nil?
+          narrow = value_type
+        elsif narrow != value_type
+          narrow = TypeRef::VOID
+        end
+      end
+      variant_id = -1
+      if (narrow_type = narrow) && narrow_type != TypeRef::VOID && narrow_type != exit_type &&
+         is_union_type?(exit_type)
+        variant_id = get_union_variant_id(exit_type, narrow_type) || -1
+        exit_type = narrow_type if variant_id >= 0
+      end
+
+      exit_phi = Phi.new(ctx.next_id, exit_type)
+      incomings.each do |(block_id, value_id)|
+        incoming = value_id
+        if exit_type != cond_phi.type && value_id == cond_phi.id
+          # Only the statically dead normal edge reaches here.
+          unwrap = UnionUnwrap.new(ctx.next_id, exit_type, value_id, variant_id, false)
+          ctx.emit_to_block(block_id, unwrap)
+          incoming = unwrap.id
+        else
+          incoming = coerce_branch_local_for_phi(ctx, block_id, value_id, exit_type)
+        end
+        exit_phi.add_incoming(block_id, incoming)
+      end
+      ctx.emit(exit_phi)
+      exit_phi.id
+    end
+
+    private def hir_block_has_predecessor?(ctx : LoweringContext, target : BlockId) : Bool
+      ctx.function.blocks.any? do |block|
+        case term = block.terminator
+        when Jump   then term.target == target
+        when Branch then term.then_block == target || term.else_block == target
+        when Switch then term.default == target || term.cases.any? { |entry| entry[1] == target }
+        else             false
+        end
+      end
+    end
+
+    # Locals assigned at a loop's own lexical level: nested control flow is
+    # transparent, block bodies are not (their first assignment is block-local).
+    # `first_values` receives the value of each local's first simple assignment.
+    private def collect_loop_level_assigned_vars(body : Array(ExprId), first_values : Hash(String, ExprId)) : Array(String)
+      vars = [] of String
+      body.each { |expr_id| collect_loop_level_assigned_vars_in_expr(expr_id, vars, first_values) }
+      vars.uniq
+    end
+
+    private def collect_loop_level_assigned_vars_in_expr(expr_id : ExprId, vars : Array(String), first_values : Hash(String, ExprId)) : Nil
+      case node = @arena[expr_id]
+      when Adamas::Compiler::Frontend::AssignNode
+        target = @arena[node.target]
+        if target.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
+          name = safe_slice_to_string(target.name)
+          if name && !name.empty?
+            first_values[name] = node.value unless vars.includes?(name)
+            vars << name
+          end
+        end
+        collect_loop_level_assigned_vars_in_expr(node.value, vars, first_values)
+      when Adamas::Compiler::Frontend::MultipleAssignNode
+        node.targets.each do |target_id|
+          target = @arena[target_id]
+          if target.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
+            name = safe_slice_to_string(target.name)
+            vars << name if name && !name.empty?
+          end
+        end
+        collect_loop_level_assigned_vars_in_expr(node.value, vars, first_values)
+      when Adamas::Compiler::Frontend::WhileNode
+        node.body.each { |id| collect_loop_level_assigned_vars_in_expr(id, vars, first_values) }
+      when Adamas::Compiler::Frontend::IfNode
+        node.then_body.each { |id| collect_loop_level_assigned_vars_in_expr(id, vars, first_values) }
+        if elsifs = node.elsifs
+          elsifs.each { |branch| branch.body.each { |id| collect_loop_level_assigned_vars_in_expr(id, vars, first_values) } }
+        end
+        if else_body = node.else_body
+          else_body.each { |id| collect_loop_level_assigned_vars_in_expr(id, vars, first_values) }
+        end
+      when Adamas::Compiler::Frontend::UnlessNode
+        node.then_branch.each { |id| collect_loop_level_assigned_vars_in_expr(id, vars, first_values) }
+        if else_body = node.else_branch
+          else_body.each { |id| collect_loop_level_assigned_vars_in_expr(id, vars, first_values) }
+        end
+      when Adamas::Compiler::Frontend::CaseNode
+        node.when_branches.each { |branch| branch.body.each { |id| collect_loop_level_assigned_vars_in_expr(id, vars, first_values) } }
+        if else_body = node.else_branch
+          else_body.each { |id| collect_loop_level_assigned_vars_in_expr(id, vars, first_values) }
+        end
+      when Adamas::Compiler::Frontend::BinaryNode
+        collect_loop_level_assigned_vars_in_expr(node.left, vars, first_values)
+        collect_loop_level_assigned_vars_in_expr(node.right, vars, first_values)
+      when Adamas::Compiler::Frontend::GroupingNode
+        collect_loop_level_assigned_vars_in_expr(node.expression, vars, first_values)
       end
     end
 
