@@ -137,7 +137,8 @@ module Adamas::HIR
       name : String,
       value_id : ValueId,
       carrier : ScopedReceiverCarrier,
-      block : BlockId? = nil
+      block : BlockId? = nil,
+      survives_calls : Bool = false
 
     # Function-scope predeclaration set for P1 boxed captures.
     #
@@ -434,11 +435,23 @@ module Adamas::HIR
     # the Call itself, so a matching direct argument can still consume the
     # proof; any later read must reload the box/cell and prove truthiness again.
     # Keep this conservative rather than trying to classify pure calls.
+    #
+    # The one exception is a `survives_calls` write proof for a capture cell,
+    # read in the raw block thunk that owns the cell. Only that thunk's body
+    # and the closures nested in it write the cell, and the cell is marked
+    # call-stable only when no nested closure assigns the capture, so no call
+    # made by the thunk can change it. Only a store to that very cell (or a
+    # store through a pointer) invalidates such a proof.
     private def invalidate_scoped_receiver_narrowing_after(value : Value) : Nil
-      if value.is_a?(Call) || value.is_a?(ExternCall) || value.is_a?(Yield) ||
-         value.is_a?(ClassVarSet) ||
-         value.is_a?(PointerStore) || value.is_a?(PointerRealloc) ||
-         value.is_a?(IndexSet) || value.is_a?(ArraySetSize)
+      if value.is_a?(Call) || value.is_a?(ExternCall) || value.is_a?(Yield)
+        @scoped_receiver_narrowings.reject! { |_, narrowing| !narrowing.survives_calls }
+      elsif value.is_a?(ClassVarSet)
+        stored_cell = {value.class_name, value.var_name}
+        @scoped_receiver_narrowings.reject! do |_, narrowing|
+          !narrowing.survives_calls || narrowing.carrier == stored_cell
+        end
+      elsif value.is_a?(PointerStore) || value.is_a?(PointerRealloc) ||
+            value.is_a?(IndexSet) || value.is_a?(ArraySetSize)
         @scoped_receiver_narrowings.clear
       end
     end
@@ -651,10 +664,53 @@ module Adamas::HIR
       cell_class : String,
       cell_name : String,
       value_id : ValueId,
+      survives_calls : Bool = false,
     ) : ScopedReceiverNarrowing?
-      narrowing = ScopedReceiverNarrowing.new(name, value_id, {cell_class, cell_name}, @current_block)
+      narrowing = ScopedReceiverNarrowing.new(name, value_id, {cell_class, cell_name}, @current_block, survives_calls)
       @scoped_receiver_narrowings[name] = narrowing
       narrowing
+    end
+
+    # Block-bound write proofs still alive on `block`: no call or store has
+    # been emitted since the write.
+    def closure_cell_write_proofs_on(block : BlockId) : Array(ScopedReceiverNarrowing)
+      proofs = [] of ScopedReceiverNarrowing
+      @scoped_receiver_narrowings.each_value do |narrowing|
+        proofs << narrowing if narrowing.block == block
+      end
+      proofs
+    end
+
+    # Lends the write proofs alive at a two-way branch to one of its arm
+    # blocks. An arm block is entered only from that branch, and anything that
+    # could change a cell before the branch already dropped its proof, so the
+    # cell still holds the written value there. Loop headers never receive
+    # proofs this way: a back edge may carry a later write.
+    def rebind_closure_cell_write_proofs(proofs : Array(ScopedReceiverNarrowing), block : BlockId) : Nil
+      proofs.each do |narrowing|
+        @scoped_receiver_narrowings[narrowing.name] = narrowing.copy_with(block: block)
+      end
+    end
+
+    # Carries into `merge` the proofs that held at the exit block of every arm
+    # that reaches it (`arms` holds one `closure_cell_write_proofs_on` snapshot
+    # per reaching arm, taken when the arm ended). A proof common to several
+    # arms names a value from before the branch, which dominates the merge; a
+    # proof from the only reaching arm names a value of that arm, the merge's
+    # only predecessor.
+    def join_closure_cell_write_proofs(merge : BlockId, arms : Array(Array(ScopedReceiverNarrowing))) : Nil
+      return if arms.empty?
+      common = arms[0].dup
+      (1...arms.size).each do |idx|
+        arm_proofs = arms[idx]
+        common.select! do |narrowing|
+          arm_proofs.any? do |other|
+            other.name == narrowing.name && other.value_id == narrowing.value_id &&
+              other.carrier == narrowing.carrier && other.survives_calls == narrowing.survives_calls
+          end
+        end
+      end
+      rebind_closure_cell_write_proofs(common, merge)
     end
 
     def discard_closure_cell_narrowing(
@@ -7497,6 +7553,9 @@ module Adamas::HIR
     @closure_ref_cells = {} of String => {String, String, TypeRef}
     @closure_ref_prefer_cell = Set(String).new
     @closure_cell_counter : Int32 = 0
+    # Capture cells no closure nested in their raw block thunk assigns, mapped
+    # to that thunk's function name.
+    @call_stable_closure_cells = {} of {String, String} => String
     # Pending capture write-backs keyed by {caller function, raw thunk value}.
     @block_proc_capture_writebacks = {} of {String, ValueId} => Array(BlockProcCaptureWriteback)
 
@@ -87496,7 +87555,8 @@ module Adamas::HIR
       ctx.register_type(set.id, cell_type)
       written_type = ctx.type_of(value_id)
       if written_type != cell_type && written_type != TypeRef::VOID
-        ctx.register_closure_cell_write_narrowing(name, cell_class, cell_name, value_id)
+        survives_calls = @call_stable_closure_cells[{cell_class, cell_name}]? == ctx.function.name
+        ctx.register_closure_cell_write_narrowing(name, cell_class, cell_name, value_id, survives_calls)
       end
       stored_id == value_id ? set.id : value_id
     end
@@ -90279,6 +90339,7 @@ module Adamas::HIR
       end
 
       pre_branch_locals = ctx.save_locals
+      branch_cell_proofs = ctx.closure_cell_write_proofs_on(ctx.current_block)
 
       then_block = ctx.create_block
       else_block = ctx.create_block
@@ -90288,6 +90349,7 @@ module Adamas::HIR
 
       # then: left is truthy
       ctx.current_block = then_block
+      ctx.rebind_closure_cell_write_proofs(branch_cell_proofs, then_block)
       ctx.restore_locals(pre_branch_locals)
       then_value = if op_str == "||"
                      left_id
@@ -90309,6 +90371,7 @@ module Adamas::HIR
         then_value = unwrap_non_nil_to_block(ctx, ctx.current_block, then_value, then_type)
       end
       then_exit = ctx.current_block
+      then_exit_cell_proofs = ctx.closure_cell_write_proofs_on(then_exit)
       then_locals = ctx.save_locals.locals
       then_block_data = ctx.get_block(ctx.current_block)
       then_has_noreturn = block_has_raise_instruction?(then_block_data)
@@ -90321,6 +90384,7 @@ module Adamas::HIR
 
       # else: left is falsy
       ctx.current_block = else_block
+      ctx.rebind_closure_cell_write_proofs(branch_cell_proofs, else_block)
       ctx.restore_locals(pre_branch_locals)
       else_value = if op_str == "||"
                      rhs_value = nil.as(ValueId?)
@@ -90332,6 +90396,7 @@ module Adamas::HIR
                      left_id
                    end
       else_exit = ctx.current_block
+      else_exit_cell_proofs = ctx.closure_cell_write_proofs_on(else_exit)
       else_locals = ctx.save_locals.locals
       else_block_data = ctx.get_block(ctx.current_block)
       else_has_noreturn = block_has_raise_instruction?(else_block_data)
@@ -90348,6 +90413,10 @@ module Adamas::HIR
       end
 
       ctx.current_block = merge_block
+      flowing_cell_proofs = [] of Array(LoweringContext::ScopedReceiverNarrowing)
+      flowing_cell_proofs << then_exit_cell_proofs if then_flows_to_merge
+      flowing_cell_proofs << else_exit_cell_proofs if else_flows_to_merge
+      ctx.join_closure_cell_write_proofs(merge_block, flowing_cell_proofs)
 
       if then_flows_to_merge || else_flows_to_merge
         if then_flows_to_merge && else_flows_to_merge
@@ -92834,6 +92903,8 @@ module Adamas::HIR
                           ctx.create_block # Direct else block
                         end
 
+      cond_entry_block = ctx.current_block
+
       # Lower main condition and branch
       # NOTE: Condition must be evaluated BEFORE saving locals, because
       # 'out' parameters in the condition create new locals that must be
@@ -92905,6 +92976,7 @@ module Adamas::HIR
         ctx.terminate(Branch.new(cond_bool, then_block, next_test_block))
         STDERR.puts "[NILABLE_BRANCH] lower_if after branch term" if env_has?("ADAMAS_TRACE_NILABLE_BRANCH_REPRO")
       end
+      branch_cell_proofs = ctx.closure_cell_write_proofs_on(cond_entry_block)
 
       if !has_elsifs
         reachable_after_condition = Set(BlockId).new
@@ -92965,6 +93037,7 @@ module Adamas::HIR
       # Process "then" branch
       @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
       ctx.current_block = then_block
+      ctx.rebind_closure_cell_write_proofs(branch_cell_proofs, then_block)
       ctx.push_scope(ScopeKind::Block)
       apply_truthy_narrowing(ctx, truthy_targets)
       apply_is_a_narrowing(ctx, is_a_targets)
@@ -92975,6 +93048,7 @@ module Adamas::HIR
         then_capture_sources,
       )
       then_exit_block = ctx.current_block
+      branch_exit_cell_proofs = [ctx.closure_cell_write_proofs_on(then_exit_block)]
       then_locals = ctx.save_locals.locals
       then_inline_locals = @inline_caller_locals_stack.map(&.dup)
       ctx.pop_scope
@@ -92994,6 +93068,7 @@ module Adamas::HIR
       branches << {then_exit_block, then_value, then_locals, then_flows_to_merge, then_inline_locals}
 
       # Process elsif branches
+      test_cell_proofs = branch_cell_proofs
       if elsifs && !elsifs.empty?
         elsifs.each_with_index do |elsif_branch, idx|
           # Restore locals for this test (each elsif sees pre-branch state)
@@ -93002,6 +93077,8 @@ module Adamas::HIR
 
           # We're now in the test block for this elsif
           ctx.current_block = next_test_block
+          ctx.rebind_closure_cell_write_proofs(test_cell_proofs, next_test_block)
+          elsif_entry_block = next_test_block
           apply_truthy_narrowing(ctx, accumulated_falsy_targets)
 
           # Create body block and next block
@@ -93037,7 +93114,9 @@ module Adamas::HIR
           end
 
           # Process elsif body
+          test_cell_proofs = ctx.closure_cell_write_proofs_on(elsif_entry_block)
           ctx.current_block = elsif_body_block
+          ctx.rebind_closure_cell_write_proofs(test_cell_proofs, elsif_body_block)
           ctx.push_scope(ScopeKind::Block)
           apply_truthy_narrowing(ctx, accumulated_falsy_targets)
           apply_truthy_narrowing(ctx, elsif_truthy_targets)
@@ -93049,6 +93128,7 @@ module Adamas::HIR
             elsif_capture_sources,
           )
           elsif_exit_block = ctx.current_block
+          branch_exit_cell_proofs << ctx.closure_cell_write_proofs_on(elsif_exit_block)
           elsif_locals = ctx.save_locals.locals
           elsif_inline_locals = @inline_caller_locals_stack.map(&.dup)
           ctx.pop_scope
@@ -93074,6 +93154,7 @@ module Adamas::HIR
       ctx.restore_locals(pre_branch_locals)
       @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
       ctx.current_block = next_test_block
+      ctx.rebind_closure_cell_write_proofs(test_cell_proofs, next_test_block)
       ctx.push_scope(ScopeKind::Block)
       apply_truthy_narrowing(ctx, accumulated_falsy_targets)
       apply_is_a_else_narrowing(ctx, is_a_targets) unless has_elsifs
@@ -93092,6 +93173,7 @@ module Adamas::HIR
                      nil_lit.id
                    end
       else_exit_block = ctx.current_block
+      branch_exit_cell_proofs << ctx.closure_cell_write_proofs_on(else_exit_block)
       else_locals = ctx.save_locals.locals
       else_inline_locals = @inline_caller_locals_stack.map(&.dup)
       ctx.pop_scope
@@ -93112,6 +93194,11 @@ module Adamas::HIR
 
       # Merge block
       ctx.current_block = merge_block
+      flowing_cell_proofs = [] of Array(LoweringContext::ScopedReceiverNarrowing)
+      branches.each_with_index do |branch, idx|
+        flowing_cell_proofs << branch_exit_cell_proofs[idx] if branch[3]
+      end
+      ctx.join_closure_cell_write_proofs(merge_block, flowing_cell_proofs)
 
       # Count flowing branches
       # Use indexed tuple access to avoid V2 tuple destructuring issues
@@ -93801,6 +93888,7 @@ module Adamas::HIR
       else_block = ctx.create_block
       merge_block = ctx.create_block
 
+      cond_entry_block = ctx.current_block
       cond_node = @arena[node.condition]
       if cond_node.is_a?(Adamas::Compiler::Frontend::BinaryNode) &&
          (cond_node.operator_string == "&&" || cond_node.operator_string == "||")
@@ -93814,6 +93902,7 @@ module Adamas::HIR
         ctx.register_type(neg_cond.id, TypeRef::BOOL)
         ctx.terminate(Branch.new(neg_cond.id, then_block, else_block))
       end
+      branch_cell_proofs = ctx.closure_cell_write_proofs_on(cond_entry_block)
 
       # Save locals state after lowering the condition so branch bodies can see
       # locals introduced by condition expressions such as `out` parameters.
@@ -93823,11 +93912,13 @@ module Adamas::HIR
       # Then (was unless body)
       @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
       ctx.current_block = then_block
+      ctx.rebind_closure_cell_write_proofs(branch_cell_proofs, then_block)
       ctx.restore_locals(pre_branch_locals)
       ctx.push_scope(ScopeKind::Block)
       apply_truthy_narrowing(ctx, falsy_targets)
       then_value = lower_body(ctx, node.then_branch)
       then_exit = ctx.current_block
+      then_exit_cell_proofs = ctx.closure_cell_write_proofs_on(then_exit)
       then_locals = ctx.save_locals.locals
       then_inline_locals = @inline_caller_locals_stack.map(&.dup)
       ctx.pop_scope
@@ -93849,6 +93940,7 @@ module Adamas::HIR
       # Else branch (if any)
       @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
       ctx.current_block = else_block
+      ctx.rebind_closure_cell_write_proofs(branch_cell_proofs, else_block)
       ctx.restore_locals(pre_branch_locals)
       ctx.push_scope(ScopeKind::Block)
       apply_truthy_narrowing(ctx, truthy_targets)
@@ -93861,6 +93953,7 @@ module Adamas::HIR
                      nil_lit.id
                    end
       else_exit = ctx.current_block
+      else_exit_cell_proofs = ctx.closure_cell_write_proofs_on(else_exit)
       else_locals = ctx.save_locals.locals
       else_inline_locals = @inline_caller_locals_stack.map(&.dup)
       ctx.pop_scope
@@ -93881,6 +93974,10 @@ module Adamas::HIR
 
       # Merge
       ctx.current_block = merge_block
+      flowing_cell_proofs = [] of Array(LoweringContext::ScopedReceiverNarrowing)
+      flowing_cell_proofs << then_exit_cell_proofs if then_flows_to_merge
+      flowing_cell_proofs << else_exit_cell_proofs if else_flows_to_merge
+      ctx.join_closure_cell_write_proofs(merge_block, flowing_cell_proofs)
 
       # Only create phi if at least one branch flows to merge
       if then_flows_to_merge || else_flows_to_merge
@@ -95749,6 +95846,7 @@ module Adamas::HIR
       is_a_targets = is_a_narrowing_targets(node.condition)
 
       cond_id = lower_expr(ctx, node.condition)
+      branch_cell_proofs = ctx.closure_cell_write_proofs_on(ctx.current_block)
 
       # Save locals before branching
       pre_branch_locals = ctx.save_locals
@@ -95760,12 +95858,14 @@ module Adamas::HIR
       ctx.terminate(Branch.new(cond_id, then_block, else_block))
 
       ctx.current_block = then_block
+      ctx.rebind_closure_cell_write_proofs(branch_cell_proofs, then_block)
       ctx.restore_locals(pre_branch_locals)
       # Apply truthy narrowing in the then branch (e.g., entry ? entry.value : nil)
       apply_truthy_narrowing(ctx, truthy_targets)
       apply_is_a_narrowing(ctx, is_a_targets)
       then_value = lower_expr(ctx, node.true_branch)
       then_exit = ctx.current_block
+      then_exit_cell_proofs = ctx.closure_cell_write_proofs_on(then_exit)
       then_locals = ctx.save_locals.locals
 
       # Check if then branch flows to merge
@@ -95779,10 +95879,12 @@ module Adamas::HIR
       end
 
       ctx.current_block = else_block
+      ctx.rebind_closure_cell_write_proofs(branch_cell_proofs, else_block)
       ctx.restore_locals(pre_branch_locals)
       apply_truthy_narrowing(ctx, falsy_targets)
       else_value = lower_expr(ctx, node.false_branch)
       else_exit = ctx.current_block
+      else_exit_cell_proofs = ctx.closure_cell_write_proofs_on(else_exit)
       else_locals = ctx.save_locals.locals
 
       # Check if else branch flows to merge
@@ -95796,6 +95898,10 @@ module Adamas::HIR
       end
 
       ctx.current_block = merge_block
+      flowing_cell_proofs = [] of Array(LoweringContext::ScopedReceiverNarrowing)
+      flowing_cell_proofs << then_exit_cell_proofs if then_flows_to_merge
+      flowing_cell_proofs << else_exit_cell_proofs if else_flows_to_merge
+      ctx.join_closure_cell_write_proofs(merge_block, flowing_cell_proofs)
 
       # Only create phi if at least one branch flows to merge
       if then_flows_to_merge || else_flows_to_merge
@@ -134180,6 +134286,41 @@ module Adamas::HIR
       written
     end
 
+    # Captures assigned inside a closure nested in a raw block body: a nested
+    # block or proc literal may outlive the call that runs it and write the
+    # capture's cell during any later call the body makes.
+    private def detect_nested_closure_written_captures(
+      body : Array(ExprId),
+      capture_names : Set(String),
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Set(String)
+      written = Set(String).new
+      saved_arena = @arena
+      saved_sink = @written_capture_value_sink
+      @arena = arena
+      @written_capture_value_sink = nil
+      begin
+        body.each { |eid| detect_nested_closure_written_captures_walk(eid, capture_names, written) }
+      ensure
+        @arena = saved_arena
+        @written_capture_value_sink = saved_sink
+      end
+      written
+    end
+
+    private def detect_nested_closure_written_captures_walk(expr_id : ExprId, capture_names : Set(String), written : Set(String)) : Nil
+      return if expr_id.index < 0 || expr_id.index >= @arena.size
+      node = @arena[expr_id]
+      case node
+      when Adamas::Compiler::Frontend::BlockNode,
+           Adamas::Compiler::Frontend::ProcLiteralNode,
+           Adamas::Compiler::Frontend::SpawnNode
+        detect_written_captures_walk(expr_id, capture_names, written)
+      else
+        each_proc_scan_child(expr_id) { |child| detect_nested_closure_written_captures_walk(child, capture_names, written) }
+      end
+    end
+
     # A capture declared as `x = nil` in the parent and assigned a value inside
     # a raw block thunk / proc body must be stored as `T | Nil`; otherwise its
     # closure cell (or box) is typed Nil and every write from the body is lost
@@ -136079,6 +136220,23 @@ module Adamas::HIR
       if heap_proc
         captured_vars = captured_vars_for_env(ctx, captures, written_captures, write_enums)
       else
+        nested_closure_writes = detect_nested_closure_written_captures(block_node.body, capture_names, block_arena)
+        # Caller blocks a `yield` in this body inlines are part of the thunk's
+        # code too; closures nested in them can write the same cells.
+        if contains_yield_deep?(block_node.body, block_arena)
+          yield_block_stack_idx = @inline_yield_block_stack.size - 1
+          while yield_block_stack_idx >= 0
+            yield_blk = @inline_yield_block_stack[yield_block_stack_idx]
+            if yield_blk_arena = @inline_yield_block_arena_stack[yield_block_stack_idx]?
+              nested_closure_writes.concat(detect_nested_closure_written_captures(yield_blk.body, capture_names, yield_blk_arena))
+            else
+              # The block cannot be scanned without its arena.
+              nested_closure_writes.concat(capture_names)
+            end
+            break unless contains_yield_deep?(yield_blk.body, yield_blk_arena || block_arena)
+            yield_block_stack_idx -= 1
+          end
+        end
         # Runtime-yield block callbacks are still raw function pointers. Keep the
         # legacy closure-cell path here; heap Proc object materialization is used
         # by proc literals and targeted Proc values, not by every raw block thunk.
@@ -136095,6 +136253,9 @@ module Adamas::HIR
           emit_capture_cell_init(ctx, class_name, cell_name, cap_type, parent_vid)
           @closure_ref_cells[cap_name] = {class_name, cell_name, cap_type}
           @closure_ref_prefer_cell.add(cap_name) if written_captures.includes?(cap_name)
+          unless nested_closure_writes.includes?(cap_name)
+            @call_stable_closure_cells[{class_name, cell_name}] = proc_func_name
+          end
         end
       end
       saved_enum_value_types = @enum_value_types
