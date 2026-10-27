@@ -2210,6 +2210,9 @@ module Adamas
         scan_module_body = ->(prefix : String, arena : Frontend::AstArena, body : Array(Frontend::ExprId)) do
           stack = [{prefix: prefix, body: body}]
           while current = stack.pop?
+            # The module's own constants (`BIGINT_LIMBS` in Float::FastFloat)
+            # can size a class registered below (`@vec = Stackvec(BIGINT_LIMBS).new`).
+            scan_constants_in_body.call(current[:prefix], arena, current[:body])
             current[:body].each do |expr_id|
               expr_node = arena[expr_id]
               while expr_node.is_a?(Frontend::VisibilityModifierNode)
