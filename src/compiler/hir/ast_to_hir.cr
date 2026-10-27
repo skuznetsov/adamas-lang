@@ -31349,7 +31349,9 @@ module Adamas::HIR
                     skip_next = false
                     next
                   end
-                  expr_node = @arena[expr_id]
+                  # `private C = 1` or `private def` arrives wrapped in a visibility
+                  # modifier; dispatch on the member, as the direct module body does.
+                  expr_node = unwrap_visibility_member(@arena[expr_id])
                   case expr_node
                   when Adamas::Compiler::Frontend::DefNode
                     register_module_method_from_def(expr_node, module_name)
@@ -31445,7 +31447,7 @@ module Adamas::HIR
 
     # Process macro body (MacroLiteralNode or expression) to extract module methods
     private def process_macro_body_in_module(body_id : ExprId, module_name : String)
-      body_node = @arena[body_id]
+      body_node = unwrap_visibility_member(@arena[body_id])
       case body_node
       when Adamas::Compiler::Frontend::MacroLiteralNode
         process_macro_literal_in_module(body_node, module_name)
@@ -31538,7 +31540,7 @@ module Adamas::HIR
           body = expanded_node.body || [] of ExprId
           scan_module_extend_self_in_roots(body, module_name)
           body.each do |expr_id|
-            expr_node = @arena[expr_id]
+            expr_node = unwrap_visibility_member(@arena[expr_id])
             case expr_node
             when Adamas::Compiler::Frontend::DefNode
               register_module_method_from_def(expr_node, module_name)
@@ -31612,7 +31614,7 @@ module Adamas::HIR
         with_arena(prog_arena) do
           scan_module_extend_self_in_roots(prog_roots, module_name)
           prog_roots.each do |expr_id|
-            expr_node = @arena[expr_id]
+            expr_node = unwrap_visibility_member(@arena[expr_id])
             case expr_node
             when Adamas::Compiler::Frontend::DefNode
               register_module_method_from_def(expr_node, module_name)
@@ -31654,7 +31656,7 @@ module Adamas::HIR
           with_arena(prog_arena) do
             scan_module_extend_self_in_roots(prog_roots, module_name)
             prog_roots.each do |expr_id|
-              expr_node = @arena[expr_id]
+              expr_node = unwrap_visibility_member(@arena[expr_id])
               case expr_node
               when Adamas::Compiler::Frontend::DefNode
                 register_module_method_from_def(expr_node, module_name)
@@ -31717,7 +31719,7 @@ module Adamas::HIR
         with_arena(prog_arena) do
           scan_module_extend_self_in_roots(prog_roots, module_name)
           prog_roots.each do |expr_id|
-            expr_node = @arena[expr_id]
+            expr_node = unwrap_visibility_member(@arena[expr_id])
             case expr_node
             when Adamas::Compiler::Frontend::DefNode
               register_module_method_from_def(expr_node, module_name)
@@ -31777,7 +31779,7 @@ module Adamas::HIR
           prog_arena, prog_roots = parsed_prog
           with_arena(prog_arena) do
             prog_roots.each do |expr_id|
-              expr_node = @arena[expr_id]
+              expr_node = unwrap_visibility_member(@arena[expr_id])
               case expr_node
               when Adamas::Compiler::Frontend::DefNode
                 register_module_method_from_def(expr_node, module_name)
@@ -31834,7 +31836,7 @@ module Adamas::HIR
         case piece.kind
         when Adamas::Compiler::Frontend::MacroPiece::Kind::Expression
           if expr_id = piece.expr
-            expr_node = @arena[expr_id]
+            expr_node = unwrap_visibility_member(@arena[expr_id])
             case expr_node
             when Adamas::Compiler::Frontend::DefNode
               register_module_method_from_def(expr_node, module_name)
@@ -34130,7 +34132,10 @@ module Adamas::HIR
                     record_constant_definition(class_name, expr_node, @arena)
                   when Adamas::Compiler::Frontend::AssignNode
                     register_class_assign_from_expansion(expr_id, expr_node, class_name)
+                  # `private C = 1` arrives wrapped in a visibility modifier; the general
+                  # expansion registration unwraps it and keeps the inner expression id.
                   when Adamas::Compiler::Frontend::CallNode,
+                       Adamas::Compiler::Frontend::VisibilityModifierNode,
                        Adamas::Compiler::Frontend::InstanceVarDeclNode,
                        Adamas::Compiler::Frontend::TypeDeclarationNode
                     register_class_members_from_expansion(
@@ -34210,6 +34215,7 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::AssignNode
         register_class_assign_from_expansion(body_id, body_node, class_name)
       when Adamas::Compiler::Frontend::CallNode,
+           Adamas::Compiler::Frontend::VisibilityModifierNode,
            Adamas::Compiler::Frontend::InstanceVarDeclNode,
            Adamas::Compiler::Frontend::TypeDeclarationNode
         register_class_members_from_expansion(
@@ -34296,6 +34302,7 @@ module Adamas::HIR
               when Adamas::Compiler::Frontend::AssignNode
                 register_class_assign_from_expansion(expr_id, expr_node, class_name)
               when Adamas::Compiler::Frontend::CallNode,
+                   Adamas::Compiler::Frontend::VisibilityModifierNode,
                    Adamas::Compiler::Frontend::InstanceVarDeclNode,
                    Adamas::Compiler::Frontend::TypeDeclarationNode
                 register_class_members_from_expansion(
@@ -34360,6 +34367,7 @@ module Adamas::HIR
             when Adamas::Compiler::Frontend::AssignNode
               register_class_assign_from_expansion(expr_id, expr_node, class_name)
             when Adamas::Compiler::Frontend::CallNode,
+                 Adamas::Compiler::Frontend::VisibilityModifierNode,
                  Adamas::Compiler::Frontend::InstanceVarDeclNode,
                  Adamas::Compiler::Frontend::TypeDeclarationNode
               register_class_members_from_expansion(
@@ -34425,6 +34433,7 @@ module Adamas::HIR
               when Adamas::Compiler::Frontend::PropertyNode
                 register_accessors_in_class(expr_node, class_name, ivars, offset_ref)
               when Adamas::Compiler::Frontend::CallNode,
+                   Adamas::Compiler::Frontend::VisibilityModifierNode,
                    Adamas::Compiler::Frontend::InstanceVarDeclNode,
                    Adamas::Compiler::Frontend::TypeDeclarationNode
                 register_class_members_from_expansion(
@@ -34610,6 +34619,7 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::AssignNode
         register_class_assign_from_expansion(expr_id, expr_node, class_name)
       when Adamas::Compiler::Frontend::CallNode,
+           Adamas::Compiler::Frontend::VisibilityModifierNode,
            Adamas::Compiler::Frontend::InstanceVarDeclNode,
            Adamas::Compiler::Frontend::TypeDeclarationNode
         register_class_members_from_expansion(
@@ -34952,6 +34962,7 @@ module Adamas::HIR
             record_constant_definition(class_name, (safe_slice_to_string(target.name) || ""), expr_node.value, @arena)
           end
         when Adamas::Compiler::Frontend::CallNode,
+             Adamas::Compiler::Frontend::VisibilityModifierNode,
              Adamas::Compiler::Frontend::InstanceVarDeclNode,
              Adamas::Compiler::Frontend::TypeDeclarationNode
           STDERR.puts "[BEGIN_MACRO_CLASS] class=#{class_name} phase=body_call idx=#{begin_idx}" if trace_begin_macro
@@ -35081,6 +35092,7 @@ module Adamas::HIR
             record_constant_definition(class_name, (safe_slice_to_string(target.name) || ""), expr_node.value, @arena)
           end
         when Adamas::Compiler::Frontend::CallNode,
+             Adamas::Compiler::Frontend::VisibilityModifierNode,
              Adamas::Compiler::Frontend::InstanceVarDeclNode,
              Adamas::Compiler::Frontend::TypeDeclarationNode
           register_class_members_from_expansion(
