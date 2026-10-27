@@ -7581,6 +7581,10 @@ module Adamas::HIR
     # Capture cells no closure nested in their raw block thunk assigns, mapped
     # to that thunk's function name.
     @call_stable_closure_cells = {} of {String, String} => String
+    # Call-stable capture cells the thunk body itself never assigns either:
+    # their value is fixed for the whole run of the thunk, which reads them
+    # once on entry into ordinary locals.
+    @read_only_closure_cells = {} of {String, String} => String
     # Capture cells some closure nested in their raw block thunk assigns,
     # mapped to the thunk's block and the closure path from it to each such
     # closure (nil marks a closure that is not a raw block or not scanned).
@@ -87693,6 +87697,8 @@ module Adamas::HIR
       set = ClassVarSet.new(ctx.next_id, cell_type, cell_class, cell_name, stored_id)
       ctx.emit(set)
       ctx.register_type(set.id, cell_type)
+      # A capture read into a thunk local on entry follows the cell's writes.
+      ctx.register_local(name, value_id) if ctx.lookup_local(name)
       written_type = ctx.type_of(value_id)
       if written_type != cell_type && written_type != TypeRef::VOID
         cell_key = {cell_class, cell_name}
@@ -136757,6 +136763,9 @@ module Adamas::HIR
             @closure_cell_nested_write_paths[{class_name, cell_name}] = {block_node, paths}
           else
             @call_stable_closure_cells[{class_name, cell_name}] = proc_func_name
+            unless written_captures.includes?(cap_name)
+              @read_only_closure_cells[{class_name, cell_name}] = proc_func_name
+            end
           end
         end
       end
@@ -136781,6 +136790,20 @@ module Adamas::HIR
             proc_ctx.register_type(self_get.id, cell_type)
             proc_ctx.register_local("self", self_get.id)
           end
+        end
+        # A read-only capture keeps one value for the whole run of the thunk:
+        # read it once into a local so branch narrowing and merges treat it
+        # like any other local, and a recursive call that re-initializes the
+        # global cell cannot change it under later reads.
+        captures.each do |cap_name, _, _|
+          next if cap_name == "self"
+          next unless ref_cell = @closure_ref_cells[cap_name]?
+          cell_class, cell_name, cell_type = ref_cell
+          next unless @read_only_closure_cells[{cell_class, cell_name}]? == proc_func_name
+          cap_get = ClassVarGet.new(proc_ctx.next_id, cell_type, cell_class, cell_name)
+          proc_ctx.emit(cap_get)
+          proc_ctx.register_type(cap_get.id, cell_type)
+          proc_ctx.register_local(cap_name, cap_get.id)
         end
       end
 
