@@ -27384,6 +27384,12 @@ module Adamas::HIR
       end
     end
 
+    # Inferred argument types precede argument lowering; a bottom argument
+    # makes the call unreachable, so it is no evidence against an overload.
+    private def noreturn_type?(type : TypeRef) : Bool
+      get_type_name_from_ref(type) == "NoReturn"
+    end
+
     private def def_declared_noreturn?(def_node : Adamas::Compiler::Frontend::DefNode) : Bool
       return_type = def_node.return_type
       return false unless return_type
@@ -55604,6 +55610,8 @@ module Adamas::HIR
       source_arena : Adamas::Compiler::Frontend::ArenaLike,
     ) : Tuple(String, String, String)?
       return nil if callsite_types.empty? || callsite_types.any? { |type| type == TypeRef::VOID || is_union_type?(type) }
+      # The call is unreachable past a NoReturn argument: no initializer rejects it.
+      return nil if callsite_types.any? { |type| noreturn_type?(type) }
       return nil unless source_args.size == callsite_types.size
       owner = function_context_from_name(init_base_name)
       return nil unless owner
@@ -106878,7 +106886,7 @@ module Adamas::HIR
                 end
               elsif method_name != "new" && !call_has_splat && !call_has_named_args &&
                     call_arg_types.size == call_args.size &&
-                    call_arg_types.all? { |t| t != TypeRef::VOID && !is_union_type?(t) && !unresolved_generic_return_type?(t) } &&
+                    call_arg_types.all? { |t| t != TypeRef::VOID && !is_union_type?(t) && !unresolved_generic_return_type?(t) && !noreturn_type?(t) } &&
                     class_method_declared_in_ancestry?(class_name_str, method_name)
                 actual_names = call_arg_types.map { |type| get_type_name_from_ref(type) }.join(", ")
                 block_suffix = has_block_call ? " with block" : ""
@@ -107692,9 +107700,11 @@ module Adamas::HIR
       # Positional arguments are evaluated left-to-right. If one selected call
       # is explicitly NoReturn, its value cannot participate in outer target
       # resolution and later arguments must not be evaluated.
+      # A NoReturn receiver ends the block the same way; the call never runs.
       if control_flow_dead_block?(ctx, ctx.current_block)
-        if terminal_arg = args.last?
-          return terminal_arg
+        bottom_receiver = receiver_id if receiver_id && noreturn_type?(ctx.type_of(receiver_id))
+        if terminal = bottom_receiver || args.last?
+          return terminal
         end
       end
       abi_guard_explicit_arg_count = args.size
@@ -129695,6 +129705,8 @@ module Adamas::HIR
 
       # Otherwise it's an instance method call - evaluate object first
       object_id = lower_expr(ctx, node.object)
+      # A receiver that ended its block (a NoReturn call) leaves nothing to call.
+      return object_id if control_flow_dead_block?(ctx, ctx.current_block)
       refine_void_value_type_from_expr(ctx, object_id, node.object, @current_class)
       if ctx.type_of(object_id) == TypeRef::VOID || ctx.type_of(object_id) == TypeRef::POINTER
         repair_call_return_type_in_context(ctx, object_id)
@@ -130210,7 +130222,8 @@ module Adamas::HIR
       if member_name == "not_nil!" && is_union_or_nilable_type?(receiver_type)
         return lower_not_nil_intrinsic(ctx, object_id, receiver_type)
       end
-      if member_name == "not_nil!" && receiver_type != TypeRef::VOID
+      # Nil#not_nil! raises; only a non-nil receiver is its own result.
+      if member_name == "not_nil!" && receiver_type != TypeRef::VOID && receiver_type != TypeRef::NIL
         return object_id
       end
       if member_name == "not_nil!" && receiver_type == TypeRef::VOID
@@ -131476,6 +131489,13 @@ module Adamas::HIR
       call = Call.with_receiver_virtual(ctx.next_id, return_type, object_id, actual_name, args, call_virtual)
       ctx.emit(call)
       ctx.register_type(call.id, return_type)
+      # As in lower_call: an exact bottom target ends the block, so an
+      # enclosing call does not resolve against the NoReturn value.
+      unless call_virtual
+        if selected_call_noreturn?(actual_name, @function_defs[actual_name]?)
+          @control_flow_dead_blocks.add({ctx.function.id, ctx.current_block})
+        end
+      end
       track_enum_return_value(call.id, actual_name, return_type)
       if debug_stdio_type
         STDERR.puts "[STDIO_TYPE] phase=emitted call_id=#{call.id} return=#{return_type.id}:#{get_type_name_from_ref(return_type)}"
