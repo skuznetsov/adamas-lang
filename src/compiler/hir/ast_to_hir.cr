@@ -71185,6 +71185,12 @@ module Adamas::HIR
           false,
         )
         actual_map.each { |name, value| exact_map[name] = value }
+        # Structural annotations (`first : UC*`, `num : Pns(UC)`) bind the
+        # same names; without them `UC` stays an identity binding and the
+        # body resolves `UC*` to a phantom Pointer(UC).
+        method_forall_call_bindings(selected_def, arg_types).each do |name, value|
+          exact_map[name] = value if exact_map[name]? == name && value != name
+        end
       end
 
       # Preserve unrelated per-call metadata while replacing any prior
