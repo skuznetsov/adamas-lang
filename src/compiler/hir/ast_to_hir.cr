@@ -55336,9 +55336,11 @@ module Adamas::HIR
       end
     end
 
+    # `context` is the declaration's lookup owner; nil means the current scope.
     private def method_forall_call_bindings(
       def_node : Adamas::Compiler::Frontend::DefNode,
       arg_types : Array(TypeRef),
+      context : String? = nil,
     ) : Hash(String, String)
       bindings = {} of String => String
       formals = forall_type_param_names(def_node)
@@ -55353,7 +55355,8 @@ module Adamas::HIR
         actual = arg_types[arg_index]
         if actual != TypeRef::VOID && (restriction_text = param.type_annotation)
           collect_type_param_substitutions(
-            restriction_text, generic_param_type_name_from_ref(actual), bindings, formals
+            restriction_text, generic_param_type_name_from_ref(actual), bindings, formals,
+            resolve_heads: true, head_context: context,
           )
         end
         arg_index += 1
@@ -55365,8 +55368,9 @@ module Adamas::HIR
       def_node : Adamas::Compiler::Frontend::DefNode,
       arg_types : Array(TypeRef),
       params : Array(DefParamInfo),
+      context : String? = nil,
     ) : Array(DefParamInfo)
-      bindings = method_forall_call_bindings(def_node, arg_types)
+      bindings = method_forall_call_bindings(def_node, arg_types, context)
       return params if bindings.empty?
       source_params = function_param_infos(def_node)
       return params if source_params.size != params.size
@@ -55392,7 +55396,7 @@ module Adamas::HIR
       context : String?,
     ) : Tuple(String, String)?
       return nil if arg_types.empty? || arg_types.any? { |type_ref| type_ref == TypeRef::VOID }
-      params = method_forall_call_param_infos(def_node, arg_types, function_param_infos(def_node))
+      params = method_forall_call_param_infos(def_node, arg_types, function_param_infos(def_node), context)
       return nil if params.any? { |param| param.is_splat || param.is_double_splat || named_only_separator?(param) }
       arg_index = 0
       params.each do |param|
@@ -55420,7 +55424,7 @@ module Adamas::HIR
       context : String?,
     ) : Tuple(String, String)?
       return nil if arg_types.empty? || arg_types.any? { |type_ref| type_ref == TypeRef::VOID }
-      params = method_forall_call_param_infos(def_node, arg_types, function_param_infos(def_node))
+      params = method_forall_call_param_infos(def_node, arg_types, function_param_infos(def_node), context)
       return nil if params.any? { |param| param.is_splat || param.is_double_splat || named_only_separator?(param) }
 
       simple_known_type = ->(name : String) {
@@ -55520,7 +55524,7 @@ module Adamas::HIR
     ) : Tuple(String, String)?
       return nil if arg_types.empty? || arg_types.any? { |type_ref| type_ref == TypeRef::VOID }
       return nil unless source_args.size == arg_types.size
-      params = method_forall_call_param_infos(def_node, arg_types, function_param_infos(def_node))
+      params = method_forall_call_param_infos(def_node, arg_types, function_param_infos(def_node), context)
       return nil if params.any? { |param| param.is_splat || param.is_double_splat || named_only_separator?(param) }
 
       arg_index = 0
@@ -55741,7 +55745,7 @@ module Adamas::HIR
       param_infos : Array(DefParamInfo)? = nil,
       trace : Bool = false,
     ) : Bool
-      params = method_forall_call_param_infos(def_node, arg_types, param_infos || function_param_infos(def_node))
+      params = method_forall_call_param_infos(def_node, arg_types, param_infos || function_param_infos(def_node), context)
       STDERR.puts "[COMPAT] enter def=#{def_node.name} params=#{params.size} args=#{arg_types.size} ctx=#{context}" if trace
       return true if params.empty?
 
@@ -56502,11 +56506,16 @@ module Adamas::HIR
       substitutions
     end
 
+    # With `resolve_heads`, a source restriction head is a name in the
+    # declaration scope (`head_context`, nil = current scope): `Sv(Size)` in
+    # `module FF` matches the canonical `FF::Sv(62)`.
     private def collect_type_param_substitutions(
       annotated_type : String,
       concrete : String,
       substitutions : Hash(String, String),
       declared_formals : Array(String)? = nil,
+      resolve_heads : Bool = false,
+      head_context : String? = nil,
     ) : Nil
       return if annotated_type.empty? || concrete.empty?
       return if concrete == "Void" || concrete == "Unknown"
@@ -56516,7 +56525,8 @@ module Adamas::HIR
       # `type : U.class` binds U from that type.
       if annotated_type.ends_with?(".class") && !concrete.ends_with?(".class")
         collect_type_param_substitutions(
-          annotated_type[0, annotated_type.bytesize - 6].strip, concrete, substitutions, declared_formals
+          annotated_type[0, annotated_type.bytesize - 6].strip, concrete, substitutions, declared_formals,
+          resolve_heads, head_context,
         )
         return
       end
@@ -56533,7 +56543,7 @@ module Adamas::HIR
           if info.base == "Pointer"
             pointed = info.args.strip
             unless pointed.empty?
-              collect_type_param_substitutions(inner, pointed, substitutions, declared_formals)
+              collect_type_param_substitutions(inner, pointed, substitutions, declared_formals, resolve_heads, head_context)
             end
           end
         end
@@ -56544,7 +56554,7 @@ module Adamas::HIR
       concrete_union = split_union_type_name(concrete)
       if annotation_union.size > 1 && concrete_union.size == annotation_union.size
         annotation_union.each_with_index do |part, idx|
-          collect_type_param_substitutions(part.strip, concrete_union[idx].strip, substitutions, declared_formals)
+          collect_type_param_substitutions(part.strip, concrete_union[idx].strip, substitutions, declared_formals, resolve_heads, head_context)
         end
         return
       end
@@ -56555,6 +56565,11 @@ module Adamas::HIR
 
       ann_base = strip_generic_args(ann_info.base)
       concrete_base = strip_generic_args(concrete_info.base)
+      if ann_base != concrete_base && resolve_heads
+        ann_base = strip_generic_args(
+          normalize_declared_type_name(ann_base, head_context, specialize_bare_generics: false)
+        ).lchop("::")
+      end
       return unless ann_base == concrete_base
 
       ann_args = split_generic_type_args(ann_info.args)
@@ -56562,7 +56577,7 @@ module Adamas::HIR
       return unless ann_args.size == concrete_args.size
 
       ann_args.each_with_index do |ann_arg, idx|
-        collect_type_param_substitutions(ann_arg.strip, concrete_args[idx].strip, substitutions, declared_formals)
+        collect_type_param_substitutions(ann_arg.strip, concrete_args[idx].strip, substitutions, declared_formals, resolve_heads, head_context)
       end
     end
 
@@ -71220,7 +71235,7 @@ module Adamas::HIR
         # Structural annotations (`first : UC*`, `num : Pns(UC)`) bind the
         # same names; without them `UC` stays an identity binding and the
         # body resolves `UC*` to a phantom Pointer(UC).
-        method_forall_call_bindings(selected_def, arg_types).each do |name, value|
+        method_forall_call_bindings(selected_def, arg_types, module_owner).each do |name, value|
           exact_map[name] = value if exact_map[name]? == name && value != name
         end
       end
@@ -111495,7 +111510,9 @@ module Adamas::HIR
             # The loop above binds only bare `T` and `T*` restrictions. Free
             # variables under `U.class` or a generic shape (`Bx(U)`) come from
             # the overload binder, else `: Bx(U)` resolves without U.
-            _structural_bindings = method_forall_call_bindings(def_node, arg_types).reject { |name, _| _forall_bound.includes?(name) }
+            _structural_bindings = method_forall_call_bindings(
+              def_node, arg_types, _declaration_owner || function_context_from_name(mangled_method_name)
+            ).reject { |name, _| _forall_bound.includes?(name) }
             unless _structural_bindings.empty?
               record_pending_type_param_map(mangled_method_name, _structural_bindings)
               record_pending_type_param_map(base_method_name, _structural_bindings)
