@@ -119809,6 +119809,120 @@ module Adamas::HIR
       end
     end
 
+    # A source slot is retyped only from an integer literal that fits its
+    # restriction, or from an integer value whose whole domain fits it.
+    private def source_integer_slot_autocast_target(
+      arg_node : Adamas::Compiler::Frontend::Node,
+      source_type : TypeRef,
+      restriction_text : String?,
+      context : String?,
+    ) : TypeRef?
+      return nil unless restriction_text
+      restriction = normalize_declared_type_name(restriction_text, context, specialize_bare_generics: false)
+      target_type = type_ref_for_name(restriction)
+      return nil if target_type == source_type
+      admitted = if arg_node.is_a?(Adamas::Compiler::Frontend::NumberNode)
+                   integer_literal_representable_as?(arg_node, target_type)
+                 else
+                   source_integer_domain_subset?(source_type, target_type)
+                 end
+      admitted ? target_type : nil
+    end
+
+    # Named calls bind source slots by label; positional slots keep their
+    # order. `source_types` lists positional values first, then the named
+    # values in `names` order, as `lower_source_named_args` selects them.
+    private def source_named_integer_autocast_candidate_entry(
+      func_name : String,
+      positional_args : Array(ExprId),
+      named_exprs : Hash(String, ExprId),
+      names : Array(String),
+      source_types : Array(TypeRef),
+      call_arena : Adamas::Compiler::Frontend::ArenaLike,
+      candidate_name : String,
+      candidate_def : Adamas::Compiler::Frontend::DefNode,
+    ) : Tuple(String, Adamas::Compiler::Frontend::DefNode, Array(TypeRef))?
+      params = function_param_infos(candidate_def)
+      return nil if params.any? { |param| param.is_splat || param.is_double_splat }
+      return nil unless named_args_compatible_with_def?(candidate_def, names, positional_args.size, positional_args.size)
+      context = function_context_for_lookup_candidate(func_name, candidate_name)
+      converted_types = source_types.dup
+      changed = false
+      positional_index = 0
+      in_named_only = false
+      params.each do |param|
+        next if param.is_block
+        if named_only_separator?(param)
+          in_named_only = true
+          next
+        end
+        slot = nil
+        arg_expr = nil
+        if !in_named_only && positional_index < positional_args.size
+          slot = positional_index
+          arg_expr = positional_args[positional_index]
+          positional_index += 1
+        elsif (label = named_parameter_label(param)) && (named_index = names.index(label))
+          slot = positional_args.size + named_index
+          arg_expr = named_exprs[label]
+        end
+        next unless slot && arg_expr
+        target_type = source_integer_slot_autocast_target(
+          call_arena[arg_expr], source_types[slot], param.type_annotation, context,
+        )
+        next unless target_type
+        converted_types[slot] = target_type
+        changed = true
+      end
+      return nil unless changed
+      # The unchanged resolver must select this very declaration with the
+      # validated vector, as in the positional path.
+      selected = lookup_function_def_for_call(
+        func_name, converted_types.size, false, converted_types,
+        false, true, names, positional_args.size, true,
+      )
+      return nil unless selected && selected[1].same?(candidate_def)
+      {selected[0], candidate_def, converted_types}
+    end
+
+    private def source_named_integer_autocast_entry(
+      func_name : String,
+      positional_args : Array(ExprId),
+      named_exprs : Hash(String, ExprId),
+      names : Array(String),
+      source_types : Array(TypeRef),
+      call_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Tuple(String, Adamas::Compiler::Frontend::DefNode, Array(TypeRef))?
+      return nil unless source_types.any? { |type| signed_integer_primitive?(type) || unsigned_integer_type?(type) }
+      candidates = [] of Tuple(String, Adamas::Compiler::Frontend::DefNode, Array(TypeRef))
+      function_def_overload_keys(func_name).each do |candidate_name|
+        candidate_def = @function_defs[candidate_name]?
+        next unless candidate_def
+        candidate_entry = source_named_integer_autocast_candidate_entry(
+          func_name, positional_args, named_exprs, names, source_types, call_arena,
+          candidate_name, candidate_def,
+        )
+        next unless candidate_entry
+        duplicate = candidates.any? do |existing|
+          existing[0] == candidate_entry[0] &&
+            existing[1].same?(candidate_entry[1]) &&
+            existing[2] == candidate_entry[2]
+        end
+        candidates << candidate_entry unless duplicate
+      end
+      return nil if candidates.empty?
+      survivors = candidates.reject do |candidate|
+        candidates.any? do |other|
+          !other[1].same?(candidate[1]) &&
+            source_overload_restriction_precedence(func_name, other[0], other[1], candidate[0], candidate[1]) == 1
+        end
+      end
+      if survivors.size != 1
+        raise LoweringError.new("ambiguous call to #{func_name} with source integer autocasts")
+      end
+      survivors.first
+    end
+
     private def source_integer_autocast_candidate_entry(
       func_name : String,
       positional_args : Array(ExprId),
@@ -119828,18 +119942,10 @@ module Adamas::HIR
       changed = false
       params.each_with_index do |param, index|
         break if index >= positional_args.size
-        restriction_text = param.type_annotation
-        next unless restriction_text
-        restriction = normalize_declared_type_name(restriction_text, context, specialize_bare_generics: false)
-        target_type = type_ref_for_name(restriction)
-        next if target_type == arg_types[index]
-        arg_node = call_arena[positional_args[index]]
-        admitted = if arg_node.is_a?(Adamas::Compiler::Frontend::NumberNode)
-                     integer_literal_representable_as?(arg_node, target_type)
-                   else
-                     source_integer_domain_subset?(arg_types[index], target_type)
-                   end
-        next unless admitted
+        target_type = source_integer_slot_autocast_target(
+          call_arena[positional_args[index]], arg_types[index], param.type_annotation, context,
+        )
+        next unless target_type
         converted_types[index] = target_type
         changed = true
       end
@@ -120148,6 +120254,55 @@ module Adamas::HIR
               init_name, source_types.size, has_block_call, source_types,
               false, true, names, positional_values.size, true,
             )
+          end
+        end
+      end
+      # Integer literals autocast to named restrictions exactly as they do to
+      # positional ones (`AdjustedMantissa.new(power2: 0, mantissa: 0)`).
+      unless selected
+        if positional_values.size == positional_args.size
+          named_exprs = {} of String => ExprId
+          named_args.each do |arg|
+            named_exprs[safe_slice_to_string(arg.name) || ""] = arg.value
+          end
+          lookup_names = [func_name]
+          base_name = strip_type_suffix(func_name)
+          if base_name.ends_with?(".new") || base_name.ends_with?("#new")
+            if owner = method_owner(base_name)
+              lookup_names << allocator_init_name_for(owner)
+            end
+          end
+          lookup_names.each do |lookup_name|
+            autocast = source_named_integer_autocast_entry(
+              lookup_name, positional_args, named_exprs, names, source_types, call_arena,
+            )
+            next unless autocast
+            converted_types = autocast[2]
+            converted_types.each_with_index do |target_type, slot|
+              next if target_type == source_types[slot]
+              value_id = if slot < positional_values.size
+                           positional_values[slot]
+                         else
+                           named_values[names[slot - positional_values.size]]
+                         end
+              # As in the positional path, the emitted value must prove the
+              # source type the conversion was validated for.
+              if ctx.type_literal?(value_id) || ctx.type_of(value_id) != source_types[slot] ||
+                 enum_tracked_type(ctx, value_id) != source_types[slot]
+                raise LoweringError.new("no overload matches #{func_name}: integer autocast requires a runtime #{get_type_name_from_ref(source_types[slot])} value")
+              end
+              cast = Cast.new(ctx.next_id, target_type, value_id, target_type)
+              ctx.emit(cast)
+              ctx.register_type(cast.id, target_type)
+              if slot < positional_values.size
+                positional_values[slot] = cast.id
+              else
+                named_values[names[slot - positional_values.size]] = cast.id
+              end
+            end
+            source_types = converted_types
+            selected = {autocast[0], autocast[1]}
+            break
           end
         end
       end
