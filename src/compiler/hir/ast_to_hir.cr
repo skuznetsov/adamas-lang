@@ -93241,12 +93241,16 @@ module Adamas::HIR
       test_cell_proofs = branch_cell_proofs
       # A statically true elsif test leaves the later tests and the else unreachable.
       elsif_chain_closed = false
+      # Each test runs on the false edge of the previous one, so it sees the
+      # locals as that test left them (`elsif (x = nil)` rebinds x for every
+      # later test, its body and the else).
+      test_locals = pre_branch_locals
+      test_inline_locals = pre_inline_caller_locals
       if elsifs && !elsifs.empty?
         elsifs.each_with_index do |elsif_branch, idx|
           next if elsif_chain_closed
-          # Restore locals for this test (each elsif sees pre-branch state)
-          ctx.restore_locals(pre_branch_locals)
-          @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
+          ctx.restore_locals(test_locals)
+          @inline_caller_locals_stack = test_inline_locals.map(&.dup)
 
           # We're now in the test block for this elsif
           ctx.current_block = next_test_block
@@ -93300,6 +93304,8 @@ module Adamas::HIR
           end
 
           test_cell_proofs = ctx.closure_cell_write_proofs_on(elsif_entry_block)
+          test_locals = ctx.save_locals
+          test_inline_locals = @inline_caller_locals_stack.map(&.dup)
           if elsif_static == false
             merge_narrowing_target_names(accumulated_falsy_targets, elsif_falsy_targets)
             next
@@ -93344,8 +93350,8 @@ module Adamas::HIR
 
       # Process final else branch
       unless elsif_chain_closed
-        ctx.restore_locals(pre_branch_locals)
-        @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
+        ctx.restore_locals(test_locals)
+        @inline_caller_locals_stack = test_inline_locals.map(&.dup)
         ctx.current_block = next_test_block
         ctx.rebind_closure_cell_write_proofs(test_cell_proofs, next_test_block)
         ctx.push_scope(ScopeKind::Block)
