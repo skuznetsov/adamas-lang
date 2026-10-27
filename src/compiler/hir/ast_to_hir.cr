@@ -697,6 +697,22 @@ module Adamas::HIR
       end
     end
 
+    # Carries into the current block the write proofs taken on entry to a
+    # compiler-generated fanout: branches over already-lowered values that run
+    # only the dispatched calls and rejoin without a back edge. Every op of
+    # every arm was emitted after the snapshot, and any that could change a
+    # cell dropped its proof, so a proof still registered unchanged held on
+    # each arm and so holds at the join.
+    def carry_closure_cell_write_proofs(proofs : Array(ScopedReceiverNarrowing)) : Nil
+      proofs.each do |entry|
+        current = @scoped_receiver_narrowings[entry.name]?
+        next unless current && current.value_id == entry.value_id && current.carrier == entry.carrier &&
+                    current.survives_calls == entry.survives_calls &&
+                    current.survives_pointer_stores == entry.survives_pointer_stores
+        @scoped_receiver_narrowings[entry.name] = current.copy_with(block: @current_block)
+      end
+    end
+
     # Carries into `merge` the proofs that held at the exit block of every arm
     # that reaches it (`arms` holds one `closure_cell_write_proofs_on` snapshot
     # per reaching arm, taken when the arm ended). A proof common to several
@@ -115547,6 +115563,7 @@ module Adamas::HIR
       end
       ua = args[ui]
       pb = ctx.save_locals
+      entry_cell_proofs = ctx.closure_cell_write_proofs_on(ctx.current_block)
       merge = ctx.create_block
       phi_inputs = [] of {BlockId, ValueId}
 
@@ -115632,6 +115649,7 @@ module Adamas::HIR
 
       ctx.current_block = merge
       ctx.restore_locals(pb)
+      ctx.carry_closure_cell_write_proofs(entry_cell_proofs)
       phi = Phi.new(ctx.next_id, dispatch_return_type, phi_inputs)
       ctx.emit(phi); ctx.register_type(phi.id, dispatch_return_type)
       phi.id
@@ -115729,6 +115747,7 @@ module Adamas::HIR
 
       ua = args[ui]
       pb = ctx.save_locals
+      entry_cell_proofs = ctx.closure_cell_write_proofs_on(ctx.current_block)
       mb = ctx.create_block
       phi_inputs = [] of {BlockId, ValueId}
       variants.each do |vm, vr, _|
@@ -115757,6 +115776,7 @@ module Adamas::HIR
       phi_inputs << {ctx.current_block, fc.id}
       ctx.terminate(Jump.new(mb))
       ctx.current_block = mb
+      ctx.carry_closure_cell_write_proofs(entry_cell_proofs)
       phi = Phi.new(ctx.next_id, return_type, phi_inputs)
       ctx.emit(phi); ctx.register_type(phi.id, return_type)
       phi.id
