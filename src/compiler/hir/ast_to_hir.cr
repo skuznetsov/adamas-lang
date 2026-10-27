@@ -30915,6 +30915,8 @@ module Adamas::HIR
             @current_class = old_class
             full_alias_name = qualified_nested_type_name(module_name, alias_name)
             register_type_alias(full_alias_name, target_name)
+          when Adamas::Compiler::Frontend::MacroIfNode
+            preregister_macro_if_aliases_in_module(member, module_name)
           when Adamas::Compiler::Frontend::LibNode
             register_nested_lib(member, module_name)
           end
@@ -31416,6 +31418,34 @@ module Adamas::HIR
                 nil
               )
             end
+          end
+        end
+      end
+    end
+
+    # An alias declared under `{% if flag?(...) %}` must exist, in source
+    # order, before the module's nested types are registered: their own macro
+    # conditions compare against it (`{% if Limb == UInt64 %}` in
+    # Float::FastFloat::Pow5Tables). PASS 2 (process_macro_if_in_module)
+    # registers the same alias again with the same target.
+    private def preregister_macro_if_aliases_in_module(node : Adamas::Compiler::Frontend::MacroIfNode, module_name : String) : Nil
+      return if begin_style_body_macro?(node)
+      return unless raw_text = macro_if_raw_text(node)
+      return unless raw_text.includes?("alias ")
+      return if contains_nested_macro_end?(raw_text)
+      return unless expanded = expand_flag_macro_text(raw_text)
+      return unless parsed_prog = parse_macro_literal_program(expanded)
+      prog_arena, prog_roots = parsed_prog
+      with_arena(prog_arena) do
+        prog_roots.each do |expr_id|
+          expr_node = unwrap_visibility_member(@arena[expr_id])
+          next unless expr_node.is_a?(Adamas::Compiler::Frontend::AliasNode)
+          old_class = @current_class
+          @current_class = module_name
+          begin
+            register_alias(expr_node)
+          ensure
+            @current_class = old_class
           end
         end
       end
@@ -35462,6 +35492,8 @@ module Adamas::HIR
             full_class_name = qualified_nested_type_name(full_name, class_name)
             register_type_alias(full_class_name, full_class_name)
             register_class_aliases(member, full_class_name)
+          elsif member.is_a?(Adamas::Compiler::Frontend::MacroIfNode)
+            preregister_macro_if_aliases_in_module(member, full_name)
           elsif member.is_a?(Adamas::Compiler::Frontend::LibNode)
             register_nested_lib(member, full_name)
           end
