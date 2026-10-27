@@ -748,7 +748,9 @@ module Adamas::HIR
     end
 
     def discard_scoped_receiver_narrowing(expected : ScopedReceiverNarrowing) : Nil
-      if @scoped_receiver_narrowings[expected.name]? == expected
+      # Branch arms and joins rebind a block-bound proof to other blocks.
+      current = @scoped_receiver_narrowings[expected.name]?
+      if current && current.copy_with(block: expected.block) == expected
         @scoped_receiver_narrowings.delete(expected.name)
       end
     end
@@ -91264,6 +91266,10 @@ module Adamas::HIR
         direct_capture_truthy_source(node.expression, value_id)
       when Adamas::Compiler::Frontend::IdentifierNode
         {identifier_name_text(node), value_id}
+      when Adamas::Compiler::Frontend::AssignNode
+        # `if v = expr`: the condition value is the value just stored to `v`.
+        target = @arena[node.target]
+        target.is_a?(Adamas::Compiler::Frontend::IdentifierNode) ? {identifier_name_text(target), value_id} : nil
       else
         nil
       end
@@ -91305,11 +91311,18 @@ module Adamas::HIR
       # Captures can be mutated through aliases. Lend the branch-proven payload
       # to exactly one direct read; lower_identifier consumes the slot, while an
       # assignment invalidates it before writing through the box or closure cell.
+      # A call-stable cell changes only by the thunk's own writes, so its
+      # proof holds like a write proof: on its straight-line block until a
+      # store to the cell.
       if box_info && local_id
         ctx.register_boxed_local_narrowing(name, local_id, narrowed)
       elsif ref_cell
         cell_class, cell_name, _ = ref_cell
-        ctx.register_closure_cell_narrowing(name, cell_class, cell_name, narrowed)
+        if @call_stable_closure_cells[{cell_class, cell_name}]? == ctx.function.name
+          ctx.register_closure_cell_write_narrowing(name, cell_class, cell_name, narrowed, survives_calls: true)
+        else
+          ctx.register_closure_cell_narrowing(name, cell_class, cell_name, narrowed)
+        end
       end
     end
 
