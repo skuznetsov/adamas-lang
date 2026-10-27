@@ -90359,7 +90359,7 @@ module Adamas::HIR
             return unwrap_non_nil_to_block(ctx, ctx.current_block, left_id, then_type)
           else
             rhs_value = nil.as(ValueId?)
-            with_scoped_condition_narrowing(ctx, falsy_targets, node.right, capture_source) do
+            with_scoped_condition_narrowing(ctx, falsy_targets, capture_source) do
               rhs_value = lower_expr(ctx, node.right)
             end
             return rhs_value.not_nil!
@@ -90368,7 +90368,7 @@ module Adamas::HIR
           if static_left
             rhs_value = nil.as(ValueId?)
             is_a_restores = apply_scoped_is_a_narrowing(ctx, is_a_rhs_targets)
-            with_scoped_condition_narrowing(ctx, truthy_targets, node.right, capture_source) do
+            with_scoped_condition_narrowing(ctx, truthy_targets, capture_source) do
               rhs_value = lower_expr(ctx, node.right)
             end
             restore_scoped_is_a_narrowing(ctx, is_a_restores)
@@ -90397,7 +90397,7 @@ module Adamas::HIR
                    else
                      rhs_value = nil.as(ValueId?)
                      is_a_restores = apply_scoped_is_a_narrowing(ctx, is_a_rhs_targets)
-                     with_scoped_condition_narrowing(ctx, truthy_targets, node.right, capture_source) do
+                     with_scoped_condition_narrowing(ctx, truthy_targets, capture_source) do
                        rhs_value = lower_expr(ctx, node.right)
                      end
                      restore_scoped_is_a_narrowing(ctx, is_a_restores)
@@ -90429,7 +90429,7 @@ module Adamas::HIR
       ctx.restore_locals(pre_branch_locals)
       else_value = if op_str == "||"
                      rhs_value = nil.as(ValueId?)
-                     with_scoped_condition_narrowing(ctx, falsy_targets, node.right, capture_source) do
+                     with_scoped_condition_narrowing(ctx, falsy_targets, capture_source) do
                        rhs_value = lower_expr(ctx, node.right)
                      end
                      rhs_value.not_nil!
@@ -90668,7 +90668,6 @@ module Adamas::HIR
     private def with_scoped_condition_narrowing(
       ctx : LoweringContext,
       targets : Array(String),
-      rhs_expr : ExprId,
       capture_source : {String, ValueId}?,
       &
     )
@@ -90682,7 +90681,7 @@ module Adamas::HIR
           prev[name] = v
         end
       end
-      scoped_narrowing = apply_scoped_truthy_narrowing(ctx, targets, rhs_expr, capture_source)
+      scoped_narrowing = apply_scoped_truthy_narrowing(ctx, targets, capture_source)
       narrowed = {} of String => ValueId
       targets.each do |name|
         if v = ctx.lookup_local(name)
@@ -90704,8 +90703,8 @@ module Adamas::HIR
             ctx.register_local(name, pv)
           end
         end
-        # This condition lends one direct receiver proof for its captured name.
-        # A successful receiver read or assignment already consumes that proof.
+        # This condition lends one direct read proof for its captured name.
+        # A successful read or assignment already consumes that proof.
         if narrowing = scoped_narrowing
           ctx.discard_scoped_receiver_narrowing(narrowing)
         end
@@ -90741,14 +90740,14 @@ module Adamas::HIR
               lower_short_circuit_condition(ctx, left_node, rhs_block, else_block, capture_sources)
               ctx.current_block = rhs_block
               is_a_restores = apply_scoped_is_a_narrowing(ctx, is_a_rhs_targets)
-              with_scoped_condition_narrowing(ctx, truthy_targets, node.right, nil) do
+              with_scoped_condition_narrowing(ctx, truthy_targets, nil) do
                 lower_condition_branch(ctx, node.right, then_block, else_block, capture_sources)
               end
               restore_scoped_is_a_narrowing(ctx, is_a_restores)
             else
               lower_short_circuit_condition(ctx, left_node, then_block, rhs_block)
               ctx.current_block = rhs_block
-              with_scoped_condition_narrowing(ctx, falsy_targets, node.right, nil) do
+              with_scoped_condition_narrowing(ctx, falsy_targets, nil) do
                 lower_condition_branch(ctx, node.right, then_block, else_block)
               end
             end
@@ -90774,7 +90773,7 @@ module Adamas::HIR
             ctx.terminate(Jump.new(rhs_block))
             ctx.current_block = rhs_block
             is_a_restores = apply_scoped_is_a_narrowing(ctx, is_a_rhs_targets)
-            with_scoped_condition_narrowing(ctx, truthy_targets, node.right, capture_source) do
+            with_scoped_condition_narrowing(ctx, truthy_targets, capture_source) do
               lower_condition_branch(ctx, node.right, then_block, else_block, capture_sources)
             end
             restore_scoped_is_a_narrowing(ctx, is_a_restores)
@@ -90787,7 +90786,7 @@ module Adamas::HIR
           else
             ctx.terminate(Jump.new(rhs_block))
             ctx.current_block = rhs_block
-            with_scoped_condition_narrowing(ctx, falsy_targets, node.right, capture_source) do
+            with_scoped_condition_narrowing(ctx, falsy_targets, capture_source) do
               lower_condition_branch(ctx, node.right, then_block, else_block)
             end
           end
@@ -90798,14 +90797,14 @@ module Adamas::HIR
         ctx.terminate(Branch.new(left_cond, rhs_block, else_block))
         ctx.current_block = rhs_block
         is_a_restores = apply_scoped_is_a_narrowing(ctx, is_a_rhs_targets)
-        with_scoped_condition_narrowing(ctx, truthy_targets, node.right, capture_source) do
+        with_scoped_condition_narrowing(ctx, truthy_targets, capture_source) do
           lower_condition_branch(ctx, node.right, then_block, else_block, capture_sources)
         end
         restore_scoped_is_a_narrowing(ctx, is_a_restores)
       else
         ctx.terminate(Branch.new(left_cond, then_block, rhs_block))
         ctx.current_block = rhs_block
-        with_scoped_condition_narrowing(ctx, falsy_targets, node.right, capture_source) do
+        with_scoped_condition_narrowing(ctx, falsy_targets, capture_source) do
           lower_condition_branch(ctx, node.right, then_block, else_block)
         end
       end
@@ -91143,23 +91142,6 @@ module Adamas::HIR
       end
     end
 
-    private def direct_includes_receiver_name(expr_id : ExprId) : String?
-      node = @arena[expr_id]
-      case node
-      when Adamas::Compiler::Frontend::GroupingNode
-        direct_includes_receiver_name(node.expression)
-      when Adamas::Compiler::Frontend::CallNode
-        callee = @arena[node.callee]
-        return nil unless callee.is_a?(Adamas::Compiler::Frontend::MemberAccessNode)
-        return nil unless member_access_name_text(callee) == "includes?"
-
-        receiver = @arena[callee.object]
-        receiver.is_a?(Adamas::Compiler::Frontend::IdentifierNode) ? identifier_name_text(receiver) : nil
-      else
-        nil
-      end
-    end
-
     private def direct_capture_truthy_source(expr_id : ExprId, value_id : ValueId) : {String, ValueId}?
       node = @arena[expr_id]
       case node
@@ -91222,6 +91204,19 @@ module Adamas::HIR
       targets : Array(String),
       capture_sources : Array({String, ValueId}),
     ) : ValueId
+      with_direct_capture_truthy_narrowing(ctx, targets, capture_sources) do
+        lower_body(ctx, body)
+      end
+    end
+
+    # Lends each dominating truthy condition read of a captured box/cell to the
+    # first direct read lowered inside the block; leftover proofs end with it.
+    private def with_direct_capture_truthy_narrowing(
+      ctx : LoweringContext,
+      targets : Array(String),
+      capture_sources : Array({String, ValueId}),
+      &
+    )
       narrowings = [] of LoweringContext::ScopedReceiverNarrowing
       capture_sources.each do |capture_source|
         if narrowing = register_direct_capture_truthy_narrowing(ctx, targets, capture_source)
@@ -91229,27 +91224,25 @@ module Adamas::HIR
         end
       end
       begin
-        lower_body(ctx, body)
+        yield
       ensure
         narrowings.each { |narrowing| ctx.discard_scoped_receiver_narrowing(narrowing) }
       end
     end
 
+    # The truthy left operand of `&&` dominates its right operand, so a captured
+    # left identifier lends its proof to the first direct read in the right
+    # operand, whether receiver or argument. Only a bare identifier yields a
+    # `capture_source`, and it is a target only for the truthy polarity, so the
+    # right operand of `||` never receives a non-nil proof.
     private def apply_scoped_truthy_narrowing(
       ctx : LoweringContext,
       targets : Array(String),
-      rhs_expr : ExprId,
       capture_source : {String, ValueId}?,
     ) : LoweringContext::ScopedReceiverNarrowing?
       return nil if targets.empty?
 
-      direct_receiver = direct_includes_receiver_name(rhs_expr)
-      scoped_narrowing = nil.as(LoweringContext::ScopedReceiverNarrowing?)
-      if direct_receiver && capture_source &&
-         direct_receiver == capture_source[0] && targets.includes?(direct_receiver)
-        scoped_narrowing = register_direct_capture_truthy_narrowing(ctx, targets, capture_source)
-      end
-
+      scoped_narrowing = register_direct_capture_truthy_narrowing(ctx, targets, capture_source)
       apply_truthy_narrowing(ctx, targets, skip_boxed: true)
       scoped_narrowing
     end
@@ -95928,6 +95921,10 @@ module Adamas::HIR
 
       cond_id = lower_expr(ctx, node.condition)
       branch_cell_proofs = ctx.closure_cell_write_proofs_on(ctx.current_block)
+      then_capture_sources = [] of {String, ValueId}
+      if then_capture_source = direct_capture_truthy_source(node.condition, cond_id)
+        then_capture_sources << then_capture_source
+      end
 
       # Save locals before branching
       pre_branch_locals = ctx.save_locals
@@ -95944,7 +95941,9 @@ module Adamas::HIR
       # Apply truthy narrowing in the then branch (e.g., entry ? entry.value : nil)
       apply_truthy_narrowing(ctx, truthy_targets)
       apply_is_a_narrowing(ctx, is_a_targets)
-      then_value = lower_expr(ctx, node.true_branch)
+      then_value = with_direct_capture_truthy_narrowing(ctx, truthy_targets, then_capture_sources) do
+        lower_expr(ctx, node.true_branch)
+      end
       then_exit = ctx.current_block
       then_exit_cell_proofs = ctx.closure_cell_write_proofs_on(then_exit)
       then_locals = ctx.save_locals.locals
