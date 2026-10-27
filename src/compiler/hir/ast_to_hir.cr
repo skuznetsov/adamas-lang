@@ -93239,8 +93239,11 @@ module Adamas::HIR
 
       # Process elsif branches
       test_cell_proofs = branch_cell_proofs
+      # A statically true elsif test leaves the later tests and the else unreachable.
+      elsif_chain_closed = false
       if elsifs && !elsifs.empty?
         elsifs.each_with_index do |elsif_branch, idx|
+          next if elsif_chain_closed
           # Restore locals for this test (each elsif sees pre-branch state)
           ctx.restore_locals(pre_branch_locals)
           @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
@@ -93270,8 +93273,14 @@ module Adamas::HIR
           elsif_is_a_targets = is_a_narrowing_targets(elsif_branch.condition)
           elsif_capture_sources = [] of {String, ValueId}
           elsif_cond_node = @arena[elsif_branch.condition]
-          if elsif_cond_node.is_a?(Adamas::Compiler::Frontend::BinaryNode) &&
-             (elsif_cond_node.operator_string == "&&" || elsif_cond_node.operator_string == "||")
+          # Fold elsif tests like the main condition: a dead elsif body would
+          # otherwise demand calls on statically impossible types.
+          elsif_static = static_is_a_condition_value(ctx, elsif_branch.condition)
+          elsif_static = static_nil_condition_value(ctx, elsif_branch.condition) if elsif_static.nil?
+          if !elsif_static.nil?
+            ctx.terminate(Jump.new(elsif_static ? elsif_body_block : next_test_block))
+          elsif elsif_cond_node.is_a?(Adamas::Compiler::Frontend::BinaryNode) &&
+                (elsif_cond_node.operator_string == "&&" || elsif_cond_node.operator_string == "||")
             lower_short_circuit_condition(ctx, elsif_cond_node, elsif_body_block, next_test_block, elsif_capture_sources)
           else
             elsif_cond_id = lower_expr(ctx, elsif_branch.condition)
@@ -93280,11 +93289,24 @@ module Adamas::HIR
             end
             elsif_cond_type = ctx.type_of(elsif_cond_id)
             elsif_cond_bool = lower_truthy_check(ctx, elsif_cond_id, elsif_cond_type)
-            ctx.terminate(Branch.new(elsif_cond_bool, elsif_body_block, next_test_block))
+            elsif_static = static_truthy_value(ctx, elsif_cond_bool)
+            elsif_static = static_truthy_value(ctx, elsif_cond_id) if elsif_static.nil?
+            elsif_static = static_literal_condition_value(elsif_branch.condition) if elsif_static.nil?
+            if elsif_static.nil?
+              ctx.terminate(Branch.new(elsif_cond_bool, elsif_body_block, next_test_block))
+            else
+              ctx.terminate(Jump.new(elsif_static ? elsif_body_block : next_test_block))
+            end
           end
 
-          # Process elsif body
           test_cell_proofs = ctx.closure_cell_write_proofs_on(elsif_entry_block)
+          if elsif_static == false
+            merge_narrowing_target_names(accumulated_falsy_targets, elsif_falsy_targets)
+            next
+          end
+          elsif_chain_closed = true if elsif_static
+
+          # Process elsif body
           ctx.current_block = elsif_body_block
           ctx.rebind_closure_cell_write_proofs(test_cell_proofs, elsif_body_block)
           ctx.push_scope(ScopeKind::Block)
@@ -93321,46 +93343,48 @@ module Adamas::HIR
       end
 
       # Process final else branch
-      ctx.restore_locals(pre_branch_locals)
-      @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
-      ctx.current_block = next_test_block
-      ctx.rebind_closure_cell_write_proofs(test_cell_proofs, next_test_block)
-      ctx.push_scope(ScopeKind::Block)
-      apply_truthy_narrowing(ctx, accumulated_falsy_targets)
-      apply_is_a_else_narrowing(ctx, is_a_targets) unless has_elsifs
-      else_value = if else_body = node.else_body
-                     if else_body.empty?
+      unless elsif_chain_closed
+        ctx.restore_locals(pre_branch_locals)
+        @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
+        ctx.current_block = next_test_block
+        ctx.rebind_closure_cell_write_proofs(test_cell_proofs, next_test_block)
+        ctx.push_scope(ScopeKind::Block)
+        apply_truthy_narrowing(ctx, accumulated_falsy_targets)
+        apply_is_a_else_narrowing(ctx, is_a_targets) unless has_elsifs
+        else_value = if else_body = node.else_body
+                       if else_body.empty?
+                         nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+                         ctx.emit(nil_lit)
+                         nil_lit.id
+                       else
+                         lower_body(ctx, else_body)
+                       end
+                     else
+                       # No else: produce nil
                        nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
                        ctx.emit(nil_lit)
                        nil_lit.id
-                     else
-                       lower_body(ctx, else_body)
                      end
-                   else
-                     # No else: produce nil
-                     nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
-                     ctx.emit(nil_lit)
-                     nil_lit.id
-                   end
-      else_exit_block = ctx.current_block
-      branch_exit_cell_proofs << ctx.closure_cell_write_proofs_on(else_exit_block)
-      else_locals = ctx.save_locals.locals
-      else_inline_locals = @inline_caller_locals_stack.map(&.dup)
-      ctx.pop_scope
+        else_exit_block = ctx.current_block
+        branch_exit_cell_proofs << ctx.closure_cell_write_proofs_on(else_exit_block)
+        else_locals = ctx.save_locals.locals
+        else_inline_locals = @inline_caller_locals_stack.map(&.dup)
+        ctx.pop_scope
 
-      else_block_data = ctx.get_block(ctx.current_block)
-      else_has_noreturn = block_has_raise_or_return_instruction?(else_block_data)
-      else_term = else_block_data.terminator
-      else_jump_to_merge = else_term.is_a?(Jump) && else_term.target == merge_block
-      else_flows_to_merge = else_jump_to_merge || (
-        else_term.is_a?(Unreachable) &&
-        !else_has_noreturn &&
-        !control_flow_dead_block?(ctx, else_exit_block)
-      )
-      if else_flows_to_merge && !else_jump_to_merge
-        ctx.terminate(Jump.new(merge_block))
+        else_block_data = ctx.get_block(ctx.current_block)
+        else_has_noreturn = block_has_raise_or_return_instruction?(else_block_data)
+        else_term = else_block_data.terminator
+        else_jump_to_merge = else_term.is_a?(Jump) && else_term.target == merge_block
+        else_flows_to_merge = else_jump_to_merge || (
+          else_term.is_a?(Unreachable) &&
+          !else_has_noreturn &&
+          !control_flow_dead_block?(ctx, else_exit_block)
+        )
+        if else_flows_to_merge && !else_jump_to_merge
+          ctx.terminate(Jump.new(merge_block))
+        end
+        branches << {else_exit_block, else_value, else_locals, else_flows_to_merge, else_inline_locals}
       end
-      branches << {else_exit_block, else_value, else_locals, else_flows_to_merge, else_inline_locals}
 
       # Merge block
       ctx.current_block = merge_block
