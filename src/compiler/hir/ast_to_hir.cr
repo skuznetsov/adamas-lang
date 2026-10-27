@@ -97904,6 +97904,7 @@ module Adamas::HIR
 
       narrow_type = TypeRef::VOID
       variant_id = -1
+      single_variant = true
       ctx.function.blocks.each do |block|
         ret = block.terminator.as?(Return)
         next unless ret
@@ -97912,23 +97913,85 @@ module Adamas::HIR
         wrap = wraps[value_id]?
         return unless wrap && wrap.type == return_type
         source_type = ctx.type_of(wrap.value)
-        return if source_type == TypeRef::NIL || source_type == TypeRef::VOID
-        return if is_union_type?(source_type)
-        return unless get_union_variant_id(return_type, source_type) == wrap.variant_type_id
+        return if source_type == TypeRef::VOID
+        if source_type == TypeRef::NIL || is_union_type?(source_type) ||
+           get_union_variant_id(return_type, source_type) != wrap.variant_type_id
+          single_variant = false
+          break
+        end
         if variant_id < 0
           narrow_type = source_type
           variant_id = wrap.variant_type_id
         elsif variant_id != wrap.variant_type_id || narrow_type != source_type
-          return
+          single_variant = false
+          break
         end
       end
-      return if variant_id < 0
 
-      @narrowed_body_returns[name] = {return_type, narrow_type, variant_id}
+      if single_variant
+        return if variant_id < 0
+        @narrowed_body_returns[name] = {return_type, narrow_type, variant_id}
+      elsif narrow_union = narrowed_union_body_return_type(ctx, return_type, wraps)
+        @narrowed_body_returns[name] = {return_type, narrow_union, -2}
+      end
     end
 
-    # Unwraps a direct call whose callee body was recorded as narrower than
-    # its annotated union return (record_narrowed_body_return).
+    # Multi-variant form of record_narrowed_body_return: every return wraps a
+    # source (a concrete type, Nil, or a union) into the annotated union, and
+    # the union of those sources is strictly narrower. A `def f : Ty?` whose
+    # body only yields `Prim | Nil` types `f` as `Prim | Nil`, as in Crystal.
+    private def narrowed_union_body_return_type(
+      ctx : LoweringContext,
+      return_type : TypeRef,
+      wraps : Hash(ValueId, UnionWrap),
+    ) : TypeRef?
+      # Arms come from the HIR union names: the MIR sidecar variants lose
+      # generic arguments on the way back (`Proc(Int32, Nil)` -> `Proc`).
+      return_members = split_union_type_name(get_type_name_from_ref(return_type)).map { |n| type_ref_for_name(n) }
+      return nil if return_members.size < 2 || return_members.includes?(TypeRef::VOID)
+
+      members = [] of TypeRef
+      ctx.function.blocks.each do |block|
+        ret = block.terminator.as?(Return)
+        next unless ret
+        value_id = ret.value
+        return nil unless value_id
+        wrap = wraps[value_id]?
+        return nil unless wrap && wrap.type == return_type
+        source_type = ctx.type_of(wrap.value)
+        return nil if source_type == TypeRef::VOID || source_type == return_type
+        if is_union_type?(source_type)
+          split_union_type_name(get_type_name_from_ref(source_type)).each do |variant_name|
+            member = type_ref_for_name(variant_name)
+            return nil if member == TypeRef::VOID
+            members << member unless members.includes?(member)
+          end
+        else
+          members << source_type unless members.includes?(source_type)
+        end
+      end
+      return nil if members.size < 2
+
+      # Every source member must be an annotated arm or a strict subtype of
+      # one; a less specific member (a bare `Proc` against `Proc(Int32, Nil)`)
+      # or anything undecidable keeps the annotation.
+      members.each do |member|
+        covered = return_members.any? do |rm|
+          member == rm ||
+            (statically_is_a_type?(member, rm) == true && statically_is_a_type?(rm, member) != true)
+        end
+        return nil unless covered
+      end
+
+      narrow_type = create_union_type(members.map { |m| generic_param_type_name_from_ref(m) }.join(" | "))
+      return nil if narrow_type == TypeRef::VOID || narrow_type == return_type
+      return nil unless is_union_type?(narrow_type)
+      narrow_type
+    end
+
+    # Unwraps (or, for a multi-variant body, narrows union-to-union) a direct
+    # call whose callee body was recorded as narrower than its annotated union
+    # return (record_narrowed_body_return).
     private def narrow_direct_call_result(ctx : LoweringContext, value_id : ValueId) : ValueId
       return value_id if @narrowed_body_returns.empty?
 
@@ -97945,6 +98008,17 @@ module Adamas::HIR
 
       union_type, narrow_type, variant_id = narrowed
       return value_id unless result_type == union_type
+
+      if variant_id == -2
+        narrowed_value = if all_ref_union_type_ref?(union_type) && all_ref_union_type_ref?(narrow_type)
+                           Copy.new(ctx.next_id, narrow_type, value_id).as(Value)
+                         else
+                           UnionWrap.new(ctx.next_id, narrow_type, value_id, -2).as(Value)
+                         end
+        ctx.emit(narrowed_value)
+        ctx.register_type(narrowed_value.id, narrow_type)
+        return narrowed_value.id
+      end
 
       unwrap = UnionUnwrap.new(ctx.next_id, narrow_type, value_id, variant_id, false)
       ctx.emit(unwrap)
