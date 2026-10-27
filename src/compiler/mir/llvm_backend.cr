@@ -13292,33 +13292,6 @@ module Adamas::MIR
         return true
       end
 
-      # Time.new(LibC::Timespec, Time::Location) — explicit self.new that adds UNIX_EPOCH
-      # The auto-allocator generates the wrong body (passes tv_sec directly as @seconds
-      # instead of computing UNIX_EPOCH.total_seconds + tv_sec).
-      if mangled == "Time$Dnew$$LibC$CCTimespec_Time$CCLocation"
-        emit_raw "; Time.new(LibC::Timespec, Time::Location) — runtime override\n"
-        emit_raw "define ptr @#{mangled}(i64 %tv_sec, i32 %tv_nsec, ptr %location) {\n"
-        emit_raw "entry:\n"
-        # Load UNIX_EPOCH global → Time struct pointer → @seconds at offset 0
-        emit_raw "  %epoch_ptr = load ptr, ptr @Time__classvar__UNIX_EPOCH\n"
-        emit_raw "  %epoch_is_null = icmp eq ptr %epoch_ptr, null\n"
-        emit_raw "  br i1 %epoch_is_null, label %epoch_zero, label %epoch_ok\n"
-        emit_raw "epoch_zero:\n"
-        emit_raw "  br label %compute\n"
-        emit_raw "epoch_ok:\n"
-        emit_raw "  %epoch_sec = load i64, ptr %epoch_ptr\n"
-        emit_raw "  br label %compute\n"
-        emit_raw "compute:\n"
-        emit_raw "  %epoch_total = phi i64 [0, %epoch_zero], [%epoch_sec, %epoch_ok]\n"
-        emit_raw "  %seconds = add i64 %epoch_total, %tv_sec\n"
-        # Bootstrap fallback: route through the always-emitted Int64 constructor.
-        # This keeps stage2 codegen valid even when the 3-arg overload isn't lowered.
-        emit_raw "  %result = call ptr @Time$Dnew$$Int64(i64 %seconds)\n"
-        emit_raw "  ret ptr %result\n"
-        emit_raw "}\n\n"
-        return true
-      end
-
       if mangled == "String$Hhash"
         # Bare String#hash returns UInt64. Keep this ABI separate from the
         # hash(hasher : Crystal::Hasher) protocol overload below; generated
