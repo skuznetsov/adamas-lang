@@ -36501,231 +36501,235 @@ module Adamas::HIR
       use_specialized_runtime_param_types = specialized_runtime_param_types?(full_name_override)
       raw_callback_contract = raw_callback_abi_for(lookup_name)
 
+      # Bind `forall` variables before resolving parameter annotations; see
+      # the same step in `lower_def`.
       if params = node.params
-        each_param(params) do |param|
-          next if named_only_separator?(param)
-          param_name = if nm = param.name
-                         safe_slice_to_string(nm) || "_"
-                       else
-                         "_"
-                       end
-          is_ivar_param = param.is_instance_var || param_name.starts_with?('@')
-          if is_ivar_param
-            param_name = param_name.lstrip('@')
-          end
-          type_ann_str : String? = nil
-          raw_type_ann_str : String? = nil
-          param_type = if (ta = param.type_annotation) && (raw_type_ann_str = safe_slice_to_string(ta))
-                         type_ann_str = raw_type_ann_str
-                         if contextual_alias = resolve_contextual_type_alias_name(type_ann_str)
-                           type_ann_str = contextual_alias
+        with_type_param_map(method_forall_call_bindings(node, call_types)) do
+          each_param(params) do |param|
+            next if named_only_separator?(param)
+            param_name = if nm = param.name
+                           safe_slice_to_string(nm) || "_"
+                         else
+                           "_"
                          end
-                         annotation_type_ref(type_ann_str, module_name)
-                       elsif param.is_double_splat
-                         double_splat_layout_type_from_name(full_name_override) ||
-                           type_ref_for_name("NamedTuple")
-                       else
-                         TypeRef::VOID
-                       end
-          if param.is_block && param_type == TypeRef::VOID
-            if callback_abi = raw_callback_contract
-              param_type = callback_abi.proc_type
-            else
-              # `&@capture` receives the already materialized Proc object from an
-              # allocator wrapper. Treating it as a raw callback pointer causes
-              # auto-assignment to wrap the object address as a function pointer.
-              # Retained named blocks also keep their heap Proc identity.
-              param_type = untyped_block_parameter_type(node, is_ivar_param)
+            is_ivar_param = param.is_instance_var || param_name.starts_with?('@')
+            if is_ivar_param
+              param_name = param_name.lstrip('@')
             end
-          end
-          if type_ann_str && bare_generic_annotation?(type_ann_str)
-            # Keep the generic base type for dispatch; allow callsite refinement.
-            param_type = type_ref_for_name(strip_generic_args(type_ann_str))
-          end
-          call_type_for_param = if !param.is_block && !param.is_splat && !param.is_double_splat && call_index < call_types.size
-                                  type_ref_array_fetch_or_void(call_types, call_index)
-                                else
-                                  TypeRef::VOID
-                                end
-          if param.is_splat && call_index < call_types.size
-            # Calls carry an already-packed Tuple in the splat ABI slot.
-            # Consume that slot before binding trailing named/default params;
-            # otherwise the first parameter after `*args` inherits the tuple.
-            packed_splat_type = type_ref_array_fetch_or_void(call_types, call_index)
-            if is_tuple_type_ref?(packed_splat_type)
-              param_type = packed_splat_type
-              call_type_for_param = packed_splat_type
-              packed_splat_param_type = packed_splat_type
-            end
-          end
-          if param_type == TypeRef::VOID && method_name == "hash" && param_name == "hasher"
-            inferred = type_ref_for_name("Crystal::Hasher")
-            param_type = inferred if inferred != TypeRef::VOID
-          end
-          if param_type == TypeRef::VOID && !param.is_block && !param.is_splat && !param.is_double_splat
-            if call_index < call_types.size
-              inferred = call_types[call_index]
-              param_type = inferred if inferred != TypeRef::VOID
-            end
-          end
-          preserve_shared_arity_union =
-            preserve_annotated_union_param_for_shared_arity?(
-              full_name_override,
-              raw_type_ann_str || type_ann_str,
-              param_type,
-            )
-          if !preserve_shared_arity_union &&
-             !param.is_block && !param.is_splat && !param.is_double_splat &&
-             call_index < call_types.size
-            param_type = refine_param_type_from_call(param_type, call_types[call_index])
-          end
-          if !preserve_shared_arity_union &&
-             type_ann_str && module_like_type_name?(type_ann_str)
-            if call_index < call_types.size
-              inferred = call_types[call_index]
-              param_type = inferred if inferred != TypeRef::VOID
-            end
-          end
-          if param_type == TypeRef::VOID && !param.is_block && !param.is_splat && !param.is_double_splat
-            if default_value = param.default_value
-              default_node = @arena[default_value]
-              if debug_env_filter_match?("DEBUG_PARAM_DEFAULT", base_name, param_name)
-                default_kind = default_node.class.name.split("::").last
-                default_extra = default_node.is_a?(Adamas::Compiler::Frontend::NumberNode) ? " kind=#{default_node.kind}" : ""
-                STDERR.puts "[PARAM_DEFAULT] func=#{base_name} param=#{param_name} node=#{default_kind}#{default_extra}"
-              end
-              if default_node.is_a?(Adamas::Compiler::Frontend::NilNode)
-                # An omitted literal default supplies Nil. Concrete callsite
-                # types have already taken precedence above this fallback.
-                param_type = TypeRef::NIL
+            type_ann_str : String? = nil
+            raw_type_ann_str : String? = nil
+            param_type = if (ta = param.type_annotation) && (raw_type_ann_str = safe_slice_to_string(ta))
+                           type_ann_str = raw_type_ann_str
+                           if contextual_alias = resolve_contextual_type_alias_name(type_ann_str)
+                             type_ann_str = contextual_alias
+                           end
+                           annotation_type_ref(type_ann_str, module_name)
+                         elsif param.is_double_splat
+                           double_splat_layout_type_from_name(full_name_override) ||
+                             type_ref_for_name("NamedTuple")
+                         else
+                           TypeRef::VOID
+                         end
+            if param.is_block && param_type == TypeRef::VOID
+              if callback_abi = raw_callback_contract
+                param_type = callback_abi.proc_type
               else
-                if inferred_default = infer_type_from_expr(default_value, module_name)
-                  if debug_env_filter_match?("DEBUG_PARAM_DEFAULT", base_name, param_name)
-                    inferred_name = get_type_name_from_ref(inferred_default)
-                    STDERR.puts "[PARAM_DEFAULT] func=#{base_name} param=#{param_name} inferred=#{inferred_name}"
+                # `&@capture` receives the already materialized Proc object from an
+                # allocator wrapper. Treating it as a raw callback pointer causes
+                # auto-assignment to wrap the object address as a function pointer.
+                # Retained named blocks also keep their heap Proc identity.
+                param_type = untyped_block_parameter_type(node, is_ivar_param)
+              end
+            end
+            if type_ann_str && bare_generic_annotation?(type_ann_str)
+              # Keep the generic base type for dispatch; allow callsite refinement.
+              param_type = type_ref_for_name(strip_generic_args(type_ann_str))
+            end
+            call_type_for_param = if !param.is_block && !param.is_splat && !param.is_double_splat && call_index < call_types.size
+                                    type_ref_array_fetch_or_void(call_types, call_index)
+                                  else
+                                    TypeRef::VOID
+                                  end
+            if param.is_splat && call_index < call_types.size
+              # Calls carry an already-packed Tuple in the splat ABI slot.
+              # Consume that slot before binding trailing named/default params;
+              # otherwise the first parameter after `*args` inherits the tuple.
+              packed_splat_type = type_ref_array_fetch_or_void(call_types, call_index)
+              if is_tuple_type_ref?(packed_splat_type)
+                param_type = packed_splat_type
+                call_type_for_param = packed_splat_type
+                packed_splat_param_type = packed_splat_type
+              end
+            end
+            if param_type == TypeRef::VOID && method_name == "hash" && param_name == "hasher"
+              inferred = type_ref_for_name("Crystal::Hasher")
+              param_type = inferred if inferred != TypeRef::VOID
+            end
+            if param_type == TypeRef::VOID && !param.is_block && !param.is_splat && !param.is_double_splat
+              if call_index < call_types.size
+                inferred = call_types[call_index]
+                param_type = inferred if inferred != TypeRef::VOID
+              end
+            end
+            preserve_shared_arity_union =
+              preserve_annotated_union_param_for_shared_arity?(
+                full_name_override,
+                raw_type_ann_str || type_ann_str,
+                param_type,
+              )
+            if !preserve_shared_arity_union &&
+               !param.is_block && !param.is_splat && !param.is_double_splat &&
+               call_index < call_types.size
+              param_type = refine_param_type_from_call(param_type, call_types[call_index])
+            end
+            if !preserve_shared_arity_union &&
+               type_ann_str && module_like_type_name?(type_ann_str)
+              if call_index < call_types.size
+                inferred = call_types[call_index]
+                param_type = inferred if inferred != TypeRef::VOID
+              end
+            end
+            if param_type == TypeRef::VOID && !param.is_block && !param.is_splat && !param.is_double_splat
+              if default_value = param.default_value
+                default_node = @arena[default_value]
+                if debug_env_filter_match?("DEBUG_PARAM_DEFAULT", base_name, param_name)
+                  default_kind = default_node.class.name.split("::").last
+                  default_extra = default_node.is_a?(Adamas::Compiler::Frontend::NumberNode) ? " kind=#{default_node.kind}" : ""
+                  STDERR.puts "[PARAM_DEFAULT] func=#{base_name} param=#{param_name} node=#{default_kind}#{default_extra}"
+                end
+                if default_node.is_a?(Adamas::Compiler::Frontend::NilNode)
+                  # An omitted literal default supplies Nil. Concrete callsite
+                  # types have already taken precedence above this fallback.
+                  param_type = TypeRef::NIL
+                else
+                  if inferred_default = infer_type_from_expr(default_value, module_name)
+                    if debug_env_filter_match?("DEBUG_PARAM_DEFAULT", base_name, param_name)
+                      inferred_name = get_type_name_from_ref(inferred_default)
+                      STDERR.puts "[PARAM_DEFAULT] func=#{base_name} param=#{param_name} inferred=#{inferred_name}"
+                    end
+                    param_type = inferred_default if inferred_default != TypeRef::VOID
                   end
-                  param_type = inferred_default if inferred_default != TypeRef::VOID
                 end
               end
             end
-          end
-          if param_type == TypeRef::VOID && !param.is_block && !param.is_splat && !param.is_double_splat
-            if default_value = param.default_value
-              inferred = infer_type_from_expr(default_value, module_name)
-              param_type = inferred if inferred && inferred != TypeRef::VOID
-            end
-          end
-          if param_name.ends_with?("_class") && call_type_for_param != TypeRef::VOID
-            param_type = call_type_for_param
-          end
-          exact_runtime_param_type = if preserve_shared_arity_union
-                                       param_type
-                                     elsif use_specialized_runtime_param_types &&
-                                        !param.is_block && !param.is_splat && !param.is_double_splat &&
-                                        (should_use_exact_call_type_for_local_inference?(param_type, call_type_for_param) ||
-                                        should_use_exact_call_type_for_annotation?(raw_type_ann_str || type_ann_str, call_type_for_param))
-                                       call_type_for_param
-                                     else
-                                       param_type
-                                     end
-          if param.is_block
-            if dependent_type = dependent_self_callback_param_type(
-              raw_callback_contract, node, lookup_name, type_ann_str,
-            )
-              exact_runtime_param_type = dependent_type
-            end
-          end
-          local_inference_type = exact_runtime_param_type
-          param_type_map[param_name] = local_inference_type
-          # A captured `&@ivar` is a materialized Proc ABI value, not a raw
-          # callback parameter. Keep block-call overload identity separately
-          # via `has_block`, but do not tag this HIR parameter as raw.
-          param_infos << {param_name, exact_runtime_param_type, param.is_block && !is_ivar_param}
-          param_default_literals << extract_param_default_literal(param)
-          enum_name = call_index < call_enum_names.size ? call_enum_names[call_index] : nil
-          param_type_names << (type_ann_str || enum_name)
-          if ta = param.type_annotation
-            concrete_name = get_type_name_from_ref(local_inference_type)
-            if concrete_name.empty? || concrete_name == "Void" || concrete_name == "Unknown"
-              update_typeof_local_name(param_name, (safe_slice_to_string(ta) || ""))
-            else
-              update_typeof_local_name(param_name, concrete_name)
-            end
-          end
-          param_literal = !param.is_block && !param.is_splat && !param.is_double_splat &&
-                          call_index < call_literal_flags.size && call_literal_flags[call_index]
-          if param_name.ends_with?("_class")
-            chosen_type = call_type_for_param == TypeRef::VOID ? param_type : call_type_for_param
-            type_name = get_type_name_from_ref(chosen_type)
-            if !type_name.empty? && type_name != "Void" && type_name != "Unknown"
-              param_literal = true
-            end
-          end
-          if param_literal
-            chosen_type = call_type_for_param == TypeRef::VOID ? param_type : call_type_for_param
-            type_name = get_type_name_from_ref(chosen_type)
-            if !type_name.empty? && type_name != "Void" && type_name != "Unknown"
-              update_typeof_local_name(param_name, type_name)
-              extra_type_params[param_name] = type_name
-              # Map forall type parameter name (e.g. T) to concrete type when the
-              # parameter annotation is a bare type variable (e.g. `default : T`).
-              if type_ann_str && unresolved_type_param_annotation?(type_ann_str) && !extra_type_params.has_key?(type_ann_str)
-                extra_type_params[type_ann_str] = type_name
+            if param_type == TypeRef::VOID && !param.is_block && !param.is_splat && !param.is_double_splat
+              if default_value = param.default_value
+                inferred = infer_type_from_expr(default_value, module_name)
+                param_type = inferred if inferred && inferred != TypeRef::VOID
               end
             end
-          end
-          # Also map forall type params from non-literal call-site arguments
-          # (e.g. passing a variable of known type to a `forall T` parameter).
-          if !param_literal && type_ann_str && unresolved_type_param_annotation?(type_ann_str) && !extra_type_params.has_key?(type_ann_str)
-            if call_type_for_param != TypeRef::VOID
-              ct_name = get_type_name_from_ref(call_type_for_param)
-              if !ct_name.empty? && ct_name != "Void" && ct_name != "Unknown"
-                extra_type_params[type_ann_str] = ct_name
+            if param_name.ends_with?("_class") && call_type_for_param != TypeRef::VOID
+              param_type = call_type_for_param
+            end
+            exact_runtime_param_type = if preserve_shared_arity_union
+                                         param_type
+                                       elsif use_specialized_runtime_param_types &&
+                                          !param.is_block && !param.is_splat && !param.is_double_splat &&
+                                          (should_use_exact_call_type_for_local_inference?(param_type, call_type_for_param) ||
+                                          should_use_exact_call_type_for_annotation?(raw_type_ann_str || type_ann_str, call_type_for_param))
+                                         call_type_for_param
+                                       else
+                                         param_type
+                                       end
+            if param.is_block
+              if dependent_type = dependent_self_callback_param_type(
+                raw_callback_contract, node, lookup_name, type_ann_str,
+              )
+                exact_runtime_param_type = dependent_type
               end
             end
-          end
-          if !param_literal && type_ann_str && call_type_for_param != TypeRef::VOID
-            merge_type_param_substitutions_from_callsite(extra_type_params, type_ann_str, call_type_for_param, forall_type_param_names(node))
-          end
-          if !param_literal && type_ann_str && call_type_for_param != TypeRef::VOID
-            # Map pointer-shaped generic annotations (e.g. `T*`) from concrete call-site
-            # types (e.g. `Pointer(Void)`), so return annotations/casts can resolve.
-            if type_ann_str.ends_with?('*')
-              elem_param = type_ann_str[0, type_ann_str.bytesize - 1].strip
-              if unresolved_type_param_annotation?(elem_param) && !extra_type_params.has_key?(elem_param)
+            local_inference_type = exact_runtime_param_type
+            param_type_map[param_name] = local_inference_type
+            # A captured `&@ivar` is a materialized Proc ABI value, not a raw
+            # callback parameter. Keep block-call overload identity separately
+            # via `has_block`, but do not tag this HIR parameter as raw.
+            param_infos << {param_name, exact_runtime_param_type, param.is_block && !is_ivar_param}
+            param_default_literals << extract_param_default_literal(param)
+            enum_name = call_index < call_enum_names.size ? call_enum_names[call_index] : nil
+            param_type_names << (type_ann_str || enum_name)
+            if ta = param.type_annotation
+              concrete_name = get_type_name_from_ref(local_inference_type)
+              if concrete_name.empty? || concrete_name == "Void" || concrete_name == "Unknown"
+                update_typeof_local_name(param_name, (safe_slice_to_string(ta) || ""))
+              else
+                update_typeof_local_name(param_name, concrete_name)
+              end
+            end
+            param_literal = !param.is_block && !param.is_splat && !param.is_double_splat &&
+                            call_index < call_literal_flags.size && call_literal_flags[call_index]
+            if param_name.ends_with?("_class")
+              chosen_type = call_type_for_param == TypeRef::VOID ? param_type : call_type_for_param
+              type_name = get_type_name_from_ref(chosen_type)
+              if !type_name.empty? && type_name != "Void" && type_name != "Unknown"
+                param_literal = true
+              end
+            end
+            if param_literal
+              chosen_type = call_type_for_param == TypeRef::VOID ? param_type : call_type_for_param
+              type_name = get_type_name_from_ref(chosen_type)
+              if !type_name.empty? && type_name != "Void" && type_name != "Unknown"
+                update_typeof_local_name(param_name, type_name)
+                extra_type_params[param_name] = type_name
+                # Map forall type parameter name (e.g. T) to concrete type when the
+                # parameter annotation is a bare type variable (e.g. `default : T`).
+                if type_ann_str && unresolved_type_param_annotation?(type_ann_str) && !extra_type_params.has_key?(type_ann_str)
+                  extra_type_params[type_ann_str] = type_name
+                end
+              end
+            end
+            # Also map forall type params from non-literal call-site arguments
+            # (e.g. passing a variable of known type to a `forall T` parameter).
+            if !param_literal && type_ann_str && unresolved_type_param_annotation?(type_ann_str) && !extra_type_params.has_key?(type_ann_str)
+              if call_type_for_param != TypeRef::VOID
                 ct_name = get_type_name_from_ref(call_type_for_param)
-                if info = split_generic_base_and_args(ct_name)
-                  if info.base == "Pointer"
-                    pointed = info.args.strip
-                    if !pointed.empty? && pointed != "Void" && pointed != "Unknown"
-                      extra_type_params[elem_param] = pointed
-                    elsif pointed == "Void"
-                      extra_type_params[elem_param] = "Void"
+                if !ct_name.empty? && ct_name != "Void" && ct_name != "Unknown"
+                  extra_type_params[type_ann_str] = ct_name
+                end
+              end
+            end
+            if !param_literal && type_ann_str && call_type_for_param != TypeRef::VOID
+              merge_type_param_substitutions_from_callsite(extra_type_params, type_ann_str, call_type_for_param, forall_type_param_names(node))
+            end
+            if !param_literal && type_ann_str && call_type_for_param != TypeRef::VOID
+              # Map pointer-shaped generic annotations (e.g. `T*`) from concrete call-site
+              # types (e.g. `Pointer(Void)`), so return annotations/casts can resolve.
+              if type_ann_str.ends_with?('*')
+                elem_param = type_ann_str[0, type_ann_str.bytesize - 1].strip
+                if unresolved_type_param_annotation?(elem_param) && !extra_type_params.has_key?(elem_param)
+                  ct_name = get_type_name_from_ref(call_type_for_param)
+                  if info = split_generic_base_and_args(ct_name)
+                    if info.base == "Pointer"
+                      pointed = info.args.strip
+                      if !pointed.empty? && pointed != "Void" && pointed != "Unknown"
+                        extra_type_params[elem_param] = pointed
+                      elsif pointed == "Void"
+                        extra_type_params[elem_param] = "Void"
+                      end
                     end
                   end
                 end
               end
             end
-          end
-          if param.is_block
-            has_block = true
-          else
-            if param.is_splat
-              splat_param_info_index = param_infos.size - 1
-              splat_param_types_index = param_types.size
-              splat_param_name = param_name
-              call_index += 1 if call_type_for_param != TypeRef::VOID && is_tuple_type_ref?(call_type_for_param)
-            elsif !param.is_double_splat
-              call_index += 1
+            if param.is_block
+              has_block = true
+            else
+              if param.is_splat
+                splat_param_info_index = param_infos.size - 1
+                splat_param_types_index = param_types.size
+                splat_param_name = param_name
+                call_index += 1 if call_type_for_param != TypeRef::VOID && is_tuple_type_ref?(call_type_for_param)
+              elsif !param.is_double_splat
+                call_index += 1
+              end
+              param_types << exact_runtime_param_type
             end
-            param_types << exact_runtime_param_type
-          end
-          param_literal_flags << param_literal
-          if debug_hook_filter_match?(base_name)
-            debug_hook(
-              "param.literal",
-              "name=#{base_name} param=#{param_name} literal=#{param_literal}"
-            )
+            param_literal_flags << param_literal
+            if debug_hook_filter_match?(base_name)
+              debug_hook(
+                "param.literal",
+                "name=#{base_name} param=#{param_name} literal=#{param_literal}"
+              )
+            end
           end
         end
       end
@@ -44896,259 +44900,263 @@ module Adamas::HIR
                                  [] of DefParamInfo
                                end
 
+      # Bind `forall` variables before resolving parameter annotations; see
+      # the same step in `lower_def`.
       if params = node.params
-        registered_param_index = 0
-        each_param(params) do |param|
-          registered_param_info = if registered_param_index < registered_param_infos.size
-                                    registered_param_infos.unsafe_fetch(registered_param_index)
-                                  end
-          registered_param_index += 1
-          next if named_only_separator?(param)
-          param_name = if nm = param.name
-                         safe_slice_to_string(nm) ||
-                           registered_param_info.try(&.name) ||
-                           "_"
-                       else
-                         registered_param_info.try(&.name) || "_"
-                       end
-          is_ivar_param = param.is_instance_var || param_name.starts_with?('@')
-          if is_ivar_param
-            param_name = param_name.lstrip('@')
-          end
-          type_ann_str : String? = nil
-          raw_type_ann_str : String? = nil
-          param_type = TypeRef::VOID
-          if ta = param.type_annotation
-            if type_ann_value = safe_slice_to_string(ta)
-              raw_type_ann_str = type_ann_value
-              if contextual_alias = resolve_contextual_type_alias_name(type_ann_value)
-                type_ann_value = contextual_alias
+        with_type_param_map(method_forall_call_bindings(node, call_types)) do
+          registered_param_index = 0
+          each_param(params) do |param|
+            registered_param_info = if registered_param_index < registered_param_infos.size
+                                      registered_param_infos.unsafe_fetch(registered_param_index)
+                                    end
+            registered_param_index += 1
+            next if named_only_separator?(param)
+            param_name = if nm = param.name
+                           safe_slice_to_string(nm) ||
+                             registered_param_info.try(&.name) ||
+                             "_"
+                         else
+                           registered_param_info.try(&.name) || "_"
+                         end
+            is_ivar_param = param.is_instance_var || param_name.starts_with?('@')
+            if is_ivar_param
+              param_name = param_name.lstrip('@')
+            end
+            type_ann_str : String? = nil
+            raw_type_ann_str : String? = nil
+            param_type = TypeRef::VOID
+            if ta = param.type_annotation
+              if type_ann_value = safe_slice_to_string(ta)
+                raw_type_ann_str = type_ann_value
+                if contextual_alias = resolve_contextual_type_alias_name(type_ann_value)
+                  type_ann_value = contextual_alias
+                end
+                type_ann_str = type_ann_value
+                param_type = annotation_type_ref(type_ann_value, signature_owner)
               end
-              type_ann_str = type_ann_value
-              param_type = annotation_type_ref(type_ann_value, signature_owner)
             end
-          end
-          if type_ann_str.nil?
-            if registered_type_annotation = registered_param_info.try(&.type_annotation)
-              raw_type_ann_str = registered_type_annotation
-              type_ann_value = registered_type_annotation
-              if contextual_alias = resolve_contextual_type_alias_name(type_ann_value)
-                type_ann_value = contextual_alias
+            if type_ann_str.nil?
+              if registered_type_annotation = registered_param_info.try(&.type_annotation)
+                raw_type_ann_str = registered_type_annotation
+                type_ann_value = registered_type_annotation
+                if contextual_alias = resolve_contextual_type_alias_name(type_ann_value)
+                  type_ann_value = contextual_alias
+                end
+                type_ann_str = type_ann_value
+                param_type = annotation_type_ref(type_ann_value, signature_owner)
               end
-              type_ann_str = type_ann_value
-              param_type = annotation_type_ref(type_ann_value, signature_owner)
             end
-          end
-          if type_ann_str.nil? && param.is_double_splat
-            param_type = double_splat_layout_type_from_name(effective_full_name_override) ||
-                         type_ref_for_name("NamedTuple")
-          end
-          if param.is_block && param_type == TypeRef::VOID
-            if callback_abi = raw_callback_contract
-              param_type = callback_abi.proc_type
-            else
-              # Allocator wrappers pass a materialized Proc to `&@capture`.
-              # Preserve that object (and its closure environment) instead of
-              # re-wrapping its address as a raw callback pointer.
-              param_type = untyped_block_parameter_type(node, is_ivar_param)
+            if type_ann_str.nil? && param.is_double_splat
+              param_type = double_splat_layout_type_from_name(effective_full_name_override) ||
+                           type_ref_for_name("NamedTuple")
             end
-          end
-          if type_ann_value = type_ann_str
-            if bare_generic_annotation?(type_ann_value)
-              # Keep the generic base type for dispatch; allow callsite refinement.
-              param_type = type_ref_for_name(strip_generic_args(type_ann_value))
-            end
-          end
-          call_type_for_param = if !param.is_block && !param.is_splat && !param.is_double_splat && call_index < call_types.size
-                                  call_types[call_index]
-                                else
-                                  TypeRef::VOID
-                                end
-          if param.is_splat && call_index < call_types.size
-            # Calls carry an already-packed Tuple in the splat ABI slot.
-            # Consume that slot before binding trailing named/default params;
-            # otherwise the first parameter after `*args` inherits the tuple.
-            packed_splat_type = type_ref_array_fetch_or_void(call_types, call_index)
-            if is_tuple_type_ref?(packed_splat_type)
-              param_type = packed_splat_type
-              call_type_for_param = packed_splat_type
-              packed_splat_param_type = packed_splat_type
-            end
-          end
-          if param_type == TypeRef::VOID && method_name == "hash" && param_name == "hasher"
-            # Keep these bindings purpose-specific. Reusing `inferred` across
-            # blocks widens produced-stage closure cells to unrelated types.
-            hasher_param_type = type_ref_for_name("Crystal::Hasher")
-            param_type = hasher_param_type if hasher_param_type != TypeRef::VOID
-          end
-          if param_type == TypeRef::VOID && !param.is_block && !param.is_splat && !param.is_double_splat
-            if call_index < call_types.size
-              callsite_param_type = type_ref_array_fetch_or_void(call_types, call_index)
-              param_type = callsite_param_type if callsite_param_type != TypeRef::VOID
-            end
-          end
-          preserve_shared_arity_union =
-            preserve_annotated_union_param_for_shared_arity?(
-              effective_full_name_override,
-              raw_type_ann_str || type_ann_str,
-              param_type,
-            )
-          if !preserve_shared_arity_union &&
-             !param.is_block && !param.is_splat && !param.is_double_splat &&
-             call_index < call_types.size
-            old_param_type = param_type
-            call_type_at_index = type_ref_array_fetch_or_void(call_types, call_index)
-            param_type = refine_param_type_from_call(param_type, call_type_at_index)
-            if env_has?("DEBUG_RANGE_REFINE") && method_name == "[]"
-              old_desc = @module.get_type_descriptor(old_param_type)
-              new_desc = @module.get_type_descriptor(param_type)
-              call_desc = @module.get_type_descriptor(call_type_at_index)
-              STDERR.puts "[RANGE_REFINE] class=#{class_name} param=#{param_name} old=#{old_desc.try(&.name) || "T#{old_param_type.id}"} call=#{call_desc.try(&.name) || "T#{call_type_at_index.id}"} new=#{new_desc.try(&.name) || "T#{param_type.id}"}"
-            end
-          end
-          if env_get("DEBUG_HASH_PARAMS") && method_name == "hash" && param_name == "hasher"
-            hasher_ref = type_ref_for_name("Crystal::Hasher")
-            STDERR.puts "[HASH_PARAM] class=#{class_name} param_type=#{get_type_name_from_ref(param_type)} hasher=#{get_type_name_from_ref(hasher_ref)}"
-          end
-          if param_type == TypeRef::VOID && !param.is_block && !param.is_splat && !param.is_double_splat
-            if default_value = param.default_value
-              default_node = @arena[default_value]
-              if debug_env_filter_match?("DEBUG_PARAM_DEFAULT", base_name, param_name)
-                default_kind = default_node.class.name.split("::").last
-                default_extra = default_node.is_a?(Adamas::Compiler::Frontend::NumberNode) ? " kind=#{default_node.kind}" : ""
-                STDERR.puts "[PARAM_DEFAULT] func=#{base_name} param=#{param_name} node=#{default_kind}#{default_extra}"
-              end
-              if default_node.is_a?(Adamas::Compiler::Frontend::NilNode)
-                # An omitted literal default supplies Nil. Concrete callsite
-                # types have already taken precedence above this fallback.
-                param_type = TypeRef::NIL
+            if param.is_block && param_type == TypeRef::VOID
+              if callback_abi = raw_callback_contract
+                param_type = callback_abi.proc_type
               else
-                if inferred_default = infer_type_from_expr(default_value, class_name)
-                  if debug_env_filter_match?("DEBUG_PARAM_DEFAULT", base_name, param_name)
-                    inferred_name = get_type_name_from_ref(inferred_default)
-                    STDERR.puts "[PARAM_DEFAULT] func=#{base_name} param=#{param_name} inferred=#{inferred_name}"
+                # Allocator wrappers pass a materialized Proc to `&@capture`.
+                # Preserve that object (and its closure environment) instead of
+                # re-wrapping its address as a raw callback pointer.
+                param_type = untyped_block_parameter_type(node, is_ivar_param)
+              end
+            end
+            if type_ann_value = type_ann_str
+              if bare_generic_annotation?(type_ann_value)
+                # Keep the generic base type for dispatch; allow callsite refinement.
+                param_type = type_ref_for_name(strip_generic_args(type_ann_value))
+              end
+            end
+            call_type_for_param = if !param.is_block && !param.is_splat && !param.is_double_splat && call_index < call_types.size
+                                    call_types[call_index]
+                                  else
+                                    TypeRef::VOID
+                                  end
+            if param.is_splat && call_index < call_types.size
+              # Calls carry an already-packed Tuple in the splat ABI slot.
+              # Consume that slot before binding trailing named/default params;
+              # otherwise the first parameter after `*args` inherits the tuple.
+              packed_splat_type = type_ref_array_fetch_or_void(call_types, call_index)
+              if is_tuple_type_ref?(packed_splat_type)
+                param_type = packed_splat_type
+                call_type_for_param = packed_splat_type
+                packed_splat_param_type = packed_splat_type
+              end
+            end
+            if param_type == TypeRef::VOID && method_name == "hash" && param_name == "hasher"
+              # Keep these bindings purpose-specific. Reusing `inferred` across
+              # blocks widens produced-stage closure cells to unrelated types.
+              hasher_param_type = type_ref_for_name("Crystal::Hasher")
+              param_type = hasher_param_type if hasher_param_type != TypeRef::VOID
+            end
+            if param_type == TypeRef::VOID && !param.is_block && !param.is_splat && !param.is_double_splat
+              if call_index < call_types.size
+                callsite_param_type = type_ref_array_fetch_or_void(call_types, call_index)
+                param_type = callsite_param_type if callsite_param_type != TypeRef::VOID
+              end
+            end
+            preserve_shared_arity_union =
+              preserve_annotated_union_param_for_shared_arity?(
+                effective_full_name_override,
+                raw_type_ann_str || type_ann_str,
+                param_type,
+              )
+            if !preserve_shared_arity_union &&
+               !param.is_block && !param.is_splat && !param.is_double_splat &&
+               call_index < call_types.size
+              old_param_type = param_type
+              call_type_at_index = type_ref_array_fetch_or_void(call_types, call_index)
+              param_type = refine_param_type_from_call(param_type, call_type_at_index)
+              if env_has?("DEBUG_RANGE_REFINE") && method_name == "[]"
+                old_desc = @module.get_type_descriptor(old_param_type)
+                new_desc = @module.get_type_descriptor(param_type)
+                call_desc = @module.get_type_descriptor(call_type_at_index)
+                STDERR.puts "[RANGE_REFINE] class=#{class_name} param=#{param_name} old=#{old_desc.try(&.name) || "T#{old_param_type.id}"} call=#{call_desc.try(&.name) || "T#{call_type_at_index.id}"} new=#{new_desc.try(&.name) || "T#{param_type.id}"}"
+              end
+            end
+            if env_get("DEBUG_HASH_PARAMS") && method_name == "hash" && param_name == "hasher"
+              hasher_ref = type_ref_for_name("Crystal::Hasher")
+              STDERR.puts "[HASH_PARAM] class=#{class_name} param_type=#{get_type_name_from_ref(param_type)} hasher=#{get_type_name_from_ref(hasher_ref)}"
+            end
+            if param_type == TypeRef::VOID && !param.is_block && !param.is_splat && !param.is_double_splat
+              if default_value = param.default_value
+                default_node = @arena[default_value]
+                if debug_env_filter_match?("DEBUG_PARAM_DEFAULT", base_name, param_name)
+                  default_kind = default_node.class.name.split("::").last
+                  default_extra = default_node.is_a?(Adamas::Compiler::Frontend::NumberNode) ? " kind=#{default_node.kind}" : ""
+                  STDERR.puts "[PARAM_DEFAULT] func=#{base_name} param=#{param_name} node=#{default_kind}#{default_extra}"
+                end
+                if default_node.is_a?(Adamas::Compiler::Frontend::NilNode)
+                  # An omitted literal default supplies Nil. Concrete callsite
+                  # types have already taken precedence above this fallback.
+                  param_type = TypeRef::NIL
+                else
+                  if inferred_default = infer_type_from_expr(default_value, class_name)
+                    if debug_env_filter_match?("DEBUG_PARAM_DEFAULT", base_name, param_name)
+                      inferred_name = get_type_name_from_ref(inferred_default)
+                      STDERR.puts "[PARAM_DEFAULT] func=#{base_name} param=#{param_name} inferred=#{inferred_name}"
+                    end
+                    param_type = inferred_default if inferred_default != TypeRef::VOID
                   end
-                  param_type = inferred_default if inferred_default != TypeRef::VOID
                 end
               end
             end
-          end
-          if env_get("DEBUG_PARAM_TYPES") && class_name == "IO::Error" && method_name == "initialize" && param_name == "target"
-            default_kind = param.default_value ? @arena[param.default_value.not_nil!].class.name.split("::").last : "none"
-            STDERR.puts "[PARAM_TYPE] class=#{class_name} param=#{param_name} type=#{get_type_name_from_ref(param_type)} default=#{default_kind}"
-          end
-          if module_type_ref?(param_type) && (default_value = param.default_value)
-            call_type = call_index < call_types.size ? type_ref_array_fetch_or_void(call_types, call_index) : TypeRef::VOID
-            if call_type == TypeRef::VOID || call_type == param_type
-              if inferred_default = infer_type_from_expr(default_value, class_name)
-                if module_type_ref?(inferred_default) && inferred_default != TypeRef::VOID
-                  param_type = inferred_default
+            if env_get("DEBUG_PARAM_TYPES") && class_name == "IO::Error" && method_name == "initialize" && param_name == "target"
+              default_kind = param.default_value ? @arena[param.default_value.not_nil!].class.name.split("::").last : "none"
+              STDERR.puts "[PARAM_TYPE] class=#{class_name} param=#{param_name} type=#{get_type_name_from_ref(param_type)} default=#{default_kind}"
+            end
+            if module_type_ref?(param_type) && (default_value = param.default_value)
+              call_type = call_index < call_types.size ? type_ref_array_fetch_or_void(call_types, call_index) : TypeRef::VOID
+              if call_type == TypeRef::VOID || call_type == param_type
+                if inferred_default = infer_type_from_expr(default_value, class_name)
+                  if module_type_ref?(inferred_default) && inferred_default != TypeRef::VOID
+                    param_type = inferred_default
+                  end
                 end
               end
             end
-          end
-          if param_name.ends_with?("_class") && call_type_for_param != TypeRef::VOID
-            param_type = call_type_for_param
-          end
-          param_literal = !param.is_block && !param.is_splat && !param.is_double_splat &&
-                          call_index < call_literal_flags.size && call_literal_flags[call_index]
-          if param_name.ends_with?("_class")
-            chosen_type = call_type_for_param == TypeRef::VOID ? param_type : call_type_for_param
-            type_name = get_type_name_from_ref(chosen_type)
-            if !type_name.empty? && type_name != "Void" && type_name != "Unknown"
-              param_literal = true
+            if param_name.ends_with?("_class") && call_type_for_param != TypeRef::VOID
+              param_type = call_type_for_param
             end
-          end
-          if param_literal
-            chosen_type = call_type_for_param == TypeRef::VOID ? param_type : call_type_for_param
-            type_name = get_type_name_from_ref(chosen_type)
-            if !type_name.empty? && type_name != "Void" && type_name != "Unknown"
-              update_typeof_local_name(param_name, type_name)
-              extra_type_params[param_name] = type_name
-              # Map forall type parameter name (e.g. T) to concrete type when the
-              # parameter annotation is a bare type variable (e.g. `default : T`).
+            param_literal = !param.is_block && !param.is_splat && !param.is_double_splat &&
+                            call_index < call_literal_flags.size && call_literal_flags[call_index]
+            if param_name.ends_with?("_class")
+              chosen_type = call_type_for_param == TypeRef::VOID ? param_type : call_type_for_param
+              type_name = get_type_name_from_ref(chosen_type)
+              if !type_name.empty? && type_name != "Void" && type_name != "Unknown"
+                param_literal = true
+              end
+            end
+            if param_literal
+              chosen_type = call_type_for_param == TypeRef::VOID ? param_type : call_type_for_param
+              type_name = get_type_name_from_ref(chosen_type)
+              if !type_name.empty? && type_name != "Void" && type_name != "Unknown"
+                update_typeof_local_name(param_name, type_name)
+                extra_type_params[param_name] = type_name
+                # Map forall type parameter name (e.g. T) to concrete type when the
+                # parameter annotation is a bare type variable (e.g. `default : T`).
+                if type_ann_value = type_ann_str
+                  if unresolved_type_param_annotation?(type_ann_value) && !extra_type_params.has_key?(type_ann_value)
+                    extra_type_params[type_ann_value] = type_name
+                  end
+                end
+              end
+            end
+            # Also map forall type params from non-literal call-site arguments.
+            if !param_literal
               if type_ann_value = type_ann_str
                 if unresolved_type_param_annotation?(type_ann_value) && !extra_type_params.has_key?(type_ann_value)
-                  extra_type_params[type_ann_value] = type_name
-                end
-              end
-            end
-          end
-          # Also map forall type params from non-literal call-site arguments.
-          if !param_literal
-            if type_ann_value = type_ann_str
-              if unresolved_type_param_annotation?(type_ann_value) && !extra_type_params.has_key?(type_ann_value)
-                if call_type_for_param != TypeRef::VOID
-                  ct_name = get_type_name_from_ref(call_type_for_param)
-                  if !ct_name.empty? && ct_name != "Void" && ct_name != "Unknown"
-                    extra_type_params[type_ann_value] = ct_name
+                  if call_type_for_param != TypeRef::VOID
+                    ct_name = get_type_name_from_ref(call_type_for_param)
+                    if !ct_name.empty? && ct_name != "Void" && ct_name != "Unknown"
+                      extra_type_params[type_ann_value] = ct_name
+                    end
                   end
                 end
               end
             end
-          end
-          if !param_literal && call_type_for_param != TypeRef::VOID
-            if type_ann_value = type_ann_str
-              merge_type_param_substitutions_from_callsite(extra_type_params, type_ann_value, call_type_for_param, forall_type_param_names(node))
+            if !param_literal && call_type_for_param != TypeRef::VOID
+              if type_ann_value = type_ann_str
+                merge_type_param_substitutions_from_callsite(extra_type_params, type_ann_value, call_type_for_param, forall_type_param_names(node))
+              end
             end
-          end
-          exact_runtime_param_type = if preserve_shared_arity_union
-                                       param_type
-                                     elsif use_specialized_runtime_param_types &&
-                                        !param.is_block && !param.is_splat && !param.is_double_splat &&
-                                        (should_use_exact_call_type_for_local_inference?(param_type, call_type_for_param) ||
-                                        should_use_exact_call_type_for_annotation?(raw_type_ann_str || type_ann_str, call_type_for_param) ||
-                                        (@string_builder_formatting_corridor_depth > 0 &&
-                                        string_builder_formatting_shape?(method_name, raw_type_ann_str || type_ann_str, call_type_for_param)))
-                                       call_type_for_param
-                                     else
-                                       param_type
-                                     end
-          if param.is_block
-            if dependent_type = dependent_self_callback_param_type(
-              raw_callback_contract, node, effective_full_name_override || logical_registered_name, type_ann_str,
-            )
-              exact_runtime_param_type = dependent_type
+            exact_runtime_param_type = if preserve_shared_arity_union
+                                         param_type
+                                       elsif use_specialized_runtime_param_types &&
+                                          !param.is_block && !param.is_splat && !param.is_double_splat &&
+                                          (should_use_exact_call_type_for_local_inference?(param_type, call_type_for_param) ||
+                                          should_use_exact_call_type_for_annotation?(raw_type_ann_str || type_ann_str, call_type_for_param) ||
+                                          (@string_builder_formatting_corridor_depth > 0 &&
+                                          string_builder_formatting_shape?(method_name, raw_type_ann_str || type_ann_str, call_type_for_param)))
+                                         call_type_for_param
+                                       else
+                                         param_type
+                                       end
+            if param.is_block
+              if dependent_type = dependent_self_callback_param_type(
+                raw_callback_contract, node, effective_full_name_override || logical_registered_name, type_ann_str,
+              )
+                exact_runtime_param_type = dependent_type
+              end
             end
-          end
-          local_inference_type = exact_runtime_param_type
-          param_type_map[param_name] = local_inference_type
-          param_info_names << param_name
-          param_info_types << exact_runtime_param_type
-          # `&@capture` is forwarded by allocator wrappers as a complete Proc
-          # object. Only ordinary `&block` parameters use the raw callback flag.
-          param_info_is_blocks << (param.is_block && !is_ivar_param)
-          param_info_instance_vars << is_ivar_param
-          param_default_literals << extract_param_default_literal(param)
-          enum_name = call_index < call_enum_names.size ? call_enum_names[call_index] : nil
-          param_type_names << (type_ann_str || enum_name)
-          if ta = param.type_annotation
-            concrete_name = get_type_name_from_ref(local_inference_type)
-            if concrete_name.empty? || concrete_name == "Void" || concrete_name == "Unknown"
-              update_typeof_local_name(param_name, (safe_slice_to_string(ta) || ""))
+            local_inference_type = exact_runtime_param_type
+            param_type_map[param_name] = local_inference_type
+            param_info_names << param_name
+            param_info_types << exact_runtime_param_type
+            # `&@capture` is forwarded by allocator wrappers as a complete Proc
+            # object. Only ordinary `&block` parameters use the raw callback flag.
+            param_info_is_blocks << (param.is_block && !is_ivar_param)
+            param_info_instance_vars << is_ivar_param
+            param_default_literals << extract_param_default_literal(param)
+            enum_name = call_index < call_enum_names.size ? call_enum_names[call_index] : nil
+            param_type_names << (type_ann_str || enum_name)
+            if ta = param.type_annotation
+              concrete_name = get_type_name_from_ref(local_inference_type)
+              if concrete_name.empty? || concrete_name == "Void" || concrete_name == "Unknown"
+                update_typeof_local_name(param_name, (safe_slice_to_string(ta) || ""))
+              else
+                update_typeof_local_name(param_name, concrete_name)
+              end
+            end
+            if param.is_block
+              has_block = true
             else
-              update_typeof_local_name(param_name, concrete_name)
+              if param.is_splat
+                splat_param_info_index = param_info_names.size - 1
+                splat_param_types_index = param_types.size
+                splat_param_name = param_name
+                call_index += 1 if call_type_for_param != TypeRef::VOID && is_tuple_type_ref?(call_type_for_param)
+              elsif !param.is_double_splat
+                call_index += 1
+              end
+              param_types << exact_runtime_param_type
             end
-          end
-          if param.is_block
-            has_block = true
-          else
-            if param.is_splat
-              splat_param_info_index = param_info_names.size - 1
-              splat_param_types_index = param_types.size
-              splat_param_name = param_name
-              call_index += 1 if call_type_for_param != TypeRef::VOID && is_tuple_type_ref?(call_type_for_param)
-            elsif !param.is_double_splat
-              call_index += 1
+            param_literal_flags << param_literal
+            if debug_hook_filter_match?(base_name)
+              debug_hook(
+                "param.literal",
+                "name=#{base_name} param=#{param_name} literal=#{param_literal}"
+              )
             end
-            param_types << exact_runtime_param_type
-          end
-          param_literal_flags << param_literal
-          if debug_hook_filter_match?(base_name)
-            debug_hook(
-              "param.literal",
-              "name=#{base_name} param=#{param_name} literal=#{param_literal}"
-            )
           end
         end
       end
@@ -75524,8 +75532,15 @@ module Adamas::HIR
       registered_param_infos = function_param_infos(lookup_name, node)
       raw_callback_contract = raw_callback_abi_for(lookup_name)
 
+      # A method's `forall` variables are bound by this call's arguments before
+      # its parameter annotations are resolved. Otherwise `last : UC*` resolves
+      # to a `Pointer(UC)` already registered for another generic type whose
+      # own parameter is also named `UC` (`record FromCharsResultT(UC)`), and
+      # that phantom type wins over the call's `Pointer(UInt8)`.
+      param_annotation_map = registered_param_map.try(&.dup) || {} of String => String
+      param_annotation_map.merge!(method_forall_call_bindings(node, call_types))
       if params = node.params
-        with_type_param_map(registered_param_map || {} of String => String) do
+        with_type_param_map(param_annotation_map) do
           param_idx = 0
           param_buf = params.to_unsafe
           while param_idx < params.size
