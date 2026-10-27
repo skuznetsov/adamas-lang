@@ -40237,7 +40237,11 @@ module Adamas::HIR
       # Set up type parameter substitutions: T => Int32, etc.
       # Resolve type aliases so that e.g. `alias Handler = Proc(String, Nil)`
       # stores "Proc(String, Nil)" instead of "Handler" in the map.
-      old_map = @type_param_map.dup
+      # Bind into a copy: callers save and restore `@type_param_map` by
+      # reference, so writing into the current Hash would leave `T => Event`
+      # behind in every scope that shares it.
+      old_map = @type_param_map
+      @type_param_map = old_map.dup
       template.type_params.each_with_index do |param, i|
         @type_param_map[param] = resolve_type_alias_chain(type_args[i])
         @subst_cache_gen &+= 1
@@ -40407,8 +40411,10 @@ module Adamas::HIR
       # Mark as monomorphized to prevent infinite recursion
       @monomorphized.add(specialized_name)
 
-      # Set up type parameter substitutions
-      old_map = @type_param_map.dup
+      # Set up type parameter substitutions in a copy (see
+      # monomorphize_generic_class: the current Hash is shared by reference).
+      old_map = @type_param_map
+      @type_param_map = old_map.dup
       if type_params = template_def.type_params
         type_params.each_with_index do |param, i|
           pname = safe_slice_to_string(param) || ""
