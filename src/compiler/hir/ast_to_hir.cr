@@ -7498,7 +7498,10 @@ module Adamas::HIR
     @inline_loop_vars_stack : Array(Set(String)) = [] of Set(String)
     # Pre-revert values for inline loop vars: saved before inline_loop_vars reverts them,
     # so the enclosing while loop can use them for PHI backedge incoming values.
-    @inline_loop_var_backedge_values : Hash(String, ValueId) = {} of String => ValueId
+    # Each value is tagged with the 1-based @inline_loop_vars_stack depth of the
+    # loop whose back edge it feeds; once that loop is lowered the value no
+    # longer dominates anything that follows.
+    @inline_loop_var_backedge_values : Hash(String, {Int32, ValueId}) = {} of String => {Int32, ValueId}
     # collect_assigned_vars yield-block depth and, when set, the {name, depth}
     # origin of every name assigned inside an inlined yield block (depth >= 1,
     # depth d = @inline_yield_block_stack[-d]).
@@ -8225,7 +8228,7 @@ module Adamas::HIR
       @inline_callee_local_names_frame_stack = [] of Int32
       @inline_active_caller_locals_index_stack = [] of Int32
       @inline_loop_vars_stack = [] of Set(String)
-      @inline_loop_var_backedge_values = {} of String => ValueId
+      @inline_loop_var_backedge_values = {} of String => {Int32, ValueId}
       @inline_yield_block_stack = [] of Adamas::Compiler::Frontend::BlockNode
       @inline_yield_block_arena_stack = [] of Adamas::Compiler::Frontend::ArenaLike
       @inline_yield_block_param_types_stack = [] of Array(TypeRef)?
@@ -94288,7 +94291,7 @@ module Adamas::HIR
         @inline_loop_vars_stack << inline_vars
         pushed_inline = true
         # Clear backedge values before body — they'll be populated by inline_block_body
-        inline_vars.each { |name| @inline_loop_var_backedge_values.delete(name) }
+        reset_inline_loop_backedge_values(inline_vars)
       end
       begin
         lower_body(ctx, node.body)
@@ -94319,7 +94322,7 @@ module Adamas::HIR
           # inline_loop_vars revert restored the stack entry to the PHI value.
           # Use the saved pre-revert value from @inline_loop_var_backedge_values instead.
           if inline_vars.includes?(var_name)
-            if saved = @inline_loop_var_backedge_values[var_name]?
+            if saved = finished_loop_backedge_value(var_name)
               updated_val = saved
             end
           end
@@ -94398,7 +94401,7 @@ module Adamas::HIR
           # start_pos sibling). Also update the caller locals stack so the
           # value survives inline_yield_function's restoration.
           if inline_vars.includes?(var_name) && !vars_backedge_complete.includes?(var_name)
-            if saved = @inline_loop_var_backedge_values[var_name]?
+            if saved = finished_loop_backedge_value(var_name)
               ctx.register_local(var_name, saved)
               @inline_caller_locals_stack.reverse_each do |locals|
                 if locals.has_key?(var_name)
@@ -94744,7 +94747,7 @@ module Adamas::HIR
       if !inline_vars.empty?
         @inline_loop_vars_stack << inline_vars
         pushed_inline = true
-        inline_vars.each { |name| @inline_loop_var_backedge_values.delete(name) }
+        reset_inline_loop_backedge_values(inline_vars)
       end
       begin
         lower_body(ctx, node.body)
@@ -94765,7 +94768,7 @@ module Adamas::HIR
         if phi = phi_nodes[var_name]?
           updated_val = updated_loop_values[var_name]?
           if inline_vars.includes?(var_name)
-            if saved = @inline_loop_var_backedge_values[var_name]?
+            if saved = finished_loop_backedge_value(var_name)
               updated_val = saved
             end
           end
@@ -95272,6 +95275,17 @@ module Adamas::HIR
       nil
     end
 
+    # 1-based depth of the innermost loop on @inline_loop_vars_stack that
+    # carries `name`; its back edge receives the block's write.
+    private def innermost_inline_loop_depth(name : String) : Int32
+      depth = @inline_loop_vars_stack.size
+      while depth > 0
+        return depth if @inline_loop_vars_stack[depth - 1].includes?(name)
+        depth -= 1
+      end
+      0
+    end
+
     private def inline_loop_vars_union : Set(String)?
       return nil if @inline_loop_vars_stack.empty?
       union = Set(String).new
@@ -95281,17 +95295,46 @@ module Adamas::HIR
       union
     end
 
+    # `in_body` callers read inside the loops on @inline_loop_vars_stack
+    # (break/next); the others read right after popping their own loop.
     private def resolve_loop_updated_value(
       ctx : LoweringContext,
       var_name : String,
       inline_vars : Set(String),
+      in_body : Bool = false,
     ) : ValueId?
       if inline_vars.includes?(var_name)
-        if saved = @inline_loop_var_backedge_values[var_name]?
-          return saved
-        end
+        saved = in_body ? active_loop_backedge_value(var_name) : finished_loop_backedge_value(var_name)
+        return saved if saved
       end
       ctx.lookup_local(var_name)
+    end
+
+    # The saved back-edge value of `name` for a loop still being lowered.
+    # Values of nested loops that already finished are stale: their header
+    # phi, not the last body value, is what reaches the code after them.
+    private def active_loop_backedge_value(name : String) : ValueId?
+      if entry = @inline_loop_var_backedge_values[name]?
+        entry[1] if entry[0] <= @inline_loop_vars_stack.size
+      end
+    end
+
+    # The saved back-edge value of `name` for the loop just popped from
+    # @inline_loop_vars_stack.
+    private def finished_loop_backedge_value(name : String) : ValueId?
+      if entry = @inline_loop_var_backedge_values[name]?
+        entry[1] if entry[0] <= @inline_loop_vars_stack.size + 1
+      end
+    end
+
+    # Called right after pushing a loop's `inline_vars`: its own names start
+    # fresh, and values left by sibling or nested loops that finished at this
+    # depth or deeper must not be mistaken for this loop's.
+    private def reset_inline_loop_backedge_values(inline_vars : Set(String)) : Nil
+      depth = @inline_loop_vars_stack.size
+      @inline_loop_var_backedge_values.reject! do |name, entry|
+        entry[0] >= depth || inline_vars.includes?(name)
+      end
     end
 
     private def snapshot_loop_updated_values(
@@ -95355,7 +95398,7 @@ module Adamas::HIR
       snapshot = caller_locals.dup
       if loop_vars = inline_loop_vars_union
         loop_vars.each do |name|
-          if saved = @inline_loop_var_backedge_values[name]?
+          if saved = active_loop_backedge_value(name)
             snapshot[name] = saved
           end
         end
@@ -95705,7 +95748,7 @@ module Adamas::HIR
       if !inline_vars.empty?
         @inline_loop_vars_stack << inline_vars
         pushed_inline = true
-        inline_vars.each { |name| @inline_loop_var_backedge_values.delete(name) }
+        reset_inline_loop_backedge_values(inline_vars)
       end
       begin
         lower_body(ctx, node.body)
@@ -95763,7 +95806,7 @@ module Adamas::HIR
       if break_info.empty?
         phi_nodes.each do |var_name, phi|
           if inline_vars.includes?(var_name)
-            if saved = @inline_loop_var_backedge_values[var_name]?
+            if saved = finished_loop_backedge_value(var_name)
               ctx.register_local(var_name, saved)
               @inline_caller_locals_stack.reverse_each do |locals|
                 if locals.has_key?(var_name)
@@ -98013,7 +98056,7 @@ module Adamas::HIR
             break_locals = {} of String => ValueId
             phi_nodes.each_key do |var_name|
               val = if loop_vars = inline_loop_vars
-                      resolve_loop_updated_value(ctx, var_name, loop_vars)
+                      resolve_loop_updated_value(ctx, var_name, loop_vars, in_body: true)
                     else
                       ctx.lookup_local(var_name)
                     end
@@ -98117,7 +98160,7 @@ module Adamas::HIR
           current_block = ctx.current_block
           phi_nodes.each do |var_name, phi|
             updated_val = if loop_vars = inline_loop_vars
-                            resolve_loop_updated_value(ctx, var_name, loop_vars)
+                            resolve_loop_updated_value(ctx, var_name, loop_vars, in_body: true)
                           else
                             ctx.lookup_local(var_name)
                           end
@@ -120870,7 +120913,7 @@ module Adamas::HIR
         if !inline_vars.empty?
           @inline_loop_vars_stack << inline_vars
           pushed_inline = true
-          inline_vars.each { |name| @inline_loop_var_backedge_values.delete(name) }
+          reset_inline_loop_backedge_values(inline_vars)
         end
         @loop_exit_stack << exit_block
         @loop_cond_stack << incr_block
@@ -121046,7 +121089,7 @@ module Adamas::HIR
       if !inline_vars.empty?
         @inline_loop_vars_stack << inline_vars
         pushed_inline = true
-        inline_vars.each { |name| @inline_loop_var_backedge_values.delete(name) }
+        reset_inline_loop_backedge_values(inline_vars)
       end
       @loop_exit_stack << exit_block
       @loop_cond_stack << incr_block
@@ -121223,7 +121266,7 @@ module Adamas::HIR
       if !inline_vars.empty?
         @inline_loop_vars_stack << inline_vars
         pushed_inline = true
-        inline_vars.each { |name| @inline_loop_var_backedge_values.delete(name) }
+        reset_inline_loop_backedge_values(inline_vars)
       end
       @loop_exit_stack << exit_block
       @loop_cond_stack << incr_block
@@ -121436,7 +121479,7 @@ module Adamas::HIR
       if !inline_vars.empty?
         @inline_loop_vars_stack << inline_vars
         pushed_inline = true
-        inline_vars.each { |name| @inline_loop_var_backedge_values.delete(name) }
+        reset_inline_loop_backedge_values(inline_vars)
       end
       @loop_exit_stack << exit_block
       @loop_cond_stack << incr_block
@@ -121650,7 +121693,7 @@ module Adamas::HIR
       if !inline_vars.empty?
         @inline_loop_vars_stack << inline_vars
         pushed_inline = true
-        inline_vars.each { |name| @inline_loop_var_backedge_values.delete(name) }
+        reset_inline_loop_backedge_values(inline_vars)
       end
       # Push loop stacks so `next` in block body jumps to incr_block (advances index),
       # and `break` jumps to exit_block. Without this, `next` emits `unreachable`.
@@ -122112,7 +122155,7 @@ module Adamas::HIR
       if !inline_vars.empty?
         @inline_loop_vars_stack << inline_vars
         pushed_inline = true
-        inline_vars.each { |name| @inline_loop_var_backedge_values.delete(name) }
+        reset_inline_loop_backedge_values(inline_vars)
       end
       @loop_exit_stack << exit_block
       @loop_cond_stack << incr_block
@@ -122486,7 +122529,7 @@ module Adamas::HIR
       if !inline_vars.empty?
         @inline_loop_vars_stack << inline_vars
         pushed_inline = true
-        inline_vars.each { |name| @inline_loop_var_backedge_values.delete(name) }
+        reset_inline_loop_backedge_values(inline_vars)
       end
       @loop_exit_stack << exit_block
       @loop_cond_stack << incr_block
@@ -124684,7 +124727,7 @@ module Adamas::HIR
       if !inline_vars.empty?
         @inline_loop_vars_stack << inline_vars
         pushed_inline = true
-        inline_vars.each { |name| @inline_loop_var_backedge_values.delete(name) }
+        reset_inline_loop_backedge_values(inline_vars)
       end
       @loop_exit_stack << exit_block
       @loop_cond_stack << incr_block
@@ -127335,7 +127378,7 @@ module Adamas::HIR
                              # the revert restores the PHI value.
                              if updated = caller_locals_after[name]?
                                if updated != prev
-                                 @inline_loop_var_backedge_values[name] = updated
+                                 @inline_loop_var_backedge_values[name] = {innermost_inline_loop_depth(name), updated}
                                end
                              end
                              caller_locals_after[name] = prev
