@@ -105653,6 +105653,9 @@ module Adamas::HIR
                 ctx.emit(proc_call)
                 ctx.register_type(proc_call.id, proc_call_return)
                 ctx.mark_type_literal(proc_call.id) if proc_recv_desc.proc_type_literal_slot?(proc_recv_desc.type_params.size - 1)
+                # As in lower_call: a NoReturn proc ends the block, so an enclosing
+                # call does not resolve against the bottom value.
+                @control_flow_dead_blocks.add({ctx.function.id, ctx.current_block}) if noreturn_type?(proc_call_return)
                 return proc_call.id
               end
             end
@@ -129457,6 +129460,9 @@ module Adamas::HIR
             ctx.emit(proc_call)
             ctx.register_type(proc_call.id, proc_call_return)
             ctx.mark_type_literal(proc_call.id) if proc_recv_desc.proc_type_literal_slot?(proc_recv_desc.type_params.size - 1)
+            # As in lower_call: a NoReturn proc ends the block, so an enclosing
+            # call does not resolve against the bottom value.
+            @control_flow_dead_blocks.add({ctx.function.id, ctx.current_block}) if noreturn_type?(proc_call_return)
             return proc_call.id
           end
         end

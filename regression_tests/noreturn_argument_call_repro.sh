@@ -7,8 +7,9 @@
 # instead of calling Nil#not_nil!; a no-parens call to a NoReturn method did
 # not end its block, so the enclosing call still resolved its overload; and
 # the inferred-type pre-checks for `.new` and class-method calls rejected a
-# NoReturn argument before arguments were lowered. Each case exits with its
-# expected code under original Crystal.
+# NoReturn argument before arguments were lowered. A `Proc(..., NoReturn)`
+# call, with or without parentheses, did not end its block either. Each
+# case exits with its expected code under original Crystal.
 #
 # Usage: ADAMAS_BIN=path/to/adamas [CRYSTAL_BIN=path/to/original/crystal] $0
 set -euo pipefail
@@ -160,6 +161,46 @@ LibC.exit(run(nil))'
 
 add_case non_nil_not_nil_is_self 6 '
 LibC.exit(Eid.new(6).not_nil!.index)'
+
+# Proc#call is lowered on its own path; a NoReturn proc ends the block too.
+add_case proc_call_noreturn_argument_skipped 8 '
+def take_int(v : Int32) : Int32
+  v
+end
+def run(flag : Bool, cb : Proc(NoReturn)) : Int32
+  if flag
+    take_int(cb.call)
+  else
+    8
+  end
+end
+LibC.exit(run(false, -> { LibC.exit(77) }))'
+
+add_case proc_call_noreturn_argument_runs 77 '
+def take_int(v : Int32) : Int32
+  v
+end
+def run(flag : Bool, cb : Proc(NoReturn)) : Int32
+  if flag
+    take_int(cb.call)
+  else
+    8
+  end
+end
+LibC.exit(run(true, -> { LibC.exit(77) }))'
+
+add_case proc_call_with_args_noreturn_argument_runs 77 '
+def take_int(v : Int32) : Int32
+  v
+end
+def run(flag : Bool, cb : Proc(Int32, NoReturn)) : Int32
+  if flag
+    take_int(cb.call(77))
+  else
+    8
+  end
+end
+LibC.exit(run(true, ->(c : Int32) { LibC.exit(c) }))'
 
 exit_code_of() {
   grep -o '\[EXIT: [0-9]*\]' "$1" | head -1 | tr -dc '0-9'
