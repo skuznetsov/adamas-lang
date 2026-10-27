@@ -138,7 +138,8 @@ module Adamas::HIR
       value_id : ValueId,
       carrier : ScopedReceiverCarrier,
       block : BlockId? = nil,
-      survives_calls : Bool = false
+      survives_calls : Bool = false,
+      survives_pointer_stores : Bool = false
 
     # Function-scope predeclaration set for P1 boxed captures.
     #
@@ -440,8 +441,9 @@ module Adamas::HIR
     # read in the raw block thunk that owns the cell. Only that thunk's body
     # and the closures nested in it write the cell, and the cell is marked
     # call-stable only when no nested closure assigns the capture, so no call
-    # made by the thunk can change it. Only a store to that very cell (or a
-    # store through a pointer) invalidates such a proof.
+    # made by the thunk can change it. Only a store to that very cell
+    # invalidates such a proof, or a store through a pointer when the code
+    # sharing the cell takes the capture's address.
     private def invalidate_scoped_receiver_narrowing_after(value : Value) : Nil
       if value.is_a?(Call) || value.is_a?(ExternCall) || value.is_a?(Yield)
         @scoped_receiver_narrowings.reject! { |_, narrowing| !narrowing.survives_calls }
@@ -452,7 +454,7 @@ module Adamas::HIR
         end
       elsif value.is_a?(PointerStore) || value.is_a?(PointerRealloc) ||
             value.is_a?(IndexSet) || value.is_a?(ArraySetSize)
-        @scoped_receiver_narrowings.clear
+        @scoped_receiver_narrowings.reject! { |_, narrowing| !narrowing.survives_pointer_stores }
       end
     end
 
@@ -665,8 +667,11 @@ module Adamas::HIR
       cell_name : String,
       value_id : ValueId,
       survives_calls : Bool = false,
+      survives_pointer_stores : Bool = false,
     ) : ScopedReceiverNarrowing?
-      narrowing = ScopedReceiverNarrowing.new(name, value_id, {cell_class, cell_name}, @current_block, survives_calls)
+      narrowing = ScopedReceiverNarrowing.new(
+        name, value_id, {cell_class, cell_name}, @current_block, survives_calls, survives_pointer_stores,
+      )
       @scoped_receiver_narrowings[name] = narrowing
       narrowing
     end
@@ -706,7 +711,8 @@ module Adamas::HIR
         common.select! do |narrowing|
           arm_proofs.any? do |other|
             other.name == narrowing.name && other.value_id == narrowing.value_id &&
-              other.carrier == narrowing.carrier && other.survives_calls == narrowing.survives_calls
+              other.carrier == narrowing.carrier && other.survives_calls == narrowing.survives_calls &&
+              other.survives_pointer_stores == narrowing.survives_pointer_stores
           end
         end
       end
@@ -7563,6 +7569,9 @@ module Adamas::HIR
     # mapped to the thunk's block and the closure path from it to each such
     # closure (nil marks a closure that is not a raw block or not scanned).
     @closure_cell_nested_write_paths = {} of {String, String} => {Adamas::Compiler::Frontend::BlockNode, Array(Array(Adamas::Compiler::Frontend::Node?))}
+    # Capture cells whose capture has its address taken (`pointerof`) in the
+    # code sharing the cell; a store through any pointer may change them.
+    @address_taken_closure_cells = Set({String, String}).new
     # Blocks whose bodies are being lowered as closure code, innermost last.
     @closure_body_block_stack = [] of Adamas::Compiler::Frontend::BlockNode
     # Pending capture write-backs keyed by {caller function, raw thunk value}.
@@ -87569,7 +87578,10 @@ module Adamas::HIR
         if !survives_calls && (write_paths = @closure_cell_nested_write_paths[cell_key]?)
           survives_calls = nested_writes_suspended_in_current_block?(*write_paths)
         end
-        ctx.register_closure_cell_write_narrowing(name, cell_class, cell_name, value_id, survives_calls)
+        survives_pointer_stores = survives_calls && !@address_taken_closure_cells.includes?(cell_key)
+        ctx.register_closure_cell_write_narrowing(
+          name, cell_class, cell_name, value_id, survives_calls, survives_pointer_stores,
+        )
       end
       stored_id == value_id ? set.id : value_id
     end
@@ -134421,6 +134433,39 @@ module Adamas::HIR
       end
     end
 
+    # Captures whose address `body` takes with `pointerof`, nested closures
+    # included.
+    private def detect_address_taken_captures(
+      body : Array(ExprId),
+      capture_names : Set(String),
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Set(String)
+      taken = Set(String).new
+      saved_arena = @arena
+      @arena = arena
+      begin
+        body.each { |eid| detect_address_taken_captures_walk(eid, capture_names, taken) }
+      ensure
+        @arena = saved_arena
+      end
+      taken
+    end
+
+    private def detect_address_taken_captures_walk(expr_id : ExprId, capture_names : Set(String), taken : Set(String)) : Nil
+      return if expr_id.index < 0 || expr_id.index >= @arena.size
+      node = @arena[expr_id]
+      if node.is_a?(Adamas::Compiler::Frontend::PointerofNode)
+        node.args.each do |arg|
+          next if arg.index < 0 || arg.index >= @arena.size
+          arg_node = @arena[arg]
+          next unless arg_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
+          name = safe_slice_to_string(arg_node.name) || ""
+          taken << name if capture_names.includes?(name)
+        end
+      end
+      each_proc_scan_child(expr_id) { |child| detect_address_taken_captures_walk(child, capture_names, taken) }
+    end
+
     # Whether every closure nested in `owner` that assigns a capture cell is
     # one of the raw blocks enclosing the code being lowered. Those blocks are
     # suspended in the call that runs this code, and a raw block outside that
@@ -136355,6 +136400,7 @@ module Adamas::HIR
       else
         nested_write_paths = {} of String => Array(Array(Adamas::Compiler::Frontend::Node?))
         detect_nested_closure_write_paths(block_node.body, capture_names, block_arena, nested_write_paths)
+        address_taken_captures = detect_address_taken_captures(block_node.body, capture_names, block_arena)
         # Caller blocks a `yield` in this body inlines are part of the thunk's
         # code too; closures nested in them can write the same cells.
         if contains_yield_deep?(block_node.body, block_arena)
@@ -136363,11 +136409,13 @@ module Adamas::HIR
             yield_blk = @inline_yield_block_stack[yield_block_stack_idx]
             if yield_blk_arena = @inline_yield_block_arena_stack[yield_block_stack_idx]?
               detect_nested_closure_write_paths(yield_blk.body, capture_names, yield_blk_arena, nested_write_paths, record_nodes: false)
+              address_taken_captures.concat(detect_address_taken_captures(yield_blk.body, capture_names, yield_blk_arena))
             else
               # The block cannot be scanned without its arena.
               capture_names.each do |name|
                 (nested_write_paths[name] ||= [] of Array(Adamas::Compiler::Frontend::Node?)) << [nil.as(Adamas::Compiler::Frontend::Node?)]
               end
+              address_taken_captures.concat(capture_names)
             end
             break unless contains_yield_deep?(yield_blk.body, yield_blk_arena || block_arena)
             yield_block_stack_idx -= 1
@@ -136389,6 +136437,7 @@ module Adamas::HIR
           emit_capture_cell_init(ctx, class_name, cell_name, cap_type, parent_vid)
           @closure_ref_cells[cap_name] = {class_name, cell_name, cap_type}
           @closure_ref_prefer_cell.add(cap_name) if written_captures.includes?(cap_name)
+          @address_taken_closure_cells.add({class_name, cell_name}) if address_taken_captures.includes?(cap_name)
           if paths = nested_write_paths[cap_name]?
             @closure_cell_nested_write_paths[{class_name, cell_name}] = {block_node, paths}
           else
