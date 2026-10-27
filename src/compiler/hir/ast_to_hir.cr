@@ -89587,6 +89587,9 @@ module Adamas::HIR
             end
           end
           arg_name = normalize_typeof_name.call(arg_name, from_typeof)
+          if !from_typeof && (constant_value = generic_type_arg_constant_value(arg_name))
+            next constant_value
+          end
           arg_name = resolve_type_name_in_context(arg_name)
           arg_name = substitute_type_params_in_type_name(arg_name)
           normalize_tuple_literal_type_name(arg_name)
@@ -129400,6 +129403,11 @@ module Adamas::HIR
               unless raw_arg_name == "Void" || raw_arg_name == "::Void"
                 arg_name = normalize_typeof_name.call(arg_name)
               end
+              unless raw_arg_name.includes?("typeof(")
+                if constant_value = generic_type_arg_constant_value(arg_name)
+                  next constant_value
+                end
+              end
               arg_name = resolve_type_name_in_context(arg_name)
               substitute_type_params_in_type_name(arg_name)
             end
@@ -140826,6 +140834,14 @@ module Adamas::HIR
     private def short_numeric_constant_token?(token : String) : Bool
       return false if enclosing_generic_declares_type_param?(token)
       !numeric_constant_type_arg(token).nil?
+    end
+
+    # In a type expression (`Stackvec(BIGINT_LIMBS).new`) the argument is
+    # resolved the same way as in an annotation (resolve_generic_type_param_name).
+    private def generic_type_arg_constant_value(arg_name : String) : String?
+      return nil if @type_param_map.has_key?(arg_name)
+      return nil if enclosing_generic_declares_type_param?(arg_name)
+      numeric_constant_type_arg(arg_name)
     end
 
     private def enclosing_generic_declares_type_param?(param : String) : Bool
