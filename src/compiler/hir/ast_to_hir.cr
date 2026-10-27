@@ -54927,6 +54927,38 @@ module Adamas::HIR
       end
     end
 
+    # The name list stands in for methods whose return is often not
+    # registered. A declared source return other than `self` is the callee's
+    # own contract and wins: `def round(am : AM, &) : AM` on a struct returns
+    # AM, not the receiver. The numeric names only describe numeric (or
+    # union, e.g. `Int32 | Float64`) receivers; a user struct's own
+    # unannotated `round` returns whatever its body does.
+    private def receiver_type_preserving_call?(method_name : String, receiver_type : TypeRef, target_name : String) : Bool
+      return false unless receiver_type_preserving_method?(method_name)
+      return false if declared_non_self_return?(target_name)
+      case method_name
+      when "tap", "itself", "clamp"
+        true
+      else
+        return true if numeric_primitive?(receiver_type)
+        desc = @module.get_type_descriptor(receiver_type)
+        !desc.nil? && desc.kind == TypeKind::Union
+      end
+    end
+
+    private def declared_non_self_return?(target_name : String) : Bool
+      def_node = @function_explicit_return_defs[target_name]? || @function_defs[target_name]?
+      unless def_node
+        base_name = strip_type_suffix(target_name)
+        return false if base_name == target_name
+        def_node = @function_explicit_return_defs[base_name]? || @function_defs[base_name]?
+      end
+      return false unless def_node
+      return false unless return_slice = def_node.return_type
+      return false unless text = safe_slice_to_string(return_slice)
+      text.strip != "self"
+    end
+
     private def resolved_call_return_type_for_repair(inst : Call, value_types : Hash(ValueId, TypeRef)) : TypeRef
       candidate = TypeRef::VOID
       candidate_from_materialized_function = false
@@ -54956,7 +54988,7 @@ module Adamas::HIR
         receiver_type = value_types[inst.receiver_value]? || TypeRef::VOID
         if receiver_type != TypeRef::VOID
           method_name = method_short_from_name(inst.method_name) || inst.method_name
-          return receiver_type if receiver_type_preserving_method?(method_name)
+          return receiver_type if receiver_type_preserving_call?(method_name, receiver_type, inst.method_name)
         end
       end
 
@@ -113125,7 +113157,7 @@ module Adamas::HIR
 
       # Methods that return the same type as the receiver.
       # Handle this even if return_type is NIL (often incorrectly registered for abstract modules).
-      if receiver_id && receiver_type_preserving_method?(method_name)
+      if receiver_id && receiver_type_preserving_call?(method_name, ctx.type_of(receiver_id), mangled_method_name)
         recv_type = ctx.type_of(receiver_id)
         # Only override if receiver is not Nil (these methods don't make sense on Nil)
         if recv_type != TypeRef::NIL && recv_type != TypeRef::VOID
@@ -131007,7 +131039,7 @@ module Adamas::HIR
 
       # Methods that return the same type as the receiver.
       # Handle this even if return_type is NIL (often incorrectly registered for abstract modules).
-      if receiver_type_preserving_method?(member_name)
+      if receiver_type_preserving_call?(member_name, ctx.type_of(object_id), actual_name)
         recv_type = ctx.type_of(object_id)
         # Only override if receiver is not Nil (these methods don't make sense on Nil)
         if recv_type != TypeRef::NIL && recv_type != TypeRef::VOID
