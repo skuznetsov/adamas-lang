@@ -18133,6 +18133,17 @@ module Adamas::HIR
       end
     end
 
+    # `x[a..b]`, `x[range]` and `x[start, count]` (as opposed to `x[i]`).
+    private def index_selects_subrange?(node : Adamas::Compiler::Frontend::IndexNode, self_type_name : String?) : Bool
+      return true if node.indexes.size >= 2
+      return false unless index_id = node.indexes.first?
+      index_node = node_for_expr(index_id)
+      return true if index_node.is_a?(Adamas::Compiler::Frontend::RangeNode)
+      return false if index_node.is_a?(Adamas::Compiler::Frontend::NumberNode)
+      return false unless index_type = infer_type_from_expr(index_id, self_type_name)
+      get_type_name_from_ref(index_type).starts_with?("Range(")
+    end
+
     private def element_type_for_type_name(type_name : String) : String?
       stripped_type_name = ascii_strip(type_name)
       return nil if stripped_type_name.empty?
@@ -29175,19 +29186,7 @@ module Adamas::HIR
             end
           end
           if type_name == "String"
-            has_range_index = false
-            index_scan_idx = 0
-            while index_scan_idx < expr_node.indexes.size
-              if node_for_expr(expr_node.indexes.unsafe_fetch(index_scan_idx)).is_a?(Adamas::Compiler::Frontend::RangeNode)
-                has_range_index = true
-                break
-              end
-              index_scan_idx += 1
-            end
-            if expr_node.indexes.size >= 2 || has_range_index
-              return TypeRef::STRING
-            end
-            return TypeRef::CHAR
+            return index_selects_subrange?(expr_node, self_type_name) ? TypeRef::STRING : TypeRef::CHAR
           end
           if type_name.starts_with?("Hash(")
             if type_desc = desc
@@ -29200,6 +29199,13 @@ module Adamas::HIR
               value_ref = type_ref_for_name(value_name)
               return value_ref if value_ref != TypeRef::VOID
             end
+          end
+          # `[](range)` and `[](start, count)` select a sub-collection: Array
+          # and Slice declare their own type as the result. The element-name
+          # fallback below only describes the single-index element read.
+          if index_selects_subrange?(expr_node, self_type_name)
+            return obj_type if type_name.starts_with?("Array(") || type_name.starts_with?("Slice(")
+            return nil
           end
           # A literal Tuple index has positional type information.  The
           # collection-name fallback below intentionally merges every Tuple
