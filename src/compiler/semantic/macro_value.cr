@@ -1309,8 +1309,15 @@ module Adamas
           when "empty?"
             MacroBoolValue.new(@elements.empty?)
           when "splat"
-            # Expand array elements as comma-separated identifiers.
-            MacroIdValue.new(@elements.map(&.to_id).join(", "))
+            # Expand array elements as comma-separated identifiers. A string
+            # argument is appended unless the array is empty, so
+            # `{{args.splat(", ")}}x` stays a valid argument list either way.
+            splatted = @elements.map(&.to_id).join(", ")
+            trailing = args[0]?
+            if trailing.is_a?(MacroStringValue) && !@elements.empty?
+              splatted += trailing.value
+            end
+            MacroIdValue.new(splatted)
           when "first"
             @elements.first? || MacroNilValue.new
           when "last"
