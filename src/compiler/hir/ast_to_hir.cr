@@ -7559,6 +7559,12 @@ module Adamas::HIR
     # Capture cells no closure nested in their raw block thunk assigns, mapped
     # to that thunk's function name.
     @call_stable_closure_cells = {} of {String, String} => String
+    # Capture cells some closure nested in their raw block thunk assigns,
+    # mapped to the thunk's block and the closure path from it to each such
+    # closure (nil marks a closure that is not a raw block or not scanned).
+    @closure_cell_nested_write_paths = {} of {String, String} => {Adamas::Compiler::Frontend::BlockNode, Array(Array(Adamas::Compiler::Frontend::Node?))}
+    # Blocks whose bodies are being lowered as closure code, innermost last.
+    @closure_body_block_stack = [] of Adamas::Compiler::Frontend::BlockNode
     # Pending capture write-backs keyed by {caller function, raw thunk value}.
     @block_proc_capture_writebacks = {} of {String, ValueId} => Array(BlockProcCaptureWriteback)
 
@@ -87558,7 +87564,11 @@ module Adamas::HIR
       ctx.register_type(set.id, cell_type)
       written_type = ctx.type_of(value_id)
       if written_type != cell_type && written_type != TypeRef::VOID
-        survives_calls = @call_stable_closure_cells[{cell_class, cell_name}]? == ctx.function.name
+        cell_key = {cell_class, cell_name}
+        survives_calls = @call_stable_closure_cells[cell_key]? == ctx.function.name
+        if !survives_calls && (write_paths = @closure_cell_nested_write_paths[cell_key]?)
+          survives_calls = nested_writes_suspended_in_current_block?(*write_paths)
+        end
         ctx.register_closure_cell_write_narrowing(name, cell_class, cell_name, value_id, survives_calls)
       end
       stored_id == value_id ? set.id : value_id
@@ -133035,6 +133045,15 @@ module Adamas::HIR
       end
     end
 
+    private def lower_closure_block_body(ctx : LoweringContext, node : Adamas::Compiler::Frontend::BlockNode) : ValueId
+      @closure_body_block_stack << node
+      begin
+        lower_body(ctx, node.body)
+      ensure
+        @closure_body_block_stack.pop
+      end
+    end
+
     private def lower_block(ctx : LoweringContext, node : Adamas::Compiler::Frontend::BlockNode) : ValueId
       block_id = lower_block_to_block_id(ctx, node)
 
@@ -133194,7 +133213,7 @@ module Adamas::HIR
       end
 
       # Lower body
-      last_value = lower_body(ctx, node.body)
+      last_value = lower_closure_block_body(ctx, node)
       ctx.pop_scope
       ctx.pop_local_declaration_scope
       local_declaration_scope_pushed = false
@@ -134349,6 +134368,77 @@ module Adamas::HIR
         @written_capture_value_sink = saved_sink
       end
       written
+    end
+
+    # Records, for each capture some closure nested in `body` assigns, the
+    # closure path from `body` to every closure whose subtree assigns it.
+    # Without `record_nodes` the closures are recorded as nil.
+    private def detect_nested_closure_write_paths(
+      body : Array(ExprId),
+      capture_names : Set(String),
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+      paths : Hash(String, Array(Array(Adamas::Compiler::Frontend::Node?))),
+      record_nodes : Bool = true,
+    ) : Nil
+      saved_arena = @arena
+      saved_sink = @written_capture_value_sink
+      @arena = arena
+      @written_capture_value_sink = nil
+      path = [] of Adamas::Compiler::Frontend::Node?
+      begin
+        body.each { |eid| detect_nested_closure_write_paths_walk(eid, capture_names, paths, path, record_nodes) }
+      ensure
+        @arena = saved_arena
+        @written_capture_value_sink = saved_sink
+      end
+    end
+
+    private def detect_nested_closure_write_paths_walk(
+      expr_id : ExprId,
+      capture_names : Set(String),
+      paths : Hash(String, Array(Array(Adamas::Compiler::Frontend::Node?))),
+      path : Array(Adamas::Compiler::Frontend::Node?),
+      record_nodes : Bool,
+    ) : Nil
+      return if expr_id.index < 0 || expr_id.index >= @arena.size
+      node = @arena[expr_id]
+      case node
+      when Adamas::Compiler::Frontend::BlockNode,
+           Adamas::Compiler::Frontend::ProcLiteralNode,
+           Adamas::Compiler::Frontend::SpawnNode
+        written = Set(String).new
+        detect_written_captures_walk(expr_id, capture_names, written)
+        return if written.empty?
+        raw_block = record_nodes && node.is_a?(Adamas::Compiler::Frontend::BlockNode)
+        path << (raw_block ? node : nil)
+        written.each do |name|
+          (paths[name] ||= [] of Array(Adamas::Compiler::Frontend::Node?)) << path.dup
+        end
+        each_proc_scan_child(expr_id) { |child| detect_nested_closure_write_paths_walk(child, capture_names, paths, path, record_nodes) }
+        path.pop
+      else
+        each_proc_scan_child(expr_id) { |child| detect_nested_closure_write_paths_walk(child, capture_names, paths, path, record_nodes) }
+      end
+    end
+
+    # Whether every closure nested in `owner` that assigns a capture cell is
+    # one of the raw blocks enclosing the code being lowered. Those blocks are
+    # suspended in the call that runs this code, and a raw block outside that
+    # chain runs only inside the call it is passed to, so no call made here
+    # can assign the cell.
+    private def nested_writes_suspended_in_current_block?(
+      owner : Adamas::Compiler::Frontend::BlockNode,
+      paths : Array(Array(Adamas::Compiler::Frontend::Node?)),
+    ) : Bool
+      owner_idx = @closure_body_block_stack.rindex { |blk| blk.same?(owner) }
+      return false unless owner_idx
+      chain_size = @closure_body_block_stack.size - owner_idx - 1
+      paths.all? do |path|
+        next false if path.size > chain_size
+        path.each_with_index.all? do |closure, idx|
+          !closure.nil? && closure.same?(@closure_body_block_stack[owner_idx + 1 + idx])
+        end
+      end
     end
 
     private def detect_nested_closure_written_captures_walk(expr_id : ExprId, capture_names : Set(String), written : Set(String)) : Nil
@@ -136263,7 +136353,8 @@ module Adamas::HIR
       if heap_proc
         captured_vars = captured_vars_for_env(ctx, captures, written_captures, write_enums)
       else
-        nested_closure_writes = detect_nested_closure_written_captures(block_node.body, capture_names, block_arena)
+        nested_write_paths = {} of String => Array(Array(Adamas::Compiler::Frontend::Node?))
+        detect_nested_closure_write_paths(block_node.body, capture_names, block_arena, nested_write_paths)
         # Caller blocks a `yield` in this body inlines are part of the thunk's
         # code too; closures nested in them can write the same cells.
         if contains_yield_deep?(block_node.body, block_arena)
@@ -136271,10 +136362,12 @@ module Adamas::HIR
           while yield_block_stack_idx >= 0
             yield_blk = @inline_yield_block_stack[yield_block_stack_idx]
             if yield_blk_arena = @inline_yield_block_arena_stack[yield_block_stack_idx]?
-              nested_closure_writes.concat(detect_nested_closure_written_captures(yield_blk.body, capture_names, yield_blk_arena))
+              detect_nested_closure_write_paths(yield_blk.body, capture_names, yield_blk_arena, nested_write_paths, record_nodes: false)
             else
               # The block cannot be scanned without its arena.
-              nested_closure_writes.concat(capture_names)
+              capture_names.each do |name|
+                (nested_write_paths[name] ||= [] of Array(Adamas::Compiler::Frontend::Node?)) << [nil.as(Adamas::Compiler::Frontend::Node?)]
+              end
             end
             break unless contains_yield_deep?(yield_blk.body, yield_blk_arena || block_arena)
             yield_block_stack_idx -= 1
@@ -136296,7 +136389,9 @@ module Adamas::HIR
           emit_capture_cell_init(ctx, class_name, cell_name, cap_type, parent_vid)
           @closure_ref_cells[cap_name] = {class_name, cell_name, cap_type}
           @closure_ref_prefer_cell.add(cap_name) if written_captures.includes?(cap_name)
-          unless nested_closure_writes.includes?(cap_name)
+          if paths = nested_write_paths[cap_name]?
+            @closure_cell_nested_write_paths[{class_name, cell_name}] = {block_node, paths}
+          else
             @call_stable_closure_cells[{class_name, cell_name}] = proc_func_name
           end
         end
@@ -136552,7 +136647,7 @@ module Adamas::HIR
       @captured_block_return_owner = saved_block_return_owner || !proc_constructor_type.nil?
       block_proc_enum_value_types = nil.as(Hash(ValueId, String)?)
       last_value = begin
-        lower_body(proc_ctx, block_node.body)
+        lower_closure_block_body(proc_ctx, block_node)
       ensure
         @captured_block_return_owner = saved_block_return_owner
         @expected_proc_return_type_hint_stack.pop? if pushed_return_type_hint
