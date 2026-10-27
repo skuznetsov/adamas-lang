@@ -778,7 +778,7 @@ module Adamas
               node = parse_hash_or_tuple
               unless node.invalid?
                 # Phase 103B: Handle postfix operations like {hash}[key]
-                return parse_brace_literal_postfix(node)
+                return parse_brace_statement_tail(parse_brace_literal_postfix(node))
               end
               @index = saved_index
               @previous_token = saved_prev
@@ -786,14 +786,14 @@ module Adamas
               # Try tolerant tuple, then tolerant named tuple
               tuple_try = parse_brace_tuple_fallback
               unless tuple_try.invalid?
-                return parse_brace_literal_postfix(tuple_try)
+                return parse_brace_statement_tail(parse_brace_literal_postfix(tuple_try))
               end
               @index = saved_index
               @previous_token = saved_prev
               @brace_depth = saved_brace
               named_try = parse_brace_named_tuple_fallback
               unless named_try.invalid?
-                return parse_brace_literal_postfix(named_try)
+                return parse_brace_statement_tail(parse_brace_literal_postfix(named_try))
               end
 
               # None of the brace-literal alternatives accepted this statement.
@@ -9159,10 +9159,10 @@ module Adamas
         # Used for statements and call arguments
         # Example: clone = 42 (in method body)
         # Example: property expansion = false (assignment as macro argument)
-        private def parse_op_assign : ExprId
+        private def parse_op_assign(seed : ExprId? = nil) : ExprId
           Watchdog.check! # Guard against infinite recursion
           debug { "parse_op_assign: ENTERING" }
-          left = parse_expression(0)
+          left = seed ? parse_expression_tail(seed, 0) : parse_expression(0)
           return PREFIX_ERROR if left.invalid?
 
           skip_trivia
@@ -9889,6 +9889,12 @@ module Adamas
           debug { "parse_expression(#{precedence}): after parse_prefix, left=#{left.invalid? ? "invalid" : "valid"}" }
           return PREFIX_ERROR if left.invalid?
 
+          parse_expression_tail(left, precedence)
+        end
+
+        # Postfix/infix loop of parse_expression, continued from an operand that
+        # was already parsed (for example a statement-leading brace literal).
+        private def parse_expression_tail(left : ExprId, precedence : Int32) : ExprId
           postfix_prev_index = -1
           loop do
             if inside_delimiters?
@@ -13066,6 +13072,14 @@ module Adamas
           end
 
           result
+        end
+
+        # A statement-leading brace literal is an ordinary operand: after its
+        # postfix chain, infix operators (`{a, b}.includes?(x) && y`), ternaries
+        # and assignments continue exactly as for any other expression start.
+        private def parse_brace_statement_tail(node : ExprId) : ExprId
+          return node if node.invalid?
+          parse_op_assign(node)
         end
 
         # Phase 103B: Handle postfix operations after brace literal
