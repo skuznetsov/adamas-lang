@@ -139582,7 +139582,10 @@ module Adamas::HIR
         if ascii_upper_alpha?(byte)
           left_ok = i == 0 || !type_param_token_char?(name.byte_at(i - 1))
           right_ok = i + 1 >= name.bytesize || !type_param_token_char?(name.byte_at(i + 1))
-          if left_ok && right_ok
+          # A segment after `::` (`Foo::W(Int32)`, `::W`) names a type in a
+          # namespace; type parameters are never qualified.
+          path_segment = i >= 2 && name.byte_at(i - 1) == ':'.ord && name.byte_at(i - 2) == ':'.ord
+          if left_ok && right_ok && !path_segment
             if token = single_upper_token(byte)
               unless @type_param_map.has_key?(token) || known_type_name?(token) || type_name_exists?(token) ||
                      short_numeric_constant_token?(token)
