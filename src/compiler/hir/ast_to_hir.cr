@@ -26623,6 +26623,12 @@ module Adamas::HIR
           if type_name_exists?(type_name) || @module_defs.has_key?(type_name) || @generic_templates.has_key?(type_name)
             return type_name
           end
+        elsif !param_name.empty? && param_name[0].ascii_uppercase?
+          # A single-segment constant (`Enumerable.zip(...)`) also parses as
+          # an identifier; resolve it like a one-segment path.
+          type_name = resolve_type_name_in_context(resolve_path_string_in_context(param_name))
+          type_name = resolve_type_alias_chain(type_name)
+          return type_name if type_name_exists?(type_name) || @module_defs.has_key?(type_name) || @generic_templates.has_key?(type_name)
         end
       when Adamas::Compiler::Frontend::PathNode
         path_arena = arena_for_expr?(expr_id) || @arena
