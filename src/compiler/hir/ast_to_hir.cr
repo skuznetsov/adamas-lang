@@ -24944,7 +24944,7 @@ module Adamas::HIR
         end
         if absolute_name_prefix_bytes?(resolved_name) && trailing_question_byte?(resolved_name)
           base_name = strip_absolute_name_prefix(resolved_name[0, resolved_name.bytesize - 1])
-          resolved_name = base_name.empty? ? "Nil" : "#{base_name} | Nil"
+          resolved_name = base_name.empty? ? "Nil" : "::#{base_name} | Nil"
         end
         STDERR.puts "[ANNOT_TRACE] phase=before_type_ref raw=#{type_name.inspect} owner=#{owner_name || "(nil)"} final=#{resolved_name.inspect} current=#{@current_class || "(nil)"}" if trace_annotation
         # Resolve while owner context is active. Restoring context before this call
@@ -92369,12 +92369,17 @@ module Adamas::HIR
       type_ref_for_name("Tuple(#{merged.join(", ")})")
     end
 
+    # `variant_names` are canonical full paths taken from type descriptors, and
+    # so is the result. Each is anchored at the root: inside
+    # `Crystal::System::File`, a relative `File::Error` would resolve to the
+    # enclosing module instead of `::File::Error`.
     private def merge_union_variant_names(variant_names : Array(String)) : Array(String)
       seen = Set(TypeRef).new
       merged_refs = [] of TypeRef
       merged = [] of String
       variant_names.each do |name|
         next if name.empty?
+        name = root_anchored_canonical_type_name(name)
         ref = type_ref_for_name(name)
         next if seen.includes?(ref)
         seen << ref
@@ -92394,9 +92399,14 @@ module Adamas::HIR
           idx -= 1
         end
         merged_refs << ref
-        merged << get_type_name_from_ref(ref)
+        merged << root_anchored_canonical_type_name(get_type_name_from_ref(ref))
       end
       merged
+    end
+
+    private def root_anchored_canonical_type_name(name : String) : String
+      return name if name.starts_with?("::") || type_param_like?(name)
+      "::#{name}"
     end
 
     private def lower_truthy_check(ctx : LoweringContext, value_id : ValueId, value_type : TypeRef) : ValueId
@@ -141546,7 +141556,9 @@ module Adamas::HIR
         if base_name.empty?
           result = TypeRef::NIL
         else
-          result = create_union_type("#{base_name} | Nil")
+          # Keep the root anchor: inside `Crystal::System::File`, a relative
+          # `File::Error` would resolve to the enclosing module.
+          result = create_union_type("::#{base_name} | Nil")
         end
         store_type_cache(type_cache_key(lookup_name), result)
         return result
@@ -141635,7 +141647,11 @@ module Adamas::HIR
         return TypeRef::VOID if short_type_param_name?(lookup_name) && !@type_param_map.empty?
       end
       orig_name = lookup_name
-      absolute_name = lookup_name.starts_with?("::")
+      # In `::A | B` the root anchor belongs to the first variant only; strip
+      # it from the whole union and re-prefix after normalization and it moves
+      # onto whichever variant sorts first. create_union_type keeps per-variant
+      # anchors.
+      absolute_name = lookup_name.starts_with?("::") && !union_type_name?(lookup_name)
       if absolute_name
         lookup_name = strip_absolute_name_prefix(lookup_name)
       end
@@ -142437,7 +142453,7 @@ module Adamas::HIR
           if builtin_ref = builtin_type_ref_for(resolved)
             resolved = get_type_name_from_ref(builtin_ref)
           else
-            composite_ref = type_ref_for_name(resolved)
+            composite_ref = type_ref_for_name(absolute ? "::#{resolved}" : resolved)
             if composite_ref != TypeRef::VOID
               canonical = generic_param_type_name_from_ref(composite_ref)
               resolved = canonical unless canonical == "Unknown" || canonical.empty?
