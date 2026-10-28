@@ -3877,6 +3877,8 @@ module Adamas
                 end
               elsif macro_val.is_a?(MacroTupleValue)
                 macro_val.elements
+              elsif macro_val.is_a?(MacroTypeValue) && (type_values = macro_val.tuple_iteration_values)
+                type_values
               else
                 emit_error("For loop iterable #{name} is not an ArrayLiteral", location)
                 nil
@@ -3935,6 +3937,8 @@ module Adamas
               key = MacroSymbolValue.new(key_name).as(MacroValue)
               MacroTupleValue.new([key, entry_value]).as(MacroValue)
             end
+          when MacroTypeValue
+            value.tuple_iteration_values
           else
             nil
           end

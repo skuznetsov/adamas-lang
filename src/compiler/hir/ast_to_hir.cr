@@ -84165,6 +84165,8 @@ module Adamas::HIR
             return val.elements
           elsif val.is_a?(Adamas::Compiler::Semantic::MacroTupleValue)
             return val.elements
+          elsif val.is_a?(Adamas::Compiler::Semantic::MacroTypeValue)
+            return val.tuple_iteration_values
           end
         end
       when Adamas::Compiler::Frontend::HashLiteralNode

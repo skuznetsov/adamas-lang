@@ -2271,6 +2271,31 @@ module Adamas
           name == "Nil" || name == "Value" || name == "Object" || name.ends_with?('?')
         end
 
+        # `{% for t in T %}` over a TypeNode iterates a tuple type's element
+        # types, or a named tuple type's {name, type} entries. Other types
+        # are not iterable (Crystal raises for them).
+        def tuple_iteration_values : Array(MacroValue)?
+          base = @name.lchop("::")
+          tuple = base.starts_with?("Tuple(")
+          named = base.starts_with?("NamedTuple(")
+          return nil unless tuple || named
+          vars = @type_vars
+          return nil unless vars
+          values = @type_var_values
+          values = nil unless values && values.size == vars.size
+          vars.map_with_index do |var, index|
+            if tuple
+              values ? values[index] : MacroTypeValue.new(var).as(MacroValue)
+            else
+              colon = var.index(':')
+              return nil unless colon
+              key = MacroIdValue.new(var.byte_slice(0, colon).strip.strip('"')).as(MacroValue)
+              type_name = var.byte_slice(colon + 1, var.bytesize - colon - 1).strip
+              MacroTupleValue.new([key, MacroTypeValue.new(type_name).as(MacroValue)]).as(MacroValue)
+            end
+          end
+        end
+
         # HIR supplies canonical members for aliases. This fallback handles a
         # concrete union spelling while preserving nested generic arguments.
         private def union_member_names : Array(String)?
