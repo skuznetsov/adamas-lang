@@ -71464,6 +71464,18 @@ module Adamas::HIR
       )
     end
 
+    # Tuple type a `*splat` parameter takes for a call: every positional
+    # argument from its position on (later parameters are named-only).
+    private def splat_call_arg_tuple_type(call_arg_types : Array(TypeRef)?, start : Int32) : TypeRef?
+      return nil unless call_arg_types
+      rest = call_arg_types[start..]? || return nil
+      return nil if rest.empty? || rest.any? { |type_ref| type_ref == TypeRef::VOID }
+      # Avoid re-wrapping: lowering call sites pass the already packed tuple.
+      return rest[0] if rest.size == 1 && is_tuple_type_ref?(rest[0])
+      tuple_type = tuple_type_from_arg_types(rest)
+      tuple_type == TypeRef::VOID ? nil : tuple_type
+    end
+
     private def infer_yield_param_types_from_body(
       func_def : Adamas::Compiler::Frontend::DefNode,
       func_name : String,
@@ -71490,6 +71502,24 @@ module Adamas::HIR
       name_map = {} of String => String
 
       params = function_param_infos(func_def)
+      # A bare forall annotation (`others : U`) binds U to the call's
+      # argument type. Macro code in the body (`{% for t in U %}`) reads it,
+      # and a caller's same-name type parameter must not stand in for it.
+      if call_arg_types && !(forall_names = forall_type_param_names(func_def)).empty?
+        forall_map = {} of String => String
+        forall_arg_index = 0
+        params.each do |param|
+          next if param.is_block
+          # Splats shift argument positions; fail closed after them.
+          break if param.is_splat || param.is_double_splat
+          if (forall_ann = param.type_annotation.try(&.strip)) && forall_names.includes?(forall_ann) &&
+             (arg_type = call_arg_types[forall_arg_index]?) && arg_type != TypeRef::VOID
+            forall_map[forall_ann] ||= get_type_name_from_ref(arg_type)
+          end
+          forall_arg_index += 1
+        end
+        param_map = param_map ? param_map.merge(forall_map) : forall_map unless forall_map.empty?
+      end
       unless params.empty?
         call_arg_index = 0
         params.each do |param|
@@ -71512,16 +71542,26 @@ module Adamas::HIR
             # the element type; the callsite arg type is strictly more concrete,
             # so yield-arg exprs like `other.unsafe_fetch(i)` must infer through
             # it (otherwise the element degrades to a raw Pointer).
-            if !is_block_param && call_arg_types && (arg_type = call_arg_types[call_arg_index]?)
+            if param.is_splat
+              # The annotation restricts each element; the local itself is the
+              # tuple of the remaining positional arguments (`*others`).
+              param_type = splat_call_arg_tuple_type(call_arg_types, call_arg_index) || TypeRef::VOID
+            elsif !is_block_param && call_arg_types && (arg_type = call_arg_types[call_arg_index]?)
               if should_use_exact_call_type_for_local_inference?(param_type, arg_type)
                 param_type = arg_type
               end
             end
+          elsif param.is_splat
+            param_type = splat_call_arg_tuple_type(call_arg_types, call_arg_index) || TypeRef::VOID
           elsif !is_block_param && call_arg_types && (arg_type = call_arg_types[call_arg_index]?)
             param_type = arg_type
           elsif !is_block_param && param_map && (mapped = param_map[name]?)
             mapped_type = type_ref_for_name(mapped)
             param_type = mapped_type unless mapped_type == TypeRef::VOID
+          elsif !is_block_param && (default_value = param.default_value)
+            # An omitted argument takes its default: `each_with_index(offset = 0)`
+            # yields an Int32 index derived from `offset`.
+            param_type = with_arena(def_arena) { infer_type_from_expr(default_value, nil) } || TypeRef::VOID
           end
           local_map[name] = param_type if param_type != TypeRef::VOID
           call_arg_index += 1 unless is_block_param
@@ -71624,10 +71664,16 @@ module Adamas::HIR
       definition_arena = @arena
       body.each do |expr_id|
         node = node_for_expr(expr_id)
-        next unless node.is_a?(Adamas::Compiler::Frontend::MacroForNode)
+        next unless node.is_a?(Adamas::Compiler::Frontend::MacroForNode) ||
+                    node.is_a?(Adamas::Compiler::Frontend::MacroIfNode)
         vars = macro_vars_for_type_context(local_map["self"]?, self_type_name)
         owner_type = self_type_name ? macro_owner_type_for(self_type_name) : nil
-        expanded = expand_macro_for_body(node, vars, owner_type)
+        expanded = if node.is_a?(Adamas::Compiler::Frontend::MacroForNode)
+                     expand_macro_for_body(node, vars, owner_type)
+                   else
+                     # `{% begin %}` parses as `{% if true %}` (Enumerable.zip).
+                     expand_macro_if_body_text(node, vars, owner_type)
+                   end
         next unless expanded && !expanded.strip.empty?
         parsed = parse_macro_literal_method_body(expanded)
         next unless parsed
@@ -71655,9 +71701,17 @@ module Adamas::HIR
           bump_infer_type_cache_version
           expanded_flow = Set(ExprId).new
           collect_flow_narrowed_yield_args(parsed_body, expanded_flow)
-          compute_yield_types_with_preinferred_locals(
-            parsed_body, expanded_lists, self_type_name, local_map, name_map, debug_trace_each, expanded_flow,
-          )
+          # Locals the expansion defines (`other_elem0 = ...`) exist only in
+          # the expanded body, so nested lookups must resolve against it.
+          old_body_context = @infer_body_context
+          @infer_body_context = parsed_body
+          begin
+            compute_yield_types_with_preinferred_locals(
+              parsed_body, expanded_lists, self_type_name, local_map, name_map, debug_trace_each, expanded_flow,
+            )
+          ensure
+            @infer_body_context = old_body_context
+          end
         end
         bump_infer_type_cache_version
         merged = merge_yield_param_types(merged, inferred)
@@ -84583,6 +84637,25 @@ module Adamas::HIR
       nil_lit.id
     end
 
+    # Text of the taken branch of a method-level `{% if %}`, expanded the way
+    # lower_macro_body expands it, for inference outside a lowering context.
+    private def expand_macro_if_body_text(
+      node : Adamas::Compiler::Frontend::MacroIfNode,
+      vars : Hash(String, Adamas::Compiler::Semantic::MacroValue),
+      owner_type : Adamas::Compiler::Semantic::ClassSymbol?,
+    ) : String?
+      expander = macro_expander_for_current_context
+      taken = try_evaluate_macro_condition(node.condition)
+      taken = evaluate_macro_condition_in_context(node.condition, vars, owner_type, expander) if taken.nil?
+      return nil if taken.nil?
+      branch_id = taken ? node.then_body : node.else_body
+      return nil unless branch_id
+      branch = @arena[branch_id]
+      return nil unless branch.is_a?(Adamas::Compiler::Frontend::MacroLiteralNode)
+      expanded = expand_pieces_with_vars(branch.pieces, vars, owner_type, expander, nil)
+      expanded.try { |text| transform_tuple_new_to_literal(text.strip) }
+    end
+
     private def expand_macro_for_body(
       node : Adamas::Compiler::Frontend::MacroForNode,
       vars : Hash(String, Adamas::Compiler::Semantic::MacroValue),
@@ -85616,7 +85689,7 @@ module Adamas::HIR
       vars : Hash(String, Adamas::Compiler::Semantic::MacroValue),
       owner_type : Adamas::Compiler::Semantic::ClassSymbol?,
       expander : Adamas::Compiler::Semantic::MacroExpander,
-      ctx : LoweringContext,
+      ctx : LoweringContext?,
     ) : String?
       source = source_for_arena(@arena)
       bytesize = source ? source.bytesize : 0
@@ -85694,7 +85767,7 @@ module Adamas::HIR
       vars : Hash(String, Adamas::Compiler::Semantic::MacroValue),
       owner_type : Adamas::Compiler::Semantic::ClassSymbol?,
       expander : Adamas::Compiler::Semantic::MacroExpander,
-      ctx : LoweringContext,
+      ctx : LoweringContext?,
       builder : String::Builder,
     ) : Nil
       iter_var_names = piece.iter_vars
@@ -85726,7 +85799,7 @@ module Adamas::HIR
       vars : Hash(String, Adamas::Compiler::Semantic::MacroValue),
       owner_type : Adamas::Compiler::Semantic::ClassSymbol?,
       expander : Adamas::Compiler::Semantic::MacroExpander,
-      ctx : LoweringContext,
+      ctx : LoweringContext?,
       builder : String::Builder,
     ) : Nil
       keyword = piece.control_keyword
