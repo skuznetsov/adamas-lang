@@ -7758,6 +7758,8 @@ module Adamas::HIR
     @loop_break_inline_locals_stack : Array({BlockId, Array({BlockId, Array(Hash(String, ValueId))})}) = [] of {BlockId, Array({BlockId, Array(Hash(String, ValueId))})}
     # Track break values for while expression result (break VALUE passes value out of while)
     @loop_break_value_stack : Array({BlockId, Array({BlockId, ValueId})}) = [] of {BlockId, Array({BlockId, ValueId})}
+    # Parsed text of type-position typeof expressions, keyed by their text.
+    @typeof_text_exprs = {} of String => Tuple(Adamas::Compiler::Frontend::ArenaLike, ExprId)?
     # Dead continuation blocks created after control-flow exits (`next`/`break`).
     # These blocks are synthetic and must not be treated as flowing branches.
     @control_flow_dead_blocks : Set({FunctionId, BlockId}) = Set({FunctionId, BlockId}).new
@@ -17489,6 +17491,25 @@ module Adamas::HIR
     # Resolve typeof from a string expression like "str.to_unsafe.value"
     # This handles the case where parser stores typeof(...) as an identifier name
     private def resolve_typeof_string_expr(expr : String) : String
+      resolved = resolve_typeof_string_expr_textual(expr)
+      return resolved unless resolved == "Pointer(Void)"
+      # The textual resolver cannot follow a call with a block, such as the
+      # stdlib element-type idiom `typeof(zip(*others) { |e| break e }.not_nil!)`.
+      # Parse it and infer it as an expression-position typeof would.
+      return resolved unless expr.includes?('{') || expr.includes?(" do")
+      parsed = @typeof_text_exprs.fetch(expr) do
+        entry = parse_macro_literal_program(expr).try do |(arena, roots)|
+          roots.size == 1 ? {arena, roots.first} : nil
+        end
+        @typeof_text_exprs[expr] = entry
+      end
+      return resolved unless parsed
+      inferred = with_arena(parsed[0]) { infer_type_from_expr(parsed[1], @current_class) }
+      return resolved if inferred.nil? || inferred == TypeRef::VOID || noreturn_type?(inferred)
+      normalize_typeof_type_name(get_type_name_from_ref(inferred))
+    end
+
+    private def resolve_typeof_string_expr_textual(expr : String) : String
       expr = expr.strip
       if env_get("DEBUG_L13Z") && expr.includes?("break")
         loc = @current_typeof_locals.try(&.map { |k, v| "#{k}:#{get_type_name_from_ref(v)}" }.join(",")) || ""
@@ -27683,6 +27704,17 @@ module Adamas::HIR
       @infer_self_type_name = self_type_name
       begin
         result = infer_type_from_expr_inner(expr_id)
+        # A call's value also includes the values its block breaks with; this
+        # is what `typeof(each { |e| break e })` relies on for element types.
+        if (call_node = @arena[expr_id]).is_a?(Adamas::Compiler::Frontend::CallNode)
+          if break_type = inferred_call_block_break_type(call_node, self_type_name)
+            result = if result.nil? || result == TypeRef::VOID || noreturn_type?(result)
+                       break_type
+                     else
+                       union_type_for_values(result, break_type)
+                     end
+          end
+        end
         if env_has?("DEBUG_INFER_TRACE_O")
           __n = @arena[expr_id]
           __sp = __n.span
@@ -68448,6 +68480,117 @@ module Adamas::HIR
       type_ref = type_ref_for_name(name)
       return nil if type_ref == TypeRef::VOID || type_ref == TypeRef::NIL
       type_ref
+    end
+
+    # Type of the values `call`'s literal block breaks with, nil when it has
+    # no valued break or one is untyped. Block params take the callee's yield
+    # types, as in inline_block_return_type_name.
+    private def inferred_call_block_break_type(
+      call : Adamas::Compiler::Frontend::CallNode,
+      self_type_name : String?,
+    ) : TypeRef?
+      block_expr = call.block
+      args = call.args
+      if block_expr.nil? && (last_id = args.last?) && node_for_expr(last_id).is_a?(Adamas::Compiler::Frontend::BlockNode)
+        block_expr = last_id
+        args = args[0, args.size - 1]
+      end
+      return nil unless block_expr
+      block = node_for_expr(block_expr)
+      return nil unless block.is_a?(Adamas::Compiler::Frontend::BlockNode)
+      block_arena = cached_block_arena(block.object_id) || resolve_arena_for_block(block, @arena) || @arena
+      break_values = [] of ExprId
+      with_arena(block_arena) { collect_block_break_values(block.body, break_values) }
+      return nil if break_values.empty?
+
+      receiver_type = nil.as(TypeRef?)
+      base_name = case callee = node_for_expr(call.callee)
+                  when Adamas::Compiler::Frontend::IdentifierNode
+                    method_name = safe_slice_to_string(callee.name) || return nil
+                    if self_type_name
+                      receiver_type = type_ref_for_name(self_type_name)
+                      resolve_method_with_inheritance(self_type_name, method_name) || "#{self_type_name}##{method_name}"
+                    else
+                      method_name
+                    end
+                  when Adamas::Compiler::Frontend::MemberAccessNode
+                    member_name = safe_slice_to_string(callee.member) || return nil
+                    receiver_type = infer_type_from_expr(callee.object, self_type_name)
+                    return nil if receiver_type.nil? || receiver_type == TypeRef::VOID
+                    receiver_name = get_type_name_from_ref(receiver_type)
+                    owner_name = split_generic_base_and_args(receiver_name).try(&.base) || receiver_name
+                    resolve_method_with_inheritance(owner_name, member_name) || "#{owner_name}##{member_name}"
+                  else
+                    return nil
+                  end
+      arg_types = [] of TypeRef
+      args.each do |arg_id|
+        # `zip(*others)` passes the elements of the splatted tuple.
+        if (splat = node_for_expr(arg_id)).is_a?(Adamas::Compiler::Frontend::SplatNode) && !splat.double? &&
+           (tuple_args = concrete_tuple_element_types(infer_type_from_expr(splat.expr, self_type_name) || TypeRef::VOID))
+          arg_types.concat(tuple_args)
+        else
+          arg_types << (infer_type_from_expr(arg_id, self_type_name) || TypeRef::VOID)
+        end
+      end
+      # Yielding defs are registered under their mangled block name.
+      mangled_name = lookup_function_def_for_call(base_name, args.size, true, arg_types).try(&.[0]) || base_name
+      param_types = block_param_types_for_call(mangled_name, base_name, receiver_type, arg_types)
+
+      old_arena = @arena
+      old_locals = @current_typeof_locals
+      old_names = @current_typeof_local_names
+      old_body_context = @infer_body_context
+      begin
+        @arena = block_arena
+        local_map = old_locals ? old_locals.dup : {} of String => TypeRef
+        name_map = old_names ? old_names.dup : {} of String => String
+        if params = block.params
+          seed_inline_yield_block_param_type_map(params, param_types, local_map, block)
+        end
+        @current_typeof_locals = local_map
+        @current_typeof_local_names = name_map
+        @infer_body_context = block.body
+        bump_infer_type_cache_version
+        break_type = nil.as(TypeRef?)
+        break_values.each do |value_id|
+          value_type = infer_type_from_expr(value_id, self_type_name)
+          return nil if value_type.nil? || value_type == TypeRef::VOID
+          break_type = break_type ? union_type_for_values(break_type, value_type) : value_type
+        end
+        break_type
+      ensure
+        @current_typeof_locals = old_locals
+        @current_typeof_local_names = old_names
+        @arena = old_arena
+        @infer_body_context = old_body_context
+        bump_infer_type_cache_version
+      end
+    end
+
+    # Valued breaks of a block body that leave this block: nested blocks and
+    # loops own the breaks inside them.
+    private def collect_block_break_values(body : Array(ExprId), values : Array(ExprId)) : Nil
+      body.each do |expr_id|
+        next if expr_id.invalid?
+        case node = @arena[expr_id]
+        when Adamas::Compiler::Frontend::BreakNode
+          if value = node.value
+            values << value
+          end
+        when Adamas::Compiler::Frontend::IfNode
+          collect_block_break_values(node.then_body, values)
+          node.elsifs.try &.each { |branch| collect_block_break_values(branch.body, values) }
+          node.else_body.try { |else_body| collect_block_break_values(else_body, values) }
+        when Adamas::Compiler::Frontend::UnlessNode
+          collect_block_break_values(node.then_branch, values)
+          node.else_branch.try { |else_branch| collect_block_break_values(else_branch, values) }
+        when Adamas::Compiler::Frontend::CaseNode
+          node.when_branches.each { |branch| collect_block_break_values(branch.body, values) }
+          node.in_branches.try &.each { |branch| collect_block_break_values(branch.body, values) }
+          node.else_branch.try { |else_branch| collect_block_break_values(else_branch, values) }
+        end
+      end
     end
 
     private def inline_block_return_type_name(
