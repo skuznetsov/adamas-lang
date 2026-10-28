@@ -91446,6 +91446,8 @@ module Adamas::HIR
             idx += 1
           end
           left
+        elsif op == "||"
+          is_a_or_narrowing_targets(is_a_narrowing_targets(node.left), is_a_narrowing_targets(node.right))
         else
           [] of IsANarrowingTarget
         end
@@ -91474,6 +91476,38 @@ module Adamas::HIR
       else
         [] of IsANarrowingTarget
       end
+    end
+
+    # Truthy `a || b` proves only what both sides prove (original Crystal's
+    # TypeFilters.or): a variable narrowed on both sides narrows to the union
+    # of its targets; a variable narrowed on one side only stays unnarrowed.
+    private def is_a_or_narrowing_targets(
+      left : Array(IsANarrowingTarget),
+      right : Array(IsANarrowingTarget),
+    ) : Array(IsANarrowingTarget)
+      result = [] of IsANarrowingTarget
+      return result if left.empty? || right.empty?
+
+      left.each do |left_entry|
+        name = left_entry.name
+        # Repeated targets on one side (`x.is_a?(A) && x.is_a?(B)`) intersect;
+        # keep this conservative and narrow only single-target sides.
+        next unless left.count { |entry| entry.name == name } == 1
+        right_matches = right.select { |entry| entry.name == name }
+        next unless right_matches.size == 1
+        left_type = left_entry.type
+        right_type = right_matches.first.type
+        next if left_type == TypeRef::VOID || right_type == TypeRef::VOID
+
+        target_type = if left_type == right_type
+                        left_type
+                      else
+                        create_union_type("#{generic_param_type_name_from_ref(left_type)} | #{generic_param_type_name_from_ref(right_type)}")
+                      end
+        next if target_type == TypeRef::VOID
+        result << IsANarrowingTarget.new(left_entry.name, target_type)
+      end
+      result
     end
 
     # The variable an `is_a?` receiver narrows, mirroring original Crystal's
