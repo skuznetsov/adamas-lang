@@ -47723,8 +47723,13 @@ module Adamas::HIR
       receiver_id : ValueId?,
     ) : ValueId?
       return nil unless receiver_id
-      # object_id returns the pointer address as UInt64
-      cast = Cast.new(ctx.next_id, TypeRef::UINT64, receiver_id, TypeRef::UINT64)
+      # object_id returns the pointer address as UInt64. Go through Pointer:
+      # MIR lowers a direct reference -> integer Cast as a load of the first
+      # bytes (struct-as-pointer ABI), which would read the type id header.
+      address = Cast.new(ctx.next_id, TypeRef::POINTER, receiver_id, TypeRef::POINTER)
+      ctx.emit(address)
+      ctx.register_type(address.id, TypeRef::POINTER)
+      cast = Cast.new(ctx.next_id, TypeRef::UINT64, address.id, TypeRef::UINT64)
       ctx.emit(cast)
       ctx.register_type(cast.id, TypeRef::UINT64)
       cast.id
