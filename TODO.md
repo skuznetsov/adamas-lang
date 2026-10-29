@@ -22076,10 +22076,9 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   The existing source_integer_autocast suite passes all 21 positives and
   24 rejections under both compilers. Five additional candidate-identity
   controls preserve exact source targets, range rejection and ambiguity.
-- [ ] Unmodified installed-stdlib hello now reaches MIR and rejects an ambiguous
-  Thread#initialize target: the emitted family contains both the zero-argument
-  initializer and the nilable-name/block initializer. Preserve source identity
-  when binding the call instead of choosing the first family member.
+- [x] The ambiguous Thread#initialize MIR target exposed by this probe is closed
+  by exact initializer replay after layout invalidation below. Unmodified
+  installed-stdlib hello compiles and links; its startup failure remains open.
 - [x] A separate no-prelude probe found that MIR's includes?("Atomic") receiver
   interception replaces user AtomicLike#get/set/swap/compare_and_set bodies.
   It can replace a scalar compare_and_set result with a tuple pointer. The
@@ -22107,7 +22106,46 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Atomic load/store volatile arguments are dropped, and unused AtomicLoad
   can be eliminated. Preserve volatile and memory-observation contracts before
   claiming full Atomic parity; current tests do not certify concurrency.
-- [ ] Keep exact initializer source selection across Thread layout invalidation.
+- [x] Keep exact initializer source selection across Thread layout invalidation.
   The concrete String/block initializer is built then removed; replay chooses
   the union source's spelling and leaves the demanded concrete symbol bodyless.
   Retain Def/arena/callshape/owner context separately from live-body proofs.
+
+### Replay selected initializers after layout invalidation (2026-10-29)
+- [x] Extend the existing MaterializedInitializerSource with immutable resolved
+  body inputs, lowering context and block ABI. Retain exact source selection
+  after removing a stale layout body; do not add fake overload declarations or
+  reconstruct source identity from emitted suffixes.
+- [x] Requeue recipe-backed targets without requiring a separate RTA entry.
+  Replay through both ordinary missing-demand lowering and the common nested
+  allocator fallback. A new adversary test reproduced the latter bypass in the
+  first candidate; the shared materializer now consumes the recipe before its
+  fallback lookup. Preserve InProgress guards and the live queue's order.
+- [x] Reject changed Def, arena, namespace, bindings, owner or callback facts;
+  preserve raw/heap block slots and check rebuilt parameter/return ABI. Read
+  current ClassInfo for layout; isolate and restore the saved source context.
+  The full callshape is copied for raw callbacks. Ordinary body replay consumes
+  already-expanded arguments, not named/default overload-selection flags.
+- [x] Original Crystal 1.22.1 qualifies hello with its installed unmodified
+  stdlib. Fresh S1 compiles/links that source and emits the demanded concrete
+  Thread initializer body, verified by initializer_layout_replay_repro.sh.
+  Focused initializer/source/queue/raw callback specs pass 19 examples.
+  The parent fails source replay guards (7 examples: 5 failures, 1 error);
+  the first candidate fails the separate nested allocator discriminator.
+  Constructor integer controls pass eight positives and ten rejections under
+  both compilers; zero-argument defaults/layout/inheritance/source-new and
+  blockless-versus-block initializer neighbors also pass.
+- [ ] Full-prelude hello still fails at startup before user output, with
+  recursive exception reporting through Thread#init_semaphore. Locate the
+  first failing action; do not treat successful compile/link as runtime parity.
+  Requalify initializer_explicit_new_source_order_repro.sh after this frontier:
+  its same-arena run crashes and its cross-arena case reports a Void result.
+- [ ] Audit captured `&@run` block metadata separately: the no-prelude fixture
+  retains heap_block_param=false, while explicit `&block` stored in @run uses
+  true. This is a metadata observation, not yet a demonstrated runtime defect.
+- [ ] The body-state transaction marks Completed when a body exists even if a
+  later guard raises. Current LoweringError aborts compilation. Any future
+  recovery must discard the partially built body before continuing.
+- [ ] Fresh S2, a new bootstrap fixed point and unchanged LavinMQ test parity
+  remain open. Refresh replay evidence after source registration, layout
+  invalidation, callback binding or method-body materialization changes.

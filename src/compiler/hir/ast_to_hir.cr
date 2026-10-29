@@ -1416,7 +1416,8 @@ module Adamas::HIR
 
     # A specialized initializer can have an emitted symbol without a source
     # overload entry. Retain its exact lowering source without adding a fake
-    # declaration to the overload index.
+    # declaration to the overload index. Source/call facts survive layout
+    # invalidation; a live-body proof additionally checks the Function below.
     private class MaterializedInitializerSource
       getter function : Adamas::HIR::Function
       getter source_name : String
@@ -1425,7 +1426,18 @@ module Adamas::HIR
       getter namespace : String?
       getter bindings : Hash(String, String)
       getter parameter_types : Array(TypeRef)
+      getter block_parameters : Array(Bool)
+      getter heap_block_param : Bool
+      getter callback_abi : RawCallbackAbi?
+      getter callback_source : RawCallbackSourceBinding?
       getter return_type : TypeRef
+      getter owner : String
+      getter owner_type : TypeRef
+      getter lowering_namespace : String?
+      getter lowering_bindings : Hash(String, String)
+      getter call_types : Array(TypeRef)?
+      getter call_literals : Array(Bool)?
+      getter call_enum_names : Array(String?)?
 
       def initialize(
         @function : Adamas::HIR::Function,
@@ -1435,7 +1447,18 @@ module Adamas::HIR
         @namespace : String?,
         @bindings : Hash(String, String),
         @parameter_types : Array(TypeRef),
+        @block_parameters : Array(Bool),
+        @heap_block_param : Bool,
+        @callback_abi : RawCallbackAbi?,
+        @callback_source : RawCallbackSourceBinding?,
         @return_type : TypeRef,
+        @owner : String,
+        @owner_type : TypeRef,
+        @lowering_namespace : String?,
+        @lowering_bindings : Hash(String, String),
+        @call_types : Array(TypeRef)?,
+        @call_literals : Array(Bool)?,
+        @call_enum_names : Array(String?)?,
       )
       end
     end
@@ -40196,7 +40219,10 @@ module Adamas::HIR
           next if parsed.separator == '.'
         end
 
-        requeue_exact_demand = @rta_called_methods.includes?(name)
+        # An allocator can materialize a concrete initializer before missing
+        # demand discovery, so its exact target need not have an RTA entry.
+        # Its selected source, unlike the discarded layout body, is durable.
+        requeue_exact_demand = @rta_called_methods.includes?(name) || @materialized_initializer_sources.has_key?(name)
         next unless remove_hir_function(name)
         clear_function_state(name)
         # Do not delete from the live pending worklist.  The pending lowering
@@ -41951,6 +41977,17 @@ module Adamas::HIR
     end
 
     private def rematerialize_missing_function_body(name : String, &) : Nil
+      return if @module.has_function_with_body?(name)
+      return if function_state(name).in_progress?
+
+      # Nested allocator lowering can defer lower_function_if_needed and then
+      # materialize immediately here. Its fallback must not reselect a source
+      # whose exact recipe already survived layout invalidation.
+      return if replay_materialized_initializer(name)
+      with_missing_function_body_state(name) { yield }
+    end
+
+    private def with_missing_function_body_state(name : String, &) : Nil
       return if @module.has_function_with_body?(name)
       return if function_state(name).in_progress?
 
@@ -44494,6 +44531,7 @@ module Adamas::HIR
       forced_full_name : String = "",
       forced_method_name : String = "",
       included_forall_virtual_body_demand : IncludedForallVirtualBodyDemand? = nil,
+      initializer_replay_source : MaterializedInitializerSource? = nil,
     )
       if recovered = source_recovered_def_for(node, @arena)
         return lower_method(
@@ -44508,11 +44546,21 @@ module Adamas::HIR
           forced_full_name,
           forced_method_name,
           included_forall_virtual_body_demand,
+          initializer_replay_source,
         )
       end
       included_forall_body_method_arena = nil.as(Adamas::Compiler::Frontend::ArenaLike?)
       method_name = forced_method_name.empty? ? (safe_slice_to_string(node.name) || "") : forced_method_name
       effective_full_name_override = forced_full_name.empty? ? (full_name_override || "") : forced_full_name
+      if source = initializer_replay_source
+        unless source.function.name == effective_full_name_override && source.owner == class_name &&
+               source.owner_type == class_info.type_ref && source.source_def.same?(node)
+          raise LoweringError.new("initializer replay source changed for #{effective_full_name_override}", node)
+        end
+        call_arg_types = source.call_types.try(&.dup)
+        call_arg_literals = source.call_literals.try(&.dup)
+        call_arg_enum_names = source.call_enum_names.try(&.dup)
+      end
       callback_source_binding = raw_callback_source_binding_for(effective_full_name_override)
       if binding = callback_source_binding
         unless same_def_node?(node, binding.source_def)
@@ -44681,7 +44729,7 @@ module Adamas::HIR
       # while lazy lowering receives a transported copy whose Slice-backed
       # signature fields are missing. Match by logical definition identity so
       # parameter recovery can use the exact registration-time overload entry.
-      logical_registered_name = registered_name_for_logical_def(
+      logical_registered_name = initializer_replay_source.try(&.source_name) || registered_name_for_logical_def(
         signature_base_name,
         node,
         effective_full_name_override,
@@ -44782,7 +44830,7 @@ module Adamas::HIR
         end
       end
 
-      if callback_source_binding.nil? && !effective_full_name_override.empty? && effective_full_name_override.includes?('$')
+      if initializer_replay_source.nil? && callback_source_binding.nil? && !effective_full_name_override.empty? && effective_full_name_override.includes?('$')
         suffix = method_suffix(effective_full_name_override)
         if env_get("DEBUG_FROM_IO_LOWER") && method_name == "from_io"
           STDERR.puts "[FROM_IO_LOWER] class=#{class_name} override=#{effective_full_name_override} suffix=#{suffix || ""}"
@@ -44825,7 +44873,7 @@ module Adamas::HIR
       )
 
       # Defer lowering for untyped params until call-site types are available.
-      if def_params_untyped?(node)
+      if initializer_replay_source.nil? && def_params_untyped?(node)
         if env_get("DEBUG_UNTYPED_DEFER") && (base_name == "hexstring" || base_name == "calculate_new_capacity")
           param_count = 0
           if params = node.params
@@ -45000,6 +45048,11 @@ module Adamas::HIR
       )
 
       # Enum value tracking is per-function; preserve outer context.
+      initializer_lowering_bindings = is_initialize_method ? @type_param_map.dup : EMPTY_DEFERRED_TYPE_PARAM_SNAPSHOT
+      initializer_lowering_namespace = @current_namespace_override
+      initializer_call_types = is_initialize_method ? call_arg_types.try(&.dup) : nil
+      initializer_call_literals = is_initialize_method ? call_arg_literals.try(&.dup) : nil
+      initializer_call_enum_names = is_initialize_method ? call_arg_enum_names.try(&.dup) : nil
       old_enum_value_types = @enum_value_types
       @enum_value_types = nil
       saved_closure_ref_cells_lm = @closure_ref_cells.dup
@@ -45428,7 +45481,7 @@ module Adamas::HIR
           end
         end
       end
-      def_arena = @function_def_arenas[base_name]? || resolve_arena_for_def(node, @arena)
+      def_arena = initializer_replay_source.try(&.source_arena) || @function_def_arenas[base_name]? || resolve_arena_for_def(node, @arena)
       if !has_block
         has_block = def_contains_yield?(node, def_arena)
         # A bare-`yield` def has no source `&block` slot, but when a call is
@@ -45941,7 +45994,7 @@ module Adamas::HIR
               # For super calls (override set), prefer full_name only
               # to avoid child class base_name shadowing parent arena.
               # But still fall back to base_name if full_name not found.
-              stored = @function_def_arenas[full_name]?
+              stored = initializer_replay_source.try(&.source_arena) || @function_def_arenas[full_name]?
               if stored.nil? && effective_full_name_override.empty?
                 stored = @function_def_arenas[base_name]?
               end
@@ -46025,6 +46078,11 @@ module Adamas::HIR
               current_path = source_path_for(@arena) || "(unknown)"
               method_path = source_path_for(method_arena) || "(unknown)"
               STDERR.puts "[METHOD_ARENA_USE] full=#{full_name} stored_full=#{!stored_full.nil?} stored_base=#{!stored_base.nil?} current=#{current_path} method=#{method_path}:#{method_arena.size}"
+            end
+            if source = initializer_replay_source
+              unless arena_map_key(method_arena) == arena_map_key(source.source_arena)
+                raise LoweringError.new("initializer replay arena changed for #{full_name}", node)
+              end
             end
             included_forall_body_method_arena = method_arena
             stop_after_pending_target_lower_method_phase(
@@ -46286,11 +46344,27 @@ module Adamas::HIR
          (body_arena = included_forall_body_method_arena) &&
          arena_map_key(source_arena) == arena_map_key(body_arena)
         bindings = function_type_param_map_for_name(source_name) || EMPTY_DEFERRED_TYPE_PARAM_SNAPSHOT
-        @materialized_initializer_sources[full_name] = MaterializedInitializerSource.new(
+        # Replay does not select an overload or expand named/default arguments:
+        # those choices already belong to this exact source and ABI vector.
+        # Capture the block carrier separately from positional call types.
+        # lower_method consumes no named-call or selection flags. This recipe
+        # certifies its resolved body inputs, not equivalence of call syntax.
+        source = MaterializedInitializerSource.new(
           func, source_name, source_def, source_arena,
           function_namespace_override_for(source_name), bindings.dup,
-          func.params.map(&.type), func.return_type,
+          func.params.map(&.type), func.params.map(&.is_block), func.heap_block_param,
+          copy_initializer_callback_abi(raw_callback_contract),
+          copy_initializer_callback_source(raw_callback_source_binding_for(full_name)), func.return_type,
+          class_name, class_info.type_ref, initializer_lowering_namespace,
+          initializer_lowering_bindings, initializer_call_types,
+          initializer_call_literals, initializer_call_enum_names,
         )
+        if prior = @materialized_initializer_sources[full_name]?
+          unless initializer_source_recipe_matches?(prior, source)
+            raise LoweringError.new("initializer source identity collision for #{full_name}", node)
+          end
+        end
+        @materialized_initializer_sources[full_name] = source
       end
 
       @current_typeof_locals = old_typeof_locals
@@ -101834,6 +101908,11 @@ module Adamas::HIR
         return
       end
 
+      # Layout invalidation discards representation, not source selection.
+      # Consume an existing constructor recipe before any suffix or pending
+      # callsite lookup can choose another overload or emitted spelling.
+      return if replay_materialized_initializer(name)
+
       target_name = name
       callback_source_binding = raw_callback_source_binding_for(name)
       func_def = callback_source_binding.try(&.source_def) || @function_defs[name]?
@@ -115919,16 +115998,127 @@ module Adamas::HIR
       end
     end
 
+    private def copy_initializer_callback_abi(abi : RawCallbackAbi?) : RawCallbackAbi?
+      return nil unless abi
+      RawCallbackAbi.new(abi.param_types.dup, abi.return_type, abi.proc_type, abi.self_source_def, abi.self_source_arena)
+    end
+
+    private def copy_initializer_callback_source(source : RawCallbackSourceBinding?) : RawCallbackSourceBinding?
+      return nil unless source
+      callsite = source.callsite
+      snapshot = CallsiteArgs.new(
+        callsite.types.dup, callsite.literals.try(&.dup), callsite.enum_names.try(&.dup),
+        callsite.has_block, callsite.has_named_args, callsite.named_arg_names.try(&.dup), callsite.selected_target,
+      )
+      RawCallbackSourceBinding.new(source.source_def, source.source_arena, snapshot)
+    end
+
+    private def initializer_callback_source_matches?(expected : RawCallbackSourceBinding?, actual : RawCallbackSourceBinding?) : Bool
+      return actual.nil? unless expected
+      return false unless actual
+      left = expected.callsite
+      right = actual.callsite
+      expected.source_def.same?(actual.source_def) &&
+        arena_map_key(expected.source_arena) == arena_map_key(actual.source_arena) &&
+        left.types == right.types && left.literals == right.literals && left.enum_names == right.enum_names &&
+        left.has_block == right.has_block && left.has_named_args == right.has_named_args &&
+        left.named_arg_names == right.named_arg_names && left.selected_target == right.selected_target
+    end
+
+    private def initializer_callback_abi_matches?(expected : RawCallbackAbi?, actual : RawCallbackAbi?) : Bool
+      return actual.nil? unless expected
+      return false unless actual
+      expected.same_shape?(actual) && expected.proc_type == actual.proc_type &&
+        expected.self_source_def.try(&.object_id) == actual.self_source_def.try(&.object_id) &&
+        expected.self_source_arena.try(&.object_id) == actual.self_source_arena.try(&.object_id)
+    end
+
+    private def initializer_source_recipe_matches?(prior : MaterializedInitializerSource, current : MaterializedInitializerSource) : Bool
+      prior.source_name == current.source_name && prior.source_def.same?(current.source_def) &&
+        arena_map_key(prior.source_arena) == arena_map_key(current.source_arena) &&
+        prior.namespace == current.namespace && prior.bindings == current.bindings &&
+        prior.owner == current.owner && prior.owner_type == current.owner_type &&
+        prior.lowering_namespace == current.lowering_namespace && prior.lowering_bindings == current.lowering_bindings &&
+        prior.call_types == current.call_types && prior.call_literals == current.call_literals &&
+        prior.call_enum_names == current.call_enum_names &&
+        prior.parameter_types == current.parameter_types && prior.block_parameters == current.block_parameters &&
+        prior.heap_block_param == current.heap_block_param && prior.return_type == current.return_type &&
+        initializer_callback_abi_matches?(prior.callback_abi, current.callback_abi) &&
+        initializer_callback_source_matches?(prior.callback_source, current.callback_source)
+    end
+
+    private def initializer_source_definition_current?(source : MaterializedInitializerSource) : Bool
+      return false unless @function_defs[source.source_name]?.try(&.same?(source.source_def)) &&
+                          @function_def_arenas[source.source_name]?.try { |arena| arena_map_key(arena) == arena_map_key(source.source_arena) }
+      bindings = function_type_param_map_for_name(source.source_name) || EMPTY_DEFERRED_TYPE_PARAM_SNAPSHOT
+      function_namespace_override_for(source.source_name) == source.namespace && bindings == source.bindings &&
+        @class_info[source.owner]?.try(&.type_ref) == source.owner_type
+    end
+
+    private def replay_materialized_initializer(name : String) : Bool
+      source = @materialized_initializer_sources[name]?
+      return false unless source
+      unless source.function.name == name && initializer_source_definition_current?(source)
+        raise LoweringError.new("initializer replay source changed for #{name}", source.source_def)
+      end
+      registered_arena = registered_arena_for_def(source.source_def)
+      unless registered_arena && arena_map_key(registered_arena) == arena_map_key(source.source_arena)
+        raise LoweringError.new("initializer replay Def arena changed for #{name}", source.source_def)
+      end
+      # Match lower_method's target-first contract selection. A specialized
+      # target may lawfully differ from a shadowed generic source-key ABI.
+      callback_abi = raw_callback_abi_for(name) || raw_callback_abi_for(source.source_name)
+      unless initializer_callback_abi_matches?(source.callback_abi, callback_abi)
+        raise LoweringError.new("initializer replay callback ABI changed for #{name}", source.source_def)
+      end
+      unless initializer_callback_source_matches?(source.callback_source, raw_callback_source_binding_for(name))
+        raise LoweringError.new("initializer replay callback source changed for #{name}", source.source_def)
+      end
+      info = @class_info[source.owner]
+      old_class = @current_class
+      old_method = @current_method
+      old_method_is_class = @current_method_is_class
+      @lowering_depth += 1
+      begin
+        with_missing_function_body_state(name) do
+          with_arena(source.source_arena) do
+            with_isolated_type_param_map(source.lowering_bindings) do
+              with_namespace_override_or_clear(source.lowering_namespace) do
+                lower_method(
+                  source.owner, info, source.source_def,
+                  source.call_types, source.call_literals, source.call_enum_names,
+                  name, initializer_replay_source: source,
+                )
+              end
+            end
+          end
+          function = @module.function_by_name(name)
+          unless function && @module.has_function_with_body?(name) &&
+                 function.params.map(&.type) == source.parameter_types &&
+                 function.params.map(&.is_block) == source.block_parameters &&
+                 function.heap_block_param == source.heap_block_param &&
+                 function.return_type == source.return_type
+            raise LoweringError.new("initializer replay ABI changed for #{name}", source.source_def)
+          end
+        end
+      ensure
+        @current_class = old_class
+        @current_method = old_method
+        @current_method_is_class = old_method_is_class
+        @lowering_depth -= 1
+      end
+      true
+    end
+
     private def materialized_initializer_source_current?(source : MaterializedInitializerSource) : Bool
       function = source.function
       name = function.name
       return false unless @module.function_by_name(name).try(&.same?(function)) &&
                           function_state(name).completed? && @module.has_function_with_body?(name)
-      return false unless function.params.map(&.type) == source.parameter_types && function.return_type == source.return_type
-      return false unless @function_defs[source.source_name]?.try(&.same?(source.source_def)) &&
-                          @function_def_arenas[source.source_name]?.try { |arena| arena_map_key(arena) == arena_map_key(source.source_arena) }
-      bindings = function_type_param_map_for_name(source.source_name) || EMPTY_DEFERRED_TYPE_PARAM_SNAPSHOT
-      function_namespace_override_for(source.source_name) == source.namespace && bindings == source.bindings
+      return false unless function.params.map(&.type) == source.parameter_types &&
+                          function.params.map(&.is_block) == source.block_parameters &&
+                          function.heap_block_param == source.heap_block_param && function.return_type == source.return_type
+      initializer_source_definition_current?(source)
     end
 
     # Synthesized `.new` wrappers have no source DefNode of their own. Admit

@@ -21455,3 +21455,34 @@ layout or emitted-type tracking changes. Atomic nand and volatile semantics
 remain open, as do fresh S2, bootstrap and unchanged LavinMQ test parity.
 Thread's current blocker loses an already-selected initializer during layout
 invalidation; its source identity must outlive the materialized body.
+
+## 2026-10-29 — Initializer source selection outlives its layout body
+
+An allocator emitted a concrete String/block initializer from the exact union
+source. A later Thread layout update removed that body, but no separate RTA
+entry existed to replay it. Suffix-based recovery then emitted only the union
+spelling, leaving the demanded concrete symbol bodyless. The existing
+MaterializedInitializerSource now separates source-recipe validity from
+live-body validity. It copies resolved call/context/block facts, retains the
+Def/arena, requeues exact recipe-backed demand and rebuilds against current
+ClassInfo. Stale identity/context/ABI facts reject compilation.
+
+The adversary found a second consumer bypass: nested lowering deferred demand,
+then the allocator's immediate fallback reselected a source. A failing nested
+spec established that bypass; the shared materializer now consumes the same
+recipe before fallback. The state transaction preserves InProgress and settles
+the queued request after a body exists. No synthetic overload is registered.
+
+Evidence: initializer_layout_replay_repro.sh qualifies original Crystal 1.22.1
+hello and compiles/links candidate hello with the installed unmodified stdlib;
+the concrete Thread body calls init_semaphore and init_handle. Focused HIR
+initializer/source/queue/raw callback specs pass 19 examples. The parent fails
+5/7 examples and errors on hostile-context replay; the first candidate fails
+the nested allocator discriminator. Constructor integer controls retain eight
+original-first positives and ten rejections; default/layout and blockless
+neighbors pass. Scoped ROBUST for source/ABI replay and nested state re-entry.
+Refresh after source/context registration, layout invalidation, callback or
+body materialization changes. Full-prelude startup still fails through Thread
+initialization/exception reporting; fresh S2, bootstrap and LavinMQ parity are
+not certified. The existing state transaction assumes LoweringError aborts the
+compilation; recovery would need to discard a partially built body.

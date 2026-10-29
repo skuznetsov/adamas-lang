@@ -29,6 +29,22 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+Selected initializer source recipes survive layout-body invalidation. The
+existing MaterializedInitializerSource retains the exact Def/arena, owner,
+declaration and lowering contexts, resolved argument vectors and block/return
+ABI. Missing-demand lowering and the common nested allocator fallback consume
+that recipe before overload lookup. Replay reads current class layout, rejects
+changed source evidence, and checks the rebuilt ABI; it does not register a
+synthetic overload. A live-body proof still requires the current Function.
+DoD: initializer_layout_replay_repro.sh checks source guards and compiles/links
+hello against the installed unmodified stdlib; focused initializer/queue/raw
+callback specs pass 19 examples. Constructor integer controls retain eight
+original-first runtime positives and ten strict rejections. Rollback is the
+source-recipe, invalidation and common materialization-consumer change together.
+Full-prelude hello startup still fails in Thread initialization/exception
+reporting. Fresh S2, bootstrap fixed point and LavinMQ runtime/test parity
+remain open.
+
 High-level Atomic methods consume their selected source bodies, including
 ordering checks and value conversions. Name substrings cannot grant intrinsic
 authority. Exact Atomic::Ops primitives retain the native atomic boundary;
@@ -39,9 +55,7 @@ and a missing-method rejection; atomic_cmpxchg_result_repro.sh passes seven
 installed, unmodified atomic.cr cases with Int32, Bool, mixed instances and
 ordering rejections. MIR backend/optimization specs pass 138 examples. Rollback
 is the atomic source-dispatch and native result-contract change together.
-The current hello frontier remains exact Thread initializer replay after layout
-invalidation. Atomic nand/volatile semantics, fresh S2, bootstrap fixed point
-and LavinMQ runtime/test parity remain open.
+Atomic nand/volatile semantics remain open.
 
 The bounded legacy Proc constructor receiver ownership pilot is admitted for
 the consumers listed in section 6.3. A concrete receiver now travels as an
@@ -586,6 +600,7 @@ a current full-source emitted artifact reproduces it.
 | same-arena selected definition -> ordinary HIR call | existing `DefInstanceKey` / `TypeContext` / `SelectedCallTarget` | `spec/semantic_cli_spec.cr`, `spec/semantic_cli_compile_contracts_spec.cr`; `ADAMAS_SEMANTIC_COMPILE=1` | consumed only for the admitted single-active-unit source-backed shapes; broader T1 open |
 | source Proc constructor receiver -> owner/block/result consumers | local immutable call/arena/type fact; separate generated/source result authority | 16 receiver cases, existing 164 Proc cases and 27 parser controls; wider 20-case probe retains seven failures | consumed in the bounded legacy HIR pilot; broader T1 and Proc closure open |
 | Atomic source calls -> native cmpxchg projections and tuple layout | selected source bodies; AtomicCAS / AtomicCASSuccess; LayoutContract | atomic_source_dispatch_repro.sh, atomic_cmpxchg_result_repro.sh, MIR backend/optimization specs | consumed for qualified source calls and Int32/Bool result cases; broader atomic memory semantics open |
+| selected initializer -> body replay after layout invalidation | existing MaterializedInitializerSource, separate source-recipe and live-body validity | initializer_layout_replay_repro.sh; initializer, queue and raw callback HIR specs | consumed by explicit demand and all common allocator fallback sites; prelude startup and broader bootstrap open |
 
 ### 0.3 STABLE6 — refuted in-process prototype / not admitted
 
@@ -2175,6 +2190,27 @@ Key falsifiers:
 
 Owns turning a `CallResolution.materialization_key` into a concrete lowered
 function body and symbol.
+
+The bounded initializer replay consumer uses the existing
+`MaterializedInitializerSource` as one producer-owned recipe. Its Def/arena,
+declaration namespace/bindings and owner TypeRef must remain current. It also
+copies the lowering namespace/bindings, resolved positional type/literal/enum
+vectors, parameter/block/return ABI, and any raw callback ABI/source callsite.
+The latter copies its arrays and complete call-shape flags. Ordinary named
+argument ordering and defaults have already been resolved before lower_method;
+recipe equality certifies body inputs, not source call-syntax equivalence.
+
+Layout invalidation removes representation and requeues a recipe-backed exact
+target even without an RTA entry. It retains source selection. Both the missing
+demand consumer and the shared nested allocator materializer replay before
+fallback lookup, using the current ClassInfo and the saved source context.
+Def/arena/context/callback decay rejects compilation before body lowering;
+post-lowering ABI mismatch also rejects compilation. No fallback may silently
+choose another source. A live-body certificate additionally requires the exact
+current Function, Completed state, body and ABI. This bounded recipe is not a
+general materialization cache or a fresh bootstrap certificate. The existing
+body-state helper's error policy still assumes LoweringError aborts compilation;
+recovering from such an error would require removing any partially built body.
 
 Input:
 
@@ -4755,8 +4791,9 @@ evaluation. Refresh after numeric inference, operator lowering or call binding
 changes. Full overflow/runtime-width semantics and broader float/Char/enum
 contracts are not certified by these probes.
 
-Unmodified installed-stdlib hello now passes HIR and reaches an ambiguous
-Thread#initialize target in MIR; it has not linked or run. Fresh bootstrap
-and unchanged LavinMQ runtime/test parity remain separate obligations.
+This probe exposed an ambiguous Thread#initialize MIR target. The subsequent
+initializer replay contract closes that compile/link failure; full-prelude
+startup still fails. Fresh bootstrap and unchanged LavinMQ runtime/test parity
+remain separate obligations.
 Rollback: revert this result helper, its two consumers and the regression
 together; preserve strict source argument admission.
