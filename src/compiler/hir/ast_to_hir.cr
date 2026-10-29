@@ -78,6 +78,9 @@ module Adamas::HIR
     # Entry boxes that only their single defining assignment writes: no
     # closure body or second assignment, and no `pointerof`.
     @call_stable_boxed_locals : Set(String)
+    # Call-stable boxes whose defining assignment runs at most once per call:
+    # it is in no loop or block body.
+    @write_once_boxed_locals : Set(String)
     # Truthy-narrowed bindings of call-stable boxes. While the local is bound
     # to one, reads use it instead of loading the box.
     @call_stable_box_narrowed_bindings : Hash(String, ValueId)
@@ -213,6 +216,7 @@ module Adamas::HIR
       @boxed_locals_snapshots = [] of Hash(String, BoxedLocal)
       @entry_box_required_locals = Set(String).new
       @call_stable_boxed_locals = Set(String).new
+      @write_once_boxed_locals = Set(String).new
       @call_stable_box_narrowed_bindings = {} of String => ValueId
       @capture_storage_types = {} of {UInt64, Int32} => TypeRef
       @capture_parameter_storage_types = {} of ValueId => TypeRef
@@ -622,8 +626,13 @@ module Adamas::HIR
       narrowing.value_id
     end
 
-    def mark_call_stable_boxed_local(name : String) : Nil
+    def mark_call_stable_boxed_local(name : String, write_once : Bool) : Nil
       @call_stable_boxed_locals.add(name)
+      @write_once_boxed_locals.add(name) if write_once
+    end
+
+    def write_once_boxed_local?(name : String) : Bool
+      @write_once_boxed_locals.includes?(name)
     end
 
     def call_stable_boxed_local?(name : String) : Bool
@@ -134771,23 +134780,28 @@ module Adamas::HIR
       written = detect_nested_closure_written_captures(body, required, arena)
       taken = detect_address_taken_captures(body, required, arena)
       counts = Hash(String, Int32).new(0)
+      repeated = Set(String).new
       saved_arena = @arena
       @arena = arena
       begin
-        body.each { |eid| count_local_assignments_walk(eid, required, counts) }
+        body.each { |eid| count_local_assignments_walk(eid, required, counts, repeated, false) }
       ensure
         @arena = saved_arena
       end
       required.each do |name|
         next if written.includes?(name) || taken.includes?(name) || counts[name] > 1
-        ctx.mark_call_stable_boxed_local(name)
+        ctx.mark_call_stable_boxed_local(name, !repeated.includes?(name))
       end
     end
 
+    # Counts the assignments to each of `names`; `repeated` collects those
+    # assigned inside a loop or block body, which may run more than once.
     private def count_local_assignments_walk(
       expr_id : ExprId,
       names : Set(String),
       counts : Hash(String, Int32),
+      repeated : Set(String),
+      in_loop : Bool,
     ) : Nil
       return if expr_id.index < 0 || expr_id.index >= @arena.size
       node = @arena[expr_id]
@@ -134802,24 +134816,33 @@ module Adamas::HIR
                  when Adamas::Compiler::Frontend::ForNode
                    safe_slice_to_string(node.variable)
                  end
-      counts[assigned] += 1 if assigned && names.includes?(assigned)
+      assigned_names = [] of String
+      assigned_names << assigned if assigned
       if node.is_a?(Adamas::Compiler::Frontend::MultipleAssignNode)
         node.targets.each do |target_id|
           next if target_id.index < 0 || target_id.index >= @arena.size
           target = @arena[target_id]
           next unless target.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
-          name = safe_slice_to_string(target.name) || ""
-          counts[name] += 1 if names.includes?(name)
+          assigned_names << (safe_slice_to_string(target.name) || "")
         end
       end
       if node.is_a?(Adamas::Compiler::Frontend::BeginNode) && (clauses = node.rescue_clauses)
         clauses.each do |clause|
           next unless var_name = clause.variable_name
-          name = safe_slice_to_string(var_name) || ""
-          counts[name] += 1 if names.includes?(name)
+          assigned_names << (safe_slice_to_string(var_name) || "")
         end
       end
-      each_proc_scan_child(expr_id) { |child| count_local_assignments_walk(child, names, counts) }
+      assigned_names.each do |name|
+        next unless names.includes?(name)
+        counts[name] += 1
+        repeated.add(name) if in_loop
+      end
+      child_in_loop = in_loop || node.is_a?(Adamas::Compiler::Frontend::WhileNode) ||
+                      node.is_a?(Adamas::Compiler::Frontend::UntilNode) ||
+                      node.is_a?(Adamas::Compiler::Frontend::LoopNode) ||
+                      node.is_a?(Adamas::Compiler::Frontend::ForNode) ||
+                      node.is_a?(Adamas::Compiler::Frontend::BlockNode)
+      each_proc_scan_child(expr_id) { |child| count_local_assignments_walk(child, names, counts, repeated, child_in_loop) }
     end
 
     private def seed_entry_box_requirements_for_main(
@@ -135809,6 +135832,31 @@ module Adamas::HIR
       end
     end
 
+    # A proc literal created while a write-once box is bound to its truthy
+    # narrowing runs after the box's only write, so the box still holds the
+    # narrowed value whenever the proc is called; its body reads it narrowed,
+    # as original Crystal types a closured local nothing reassigns.
+    private def narrow_write_once_proc_captures(
+      ctx : LoweringContext,
+      proc_ctx : LoweringContext,
+      captures : Array({String, ValueId, TypeRef}),
+    ) : Nil
+      captures.each do |(name, parent_vid, _)|
+        next unless ctx.write_once_boxed_local?(name) && ctx.call_stable_box_narrowed_binding?(name, parent_vid)
+        next unless box_info = proc_ctx.lookup_boxed_local(name)
+        payload_type = box_info.payload_type
+        next unless is_union_or_nilable_type?(payload_type)
+
+        load = PointerLoad.new(proc_ctx.next_id, payload_type, box_info.box_ptr)
+        proc_ctx.emit(load)
+        proc_ctx.register_type(load.id, payload_type)
+        unwrapped = lower_not_nil_intrinsic(proc_ctx, load.id, payload_type)
+        next if unwrapped == load.id
+        proc_ctx.discard_boxed_local(name)
+        proc_ctx.register_local(name, unwrapped)
+      end
+    end
+
     private def emit_make_proc_value(
       ctx : LoweringContext,
       proc_type : TypeRef,
@@ -136320,6 +136368,7 @@ module Adamas::HIR
         proc_ctx.register_local("__closure_env", env_param.id)
         proc_ctx.register_type(env_param.id, TypeRef::POINTER)
         materialize_env_captures(proc_ctx, env_param.id, captured_vars)
+        narrow_write_once_proc_captures(ctx, proc_ctx, captures)
       end
       if class_self_type = proc_class_self_type
         self_literal = Literal.new(proc_ctx.next_id, class_self_type, nil)

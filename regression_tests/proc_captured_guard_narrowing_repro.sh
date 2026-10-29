@@ -9,6 +9,8 @@
 # assignment, no `pointerof`) is call-stable: a truthy guard now binds the
 # local to a narrowed load of the box, and reads use that binding while the
 # local machinery keeps it (branch arms, joins, inlined blocks, thunks, loops).
+# A proc literal created under that binding reads the box narrowed when the
+# box's write is in no loop or block body, so it ran before the proc existed.
 # A closure that writes the local keeps it un-narrowed, as in original Crystal.
 # Expected output is checked against original Crystal.
 #
@@ -276,9 +278,43 @@ STDERR.puts guard_in_block([] of Int32, 0)
 STDERR.puts guard_in_block([1], 0)
 STDERR.puts guard_in_block([1], 2)'
 
+add_case proc_created_after_guard '21 22|none|31,32|40 4|none' "$COMMON"'
+def after_guard(k : Int32) : String
+  arena = get(k)
+  return "none" unless arena
+  pr = ->(x : Int32) { src(arena) * 10 + x }
+  "#{pr.call(1)} #{pr.call(2)}"
+end
+
+def nested(k : Int32) : String
+  arena = get(k)
+  return "none" unless arena
+  pr = -> { [1, 2].map { |i| src(arena) * 10 + i }.join(",") }
+  pr.call
+end
+
+def before_guard(k : Int32) : String
+  arena = get(k)
+  pr = -> { arena.try(&.size) || -1 }
+  return "none" unless arena
+  "#{src(arena) * 10} #{pr.call}"
+end
+
+STDERR.puts after_guard(2)
+STDERR.puts after_guard(0)
+STDERR.puts nested(3)
+STDERR.puts before_guard(4)
+STDERR.puts before_guard(0)'
+
 # A closure that writes the guarded local must keep it nilable: both compilers
 # reject the program.
-REJECT_SRC="$COMMON"'
+REJECTS=()
+add_reject() {
+  REJECTS+=("$1")
+  printf '%s\n' "$2" > "$WORK_DIR/$1.cr"
+}
+
+add_reject closure_write_rejected "$COMMON"'
 def m(k : Int32) : Int32
   a = get(k)
   return 0 unless a
@@ -288,7 +324,17 @@ def m(k : Int32) : Int32
 end
 
 puts m(1)'
-printf '%s\n' "$REJECT_SRC" > "$WORK_DIR/closure_write_rejected.cr"
+
+# A proc created before the guard may run while the local is still nil.
+add_reject proc_before_guard_rejected "$COMMON"'
+def m(k : Int32) : Int32
+  a = get(k)
+  pr = -> { src(a) }
+  return 0 unless a
+  pr.call
+end
+
+puts m(1)'
 
 stderr_of() {
   awk '/^=== STDERR ===$/ { on = 1; next } /^\[EXIT: / { on = 0 } on' "$1"
@@ -321,24 +367,26 @@ if [[ -n "$CRYSTAL_BIN" ]]; then
 fi
 
 if [[ -n "$CRYSTAL_BIN" ]]; then
-  if CRYSTAL_CACHE_DIR="$WORK_DIR/cache" "$CRYSTAL_BIN" build \
-      "$WORK_DIR/closure_write_rejected.cr" -o "$WORK_DIR/closure_write_rejected.orig" \
-      > "$WORK_DIR/closure_write_rejected.orig.log" 2>&1; then
-    printf 'ORACLE FAIL: original accepts closure_write_rejected\n' >&2
-    exit 2
-  fi
+  for name in "${REJECTS[@]}"; do
+    if CRYSTAL_CACHE_DIR="$WORK_DIR/cache" "$CRYSTAL_BIN" build \
+        "$WORK_DIR/$name.cr" -o "$WORK_DIR/$name.orig" > "$WORK_DIR/$name.orig.log" 2>&1; then
+      printf 'ORACLE FAIL: original accepts %s\n' "$name" >&2
+      exit 2
+    fi
+  done
 fi
 
 failures=0
-"$SAFE_RUNNER" "$ADAMAS_BIN" 600 8192 "$WORK_DIR/closure_write_rejected.cr" \
-  -o "$WORK_DIR/closure_write_rejected.adamas" > "$WORK_DIR/closure_write_rejected.log" 2>&1 || true
-if [[ -x "$WORK_DIR/closure_write_rejected.adamas" ]] ||
-    ! grep -q 'no overload matches src' "$WORK_DIR/closure_write_rejected.log"; then
-  printf 'FAIL closure_write_rejected: closure-written local was narrowed\n' >&2
-  failures=$((failures + 1))
-else
-  printf 'PASS closure_write_rejected\n'
-fi
+for name in "${REJECTS[@]}"; do
+  "$SAFE_RUNNER" "$ADAMAS_BIN" 600 8192 "$WORK_DIR/$name.cr" \
+    -o "$WORK_DIR/$name.adamas" > "$WORK_DIR/$name.log" 2>&1 || true
+  if [[ -x "$WORK_DIR/$name.adamas" ]] || ! grep -q 'no overload matches src' "$WORK_DIR/$name.log"; then
+    printf 'FAIL %s: nilable local was narrowed\n' "$name" >&2
+    failures=$((failures + 1))
+  else
+    printf 'PASS %s\n' "$name"
+  fi
+done
 
 for name in "${CASES[@]}"; do
   log="$WORK_DIR/$name.adamas.log"
