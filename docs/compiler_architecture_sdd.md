@@ -29,6 +29,20 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+High-level Atomic methods consume their selected source bodies, including
+ordering checks and value conversions. Name substrings cannot grant intrinsic
+authority. Exact Atomic::Ops primitives retain the native atomic boundary;
+cmpxchg carries the old value and success flag from one operation, then builds
+the declared {T, Bool} with LayoutContract. Its escaping tuple uses GC storage.
+DoD: atomic_source_dispatch_repro.sh passes five original-first native cases
+and a missing-method rejection; atomic_cmpxchg_result_repro.sh passes seven
+installed, unmodified atomic.cr cases with Int32, Bool, mixed instances and
+ordering rejections. MIR backend/optimization specs pass 138 examples. Rollback
+is the atomic source-dispatch and native result-contract change together.
+The current hello frontier remains exact Thread initializer replay after layout
+invalidation. Atomic nand/volatile semantics, fresh S2, bootstrap fixed point
+and LavinMQ runtime/test parity remain open.
+
 The bounded legacy Proc constructor receiver ownership pilot is admitted for
 the consumers listed in section 6.3. A concrete receiver now travels as an
 immutable fact tied to its source call and arena. Canonical `Proc` dispatch no
@@ -571,6 +585,7 @@ a current full-source emitted artifact reproduces it.
 | STABLE6 materialization replay shadow | none on main (`MaterializationReplayShadow` prototype only in `/private/tmp`) | in-process prototype discriminator; no admitted owner | REFUTED IN-PROCESS PROTOTYPE / NOT ADMITTED |
 | same-arena selected definition -> ordinary HIR call | existing `DefInstanceKey` / `TypeContext` / `SelectedCallTarget` | `spec/semantic_cli_spec.cr`, `spec/semantic_cli_compile_contracts_spec.cr`; `ADAMAS_SEMANTIC_COMPILE=1` | consumed only for the admitted single-active-unit source-backed shapes; broader T1 open |
 | source Proc constructor receiver -> owner/block/result consumers | local immutable call/arena/type fact; separate generated/source result authority | 16 receiver cases, existing 164 Proc cases and 27 parser controls; wider 20-case probe retains seven failures | consumed in the bounded legacy HIR pilot; broader T1 and Proc closure open |
+| Atomic source calls -> native cmpxchg projections and tuple layout | selected source bodies; AtomicCAS / AtomicCASSuccess; LayoutContract | atomic_source_dispatch_repro.sh, atomic_cmpxchg_result_repro.sh, MIR backend/optimization specs | consumed for qualified source calls and Int32/Bool result cases; broader atomic memory semantics open |
 
 ### 0.3 STABLE6 — refuted in-process prototype / not admitted
 
@@ -2283,6 +2298,15 @@ Key falsifiers:
 ### 6.7 BackendEmitter
 
 Owns mechanical LLVM emission from MIR plus facts.
+
+AtomicCAS owns one native strong cmpxchg and exposes its scalar old value.
+AtomicCASSuccess references that exact instruction id and projects its native
+success flag. Current lowering emits the pair adjacently; an arbitrary scalar
+alias or phi is not a valid projection source. Optimizations retain the operand
+edge and the CAS id. Both results publish their emitted LLVM types, including
+single-block returns. The HIR-to-MIR primitive consumer checks the declared
+tuple's two element types before allocation and uses LayoutContract offsets.
+Public Atomic method names cannot authorize a replacement body in MIR.
 
 Inputs:
 

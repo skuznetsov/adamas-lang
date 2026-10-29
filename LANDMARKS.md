@@ -21432,3 +21432,26 @@ types; refresh after operator inference/lowering or call-binding changes.
 The unmodified installed-stdlib hello frontier advances to MIR ambiguity
 for Thread#initialize; no bootstrap or LavinMQ closure follows. See TODO for
 the separate Atomic substring interception and non-atomic override obligation.
+
+## 2026-10-29 — Atomic source authority and native cmpxchg result ownership
+
+MIR's substring-based public Atomic override both hijacked unrelated user
+methods and replaced real atomic operations with ordinary loads/stores. Public
+methods now compile from selected source bodies; exact Ops primitives retain
+the native boundary. Removing the override exposed a second root: cmpxchg
+returned only its old scalar under a {T, Bool} contract. The explicit success
+projection retains one native operation, and strict element checks plus shared
+LayoutContract build the escaping GC tuple. Emitted-type tracking covers both
+results, including single-block returns; DCE and operand rewriting retain the
+native operation and its id.
+
+Evidence: original Crystal 1.22.1 and final fresh S1 pass source dispatch 5+1
+and unmodified installed atomic.cr 7 cases (Int32/Bool/mixed instances and
+ordering errors). MIR backend/optimization specs pass 138 examples. The parent
+returns 41 for AtomicLike#get instead of 17; removing only the override crashes
+the real Int32 CAS probe at 0x3. Scoped ROBUST for these source/result contracts.
+Refresh after selected-source dispatch, MIR CAS/projection rewriting, tuple
+layout or emitted-type tracking changes. Atomic nand and volatile semantics
+remain open, as do fresh S2, bootstrap and unchanged LavinMQ test parity.
+Thread's current blocker loses an already-selected initializer during layout
+invalidation; its source identity must outlive the materialized body.

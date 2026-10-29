@@ -16622,6 +16622,8 @@ module Adamas::MIR
                         when GlobalStore  then [inst.value]
                         when AtomicStore  then [inst.value, inst.ptr]
                         when Load         then [inst.ptr]
+                        when AtomicCAS    then [inst.ptr, inst.expected, inst.desired]
+                        when AtomicCASSuccess then [inst.cas]
                         when GetElementPtr        then [inst.base]
                         when GetElementPtrDynamic then [inst.base, inst.index]
                         when UnionWrap    then [inst.value]
@@ -16849,6 +16851,7 @@ module Adamas::MIR
                         when RCDecrement  then [inst.ptr]
                         when AtomicLoad   then [inst.ptr]
                         when AtomicCAS    then [inst.ptr, inst.expected, inst.desired]
+                        when AtomicCASSuccess then [inst.cas]
                         when AtomicRMW    then [inst.ptr, inst.value]
                         when MutexLock    then [inst.mutex_ptr]
                         when MutexUnlock  then [inst.mutex_ptr]
@@ -17823,6 +17826,12 @@ module Adamas::MIR
       when AtomicCAS
         @inst_other_count += 1
         emit_atomic_cas(inst, name)
+      when AtomicCASSuccess
+        @inst_other_count += 1
+        cas_type = @type_mapper.llvm_type(@value_types[inst.cas])
+        storage_type, _ = atomic_storage_type(cas_type)
+        emit "#{name} = extractvalue { #{storage_type}, i1 } %r#{inst.cas}.result, 1"
+        record_emitted_type(name, "i1")
       when AtomicRMW
         @inst_other_count += 1
         emit_atomic_rmw(inst, name)
@@ -28423,6 +28432,7 @@ module Adamas::MIR
       if @emit_tsan
         emit "call void @__tsan_acquire(ptr #{ptr})"
       end
+      record_emitted_type(name, type)
     end
 
     private def emit_atomic_rmw(inst : AtomicRMW, name : String)

@@ -1469,6 +1469,10 @@ module Adamas::MIR
         desired = resolve(inst.desired, replacements, block_id, inst_index, def_blocks, def_index, dominance_info)
         return inst if ptr == inst.ptr && expected == inst.expected && desired == inst.desired
         AtomicCAS.new(inst.id, inst.type, ptr, expected, desired, inst.success_ordering, inst.failure_ordering)
+      when AtomicCASSuccess
+        cas = resolve(inst.cas, replacements, block_id, inst_index, def_blocks, def_index, dominance_info)
+        return inst if cas == inst.cas
+        AtomicCASSuccess.new(inst.id, cas)
       when AtomicRMW
         ptr = resolve(inst.ptr, replacements, block_id, inst_index, def_blocks, def_index, dominance_info)
         val = resolve(inst.value, replacements, block_id, inst_index, def_blocks, def_index, dominance_info)

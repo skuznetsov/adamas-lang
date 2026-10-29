@@ -22080,7 +22080,7 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   Thread#initialize target: the emitted family contains both the zero-argument
   initializer and the nilable-name/block initializer. Preserve source identity
   when binding the call instead of choosing the first family member.
-- [ ] A separate no-prelude probe found that MIR's includes?("Atomic") receiver
+- [x] A separate no-prelude probe found that MIR's includes?("Atomic") receiver
   interception replaces user AtomicLike#get/set/swap/compare_and_set bodies.
   It can replace a scalar compare_and_set result with a tuple pointer. The
   same high-level interception emits non-atomic operations for real Atomic;
@@ -22088,3 +22088,26 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] This result-type contract does not certify overflow behavior, all wide
   mixed-width runtime operations, exponentiation, floating arithmetic, fresh
   bootstrap or unchanged LavinMQ runtime/test parity.
+
+### Compile Atomic source bodies and preserve both native CAS results (2026-10-29)
+- [x] Remove high-level Atomic interception and its HIR missing-body exemption.
+  User AtomicLike/MyAtomic/namespaced/exact Atomic bodies retain source identity;
+  real Atomic consumes unmodified stdlib ordering checks and conversions.
+- [x] Preserve both projections of one native cmpxchg. The previous low-level
+  primitive returned the old scalar under a tuple contract (SIGSEGV at 0x3).
+  AtomicCASSuccess retains the native flag; strict tuple element checks and
+  shared LayoutContract assemble an escaping GC-backed {T, Bool}.
+- [x] Original Crystal 1.22.1 and final fresh S1 pass five source-dispatch cases
+  plus one missing-method rejection, and seven unchanged atomic.cr cases:
+  Int32, Bool, mixed instances, successful/failed CAS and invalid orderings.
+  Backend/optimization specs pass 138 examples, including single-block result
+  type tracking and byte-backed Bool success projection after DCE.
+- [ ] AtomicRMWOp lacks nand; the current symbol mapper falls back to exchange.
+  Add a native nand operation and original-first runtime/IR discriminator.
+- [ ] Atomic load/store volatile arguments are dropped, and unused AtomicLoad
+  can be eliminated. Preserve volatile and memory-observation contracts before
+  claiming full Atomic parity; current tests do not certify concurrency.
+- [ ] Keep exact initializer source selection across Thread layout invalidation.
+  The concrete String/block initializer is built then removed; replay chooses
+  the union source's spelling and leaves the demanded concrete symbol bodyless.
+  Retain Def/arena/callshape/owner context separately from live-body proofs.

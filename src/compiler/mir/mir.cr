@@ -891,7 +891,7 @@ module Adamas::MIR
       @success_ordering : MemoryOrdering = MemoryOrdering::SeqCst,
       @failure_ordering : MemoryOrdering = MemoryOrdering::SeqCst
     )
-      super(id, type)  # Returns {old_value, success_bool}
+      super(id, type)  # Old value; AtomicCASSuccess projects the same operation's flag.
     end
 
     def operands : Array(ValueId)
@@ -901,6 +901,25 @@ module Adamas::MIR
     def to_s(io : IO) : Nil
       io << "%" << @id << " = cmpxchg %" << @ptr << ", %" << @expected << ", %" << @desired
       io << " " << @success_ordering << " " << @failure_ordering
+    end
+  end
+
+  # Projects the success flag from one strong compare-and-swap operation.
+  # The old value remains the AtomicCAS result; both projections refer to the
+  # same native cmpxchg, without repeating the memory access or comparison.
+  class AtomicCASSuccess < Value
+    getter cas : ValueId
+
+    def initialize(id : ValueId, @cas : ValueId)
+      super(id, TypeRef::BOOL)
+    end
+
+    def operands : Array(ValueId)
+      [@cas]
+    end
+
+    def to_s(io : IO) : Nil
+      io << "%" << @id << " = cmpxchg_success %" << @cas
     end
   end
 
@@ -2731,6 +2750,10 @@ module Adamas::MIR
                    success_ordering : MemoryOrdering = MemoryOrdering::SeqCst,
                    failure_ordering : MemoryOrdering = MemoryOrdering::SeqCst) : ValueId
       emit(AtomicCAS.new(@function.next_value_id, type, ptr, expected, desired, success_ordering, failure_ordering))
+    end
+
+    def atomic_cas_success(cas : ValueId) : ValueId
+      emit(AtomicCASSuccess.new(@function.next_value_id, cas))
     end
 
     def atomic_rmw(op : AtomicRMWOp, ptr : ValueId, value : ValueId, type : TypeRef,

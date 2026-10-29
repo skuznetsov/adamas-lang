@@ -2418,6 +2418,52 @@ describe Adamas::MIR::LLVMIRGenerator do
       output.should contain("cmpxchg")
       output.should contain("seq_cst")
       output.should contain("extractvalue")
+      output.should contain("ret i64 %r#{result}")
+    end
+
+    it "projects compare-and-swap success from the same native operation" do
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("atomic_cas_success_test", Adamas::MIR::TypeRef::BOOL)
+      func.add_param("ptr", Adamas::MIR::TypeRef::POINTER)
+      func.add_param("expected", Adamas::MIR::TypeRef::INT32)
+      func.add_param("desired", Adamas::MIR::TypeRef::INT32)
+
+      builder = Adamas::MIR::Builder.new(func)
+      old = builder.atomic_cas(0_u32, 1_u32, 2_u32, Adamas::MIR::TypeRef::INT32)
+      success = builder.atomic_cas_success(old)
+      builder.ret(success)
+
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
+      gen.emit_type_metadata = false
+      output = gen.generate
+
+      output.scan(/ = cmpxchg ptr /).size.should eq(1)
+      output.should contain("extractvalue { i32, i1 } %r#{old}.result, 0")
+      output.should contain("extractvalue { i32, i1 } %r#{old}.result, 1")
+      output.should contain("ret i1 %r#{success}")
+    end
+
+    it "keeps the native success flag when Bool CAS uses byte storage" do
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("bool_cas_success", Adamas::MIR::TypeRef::BOOL)
+      func.add_param("ptr", Adamas::MIR::TypeRef::POINTER)
+      func.add_param("expected", Adamas::MIR::TypeRef::BOOL)
+      func.add_param("desired", Adamas::MIR::TypeRef::BOOL)
+
+      builder = Adamas::MIR::Builder.new(func)
+      old = builder.atomic_cas(0_u32, 1_u32, 2_u32, Adamas::MIR::TypeRef::BOOL)
+      success = builder.atomic_cas_success(old)
+      builder.ret(success)
+
+      Adamas::MIR::DeadCodeEliminationPass.new(func).run
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
+      gen.emit_type_metadata = false
+      output = gen.generate
+
+      output.scan(/ = cmpxchg ptr /).size.should eq(1)
+      output.should contain("%r#{old} = trunc i8 %r#{old}.old8 to i1")
+      output.should contain("%r#{success} = extractvalue { i8, i1 } %r#{old}.result, 1")
+      output.should contain("ret i1 %r#{success}")
     end
 
     it "generates atomic read-modify-write operations" do

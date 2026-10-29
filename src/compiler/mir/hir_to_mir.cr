@@ -6835,93 +6835,9 @@ module Adamas
           end
         end
 
-        # Atomic intrinsics: Atomic(T)#get → load from self+0, Atomic(T)#set → store to self+0
-        # Original Crystal uses @[Primitive(:load_atomic)] / @[Primitive(:store_atomic)]
-        # but our compiler can't lower those primitives, so we inline them here.
-        if call.method_name.includes?("Atomic") && call.has_receiver?
-          method_suffix = call.method_name.rpartition("#").last.split("$").first
-          if method_suffix == "get" || method_suffix == "Hget"
-            # Atomic#get: load value from self + 0
-            self_ptr = args[0]
-            val_ptr = builder.gep(self_ptr, [0_u32], TypeRef::POINTER)
-            return builder.load(val_ptr, convert_type(call.type))
-          elsif method_suffix == "set" || method_suffix == "Hset"
-            # Atomic#set: store value to self + 0
-            # Signature: set(value : T, ordering = :seq_cst) — args[0]=self, args[1]=value, args[2]=ordering.
-            # The value is always args[1]; args[2] is the ordering enum (not a value to store).
-            self_ptr = args[0]
-            new_val = args.size > 1 ? args[1] : builder.const_int(0, TypeRef::INT32)
-            val_ptr = builder.gep(self_ptr, [0_u32], TypeRef::POINTER)
-            builder.store(val_ptr, new_val)
-            return new_val
-          elsif method_suffix == "swap" || method_suffix == "Hswap"
-            # Atomic#swap: load old, store new, return old
-            # Signature: swap(value : T, ordering = :seq_cst) — args[0]=self, args[1]=value, args[2]=ordering.
-            # The value is always args[1]; args[2] is the ordering enum (not a value to store).
-            self_ptr = args[0]
-            new_val = args.size > 1 ? args[1] : builder.const_int(0, TypeRef::INT32)
-            val_ptr = builder.gep(self_ptr, [0_u32], TypeRef::POINTER)
-            old_val = builder.load(val_ptr, convert_type(call.type))
-            builder.store(val_ptr, new_val)
-            return old_val
-          elsif method_suffix == "compare_and_set" || method_suffix == "Hcompare_and_set"
-            # Atomic#compare_and_set: non-atomic CAS (sufficient for single-threaded stage2)
-            # Returns {T, Bool} — old value and whether swap succeeded
-            self_ptr = args[0]
-            expected = args.size > 2 ? args[1] : (args.size > 1 ? args[1] : builder.const_int(0, TypeRef::INT32))
-            desired = args.size > 2 ? args[2] : (args.size > 1 ? args[1] : builder.const_int(0, TypeRef::INT32))
-
-            # Determine T from the expected arg's HIR type
-            val_type = if call.args.size >= 1
-                         hir_arg_type = @hir_value_types[call.args[0]]?
-                         hir_arg_type ? convert_type(hir_arg_type) : TypeRef::UINT32
-                       else
-                         TypeRef::UINT32
-                       end
-
-            # Load current value
-            val_ptr = builder.gep(self_ptr, [0_u32], TypeRef::POINTER)
-            old_val = builder.load(val_ptr, val_type)
-
-            # Compare old_val == expected
-            is_equal = builder.eq(old_val, expected)
-
-            # Conditional store: if equal, store desired; otherwise store old (no-op)
-            store_val = builder.select(is_equal, desired, old_val, val_type)
-            builder.store(val_ptr, store_val)
-
-            # Construct {T, Bool} result tuple on stack
-            tuple_type_ref = convert_type(call.type)
-            tuple_mir_type = @mir_module.type_registry.get(tuple_type_ref)
-
-            # Compute tuple size and element offsets using alignment-aware layout
-            val_size = case val_type
-                       when TypeRef::UINT8, TypeRef::INT8, TypeRef::BOOL      then 1_u64
-                       when TypeRef::UINT16, TypeRef::INT16                   then 2_u64
-                       when TypeRef::UINT32, TypeRef::INT32, TypeRef::FLOAT32 then 4_u64
-                       else                                                        8_u64
-                       end
-            val_align = val_size
-            # Bool at offset = align(val_size, 1) = val_size
-            bool_offset = val_size
-            tuple_size = bool_offset + 1_u64
-            # Round up to alignment of largest element
-            tuple_size = (tuple_size + val_align - 1) & ~(val_align - 1)
-
-            tuple_ptr = builder.alloc(MemoryStrategy::Stack, tuple_type_ref, tuple_size, val_align.to_u32)
-
-            # Store old_val at offset 0
-            field0_ptr = builder.gep(tuple_ptr, [0_u32], TypeRef::POINTER)
-            builder.store(field0_ptr, old_val)
-
-            # Store is_equal (Bool) at bool_offset
-            field1_ptr = builder.gep(tuple_ptr, [bool_offset.to_u32], TypeRef::POINTER)
-            builder.store(field1_ptr, is_equal)
-
-            return tuple_ptr
-          end
-        end
-
+        # High-level Atomic methods compile from their source bodies, including
+        # ordering validation and value conversions. Only the low-level Ops
+        # primitives below replace source calls with MIR atomic instructions.
         # Atomic::Ops primitives: lower @[Primitive] class methods on Atomic::Ops to
         # MIR atomic instructions. The macro `Atomic#add` etc. expands to
         # `Ops.atomicrmw(:add, pointerof(@value), val, :seq_cst, false)`. HIR-level
@@ -6980,7 +6896,27 @@ module Adamas
               succ_ord = llvm_ordering_to_mir(succ_val)
               fail_ord = llvm_ordering_to_mir(fail_val)
               cmp_type = convert_type(cmp_hir_type)
-              return builder.atomic_cas(ptr, cmp, new_val, cmp_type, succ_ord, fail_ord)
+              tuple_type_ref = convert_type(call.type)
+              tuple_type = @mir_module.type_registry.get(tuple_type_ref)
+              tuple_elements = tuple_type.try(&.element_types)
+              unless tuple_type && tuple_type.kind.tuple? && tuple_elements &&
+                     tuple_elements.size == 2 && tuple_elements[0].id == cmp_type.id &&
+                     tuple_elements[1].id == TypeRef::BOOL.id
+                raise "Atomic::Ops.cmpxchg requires a {T, Bool} result contract"
+              end
+              layout = Adamas::LayoutContract.tuple_slot_layout(tuple_elements)
+              old_value = builder.atomic_cas(ptr, cmp, new_val, cmp_type, succ_ord, fail_ord)
+              succeeded = builder.atomic_cas_success(old_value)
+              # This tuple may leave the current function through cast_from.
+              # Match escaping value allocations; a stack tuple would dangle.
+              tuple_ptr = builder.alloc(MemoryStrategy::GC, tuple_type_ref, layout.size, layout.align)
+              @stats.gc_allocations += 1
+              @mir_module.uses_gc = true
+              old_ptr = builder.gep(tuple_ptr, [layout.offsets[0]], TypeRef::POINTER)
+              builder.store(old_ptr, old_value)
+              success_ptr = builder.gep(tuple_ptr, [layout.offsets[1]], TypeRef::POINTER)
+              builder.store(success_ptr, succeeded)
+              return tuple_ptr
             end
           when "load"
             # Ops.load(ptr : Pointer(T), ordering : LLVM::AtomicOrdering, volatile : Bool) : T

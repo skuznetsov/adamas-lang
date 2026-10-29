@@ -47279,9 +47279,9 @@ module Adamas::HIR
       when "class"
         nil # Complex — defer to normal dispatch
       when "load_atomic"
-        nil # Already handled via Atomic method dispatch in MIR
+        nil # Atomic::Ops primitive calls are lowered to MIR atomics
       when "store_atomic"
-        nil # Already handled via Atomic method dispatch in MIR
+        nil # Atomic::Ops primitive calls are lowered to MIR atomics
       when "tuple_indexer_known_index"
         nil # Already handled by existing tuple code
       when "proc_call"
@@ -78984,27 +78984,6 @@ module Adamas::HIR
 
         if method_name == "unsafe_as" || method_name == "Hunsafe_as"
           return true if call.args.empty? && receiver_desc.kind != TypeKind::Module
-        end
-
-        receiver_name = normalize_method_owner_name(receiver_desc.name)
-        owner_name = normalize_method_owner_name(parts.owner)
-        receiver_base = strip_generic_args(receiver_name)
-        owner_base = strip_generic_args(owner_name)
-        atomic_methods = {"get", "Hget", "set", "Hset", "swap", "Hswap", "compare_and_set", "Hcompare_and_set"}
-        if atomic_methods.includes?(method_name) && receiver_base == "Atomic" && owner_base == "Atomic" &&
-           (receiver_desc.kind == TypeKind::Struct || receiver_desc.kind == TypeKind::Class)
-          arg_shape_matches = case method_name
-                              when "get", "Hget"
-                                (call.args.empty? || call.args.size == 1) && call.type != TypeRef::VOID
-                              when "set", "Hset", "swap", "Hswap"
-                                (call.args.size == 1 || call.args.size == 2) &&
-                                  (method_name == "set" || method_name == "Hset" || call.type != TypeRef::VOID)
-                              when "compare_and_set", "Hcompare_and_set"
-                                (call.args.size == 2 || call.args.size == 4) && call.type != TypeRef::VOID
-                              else
-                                false
-                              end
-          return true if arg_shape_matches
         end
 
         is_proc = receiver_desc.kind == TypeKind::Proc || receiver_desc.name == "Proc" || receiver_desc.name.starts_with?("Proc(")
