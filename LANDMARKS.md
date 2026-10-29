@@ -21543,3 +21543,40 @@ source body/result identity. Refresh after function substitution, mangling,
 callback ABI or source body selection changes; rollback removal and tests
 together. The override's old Hash/Fiber selection comment remains an unproven
 historical explanation, not authority to retain a runtime substitution.
+
+## 2026-10-29 — Semantic loop exits own results before runtime folding
+
+A return-only while true loop emitted a Nil result on a detached normal-exit
+wrapper. Method-tail inference widened UInt32 to Nil | UInt32; installed
+FdLock#unlock_slow then propagated that aggregate to UInt32#&, whose receiver
+ABI expected a scalar pointer. LLDB caught self=0xa during STDOUT.flush. The
+root is a false loop-result producer, not an invalid stdlib receiver or a need
+for another LLVM primitive substitution.
+
+The shared conditional-loop result producer now consumes Crystal's semantic
+normal/break exits and joins every break variant, including valueless breaks.
+Only a grouped/direct literal while true omits normal Nil; no returning exit
+is NoReturn. Module, instance and top-level method result collectors share one
+consumer. Runtime constant folding must not narrow the source type contract:
+the initial CFG-only candidate wrongly removed Nil from until false, and was
+rejected before commit. Crystal main_visitor's single_expression.true_literal?
+rule and original-first negative controls establish the admitted boundary.
+
+Evidence: nullable_primitive_receiver_repro.sh passes nine native positives
+and six nullable strict-consumer rejections under Crystal 1.22.1 and fresh S1.
+The parent fails four positive cases. Focused HIR return checks pass 18 examples;
+while-local neighbors retain nine positives/one rejection, and NoReturn call
+neighbors retain twelve cases. Unchanged installed-prelude hello compiles and
+links without AST/LLVM caches, prints exactly the original hello newline and
+exits 0. Its emitted unlock_slow returns i32 and handle_last_ref consumes UInt32.
+Scoped adversary ROBUST for this semantic result contract. Refresh after loop
+control-flow, result collection or coercion changes; rollback shared producers,
+consumers and tests together. Ensure-cleanup and nested inline-iterator break
+result paths were inspected, not independently executed by this qualifier.
+Fresh no-cache S2 stops at Dir.cd with Crystal::System::Path | String (exit 1,
+about 13s); bootstrap, rescue-local exception state, full scheduler behavior and
+LavinMQ runtime/upstream-test parity remain open. The earlier minimal rescue
+HIR guard now passes, but actual exception raising exits 5 before local-state
+outputs can be compared. Constructor source-order
+neighbors still reject source new bodies returning Void; hello is not their
+parity certificate.

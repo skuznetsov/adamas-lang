@@ -29,6 +29,29 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+Conditional loop results must be owned by Crystal's semantic exit set: only
+literal `while true` omits the normal Nil exit, while `until false` retains it.
+Valueless breaks contribute Nil, valued breaks contribute every result variant,
+and no semantic exit is NoReturn. Runtime constant folding cannot narrow this
+source type contract. The shared while/until result producer and three method
+return consumers remove the parent's spurious Nil from FdLock#unlock_slow.
+The fresh S1 passes nine original-first runtime cases and six nullable
+rejections; focused HIR return checks pass 18 examples. Unchanged installed-
+prelude hello now prints hello and exits 0; its UInt32 consumer no longer
+receives an entire Nil | UInt32 aggregate. This is a CAUTION semantic change.
+Strongest failure: removing a semantic Nil or a break variant while pruning a
+runtime-dead edge. Guard until, normal exits, mixed/valueless breaks and nested
+control flow. Refresh after loop control-flow, return collection or result
+coercion changes; rollback the producer and consumers/tests together. Fresh
+bootstrap, rescue-local exception state and LavinMQ parity remain open.
+The proportionate adversary qualifier is ROBUST within this tested contract;
+ensure-cleanup and nested inline-iterator break results were not independently
+executed by that qualifier.
+Fresh no-cache S2 stops at Dir.cd argument/restriction resolution for
+Crystal::System::Path | String (exit 1 after about 13s). The earlier minimal
+rescue-edge HIR guard now passes; actual full-prelude exception raising exits 5,
+so throw-point local-state parity has not yet been exercised successfully.
+
 Source-selected spawn methods are emitted from their MIR bodies. The removed
 LLVM spawn-name override built a Fiber by hardcoded offsets from an older
 layout, overwriting the installed stdlib's execution_context slot with the
@@ -38,9 +61,8 @@ original-first positional/named regression retain result/callback ABI;
 139 LLVM/optimization examples pass. The parent fails the positional case,
 while its named control passes. No separate primitive consumes the removed
 private trampoline; the context-switch primitive remains independent.
-Installed-prelude hello now compiles, links and prints hello, then faults in
-FdLock#handle_last_ref: UInt32#& receives self=0xa where its body loads a pointer.
-This is the next startup/flush frontier, not a successful process-exit claim.
+The loop result fix above closes the following FdLock flush fault; unchanged
+installed-prelude hello now compiles, links, prints hello and exits 0.
 Refresh after function substitution, mangling or source callback ABI changes.
 Rollback source-body emission and its regression together. Full Fiber/scheduler
 parity, fresh bootstrap and LavinMQ parity remain separate obligations.
@@ -61,8 +83,8 @@ Float32 as if it belonged to the tail. Guard both with mixed-type tests.
 This is a CAUTION ABI change; rollback its transport and consumers together.
 The unchanged installed-prelude hello compiles/links and emits the correct
 sem_open call. Source spawn emission above closes the following enqueue fault;
-the program prints hello and then faults during flush. Successful completion,
-fresh bootstrap and LavinMQ parity remain open until separately exercised.
+the loop result fix above closes the following flush fault and hello exits 0.
+Fresh bootstrap and LavinMQ parity remain open until separately exercised.
 
 Selected initializer source recipes survive layout-body invalidation. The
 existing MaterializedInitializerSource retains the exact Def/arena, owner,

@@ -22138,11 +22138,13 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [x] Locate the first failing startup action: sem_open loses its C variadic
   ABI. The source-prefix fix below closes that action; successful compile/link
   alone still does not establish runtime parity.
-- [ ] Source spawn emission below closes the next Fiber enqueue fault;
-  full-prelude hello prints user output then faults in FdLock during flush.
-  Locate that receiver's first invalid representation separately.
-  Requalify initializer_explicit_new_source_order_repro.sh after this frontier:
-  its same-arena run crashes and its cross-arena case reports a Void result.
+- [x] Source spawn emission below closes the Fiber enqueue fault; the semantic
+  loop result fix closes the following FdLock flush fault. Full-prelude hello
+  now prints user output and exits 0.
+- [ ] initializer_explicit_new_source_order_repro.sh remains red after this
+  frontier: both same-arena and cross-arena now report an explicit new body
+  returning Void instead of the declared owner. Earlier same-arena execution
+  crashed; the current compile rejection does not establish source parity.
 - [ ] Audit captured `&@run` block metadata separately: the no-prelude fixture
   retains heap_block_param=false, while explicit `&block` stored in @run uses
   true. This is a metadata observation, not yet a demonstrated runtime defect.
@@ -22176,10 +22178,12 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   extern matrix keeps 28 runtime positives and 24 strict rejections; named
   extern controls retain two positives and four semantic rejections on both
   compilers. No application/stdlib changes or weakened argument checks.
-- [ ] Source spawn emission below closes the next enqueue fault. A separate
-  monitor-loop backedge currently emits a null carried Time::Span; qualify a
-  dedicated discriminator before assigning it a runtime cause. Full hello
-  now prints output then faults during flush; runtime parity remains open.
+- [x] Source spawn emission below closes the next enqueue fault. The semantic
+  loop result fix closes the subsequent flush fault; full hello exits 0.
+- [ ] An earlier monitor-loop backedge emitted a null carried Time::Span.
+  The minimal no-prelude HIR guard passes after the loop-result change; refresh
+  the full monitor case before treating that earlier IR as a current defect.
+  Broader exception/runtime parity remains open.
 - [ ] Audit nominal enum widths at the C boundary separately: the LLVM type
   mapper currently maps Enum to i32. This slice preserves the existing enum
   path and does not establish parity for every underlying enum width.
@@ -22197,10 +22201,45 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [x] Recompile unchanged installed-prelude hello without AST/LLVM caches:
   compile/link succeeds and user stdout is now hello. Generated spawn calls
   the actual scheduler source rather than the deleted layout substitution.
-- [ ] Process completion still fails: bounded LLDB captures self=0xa in
+- [x] The initial process completion failure captured self=0xa in
   UInt32#&, called by FdLock#handle_last_ref(Nil|UInt32) during STDOUT.flush.
-  Fix the compiler's scalar/receiver or union representation contract before
-  claiming full hello, Fiber, bootstrap or LavinMQ parity.
+  The shared semantic loop-result fix below removes the spurious Nil at its
+  source, and unchanged installed-prelude hello now exits 0.
 - [ ] The earlier reason for the override claimed wrong Hash/Fiber selection.
   Keep source-selection regressions as guards; the comment alone is not a
   reproduced defect on this source state. No application or stdlib changes.
+
+### Own conditional-loop results before runtime constant folding (2026-10-29)
+- [x] A return-only while true loop contributed a synthetic Nil tail, widening
+  UInt32 to Nil | UInt32. FdLock#unlock_slow propagated that type to its bitwise
+  consumer, which passed the union aggregate to a scalar receiver ABI.
+  Define loop results from semantic normal/break exits, with NoReturn when
+  literal while true has no break. Share the rule across while/until and share
+  method-return collection across module, instance and top-level methods.
+- [x] Preserve original Crystal's exact endless-loop criterion: grouped literal
+  true qualifies; until false and arbitrary constant expressions retain the
+  normal Nil type. The first CFG-only candidate failed this adversary control
+  and was corrected before commit. Do not narrow acceptance after optimization.
+- [x] Fresh S1 passes nine original-first native cases and six strict
+  nullable rejections; HIR return checks pass 18 examples, covering module and
+  instance methods, mixed/valueless breaks and NoReturn. The parent rejects
+  four positive cases with spurious nullable results.
+- [x] Recompile unchanged hello against installed Crystal 1.22.1 stdlib without
+  AST/LLVM caches: build/link succeeds, stdout is hello and process exits 0.
+  Generated unlock_slow returns i32 and handle_last_ref consumes UInt32.
+- [x] Neighbor regressions retain nine while-local positives plus one strict
+  lexical-scope rejection, and twelve NoReturn argument/receiver cases.
+- [ ] Independently qualify ensure-cleanup and nested inline-iterator break
+  results; the current adversary qualifier inspected their routing but did
+  not execute these specific result paths.
+- [ ] Rescue-local exception state remains separate. The earlier no-prelude
+  malformed-edge discriminator now passes, so its old failure is not current
+  evidence. New original-first real exceptions preserve old/new scalar and
+  object values, but fresh S1 exits 5 in exception raising before producing
+  those values. Preserve the actual throw-point state when this path is fixed;
+  an unconditional pre-try snapshot would discard valid protected assignments.
+- [ ] Fresh no-cache S2 stops after lower_main with `no overload matches Dir.cd
+  for argument types (Crystal::System::Path | String)` (exit 1, about 13s).
+  Resolve this source type/overload contract before another bootstrap claim.
+  Full scheduler behavior and unchanged LavinMQ upstream-test parity remain
+  separate obligations.

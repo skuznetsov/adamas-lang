@@ -27505,6 +27505,34 @@ module Adamas::HIR
       result
     end
 
+    # Return terminators and a semantic fallthrough own method results. A
+    # terminal loop/branch tail is not an implicit Nil return. Crystal retains
+    # a normal-exit type for loops other than literal `while true`, even when
+    # codegen can fold their condition (for example `until false`).
+    private def lowered_method_result_types(ctx : LoweringContext, last_value : ValueId?) : Array(TypeRef)
+      blocks = reachable_blocks(ctx.function)
+      types = [] of TypeRef
+      blocks.each do |block|
+        term = block.terminator
+        next unless term.is_a?(Return)
+        type = term.value.try { |value| ctx.type_of(value) } || TypeRef::NIL
+        types << type unless type == TypeRef::VOID
+      end
+
+      if value = last_value
+        type = ctx.type_of(value)
+        term = ctx.get_block(ctx.current_block).terminator
+        flowing_tail = !should_stop_sequential_lowering?(ctx) || (
+          !control_flow_dead_block?(ctx, ctx.current_block) &&
+          term.is_a?(Return) && term.value == value
+        )
+        if flowing_tail || (types.empty? && noreturn_type?(type))
+          types << type unless type == TypeRef::VOID
+        end
+      end
+      types
+    end
+
     private def noreturn_expr?(expr_id : ExprId) : Bool
       node = node_for_expr(expr_id)
       return false unless node
@@ -37173,28 +37201,7 @@ module Adamas::HIR
       # Functions with explicit `return` inside conditionals may return different
       # types from different paths. We must merge all of them.
       if node.return_type.nil?
-        inferred_types = [] of TypeRef
-
-        # Collect types from all Return terminators
-        reachable_blocks(func).each do |block|
-          term = block.terminator
-          next unless term.is_a?(Return)
-          if value = term.value
-            t = ctx.type_of(value)
-            inferred_types << t unless t == TypeRef::VOID
-          else
-            inferred_types << TypeRef::NIL
-          end
-        end
-
-        # Only a fallthrough path contributes the body's final expression.
-        # lower_return may leave a synthetic Nil last_value after terminating the block.
-        if !should_stop_sequential_lowering?(ctx)
-          if (last_id = last_value)
-            t = ctx.type_of(last_id)
-            inferred_types << t unless t == TypeRef::VOID
-          end
-        end
+        inferred_types = lowered_method_result_types(ctx, last_value)
 
         if inferred_types.any?
           inferred_type = merge_return_types(inferred_types)
@@ -46245,28 +46252,7 @@ module Adamas::HIR
       # Functions with explicit `return` inside conditionals (e.g., check_downcase_ascii)
       # may return different types from different paths. We must merge all of them.
       if node.return_type.nil? && !is_initialize_method
-        inferred_types = [] of TypeRef
-
-        # Collect types from all Return terminators
-        reachable_blocks(func).each do |block|
-          term = block.terminator
-          next unless term.is_a?(Return)
-          if value = term.value
-            t = ctx.type_of(value)
-            inferred_types << t unless t == TypeRef::VOID
-          else
-            inferred_types << TypeRef::NIL
-          end
-        end
-
-        # Only a fallthrough path contributes the body's final expression.
-        # lower_return may leave a synthetic Nil last_value after terminating the block.
-        if !should_stop_sequential_lowering?(ctx)
-          if (last_id = last_value)
-            t = ctx.type_of(last_id)
-            inferred_types << t unless t == TypeRef::VOID
-          end
-        end
+        inferred_types = lowered_method_result_types(ctx, last_value)
 
         if inferred_types.any?
           inferred_type = merge_return_types(inferred_types)
@@ -76546,32 +76532,7 @@ module Adamas::HIR
       # Infer return type from last expression if not explicitly specified
       # This handles methods with implicit returns like `def root_buffer; @buffer - @offset; end`
       if return_type == TypeRef::VOID
-        inferred_types = [] of TypeRef
-
-        # Prefer actual lowered return terminators over a separate AST-walk inference pass.
-        # This avoids doubling work (and avoids triggering extra monomorphization while
-        # lowering large pending queues during self-host).
-        reachable_blocks(func).each do |block|
-          term = block.terminator
-          next unless term.is_a?(Return)
-          if value = term.value
-            t = ctx.type_of(value)
-            inferred_types << t unless t == TypeRef::VOID
-          else
-            inferred_types << TypeRef::NIL
-          end
-        end
-
-        # Also consider the last expression as a fallback (covers single-expression bodies
-        # where lowering didn't emit an explicit return terminator yet). A value
-        # lowered after an explicit `return x` ends the body (`return blk` yields
-        # a trailing nil) is dead and must not widen the type to `T | Nil`.
-        if (last_id = last_value)
-          tail_term = ctx.get_block(ctx.current_block).terminator
-          dead_tail = tail_term.is_a?(Return) && tail_term.value != last_id
-          t = ctx.type_of(last_id)
-          inferred_types << t unless t == TypeRef::VOID || dead_tail
-        end
+        inferred_types = lowered_method_result_types(ctx, last_value)
 
         if inferred_types.any?
           inferred_type = merge_return_types(inferred_types)
@@ -95105,55 +95066,59 @@ module Adamas::HIR
         merge_inline_caller_locals_after_if(ctx, pre_inline_caller_locals, flowing_inline_info)
       end
 
-      # While expression result: nil for normal exit, break value for break exit
-      if break_values.empty?
-        # No break values — while always returns nil
-        nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
-        ctx.emit(nil_lit)
-        nil_lit.id
+      normal_exit = literal_true_loop_condition?(node.condition) ? nil : cond_branch_block
+      lower_conditional_loop_exit_result(ctx, normal_exit, break_values, break_info)
+    end
+
+    private def literal_true_loop_condition?(condition : ExprId) : Bool
+      node = @arena[condition]
+      case node
+      when Adamas::Compiler::Frontend::BoolNode
+        node.value
+      when Adamas::Compiler::Frontend::GroupingNode
+        literal_true_loop_condition?(node.expression)
       else
-        # Break values present — create phi merging nil (normal exit) + break values
-        break_type = ctx.type_of(break_values.first[1])
-        nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
-        ctx.emit_to_block(cond_branch_block, nil_lit)
-        ctx.register_type(nil_lit.id, TypeRef::NIL)
-        # Create union type for T | Nil if break type is not already nilable
-        result_type = break_type
-        if break_type != TypeRef::NIL
-          result_type = union_type_for_values(break_type, TypeRef::NIL)
-          result_type = break_type if result_type == TypeRef::VOID
-        end
-        result_phi = Phi.new(ctx.next_id, result_type)
-        # Normal exit: nil
-        if is_union_type?(result_type) && result_type != TypeRef::NIL
-          nil_wrap = UnionWrap.new(ctx.next_id, result_type, nil_lit.id, 0)
-          ctx.emit_to_block(cond_branch_block, nil_wrap)
-          ctx.register_type(nil_wrap.id, result_type)
-          result_phi.add_incoming(cond_branch_block, nil_wrap.id)
-        else
-          result_phi.add_incoming(cond_branch_block, nil_lit.id)
-        end
-        # Break exits: break value (may need union wrapping)
-        break_values.each do |break_block, break_val|
-          if is_union_type?(result_type) && ctx.type_of(break_val) != result_type
-            val_type = ctx.type_of(break_val)
-            variant_id = get_union_variant_id(result_type, val_type)
-            if variant_id && variant_id >= 0
-              wrap = UnionWrap.new(ctx.next_id, result_type, break_val, variant_id)
-              ctx.emit_to_block(break_block, wrap)
-              ctx.register_type(wrap.id, result_type)
-              result_phi.add_incoming(break_block, wrap.id)
-            else
-              result_phi.add_incoming(break_block, break_val)
-            end
-          else
-            result_phi.add_incoming(break_block, break_val)
-          end
-        end
-        ctx.emit(result_phi)
-        ctx.register_type(result_phi.id, result_type)
-        result_phi.id
+        false
       end
+    end
+
+    # Match Crystal's semantic exit set, before runtime constant folding:
+    # only literal `while true` omits its normal Nil exit. Valued breaks keep
+    # every result variant; normal exits and valueless breaks contribute Nil.
+    private def lower_conditional_loop_exit_result(
+      ctx : LoweringContext,
+      normal_exit : BlockId?,
+      break_values : Array({BlockId, ValueId}),
+      break_info : Array({BlockId, Hash(String, ValueId)}),
+    ) : ValueId
+      exit_block = ctx.current_block
+      incomings = break_values.dup
+      nil_exits = [] of BlockId
+      nil_exits << normal_exit if normal_exit
+      break_info.each do |block_id, _|
+        nil_exits << block_id unless break_values.any? { |entry| entry[0] == block_id }
+      end
+      nil_exits.each do |block_id|
+        nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+        ctx.emit_to_block(block_id, nil_lit)
+        incomings << {block_id, nil_lit.id}
+      end
+      if incomings.empty?
+        @control_flow_dead_blocks.add({ctx.function.id, exit_block})
+        bottom = Literal.new(ctx.next_id, type_ref_for_name("NoReturn"), nil)
+        ctx.emit(bottom)
+        return bottom.id
+      end
+      result_type = incomings.map { |(_, value)| ctx.type_of(value) }
+        .reduce { |left, right| union_type_for_values(left, right) }
+      result_phi = Phi.new(ctx.next_id, result_type)
+      incomings.each do |block_id, value|
+        ctx.current_block = block_id
+        result_phi.add_incoming(block_id, coerce_value_to_type(ctx, value, result_type))
+      end
+      ctx.current_block = exit_block
+      ctx.emit(result_phi)
+      result_phi.id
     end
 
     # Exit value of a local first assigned in a `while` body. A break exit
@@ -96484,50 +96449,7 @@ module Adamas::HIR
         end
       end
 
-      # Until expression result: nil for normal exit, break value for break exit
-      if break_values.empty?
-        nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
-        ctx.emit(nil_lit)
-        nil_lit.id
-      else
-        break_type = ctx.type_of(break_values.first[1])
-        nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
-        ctx.emit_to_block(cond_true_block, nil_lit)
-        ctx.register_type(nil_lit.id, TypeRef::NIL)
-        result_type = break_type
-        if break_type != TypeRef::NIL
-          result_type = union_type_for_values(break_type, TypeRef::NIL)
-          result_type = break_type if result_type == TypeRef::VOID
-        end
-        result_phi = Phi.new(ctx.next_id, result_type)
-        if is_union_type?(result_type) && result_type != TypeRef::NIL
-          nil_wrap = UnionWrap.new(ctx.next_id, result_type, nil_lit.id, 0)
-          ctx.emit_to_block(cond_true_block, nil_wrap)
-          ctx.register_type(nil_wrap.id, result_type)
-          result_phi.add_incoming(cond_true_block, nil_wrap.id)
-        else
-          result_phi.add_incoming(cond_true_block, nil_lit.id)
-        end
-        break_values.each do |break_block, break_val|
-          if is_union_type?(result_type) && ctx.type_of(break_val) != result_type
-            val_type = ctx.type_of(break_val)
-            variant_id = get_union_variant_id(result_type, val_type)
-            if variant_id && variant_id >= 0
-              wrap = UnionWrap.new(ctx.next_id, result_type, break_val, variant_id)
-              ctx.emit_to_block(break_block, wrap)
-              ctx.register_type(wrap.id, result_type)
-              result_phi.add_incoming(break_block, wrap.id)
-            else
-              result_phi.add_incoming(break_block, break_val)
-            end
-          else
-            result_phi.add_incoming(break_block, break_val)
-          end
-        end
-        ctx.emit(result_phi)
-        ctx.register_type(result_phi.id, result_type)
-        result_phi.id
-      end
+      lower_conditional_loop_exit_result(ctx, cond_true_block, break_values, break_info)
     end
 
     private def lower_ternary(ctx : LoweringContext, node : Adamas::Compiler::Frontend::TernaryNode) : ValueId

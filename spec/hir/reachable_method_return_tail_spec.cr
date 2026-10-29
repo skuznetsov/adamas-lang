@@ -93,4 +93,41 @@ describe "reachable method return tails" do
     reachable_tail_type_parts(converter, "ReachableTailClass#string_tail_after_return")
       .should eq(["Int32", "String"])
   end
+
+  it "does not add Nil to explicit returns inside non-exiting conditional loops" do
+    converter = lower_reachable_method_tail_probe
+    ["ReachableTailModule.", "ReachableTailClass#"].each do |owner|
+      reachable_tail_type_parts(converter, owner + "return_only_while").should eq(["UInt32"])
+      reachable_tail_type_parts(converter, owner + "return_only_until").should eq(["Nil", "UInt32"])
+    end
+  end
+
+  it "uses only reachable break values when the condition cannot exit" do
+    converter = lower_reachable_method_tail_probe
+    ["ReachableTailModule.", "ReachableTailClass#"].each do |owner|
+      reachable_tail_type_parts(converter, owner + "while_break_value").should eq(["Int32"])
+      reachable_tail_type_parts(converter, owner + "until_break_value").should eq(["Int32", "Nil"])
+      reachable_tail_type_parts(converter, owner + "while_mixed_break")
+        .should eq(["Int32", "String"])
+    end
+  end
+
+  it "retains Nil from reachable condition exits and valueless breaks" do
+    converter = lower_reachable_method_tail_probe
+    ["ReachableTailModule.", "ReachableTailClass#"].each do |owner|
+      ["while_normal_exit", "until_normal_exit", "until_bare_break"].each do |method|
+        reachable_tail_type_parts(converter, owner + method).should eq(["Int32", "Nil"])
+      end
+    end
+  end
+
+  it "gives a conditional loop with no returning exit a NoReturn result" do
+    converter = lower_reachable_method_tail_probe
+    ["ReachableTailModule.", "ReachableTailClass#"].each do |owner|
+      reachable_tail_type_parts(converter, owner + "endless_while").should eq(["NoReturn"])
+      function = reachable_tail_function(converter, owner + "endless_while")
+      function.blocks.none? { |block| block.terminator.is_a?(Adamas::HIR::Return) }.should be_true
+      reachable_tail_type_parts(converter, owner + "endless_until").should eq(["Nil"])
+    end
+  end
 end
