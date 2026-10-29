@@ -22243,3 +22243,31 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   Resolve this source type/overload contract before another bootstrap claim.
   Full scheduler behavior and unchanged LavinMQ upstream-test parity remain
   separate obligations.
+
+### Preserve resolved union arms across non-Nil narrowing (2026-10-29)
+- [x] A source/trace discriminator observes root Path in the nullable union's
+  sidecar, then Crystal::System::Path in the narrowed multi-arm union. The
+  known arms were reparsed in the consumer's lexical/generic environment.
+  Reuse the isolated canonical binding resolver for the shared producer and
+  its old-module fallback. Do not weaken overload or argument checks.
+- [x] Three exact-TypeRef tests fail on the parent and pass with the fix:
+  nested type collision, module namespace override and caller substitution.
+  Focused union/pointer checks pass 25 examples.
+- [x] union_narrowing_lexical_identity_repro.sh qualifies three native positives
+  and one strict rejection on Crystal 1.22.1 and fresh S1. A runtime union
+  reaches truthy/not_nil! inline calls; the parent fails both, while its
+  blockless control and rejection of the actual nested Path still pass.
+- [x] Fresh no-cache S2 passes the old Dir.cd error and reaches
+  AstCache#write_string_table(Pointer, Hash(String, UInt32)) (exit 1 after
+  about 37s). The preceding Dir.cd TODO is historical and superseded here.
+- [ ] Resolve the selected File.open block/yield argument contract at that S2
+  call: IO must not degrade into a generic Pointer. Establish a narrow oracle
+  before editing; this error is not authority to broaden IO acceptance.
+- [ ] The smaller installed-stdlib Process.exec probe next fails protected
+  Scheduler#enter_syscall. Its current class is the declaring Scheduler;
+  inspect inherited namespace override ownership across inline callee/block
+  transitions, retaining strict visibility and included-module access.
+- [ ] Audit union_type_for_values, union_type_for_value_set and nullable-union
+  construction: they also stringify known types before contextual resolution.
+  A shared source pattern is a risk indicator; qualify each with a failing
+  identity probe before broadening this change to all joins.

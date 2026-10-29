@@ -21580,3 +21580,30 @@ HIR guard now passes, but actual exception raising exits 5 before local-state
 outputs can be compared. Constructor source-order
 neighbors still reject source new bodies returning Void; hello is not their
 parity certificate.
+
+## 2026-10-29 — Non-Nil narrowing consumes canonical union-arm identities
+
+The Dir.cd bootstrap rejection was caused before overload selection. A debug
+trace observed Nil | Path | String with exact root Path in its sidecar, then
+Crystal::System::Path | String immediately after non_nil_type_for_union. The
+multi-arm path stringified resolved types and passed them to a source-lexical
+resolver. Inlining exposed the bad value at a strict inner cd call; it was
+not evidence that the stdlib needed a type annotation or relaxed IO checks.
+
+The shared narrowing producer and old-module fallback now use the existing
+canonical binding resolver, isolating class, namespace and generic context.
+Source annotations retain lexical authority. Three exact-TypeRef falsifiers
+fail on the parent and pass with the fix; union/pointer specs pass 25 examples.
+The original-first native matrix passes truthy and not_nil! inline cases,
+the blockless control and rejection of an actual nested Path on Crystal
+1.22.1 and fresh S1. The parent fails the two inline positives and passes its
+controls. Scoped adversary ROBUST; refresh after sidecar, canonical resolver
+or narrowing changes, and roll back producer/tests together.
+
+Fresh no-cache S2 moves past Dir.cd and stops at AstCache#write_string_table
+with Pointer instead of IO (exit 1, about 37s, peak RSS about 966 MiB).
+A smaller installed-stdlib Process.exec probe also passes Dir.cd and next
+rejects a protected Scheduler method from its own class, with a caller's
+namespace override still active. Neither bootstrap nor application parity is
+closed. Other known-type value joins share the textual round-trip risk and
+need their own identity falsifiers before extending this change.

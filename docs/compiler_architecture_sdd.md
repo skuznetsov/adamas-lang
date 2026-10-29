@@ -47,10 +47,26 @@ bootstrap, rescue-local exception state and LavinMQ parity remain open.
 The proportionate adversary qualifier is ROBUST within this tested contract;
 ensure-cleanup and nested inline-iterator break results were not independently
 executed by that qualifier.
-Fresh no-cache S2 stops at Dir.cd argument/restriction resolution for
-Crystal::System::Path | String (exit 1 after about 13s). The earlier minimal
-rescue-edge HIR guard now passes; actual full-prelude exception raising exits 5,
-so throw-point local-state parity has not yet been exercised successfully.
+Narrowing an existing union consumes its resolved arm identities. Rebuilding
+the remaining arms must use the canonical binding resolver, isolated from the
+consumer's class, namespace override and generic substitutions. Source type
+annotations still resolve lexically. Otherwise removing Nil from root
+Path | String | Nil inside Crystal::System::Process silently substitutes its
+nested Path module. Three TypeRef-identity falsifiers fail on the parent and
+pass with the shared non-Nil producer; 25 focused union/pointer examples pass.
+Original-first native tests retain truthy/not_nil! inline cases, a blockless
+control and rejection of an actual nested Path. Scoped adversary ROBUST for
+this boundary; refresh after union sidecar, canonical binding or narrowing
+changes. Rollback producer and tests together. Other value-join round trips
+are separate audit candidates, not certified by this narrow qualifier.
+
+Fresh no-cache S2 passes the former Dir.cd failure and stops at
+AstCache#write_string_table(Pointer, Hash(String, UInt32)) (exit 1, about 37s).
+A smaller installed-stdlib Process.exec probe also passes Dir.cd, then rejects
+Scheduler#enter_syscall despite the same lexical class: an inherited inline
+namespace override is the next context-ownership hypothesis. The earlier
+minimal rescue-edge HIR guard now passes; actual full-prelude exception raising
+exits 5, so throw-point local-state parity has not yet been exercised.
 
 Source-selected spawn methods are emitted from their MIR bodies. The removed
 LLVM spawn-name override built a Fiber by hardcoded offsets from an older

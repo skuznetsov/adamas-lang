@@ -52386,7 +52386,10 @@ module Adamas::HIR
 
         exact_variants = non_nil_variants.map { |variant| exact_hir_type_ref_for_union_variant(variant) }
         return nil if exact_variants.any? { |exact| exact == TypeRef::VOID || exact == type_ref }
-        narrowed = create_union_type(exact_variants.map { |exact| generic_param_type_name_from_ref(exact) }.join(" | "))
+        # These names describe already-resolved arms, not source annotations.
+        # Rejoining them in the consumer's lexical/generic context can turn a
+        # root Path into Crystal::System::Path, or substitute a caller formal.
+        narrowed = canonical_bound_type_ref(exact_variants.map { |exact| generic_param_type_name_from_ref(exact) }.join(" | "))
         return narrowed unless narrowed == TypeRef::VOID || narrowed == type_ref
         return nil
       end
@@ -52398,12 +52401,12 @@ module Adamas::HIR
       non_nil = variants.reject { |name| name == "Nil" }
       return nil if non_nil.empty?
       if non_nil.size == 1
-        narrowed = type_ref_for_name(non_nil.first)
+        narrowed = canonical_bound_type_ref(non_nil.first)
         return narrowed unless narrowed == TypeRef::VOID || narrowed == type_ref
         return nil
       end
 
-      narrowed = create_union_type(non_nil.join(" | "))
+      narrowed = canonical_bound_type_ref(non_nil.join(" | "))
       narrowed == TypeRef::VOID || narrowed == type_ref ? nil : narrowed
     end
 
@@ -143587,6 +143590,9 @@ module Adamas::HIR
 
       if extra_non_nil
         if narrowed_type = non_nil_type_for_union(value_type)
+          if debug_env_filter_match?("DEBUG_NOT_NIL_NARROW", ctx.function.name)
+            STDERR.puts "[NOT_NIL_NARROW] caller=#{ctx.function.name} action=multi type=#{narrowed_type.id}:#{get_type_name_from_ref(narrowed_type)}"
+          end
           if narrowed_type != value_type && is_union_type?(narrowed_type)
             if all_ref_union_type_ref?(value_type) && all_ref_union_type_ref?(narrowed_type)
               copy = Copy.new(ctx.next_id, narrowed_type, value_id)
