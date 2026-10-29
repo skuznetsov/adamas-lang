@@ -75,6 +75,9 @@ module Adamas::HIR
     @scoped_receiver_narrowings : Hash(String, ScopedReceiverNarrowing)
     @boxed_locals_snapshots : Array(Hash(String, BoxedLocal))
     @entry_box_required_locals : Set(String)
+    # Entry boxes no closure body assigns, mapped to whether their proofs also
+    # survive pointer stores (false once the owner takes the local's address).
+    @call_stable_boxed_locals : Hash(String, Bool)
     # Pre-emission payload joins are keyed by the owner arena and exact source
     # assignment node. Names alone are insufficient because scopes can shadow.
     @capture_storage_types : Hash({UInt64, Int32}, TypeRef)
@@ -206,6 +209,7 @@ module Adamas::HIR
       @scoped_receiver_narrowings = {} of String => ScopedReceiverNarrowing
       @boxed_locals_snapshots = [] of Hash(String, BoxedLocal)
       @entry_box_required_locals = Set(String).new
+      @call_stable_boxed_locals = {} of String => Bool
       @capture_storage_types = {} of {UInt64, Int32} => TypeRef
       @capture_parameter_storage_types = {} of ValueId => TypeRef
       @block_parameter_bindings = {} of String => ValueId
@@ -609,8 +613,39 @@ module Adamas::HIR
       return nil unless narrowing = @scoped_receiver_narrowings[name]?
       return nil unless narrowing.name == name && narrowing.carrier == owner_local
 
+      # A block-bound proof holds for every read on its straight-line block.
+      if block = narrowing.block
+        return narrowing.value_id if block == @current_block
+        @scoped_receiver_narrowings.delete(name)
+        return nil
+      end
       @scoped_receiver_narrowings.delete(name)
       narrowing.value_id
+    end
+
+    # A call-stable entry box changes only through the owner's own writes,
+    # and each of them discards the box's proof first. A truthiness proof of
+    # such a box therefore holds like a closure-cell write proof: on its block,
+    # across calls, carried into branch arms and joins.
+    def register_boxed_local_block_narrowing(
+      name : String,
+      owner_local : ValueId,
+      value_id : ValueId,
+      survives_pointer_stores : Bool,
+    ) : ScopedReceiverNarrowing?
+      narrowing = ScopedReceiverNarrowing.new(
+        name, value_id, owner_local, @current_block, true, survives_pointer_stores,
+      )
+      @scoped_receiver_narrowings[name] = narrowing
+      narrowing
+    end
+
+    def mark_call_stable_boxed_local(name : String, survives_pointer_stores : Bool) : Nil
+      @call_stable_boxed_locals[name] = survives_pointer_stores
+    end
+
+    def call_stable_boxed_local_pointer_stores(name : String) : Bool?
+      @call_stable_boxed_locals[name]?
     end
 
     def register_boxed_local_narrowing(
@@ -706,11 +741,31 @@ module Adamas::HIR
     def carry_closure_cell_write_proofs(proofs : Array(ScopedReceiverNarrowing)) : Nil
       proofs.each do |entry|
         current = @scoped_receiver_narrowings[entry.name]?
-        next unless current && current.value_id == entry.value_id && current.carrier == entry.carrier &&
-                    current.survives_calls == entry.survives_calls &&
-                    current.survives_pointer_stores == entry.survives_pointer_stores
+        next unless current && same_proof_on_any_block?(current, entry)
         @scoped_receiver_narrowings[entry.name] = current.copy_with(block: @current_block)
       end
+    end
+
+    # Write proofs that hold on every edge leaving a lowered condition: those
+    # still bound to its entry block, plus entry proofs that a short-circuit
+    # condition carried unchanged through its right-hand blocks. A proof first
+    # registered inside such a block covers only the edges leaving that block.
+    def condition_branch_proofs(
+      entry_block : BlockId,
+      entry_proofs : Array(ScopedReceiverNarrowing),
+    ) : Array(ScopedReceiverNarrowing)
+      proofs = closure_cell_write_proofs_on(entry_block)
+      entry_proofs.each do |entry|
+        next if proofs.any? { |proof| proof.name == entry.name }
+        current = @scoped_receiver_narrowings[entry.name]?
+        proofs << current if current && same_proof_on_any_block?(current, entry)
+      end
+      proofs
+    end
+
+    private def same_proof_on_any_block?(a : ScopedReceiverNarrowing, b : ScopedReceiverNarrowing) : Bool
+      a.value_id == b.value_id && a.carrier == b.carrier &&
+        a.survives_calls == b.survives_calls && a.survives_pointer_stores == b.survives_pointer_stores
     end
 
     # Carries into `merge` the proofs that held at the exit block of every arm
@@ -45997,6 +46052,7 @@ module Adamas::HIR
             required_boxes.each do |name|
               ctx.require_entry_box_for_local(name)
             end
+            mark_call_stable_entry_boxes(ctx, body, required_boxes, method_arena)
             owner_capture_storage_types(ctx, body, method_arena).each do |(assignment_id, storage_type)|
               ctx.set_capture_storage_type(method_arena, assignment_id, storage_type)
             end
@@ -76339,6 +76395,7 @@ module Adamas::HIR
             ctx.require_entry_box_for_local(name)
           end
           owner_arena = @arena
+          mark_call_stable_entry_boxes(ctx, body, required_boxes, owner_arena)
           owner_capture_storage_types(ctx, body, owner_arena).each do |(assignment_id, storage_type)|
             ctx.set_capture_storage_type(owner_arena, assignment_id, storage_type)
           end
@@ -91103,6 +91160,9 @@ module Adamas::HIR
       truthy_targets = truthy_narrowing_targets(node.left)
       falsy_targets = falsy_narrowing_targets(node.left)
       is_a_rhs_targets = op_str == "&&" ? is_a_narrowing_targets(node.left) : [] of IsANarrowingTarget
+      # The right operand runs only after the left one, so proofs alive before
+      # the condition that nothing in the left operand dropped still hold there.
+      entry_proofs = ctx.closure_cell_write_proofs_on(ctx.current_block)
 
       if left_node = @arena[node.left]
         if left_node.is_a?(Adamas::Compiler::Frontend::BinaryNode)
@@ -91112,6 +91172,7 @@ module Adamas::HIR
             if op_str == "&&"
               lower_short_circuit_condition(ctx, left_node, rhs_block, else_block, capture_sources)
               ctx.current_block = rhs_block
+              ctx.carry_closure_cell_write_proofs(entry_proofs)
               is_a_restores = apply_scoped_is_a_narrowing(ctx, is_a_rhs_targets)
               with_scoped_condition_narrowing(ctx, truthy_targets, nil) do
                 lower_condition_branch(ctx, node.right, then_block, else_block, capture_sources)
@@ -91120,6 +91181,7 @@ module Adamas::HIR
             else
               lower_short_circuit_condition(ctx, left_node, then_block, rhs_block)
               ctx.current_block = rhs_block
+              ctx.carry_closure_cell_write_proofs(entry_proofs)
               with_scoped_condition_narrowing(ctx, falsy_targets, nil) do
                 lower_condition_branch(ctx, node.right, then_block, else_block)
               end
@@ -91145,6 +91207,7 @@ module Adamas::HIR
           if static_left
             ctx.terminate(Jump.new(rhs_block))
             ctx.current_block = rhs_block
+            ctx.carry_closure_cell_write_proofs(entry_proofs)
             is_a_restores = apply_scoped_is_a_narrowing(ctx, is_a_rhs_targets)
             with_scoped_condition_narrowing(ctx, truthy_targets, capture_source) do
               lower_condition_branch(ctx, node.right, then_block, else_block, capture_sources)
@@ -91159,6 +91222,7 @@ module Adamas::HIR
           else
             ctx.terminate(Jump.new(rhs_block))
             ctx.current_block = rhs_block
+            ctx.carry_closure_cell_write_proofs(entry_proofs)
             with_scoped_condition_narrowing(ctx, falsy_targets, capture_source) do
               lower_condition_branch(ctx, node.right, then_block, else_block)
             end
@@ -91169,6 +91233,7 @@ module Adamas::HIR
       if op_str == "&&"
         ctx.terminate(Branch.new(left_cond, rhs_block, else_block))
         ctx.current_block = rhs_block
+        ctx.carry_closure_cell_write_proofs(entry_proofs)
         is_a_restores = apply_scoped_is_a_narrowing(ctx, is_a_rhs_targets)
         with_scoped_condition_narrowing(ctx, truthy_targets, capture_source) do
           lower_condition_branch(ctx, node.right, then_block, else_block, capture_sources)
@@ -91177,6 +91242,7 @@ module Adamas::HIR
       else
         ctx.terminate(Branch.new(left_cond, then_block, rhs_block))
         ctx.current_block = rhs_block
+        ctx.carry_closure_cell_write_proofs(entry_proofs)
         with_scoped_condition_narrowing(ctx, falsy_targets, capture_source) do
           lower_condition_branch(ctx, node.right, then_block, else_block)
         end
@@ -91675,7 +91741,15 @@ module Adamas::HIR
       targets.each do |name|
         local_id = ctx.lookup_local(name)
         next unless local_id
-        next if skip_boxed && ctx.lookup_boxed_local_for_local(name, local_id)
+        if box_info = ctx.lookup_boxed_local_for_local(name, local_id)
+          next if skip_boxed
+          # Reads of a boxed local load the box, so an unwrapped binding would
+          # be ignored after `return unless arena` when a proc captures `arena`.
+          unless (survives_pointer_stores = ctx.call_stable_boxed_local_pointer_stores(name)).nil?
+            register_call_stable_box_truthy_proof(ctx, name, local_id, box_info, survives_pointer_stores)
+            next
+          end
+        end
 
         local_type = ctx.type_of(local_id)
         next unless is_union_or_nilable_type?(local_type)
@@ -91685,6 +91759,25 @@ module Adamas::HIR
 
         ctx.register_local(name, unwrapped)
       end
+    end
+
+    private def register_call_stable_box_truthy_proof(
+      ctx : LoweringContext,
+      name : String,
+      local_id : ValueId,
+      box_info : LoweringContext::BoxedLocal,
+      survives_pointer_stores : Bool,
+    ) : Nil
+      payload_type = box_info.payload_type
+      return unless is_union_or_nilable_type?(payload_type)
+
+      load = PointerLoad.new(ctx.next_id, payload_type, box_info.box_ptr)
+      ctx.emit(load)
+      ctx.register_type(load.id, payload_type)
+      unwrapped = lower_not_nil_intrinsic(ctx, load.id, payload_type)
+      return if unwrapped == load.id
+
+      ctx.register_boxed_local_block_narrowing(name, local_id, unwrapped, survives_pointer_stores)
     end
 
     private def apply_is_a_narrowing(ctx : LoweringContext, targets : Array(IsANarrowingTarget)) : Nil
@@ -93366,6 +93459,7 @@ module Adamas::HIR
                         end
 
       cond_entry_block = ctx.current_block
+      cond_entry_proofs = ctx.closure_cell_write_proofs_on(cond_entry_block)
 
       # Lower main condition and branch
       # NOTE: Condition must be evaluated BEFORE saving locals, because
@@ -93438,7 +93532,7 @@ module Adamas::HIR
         ctx.terminate(Branch.new(cond_bool, then_block, next_test_block))
         STDERR.puts "[NILABLE_BRANCH] lower_if after branch term" if env_has?("ADAMAS_TRACE_NILABLE_BRANCH_REPRO")
       end
-      branch_cell_proofs = ctx.closure_cell_write_proofs_on(cond_entry_block)
+      branch_cell_proofs = ctx.condition_branch_proofs(cond_entry_block, cond_entry_proofs)
 
       if !has_elsifs
         reachable_after_condition = Set(BlockId).new
@@ -94381,6 +94475,7 @@ module Adamas::HIR
       merge_block = ctx.create_block
 
       cond_entry_block = ctx.current_block
+      cond_entry_proofs = ctx.closure_cell_write_proofs_on(cond_entry_block)
       cond_node = @arena[node.condition]
       if cond_node.is_a?(Adamas::Compiler::Frontend::BinaryNode) &&
          (cond_node.operator_string == "&&" || cond_node.operator_string == "||")
@@ -94394,7 +94489,7 @@ module Adamas::HIR
         ctx.register_type(neg_cond.id, TypeRef::BOOL)
         ctx.terminate(Branch.new(neg_cond.id, then_block, else_block))
       end
-      branch_cell_proofs = ctx.closure_cell_write_proofs_on(cond_entry_block)
+      branch_cell_proofs = ctx.condition_branch_proofs(cond_entry_block, cond_entry_proofs)
 
       # Save locals state after lowering the condition so branch bodies can see
       # locals introduced by condition expressions such as `out` parameters.
@@ -134688,8 +134783,27 @@ module Adamas::HIR
       required.each do |name|
         ctx.require_entry_box_for_local(name)
       end
+      mark_call_stable_entry_boxes(ctx, body, required, arena)
       if env_has?("DEBUG_ENTRY_BOX_REQUIREMENTS") && !required.empty?
         STDERR.puts "[ENTRY_BOX_REQUIREMENTS] func=#{ctx.function.name} names=#{required.to_a.sort.join(",")}"
+      end
+    end
+
+    # An entry box that no block, proc or spawn body assigns is written only
+    # by its owner, so its truthiness proofs may outlive the owner's calls.
+    private def mark_call_stable_entry_boxes(
+      ctx : LoweringContext,
+      body : Array(ExprId),
+      required : Set(String),
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Nil
+      return if required.empty?
+
+      written = detect_nested_closure_written_captures(body, required, arena)
+      taken = detect_address_taken_captures(body, required, arena)
+      required.each do |name|
+        next if written.includes?(name)
+        ctx.mark_call_stable_boxed_local(name, !taken.includes?(name))
       end
     end
 
