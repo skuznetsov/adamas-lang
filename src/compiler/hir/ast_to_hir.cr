@@ -127625,19 +127625,14 @@ module Adamas::HIR
       @inline_yield_caller_return_owner_stack << @captured_block_return_owner
       @inline_active_caller_locals_index_stack << (@inline_caller_locals_stack.size - 1)
       begin
-        if inline_param_map.empty?
-          if namespace_override
-            with_namespace_override(namespace_override) { apply_inline.call }
-          else
+        # The selected callee owns its lexical namespace, including no override.
+        # Inheriting a caller mixin override changes constant and visibility
+        # lookup inside the callee. Yielded blocks restore their own BlockOwner.
+        with_namespace_override_or_clear(namespace_override) do
+          if inline_param_map.empty?
             apply_inline.call
-          end
-        else
-          with_type_param_map(inline_param_map) do
-            if namespace_override
-              with_namespace_override(namespace_override) { apply_inline.call }
-            else
-              apply_inline.call
-            end
+          else
+            with_type_param_map(inline_param_map) { apply_inline.call }
           end
         end
       ensure

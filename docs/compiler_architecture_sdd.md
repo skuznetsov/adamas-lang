@@ -60,13 +60,37 @@ this boundary; refresh after union sidecar, canonical binding or narrowing
 changes. Rollback producer and tests together. Other value-join round trips
 are separate audit candidates, not certified by this narrow qualifier.
 
+An inline yielding callee owns its lexical namespace override, including nil.
+The inline body must apply or clear the selected callee's override just as
+ordinary method materialization does; retaining a caller mixin override can
+reject a protected call from inside its own class. Caller-owned yielded blocks
+still restore their captured BlockOwner, and generic bindings retain their
+existing nested scope. The visibility validator is unchanged. Three focused
+HIR checks cover the formerly rejected callee, a real nonnil included-module
+override and a strict caller-block rejection; together with union identity
+checks six examples pass. Original-first native checks pass three positives
+and one strict rejection, and the protected-namespace neighbor retains both
+its acceptance and rejection. Strongest failure is granting the caller block
+the callee's access. Refresh after inline context, BlockOwner or namespace-map
+changes; rollback the inline wrapper and tests together. The installed-stdlib
+Process.exec probe passes the protected call and next reaches unmaterialized
+Iterator(T)/Indexable(T)#each$block targets, so it is not a runtime certificate.
+Scoped adversary ROBUST for this body/block boundary. Generic forall bindings
+are assembled before the wrapper and remain a separate namespace falsifier.
+
 Fresh no-cache S2 passes the former Dir.cd failure and stops at
-AstCache#write_string_table(Pointer, Hash(String, UInt32)) (exit 1, about 37s).
-A smaller installed-stdlib Process.exec probe also passes Dir.cd, then rejects
-Scheduler#enter_syscall despite the same lexical class: an inherited inline
-namespace override is the next context-ownership hypothesis. The earlier
-minimal rescue-edge HIR guard now passes; actual full-prelude exception raising
-exits 5, so throw-point local-state parity has not yet been exercised.
+AstCache#write_string_table(Pointer, Hash(String, UInt32)) (exit 1, about 38s
+after the inline namespace fix). Its selected File.open Def is the installed
+stdlib source, but its unannotated block inputs are not inferred before
+materialization. A narrow File.open callback passed to consume(io : IO)
+independently reproduces the wrong Pointer type; the producer still needs
+isolation before repair.
+The earlier minimal rescue-edge HIR guard now passes; actual full-prelude
+exception raising exits 5, so throw-point local-state parity has not yet been
+exercised. A separate original-qualified no-narrowing generic call accepts a
+nested Path where Box(::Path).accept(T?) requires root Path on both the prior
+S1 and current union-identity S1. This is an open strict-argument defect, not
+evidence to loosen the restriction or to undo canonical union narrowing.
 
 Source-selected spawn methods are emitted from their MIR bodies. The removed
 LLVM spawn-name override built a Fiber by hardcoded offsets from an older

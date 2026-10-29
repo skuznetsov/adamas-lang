@@ -21607,3 +21607,33 @@ rejects a protected Scheduler method from its own class, with a caller's
 namespace override still active. Neither bootstrap nor application parity is
 closed. Other known-type value joins share the textual round-trip risk and
 need their own identity falsifiers before extending this change.
+
+## 2026-10-29 — An inline callee owns its namespace, including nil
+
+The protected Scheduler#enter_syscall rejection reduced to a method calling
+its own protected member after yield. The current class was correct, but
+validate_call_visibility! preferred a stale namespace override inherited from
+the unrelated caller mixin. Ordinary method materialization already clears
+an absent selected namespace; inline_yield_function did not. Its apply_inline
+scope now applies or clears the callee's exact override. The visibility rule
+and caller BlockOwner restoration remain unchanged.
+
+The parent fails the nil-override HIR positive while nonnil callee-mixin and
+caller-block rejection controls pass; all three pass with the fix. Union and
+inline context specs pass six examples. Original-first native regression
+passes three positives and one strict caller-block rejection on Crystal
+1.22.1 and fresh S1; the protected-namespace neighbor passes too. The full
+Process.exec probe moves past the protected call to a separate unmaterialized
+Iterator(T)/Indexable(T)#each$block guard. Refresh after selected namespace,
+inline scope or block ownership changes; roll back wrapper/tests together.
+Scoped adversary ROBUST for the tested body/block boundary. Method-forall
+generic-head binding occurs before the wrapper; its caller-namespace leak is
+an untested adjacent hypothesis, tracked for a distinct collision falsifier.
+
+A separate generic discriminator exposes a prior strict-argument error:
+Box(::Path).accept(T?) admits Crystal::System::Path, including when its body
+only returns Nil and never narrows. The original rejects it; both prior and
+union-identity S1 admit it. The bound type argument is root Path, but argument
+compatibility normalizes it in the nested consumer context. Concrete generic
+T?/Array(T)? narrowing positives pass. This negative needs its own root fix,
+without loosening restrictions or changing application/stdlib sources.

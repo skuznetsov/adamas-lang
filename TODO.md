@@ -22271,3 +22271,41 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   construction: they also stringify known types before contextual resolution.
   A shared source pattern is a risk indicator; qualify each with a failing
   identity probe before broadening this change to all joins.
+
+### Own lexical context at inline callee/block transitions (2026-10-29)
+- [x] An original-qualified no-prelude method calls its own protected member
+  after yielding. Adamas sets the correct callee class but inherits an unrelated
+  caller mixin namespace override, so the strict validator rejects it. Apply
+  or clear the selected callee override for the inline body; preserve the
+  caller block's captured owner and the generic-map scope. Do not weaken access.
+- [x] The parent fails the nil-override HIR positive while retaining the actual
+  included-module override and caller-block rejection. All three pass after
+  the fix; combined with union identity checks, six examples pass. Fresh S1
+  and installed Crystal qualify three native positives and one rejection.
+  The protected-namespace neighbor also retains acceptance/rejection.
+- [x] Fresh no-cache S2 with selected File.open diagnostics reaches the same
+  Pointer/IO mismatch (exit 1 after about 38s, peak RSS about 980 MiB). The
+  selected Def is installed file.cr; an unannotated block input is missing.
+  An original-first File.open callback to consume(io : IO) independently
+  reproduces Pointer without AstCache or its Hash argument. Root producer
+  ownership, rather than broadening IO compatibility, is the next task.
+- [x] The installed-stdlib Process.exec compile probe passes the former
+  protected Scheduler#enter_syscall error and stops later at the strict
+  unmaterialized concrete module target guard for Iterator(T)/Indexable(T)
+  #each$block. It has not yet compiled or executed the complete probe.
+- [ ] Repair the independently reproduced generic restriction false acceptance:
+  Box(::Path).accept(value : T?) accepts Crystal::System::Path although the
+  original rejects it. A Nil-returning body with no narrowing still reproduces
+  on both s1_loop_results and s1_union_identity. The applied Box type argument
+  is root Path, but the compatibility trace normalizes T? to the nested Path.
+  Resolve the argument from its bound owner identity; keep strict rejection.
+  Concrete T?/Array(T)? narrowing positives themselves pass both compilers.
+- [ ] The older program_mixin_lexical_context_spec.cr does not build on this
+  baseline: its test helper calls missing register_top_level_program_mixin.
+  It is not evidence for the current fix; the new inline-specific spec uses
+  class-level mixins supported by this source state.
+- [ ] Qualify inline method-forall binding before apply_inline: its generic
+  head inference still runs before the callee namespace wrapper and can use
+  the live caller override when no explicit owner context is passed. A distinct
+  same-short-name generic head in caller/callee namespaces is the next
+  discriminator. This is a static adjacent risk, not a reproduced failure.
