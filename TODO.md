@@ -22028,11 +22028,35 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   union probe used an ordinary call in LLVM and passed, so it is not a
   discriminator for that source-based concern. Require actual branch-call
   emission before claiming coverage or changing that path.
-- [ ] Current-stdlib hello still fails before native code generation:
-  Int#times receives Slice(Tuple(UInt64, UInt64, Pointer(UInt8))) while lowering
-  Crystal::DWARF::Backtraces#preload_function_names. Locate the first wrong
-  receiver/result decision; do not bypass the source method check.
+- [x] Localize the wrong Slice receiver in Int#times: the member-call classifier
+  treated a caller typeof binding `size => Int32` as proof that the callee's
+  bare `size` getter was a type literal. See the lexical value-receiver fix below.
 - [ ] Separately qualify review hypotheses: omitted bare/nested block break
   results in typeof; real Pointer(Void) confused with an unresolved typeof;
   blockless overload fallback ignoring implicit yield. Fresh S2, bootstrap
   fixed point and unchanged LavinMQ runtime/test parity remain open.
+
+### Keep member receivers and yield arguments in their lexical value scope (2026-10-29)
+- [x] Lower a lowercase member receiver as a source value unless an explicit
+  generic type binding authorizes a type receiver. A plain inferred value type
+  cannot authorize class dispatch; a getter actually returning a type retains
+  the existing type-literal result fact.
+- [x] Gate inline caller-local fallback with the existing lexical frame marker,
+  and read only that exact caller snapshot. A positive callee marker forbids
+  caller-local reads even under a nested active block; a negative marker is
+  installed only after restoring the actual block owner's locals. Yield
+  arguments remain in the callee scope until that transition.
+- [x] Original Crystal 1.22.1 and fresh S1 pass 11 no-prelude runtime cases and
+  one strict argument-type rejection in value_receiver_type_fact_repro.sh.
+  Nested callee and nested yield-argument block cases pass; the parent S1
+  rejects the nested callee with `undefined method 'advance' for Int32`.
+  Three neighboring suites pass 19 additional cases, including a missing-method
+  rejection. The getter side effect executes once, and type-valued getters
+  and explicit generic type receivers preserve class dispatch.
+- [ ] Unmodified installed-stdlib hello now reaches Atomic#compare_and_set,
+  then rejects `release?` on Symbol at atomic.cr:112. Locate the first lost
+  enum parameter conversion; do not add a Symbol predicate or stdlib bypass.
+- [ ] Full typeof frame/cache isolation is a separate obligation: receiver
+  admission and inline local fallback do not certify every inference consumer.
+  Fresh S2, bootstrap fixed point and unchanged LavinMQ runtime/test parity
+  remain open.

@@ -21393,3 +21393,23 @@ obligations; no full Proc, bootstrap or LavinMQ closure claim follows.
 Refresh after Proc interning, signature inference, annotation bindings or call
 admission changes. Revert the compiler delta and the proc_call_source_contract
 and proc_rooted_annotation_alias regressions together.
+
+## 2026-10-29 — Lexical value receivers and inline caller-local authority
+
+Two different facts must stay separate: a value's inferred type does not prove
+that the expression is a type literal, and inline block expansion depth does
+not prove that the current expression belongs to a caller block. The member
+receiver classifier now lowers lowercase value expressions before using a
+result type-literal fact. Inline local fallback consumes the existing lexical
+frame marker and only its exact caller snapshot; callee bodies and yield
+arguments cannot search unrelated caller frames.
+
+Evidence: value_receiver_type_fact_repro.sh passes 11 original-first native
+cases and one strict type rejection under installed Crystal 1.22.1 and fresh
+S1; three neighboring suites pass another 19 cases. The parent rejects the
+nested callee by choosing an Int32 caller local instead of the callee getter.
+Scoped ROBUST. Refresh after frame-marker lifecycle, member classification,
+or type-literal transport changes. Full typeof environment isolation, current
+bootstrap and unchanged LavinMQ parity remain open. The current unmodified
+stdlib hello frontier is Atomic#compare_and_set receiving Symbol ordering
+arguments. See TODO and compiler_architecture_sdd for the continuation.

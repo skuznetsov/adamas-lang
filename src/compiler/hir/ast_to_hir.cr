@@ -106422,6 +106422,14 @@ module Adamas::HIR
                   end
                 end
               end
+              # A lowercase source receiver names a value or an implicit call.
+              # Its inferred value type is not evidence that it names a type:
+              # caller typeof bindings can contain `size => Int32` while an
+              # inlined callee means its own `size` getter. Lower the value
+              # first; genuine type-valued results retain their literal fact.
+              if type_param_receiver_name.nil? && !name[0]?.try(&.uppercase?)
+                force_instance_receiver = true
+              end
             end
           end
           if method_name == "from_io" && env_get("DEBUG_FROM_IO_CALL")
@@ -126657,15 +126665,15 @@ module Adamas::HIR
     end
 
     private def inline_caller_local_id(name : String) : ValueId?
-      return nil if @inline_caller_locals_stack.empty?
+      # Inline expansion depth is not lexical ownership. A callee can be
+      # expanded inside a caller block, and yield arguments still belong to
+      # that callee. Only the negative frame marker installed after restoring
+      # a block's caller scope authorizes reads from that caller snapshot.
+      frame_marker = @inline_callee_local_names_frame_stack.last?
+      return nil unless frame_marker && frame_marker < 0
 
-      @inline_caller_locals_stack.reverse_each do |locals|
-        if value_id = locals[name]?
-          return value_id
-        end
-      end
-
-      nil
+      caller_index = -1 - frame_marker
+      inline_caller_locals_at?(caller_index).try(&.[name]?)
     end
 
     private def lookup_assignment_local(ctx : LoweringContext, name : String) : ValueId?

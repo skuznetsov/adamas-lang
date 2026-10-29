@@ -4681,3 +4681,31 @@ capture narrowing and enum overload regressions retain type-rejection guards.
 Refresh this evidence after capture storage, callback argument coercion,
 post-call lowering or raw ABI changes. Current external-stdlib hello, fresh
 bootstrap and unchanged LavinMQ runtime/test parity remain separate gates.
+
+### Distinguish value type facts from lexical type-valued receivers (2026-10-29)
+An inferred value type does not prove that a source expression denotes a type.
+A lowercase member receiver must first lower as a value or implicit getter;
+only an explicit generic binding or the resulting value's existing type-literal
+fact authorizes class dispatch. This prevents a caller's `size => Int32`
+typeof binding from turning an inlined callee's `size.times` into `Int32.times`
+with the callee's unrelated self supplied later as the receiver.
+
+Inline expansion depth likewise does not prove lexical capture authority.
+`inline_caller_local_id` consumes the existing callee/block frame marker:
+a nonnegative entry denotes a callee and hides caller locals; `-1-k` denotes
+an actual block-body view and permits lookup only in caller snapshot k.
+The block view is installed after yield arguments have been lowered in the
+callee scope and caller locals have been restored. Nested callee entry shadows
+an outer block view; a nested actual block installs its own exact owner view.
+Read and assignment fallback share this ownership check. This does not yet
+isolate all typeof inference maps or certify every loop-PHI fallback path.
+
+Evidence: value_receiver_type_fact_repro.sh has 11 original-first native cases
+and one strict argument-type rejection under Crystal 1.22.1 and fresh S1.
+It covers getter side effects, grouped/explicit receivers, real type-valued
+getters, generic type receivers, nested callees and blocks in yield arguments.
+The parent S1 rejects the nested callee by selecting an Int32 caller local.
+Three neighboring suites pass 19 cases. Scoped ROBUST; refresh after lexical
+frame push/pop, member receiver classification or type-literal transport changes.
+Installed-stdlib hello advances to a Symbol/Atomic::Ordering mismatch; fresh
+bootstrap and unchanged LavinMQ runtime/test parity remain open.
