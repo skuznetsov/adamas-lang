@@ -102600,6 +102600,13 @@ module Adamas::HIR
             best_untyped_def : Adamas::Compiler::Frontend::DefNode? = nil
             first_key : String? = nil
             first_def : Adamas::Compiler::Frontend::DefNode? = nil
+            # A blockless request must not materialize a block-taking body under
+            # its own name: after `args.each_with_index { }` specialized only
+            # `Enumerable#each_with_index(offset, &)` onto Array(UInt32), the
+            # blockless `args.each_with_index` became that Nil-returning body
+            # instead of reaching `Iterable#each_with_index(offset)` through
+            # the deferred module lookup.
+            requested_block = name_parts.suffix.try { |suffix| suffix == "block" || suffix.ends_with?("_block") } || false
             expected_arity = requested_arity || 0
             overload_keys.each do |key|
               # Check keys that start with mangled_prefix OR the base name itself (generic)
@@ -102620,6 +102627,7 @@ module Adamas::HIR
               elsif expected_arity != 0
                 next
               end
+              next if !requested_block && def_node.params.try { |params| any_param?(params, &.is_block) }
               unless first_key
                 first_key = key
                 first_def = def_node
