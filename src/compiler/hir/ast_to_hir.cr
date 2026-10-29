@@ -18399,7 +18399,19 @@ module Adamas::HIR
     end
 
     private def resolve_typeof_in_type_string(type_name : String) : String
+      resolve_typeof_in_type_string_impl(type_name, false) || type_name
+    end
+
+    # Like resolve_typeof_in_type_string, but nil when a `typeof(...)` operand
+    # stays unresolved instead of splicing the "Pointer(Void)" sentinel.
+    private def resolve_typeof_in_type_string?(type_name : String) : String?
+      resolve_typeof_in_type_string_impl(type_name, true)
+    end
+
+    private def resolve_typeof_in_type_string_impl(type_name : String, strict : Bool) : String?
       return type_name unless type_name.includes?("typeof(")
+
+      unresolved = false
 
       output = String.build do |io|
         i = 0
@@ -18423,7 +18435,9 @@ module Adamas::HIR
               next
             end
             inner = type_name.byte_slice(start, j - start - 1)
-            io << resolve_typeof_string_expr(inner)
+            resolved_inner = resolve_typeof_string_expr(inner)
+            unresolved = true if resolved_inner == "Pointer(Void)"
+            io << resolved_inner
             i = j
           else
             io << type_name[i]
@@ -18432,6 +18446,7 @@ module Adamas::HIR
         end
       end
 
+      return nil if strict && unresolved
       output
     end
 
@@ -28679,7 +28694,9 @@ module Adamas::HIR
                 local_type_name = get_type_name_from_ref(local_ref)
                 type_str = local_type_name unless local_type_name.empty? || local_type_name == "Void" || local_type_name == "Unknown"
               end
-              type_str = resolve_typeof_in_type_string(type_str)
+              # `W(typeof(offset)).new` names a type only once every typeof
+              # operand is bound; an unbound parameter leaves the type unknown.
+              return nil unless type_str = resolve_typeof_in_type_string?(type_str)
               resolved_type_str = resolve_type_alias_chain(resolve_type_name_in_context(type_str))
               type_str = resolved_type_str unless resolved_type_str.empty?
               if env_get("DEBUG_INFER_NEW") && self_type_name == "Fiber"
