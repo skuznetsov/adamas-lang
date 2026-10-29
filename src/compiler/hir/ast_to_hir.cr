@@ -71720,7 +71720,8 @@ module Adamas::HIR
       body = func_def.body
       return nil unless body && !body.empty?
 
-      def_arena = @function_def_arenas[func_name]? || @function_def_arenas[base_method_name]? || @arena
+      arena_hint = @function_def_arenas[func_name]? || @function_def_arenas[base_method_name]? || @arena
+      def_arena = registered_arena_for_def(func_def) || resolve_arena_for_def(func_def, arena_hint)
       old_def_node = @current_def_node
       old_body_context = @infer_body_context
       old_arena = @arena

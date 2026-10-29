@@ -22340,3 +22340,27 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Keep the separately tracked method-forall generic-head collision and
   allocator/source-order issues open. These tests are not a full generic
   dispatch, bootstrap or LavinMQ parity certificate.
+
+### Yield input inference uses the selected definition's arena (2026-10-29)
+- [x] Reproduce a stale name-level arena hint with two separately parsed,
+  same-shaped definitions and overlapping ExprIds. The selected definition
+  yields Int32, but the parent infers String from the other arena. Prefer the
+  exact registered DefNode arena, then the existing resolver/hint fallback.
+  An arena that merely fits the indices is not stronger than exact identity.
+- [x] Both conflicting-arena directions, a single-arena control, unregistered
+  valid-hint fallback and caller-arena restoration pass. The four focused HIR
+  spec files pass 18 examples; fresh S1 builds. Original-first native forwarded
+  callback controls and strict wrong-value rejection also pass.
+- [ ] General arena resolution remains weaker for unregistered definitions:
+  a stale same-shaped hint can still pass the legacy fallback's structural
+  checks. This fix establishes registered-Def precedence only. Audit exact
+  registration coverage before removing or strengthening that fallback.
+- [ ] This independent arena defect does not explain the current File.open
+  failure: diagnostics show the correct installed file.cr arena throughout.
+  Its local `file = new_internal(...)` has no inferred type. The baseline
+  File.open regression remains expected-red with Pointer instead of IO; do
+  not treat the baseline harness's success as a fixed application/bootstrap.
+- [ ] Compare bare and explicit class-helper calls during nested body
+  inference. The bare class-method path suppresses a missing return-cache body
+  walk under an active inference context; qualify this source hypothesis with
+  a discriminator before changing return inference.

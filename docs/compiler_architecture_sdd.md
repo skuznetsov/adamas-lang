@@ -4926,3 +4926,24 @@ Fresh no-cache S2 retains the separate File.open Pointer/IO failure. Bootstrap,
 method-forall head ownership and LavinMQ parity are not certified here.
 Refresh after contract production, alias/projection or compatibility changes.
 Rollback producer, consumers and their regression/specs together.
+
+### Selected yield definition and arena identity (2026-10-29)
+
+An infer_yield_param_types_from_body call already has a selected DefNode.
+Its registered arena is authoritative over a name-level hint or an ambient
+arena, even when those arenas have the same shape and overlapping ExprIds.
+Only when exact registration is unavailable may the existing resolver/hint
+fallback choose the body arena. The caller arena is restored on exit.
+
+DoD: yield_input_arena_identity_spec.cr fails on the parent with String in
+place of Int32; paired directions and fallback/restoration controls pass after
+the fix. Together with merge_yield_param_types, initializer_layout_replay and
+inline_yield_lexical_context, the focused HIR suite passes 18 examples. Fresh
+S1 builds and the existing forwarded-callback/rejection controls pass.
+This does not repair or certify File.open: its live arena is correct and its
+helper-call return inference remains unresolved. Refresh on registration,
+arena or inference changes; revert entrypoint and spec together.
+Scoped adversary: ROBUST for exact registered-Def precedence. The legacy
+unregistered fallback is not certified: a stale same-shaped arena can still
+fit its structural checks. Registration coverage needs a separate audit before
+that fallback can be replaced by mandatory identity or fail-closed behavior.

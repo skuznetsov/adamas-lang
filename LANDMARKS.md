@@ -21681,3 +21681,33 @@ Hash(String, UInt32)), exit 1 after about 36s, peak RSS 996080 KiB. File.open's
 forwarded callback input is the next producer frontier; no IO acceptance
 relaxation or stdlib/application source change is authorized by this evidence.
 Bootstrap and unchanged LavinMQ runtime/test parity remain open.
+
+## 2026-10-29 — Selected yield definitions own their AST arena
+
+Yield parameter inference selected a DefNode but read its body using a
+name-level arena map or the ambient arena. ExprIds are arena-local indices;
+two same-shaped definitions can fit the same indices while yielding different
+types. An exact-identity HIR falsifier selects the Int32 definition and gives
+it a stale String definition's arena hint: the parent returns String.
+
+The inference entrypoint now prefers registered_arena_for_def, then the
+existing resolver/hint fallback. The direct identity check must precede the
+resolver's shape-based fast path. The paired directions, valid unregistered
+fallback and caller-arena restoration pass; four focused HIR files pass 18
+examples and fresh S1 builds. Original-first forwarded callback controls and
+strict unrelated-value rejection retain their behavior. Refresh after DefNode
+registration, arena resolution or yield inference changes; roll back this
+entrypoint and its identity spec together.
+
+The adversary scope is registered-Def precedence, not general arena resolution.
+An unregistered definition with a stale same-shaped hint still lacks exact
+ownership evidence and may follow the legacy wrong-arena fallback. The valid
+unregistered-hint control preserves compatibility; it does not close that
+residual. Audit registration coverage before changing the shared fallback.
+
+This is a separate defect from the live File.open Pointer/IO failure. There,
+the selected, mapped and actual arena all identify installed file.cr; the
+missing fact is the type of `file = new_internal(...)`. The baseline native
+harness still expects that File.open failure. It does not certify File.open,
+bootstrap or LavinMQ parity. The next discriminator compares bare class-helper
+return inference against an explicit class receiver under nested inference.
