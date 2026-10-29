@@ -21486,3 +21486,33 @@ body materialization changes. Full-prelude startup still fails through Thread
 initialization/exception reporting; fresh S2, bootstrap and LavinMQ parity are
 not certified. The existing state transaction assumes LoweringError aborts the
 compilation; recovery would need to discard a partially built body.
+
+## 2026-10-29 — A selected C declaration owns each variadic call's ABI
+
+The unchanged installed stdlib's Thread initializer reached sem_open with a
+valid name, flags and thread id, but failed with EINVAL. HIR retained only a
+varargs bit, MIR dropped it, and LLVM reconstructed fixed prefixes from a
+libc-name whitelist that omitted sem_open. On arm64 Darwin, its fixed-arity
+call type changes argument placement. A scratch-only IR discriminator changed
+only that type to (ptr, i32, ...): creation and unlinking then succeeded.
+
+HIR now snapshots the selected declaration's fixed ABI types (Proc becomes
+raw Pointer); MIR lowering and optimizer reconstruction preserve them. LLVM
+uses this per-call prefix for both scalar and Void calls, including an empty
+prefix, and promotes only primitive tail arguments using Crystal's rules.
+The fixed prefix is never inferred from a symbol name. The internal inline
+array copy/move helper remains nonvariadic. Source argument checks retain
+authority; no stdlib or application source changes.
+
+Evidence: original-first c_varargs_source_abi_repro.sh passes eight cases on
+Crystal 1.22.1 and fresh S1; the exact parent fails six of the same eight.
+The cases cover arbitrary names, register boundaries, mixed promotions,
+fixed callback conversion, Void, empty tail, fixed-arity control and sem_open
+alias behavior. Transport/LLVM/optimizer specs pass 149 examples, with strict
+extern controls preserving 28 runtime positives and 24 rejections plus the
+named-argument matrix. Scoped adversary ROBUST for this source-owned call ABI.
+Refresh after ExternCall construction/cloning, type conversion, C argument
+adaptation or call emission changes; roll back transport and consumers together.
+Full-prelude hello compiles/links but startup still faults later in Fiber
+enqueue or monitor sleep. Narrow enum widths, fresh bootstrap and LavinMQ
+runtime/upstream-test parity are not certified by this result.

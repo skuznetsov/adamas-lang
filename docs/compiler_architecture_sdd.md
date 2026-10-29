@@ -29,6 +29,25 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+C variadic calls must retain the selected declaration's fixed parameter
+prefix through HIR, MIR, optimization and LLVM emission. A function-name
+whitelist cannot own that ABI: the unchanged Darwin sem_open call fails with
+EINVAL when emitted as a fixed-arity call, and succeeds when only the IR call
+signature changes to (ptr, i32, ...). The admitted change transports that
+source prefix, applies C default promotions only to the variadic tail, and
+uses it for Void as well as value-returning calls. Source argument and arity
+checks remain authoritative. The original-first C va_arg regression passes
+eight cases; the parent fails six of the same eight cases. HIR/MIR transport,
+LLVM and optimizer checks pass 149 examples. Source extern checks retain
+28 runtime positives and 24 semantic rejections, plus named-call controls.
+Strongest failure: a rewriting pass drops the prefix or promotes a fixed
+Float32 as if it belonged to the tail. Guard both with mixed-type tests.
+This is a CAUTION ABI change; rollback its transport and consumers together.
+The unchanged installed-prelude hello compiles/links and emits the correct
+sem_open call. Startup now advances to Fiber enqueue and monitor-thread faults;
+it still does not produce user output. Runtime startup beyond sem_open, fresh
+bootstrap and LavinMQ parity remain open until separately exercised.
+
 Selected initializer source recipes survive layout-body invalidation. The
 existing MaterializedInitializerSource retains the exact Def/arena, owner,
 declaration and lowering contexts, resolved argument vectors and block/return
@@ -41,9 +60,9 @@ hello against the installed unmodified stdlib; focused initializer/queue/raw
 callback specs pass 19 examples. Constructor integer controls retain eight
 original-first runtime positives and ten strict rejections. Rollback is the
 source-recipe, invalidation and common materialization-consumer change together.
-Full-prelude hello startup still fails in Thread initialization/exception
-reporting. Fresh S2, bootstrap fixed point and LavinMQ runtime/test parity
-remain open.
+The following C variadic fix closes the first sem_open failure; full-prelude
+hello startup still fails later. Fresh S2, bootstrap fixed point and LavinMQ
+runtime/test parity remain open.
 
 High-level Atomic methods consume their selected source bodies, including
 ordering checks and value conversions. Name substrings cannot grant intrinsic

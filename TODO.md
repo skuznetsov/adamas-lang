@@ -22135,9 +22135,11 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   Constructor integer controls pass eight positives and ten rejections under
   both compilers; zero-argument defaults/layout/inheritance/source-new and
   blockless-versus-block initializer neighbors also pass.
-- [ ] Full-prelude hello still fails at startup before user output, with
-  recursive exception reporting through Thread#init_semaphore. Locate the
-  first failing action; do not treat successful compile/link as runtime parity.
+- [x] Locate the first failing startup action: sem_open loses its C variadic
+  ABI. The source-prefix fix below closes that action; successful compile/link
+  alone still does not establish runtime parity.
+- [ ] Full-prelude hello now reaches later Fiber enqueue and monitor-thread
+  faults before user output. Locate their first false values separately.
   Requalify initializer_explicit_new_source_order_repro.sh after this frontier:
   its same-arena run crashes and its cross-arena case reports a Void result.
 - [ ] Audit captured `&@run` block metadata separately: the no-prelude fixture
@@ -22149,3 +22151,34 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Fresh S2, a new bootstrap fixed point and unchanged LavinMQ test parity
   remain open. Refresh replay evidence after source registration, layout
   invalidation, callback binding or method-body materialization changes.
+
+### Transport selected C variadic signatures through the complete pipeline (2026-10-29)
+- [x] Retain the selected declaration's fixed ABI prefix on HIR and MIR
+  ExternCall, including Proc-to-pointer adaptation. An absent prefix denotes
+  an ordinary call; an empty prefix denotes a variadic declaration with no
+  fixed parameters. Reject missing/inconsistent HIR signature evidence.
+- [x] Preserve that prefix when optimizer rewrites replace call operands.
+  Remove LLVM's libc-name whitelist; consume the per-call prefix for value
+  and Void returns. Promote only primitive tail Float32/narrow integers as
+  Crystal does, retaining fixed Float32 and signed/unsigned extension rules.
+  Keep the internal inline-array copy/move helper path nonvariadic.
+- [x] Source-unchanged startup proof: original sem_open IR returns EINVAL;
+  changing only its call type to (ptr, i32, ...) permits successful creation
+  and unlinking. The compiler now emits that type itself. The initial runtime
+  failure came from the call ABI, not invalid semaphore names or permissions.
+- [x] c_varargs_source_abi_repro.sh qualifies eight cases on Crystal 1.22.1 and
+  fresh S1: arbitrary symbols, register-boundary tails, signed/unsigned/float
+  promotions, a fixed Proc callback, Void, empty tail, a nonvariadic control
+  and real sem_open through an alias. The exact parent builds but fails six
+  of eight runtime cases (exit 1); the new S1 passes all eight (exit 0).
+- [x] Focused transport/LLVM/optimizer specs pass 149 examples. The source
+  extern matrix keeps 28 runtime positives and 24 strict rejections; named
+  extern controls retain two positives and four semantic rejections on both
+  compilers. No application/stdlib changes or weakened argument checks.
+- [ ] Full-prelude hello still times out before output. Bounded LLDB runs
+  observe bad receivers in Fiber execution-context dispatch and monitor
+  Thread.sleep(Time::Span). Discriminate their causes; do not attribute them
+  to sem_open or certify runtime/bootstrap/LavinMQ parity from this ABI fix.
+- [ ] Audit nominal enum widths at the C boundary separately: the LLVM type
+  mapper currently maps Enum to i32. This slice preserves the existing enum
+  path and does not establish parity for every underlying enum width.

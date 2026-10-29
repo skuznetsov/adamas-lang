@@ -87344,13 +87344,19 @@ module Adamas::HIR
       end
       returns_proc = !source_extern_proc_parts(extern_func.return_type).nil?
       abi_return_type = returns_proc ? TypeRef::POINTER : extern_func.return_type
+      variadic_fixed_types = if extern_func.varargs
+                               extern_func.param_types.map do |parameter_type|
+                                 source_extern_proc_parts(parameter_type) ? TypeRef::POINTER : parameter_type
+                               end
+                             end
       extern_call = ExternCall.new(
         ctx.next_id,
         abi_return_type,
         extern_func.real_name,
         c_args,
         extern_func.varargs,
-        extern_func.noreturn
+        extern_func.noreturn,
+        variadic_fixed_types,
       )
       ctx.emit(extern_call)
       ctx.register_type(extern_call.id, abi_return_type)

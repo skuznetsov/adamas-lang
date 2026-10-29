@@ -1136,6 +1136,9 @@ module Adamas::HIR
     getter args : Array(ValueId)
     getter varargs : Bool
     getter noreturn : Bool
+    # nil is a non-variadic/internal call; [] is a C variadic declaration
+    # with no fixed parameters. Types are ABI types (Proc -> raw Pointer).
+    getter variadic_fixed_types : Array(TypeRef)?
 
     def initialize(
       id : ValueId,
@@ -1144,8 +1147,13 @@ module Adamas::HIR
       @args : Array(ValueId) = [] of ValueId,
       @varargs : Bool = false,
       @noreturn : Bool = false,
+      variadic_fixed_types : Array(TypeRef)? = nil,
     )
       super(id, type)
+      @variadic_fixed_types = variadic_fixed_types.try(&.dup)
+      unless @varargs == !@variadic_fixed_types.nil?
+        raise ArgumentError.new("missing or inconsistent C variadic signature for #{@extern_name}")
+      end
     end
 
     def to_s(io : IO) : Nil

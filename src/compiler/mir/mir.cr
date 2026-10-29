@@ -1937,6 +1937,9 @@ module Adamas::MIR
   class ExternCall < Value
     getter extern_name : String
     getter args : Array(ValueId)
+    # Selected C declaration's fixed ABI prefix. Presence, including an empty
+    # prefix, owns variadic emission; symbol spelling cannot select this ABI.
+    getter variadic_fixed_types : Array(TypeRef)?
     property materialization_tx_id : String? = nil
     property materialization_contract : MaterializationContractFacts? = nil
 
@@ -1965,8 +1968,10 @@ module Adamas::MIR
       @args : Array(ValueId),
       @materialization_tx_id : String? = nil,
       @materialization_contract : MaterializationContractFacts? = nil,
+      variadic_fixed_types : Array(TypeRef)? = nil,
     )
       super(id, type)
+      @variadic_fixed_types = variadic_fixed_types.try(&.dup)
     end
 
     def operands : Array(ValueId)
@@ -2973,8 +2978,9 @@ module Adamas::MIR
       return_type : TypeRef,
       materialization_tx_id : String? = nil,
       materialization_contract : MaterializationContractFacts? = nil,
+      variadic_fixed_types : Array(TypeRef)? = nil,
     ) : ValueId
-      emit(ExternCall.new(@function.next_value_id, return_type, extern_name, args, materialization_tx_id, materialization_contract))
+      emit(ExternCall.new(@function.next_value_id, return_type, extern_name, args, materialization_tx_id, materialization_contract, variadic_fixed_types))
     end
 
     # Union operations

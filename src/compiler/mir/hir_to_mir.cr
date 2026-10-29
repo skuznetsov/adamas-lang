@@ -6729,7 +6729,8 @@ module Adamas
           args,
           convert_type(extern_call.type),
           materialization_tx_id: materialization_tx_id,
-          materialization_contract: materialization_contract
+          materialization_contract: materialization_contract,
+          variadic_fixed_types: extern_call.variadic_fixed_types.try { |types| types.map { |type| convert_type(type) } },
         )
       end
 

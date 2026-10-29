@@ -708,7 +708,8 @@ describe Adamas::MIR::LLVMIRGenerator do
       dst = builder.const_nil_typed(Adamas::MIR::TypeRef::POINTER)
       len = builder.const_uint(255_u64, Adamas::MIR::TypeRef::UINT32)
       call_args = [dst, len, 0_u32] of Adamas::MIR::ValueId
-      res = builder.extern_call("snprintf", call_args, Adamas::MIR::TypeRef::INT32)
+      res = builder.extern_call("snprintf", call_args, Adamas::MIR::TypeRef::INT32,
+        variadic_fixed_types: [Adamas::MIR::TypeRef::POINTER, Adamas::MIR::TypeRef::UINT64, Adamas::MIR::TypeRef::POINTER])
       builder.ret(res)
 
       gen = Adamas::MIR::LLVMIRGenerator.new(mod)

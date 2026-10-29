@@ -24539,7 +24539,7 @@ module Adamas::MIR
         dest = value_ref(inst.args[0])
         src = value_ref(inst.args[1])
         cnt = ivc_arg_as(inst.args[2], "i32")
-        emit "#{name} = call ptr (ptr, ptr, i32, i32, ...) @#{ename}(ptr #{dest}, ptr #{src}, i32 #{cnt}, i32 #{stride}) ; ivc_raw bulk-stride"
+        emit "#{name} = call ptr @#{ename}(ptr #{dest}, ptr #{src}, i32 #{cnt}, i32 #{stride}) ; ivc_raw bulk-stride"
         @value_types[inst.id] = TypeRef::POINTER
         record_emitted_type(name, "ptr")
         return true
@@ -25291,45 +25291,38 @@ module Adamas::MIR
         scalar_to_union_target_type = inst_return_type
       end
 
-      # Known varargs functions need explicit signatures because we currently declare unknown
-      # varargs as `declare <ret> @name(...)` (no fixed params). For correct ABI lowering,
-      # the number and types of *fixed* parameters must match the real C prototype.
-      #
-      # IMPORTANT: Do not treat all arguments as fixed. That breaks `va_start` offsets and
-      # results in garbage reads for functions like `printf`.
-      varargs_signatures = {
-        # stdio
-        "printf"    => ["ptr"],
-        "fprintf"   => ["ptr", "ptr"],
-        "sprintf"   => ["ptr", "ptr"],
-        "snprintf"  => ["ptr", "i64", "ptr"],
-        "scanf"     => ["ptr"],
-        "sscanf"    => ["ptr", "ptr"],
-        "fscanf"    => ["ptr", "ptr"],
-        "vprintf"   => ["ptr", "ptr"],
-        "vfprintf"  => ["ptr", "ptr", "ptr"],
-        "vsprintf"  => ["ptr", "ptr", "ptr"],
-        "vsnprintf" => ["ptr", "i64", "ptr", "ptr"],
-        # unix
-        "open"      => ["ptr", "i32"],
-        "fcntl"     => ["i32", "i32"],
-        "ioctl"     => ["i32", "i64"],
-        # exec*
-        "execl"     => ["ptr", "ptr"],
-        "execle"    => ["ptr", "ptr"],
-        "execlp"    => ["ptr", "ptr"],
-        # crystal runtime helpers
-        "__adamas_ptr_copy" => ["ptr", "ptr", "i32", "i32"],
-        "__adamas_ptr_move" => ["ptr", "ptr", "i32", "i32"],
-      } of String => Array(String)
-      fixed_sig = varargs_signatures[mangled_extern_name]?
+      # The selected declaration owns the fixed prefix. Inferring it from a
+      # libc-name list miscompiled arbitrary C varargs (including sem_open on
+      # arm64 Darwin), and even classified non-variadic vprintf as variadic.
+      fixed_types = inst.variadic_fixed_types
+      fixed_sig = fixed_types.try { |types| types.map { |type| @type_mapper.llvm_type(type) } }
 
-      if fixed_sig
+      if fixed_sig && fixed_types
+        if arg_entries.size < fixed_sig.size
+          raise "C variadic call #{inst.extern_name} lost its fixed arguments"
+        end
         fixed_sig.each_with_index do |expected_type, idx|
-          break if idx >= arg_entries.size
           actual_type, actual_val, actual_type_ref = arg_entries[idx]
-          coerced_val = cast_fixed_arg.call(actual_type, actual_type_ref, actual_val, expected_type, nil)
+          coerced_val = cast_fixed_arg.call(actual_type, actual_type_ref, actual_val, expected_type, fixed_types[idx])
           arg_entries[idx] = {expected_type, coerced_val, actual_type_ref}
+        end
+        # Match Crystal's C call boundary: only primitive floats/integers in
+        # the variadic tail receive default promotions. Nominal enums, Bool,
+        # Char and fixed Float32 parameters keep their existing ABI here.
+        (fixed_sig.size...arg_entries.size).each do |idx|
+          actual_type, actual_val, actual_type_ref = arg_entries[idx]
+          promoted_type = case actual_type_ref
+                          when TypeRef::FLOAT32
+                            "double"
+                          when TypeRef::INT8, TypeRef::UINT8, TypeRef::INT16, TypeRef::UINT16
+                            "i32"
+                          else
+                            nil
+                          end
+          if promoted_type
+            coerced_val = cast_fixed_arg.call(actual_type, actual_type_ref, actual_val, promoted_type, nil)
+            arg_entries[idx] = {promoted_type, coerced_val, actual_type_ref}
+          end
         end
       elsif matching_func
         matching_func.params.each_with_index do |param, idx|
@@ -25362,19 +25355,22 @@ module Adamas::MIR
         return_type = "ptr"
       end
 
+      # Carry the explicit function type at every use, including Void results
+      # and an empty fixed prefix. An opaque-pointer forward declaration is
+      # not authority to reconstruct this per-call C ABI.
+      call_type = if fixed_sig
+                    params = fixed_sig.empty? ? "..." : "#{fixed_sig.join(", ")}, ..."
+                    "#{return_type} (#{params})"
+                  else
+                    return_type
+                  end
       if return_type == "void"
-        emit "call void @#{mangled_extern_name}(#{args})"
+        emit "call #{call_type} @#{mangled_extern_name}(#{args})"
         # Mark as void so value_ref returns a safe default for downstream uses
         @void_values << inst.id
       elsif needs_scalar_to_union_wrap
-        if fixed_sig
-          sig_prefix = fixed_sig.join(", ")
-          raw_name = "%ext_s2u.#{inst.id}.raw"
-          emit "#{raw_name} = call #{return_type} (#{sig_prefix}, ...) @#{mangled_extern_name}(#{args})"
-        else
-          raw_name = "%ext_s2u.#{inst.id}.raw"
-          emit "#{raw_name} = call #{return_type} @#{mangled_extern_name}(#{args})"
-        end
+        raw_name = "%ext_s2u.#{inst.id}.raw"
+        emit "#{raw_name} = call #{call_type} @#{mangled_extern_name}(#{args})"
         record_emitted_type(raw_name, return_type)
         wrapped_val = coerce_union_value_for_type("ext_s2u.#{inst.id}", raw_name, scalar_to_union_target_type)
         emit "%ext_s2u.#{inst.id}.final = alloca #{scalar_to_union_target_type}, align 8"
@@ -25383,8 +25379,7 @@ module Adamas::MIR
         record_emitted_type(name, scalar_to_union_target_type)
         @value_types[inst.id] = inst.type
       elsif fixed_sig
-        sig_prefix = fixed_sig.join(", ")
-        emit "#{name} = call #{return_type} (#{sig_prefix}, ...) @#{mangled_extern_name}(#{args})"
+        emit "#{name} = call #{call_type} @#{mangled_extern_name}(#{args})"
         record_emitted_type(name, return_type)
       else
         emit "#{name} = call #{return_type} @#{mangled_extern_name}(#{args})"
