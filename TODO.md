@@ -22138,8 +22138,9 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [x] Locate the first failing startup action: sem_open loses its C variadic
   ABI. The source-prefix fix below closes that action; successful compile/link
   alone still does not establish runtime parity.
-- [ ] Full-prelude hello now reaches later Fiber enqueue and monitor-thread
-  faults before user output. Locate their first false values separately.
+- [ ] Source spawn emission below closes the next Fiber enqueue fault;
+  full-prelude hello prints user output then faults in FdLock during flush.
+  Locate that receiver's first invalid representation separately.
   Requalify initializer_explicit_new_source_order_repro.sh after this frontier:
   its same-arena run crashes and its cross-arena case reports a Void result.
 - [ ] Audit captured `&@run` block metadata separately: the no-prelude fixture
@@ -22175,10 +22176,31 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   extern matrix keeps 28 runtime positives and 24 strict rejections; named
   extern controls retain two positives and four semantic rejections on both
   compilers. No application/stdlib changes or weakened argument checks.
-- [ ] Full-prelude hello still times out before output. Bounded LLDB runs
-  observe bad receivers in Fiber execution-context dispatch and monitor
-  Thread.sleep(Time::Span). Discriminate their causes; do not attribute them
-  to sem_open or certify runtime/bootstrap/LavinMQ parity from this ABI fix.
+- [ ] Source spawn emission below closes the next enqueue fault. A separate
+  monitor-loop backedge currently emits a null carried Time::Span; qualify a
+  dedicated discriminator before assigning it a runtime cause. Full hello
+  now prints output then faults during flush; runtime parity remains open.
 - [ ] Audit nominal enum widths at the C boundary separately: the LLVM type
   mapper currently maps Enum to i32. This slice preserves the existing enum
   path and does not establish parity for every underlying enum width.
+
+### Emit selected spawn source bodies instead of a copied Fiber layout (2026-10-29)
+- [x] Remove the LLVM spawn-name override and its private trampoline. The
+  override writes alive=1 at Fiber+96, which is execution_context in the
+  installed stdlib. LLDB observed the resulting enqueue receiver=0x1.
+  Compile the selected source body; retain the independent context primitive.
+- [x] Qualify the source identity boundary against Crystal 1.22.1 with stored
+  block invocation, callback effect and an Int32 return. The parent passes
+  the named control but fails the positional spawn$$..._block case in its
+  injected Fiber body. Fresh S1 passes both. LLVM/optimizer specs pass 139
+  examples, including the backend body/result-ABI falsifier.
+- [x] Recompile unchanged installed-prelude hello without AST/LLVM caches:
+  compile/link succeeds and user stdout is now hello. Generated spawn calls
+  the actual scheduler source rather than the deleted layout substitution.
+- [ ] Process completion still fails: bounded LLDB captures self=0xa in
+  UInt32#&, called by FdLock#handle_last_ref(Nil|UInt32) during STDOUT.flush.
+  Fix the compiler's scalar/receiver or union representation contract before
+  claiming full hello, Fiber, bootstrap or LavinMQ parity.
+- [ ] The earlier reason for the override claimed wrong Hash/Fiber selection.
+  Keep source-selection regressions as guards; the comment alone is not a
+  reproduced defect on this source state. No application or stdlib changes.

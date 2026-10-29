@@ -29,6 +29,22 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+Source-selected spawn methods are emitted from their MIR bodies. The removed
+LLVM spawn-name override built a Fiber by hardcoded offsets from an older
+layout, overwriting the installed stdlib's execution_context slot with the
+alive bit. A bounded capture observed receiver=0x1 at enqueue; emitted stores
+and the actual getter shared offset 96. The source-body backend falsifier and
+original-first positional/named regression retain result/callback ABI;
+139 LLVM/optimization examples pass. The parent fails the positional case,
+while its named control passes. No separate primitive consumes the removed
+private trampoline; the context-switch primitive remains independent.
+Installed-prelude hello now compiles, links and prints hello, then faults in
+FdLock#handle_last_ref: UInt32#& receives self=0xa where its body loads a pointer.
+This is the next startup/flush frontier, not a successful process-exit claim.
+Refresh after function substitution, mangling or source callback ABI changes.
+Rollback source-body emission and its regression together. Full Fiber/scheduler
+parity, fresh bootstrap and LavinMQ parity remain separate obligations.
+
 C variadic calls must retain the selected declaration's fixed parameter
 prefix through HIR, MIR, optimization and LLVM emission. A function-name
 whitelist cannot own that ABI: the unchanged Darwin sem_open call fails with
@@ -44,9 +60,9 @@ Strongest failure: a rewriting pass drops the prefix or promotes a fixed
 Float32 as if it belonged to the tail. Guard both with mixed-type tests.
 This is a CAUTION ABI change; rollback its transport and consumers together.
 The unchanged installed-prelude hello compiles/links and emits the correct
-sem_open call. Startup now advances to Fiber enqueue and monitor-thread faults;
-it still does not produce user output. Runtime startup beyond sem_open, fresh
-bootstrap and LavinMQ parity remain open until separately exercised.
+sem_open call. Source spawn emission above closes the following enqueue fault;
+the program prints hello and then faults during flush. Successful completion,
+fresh bootstrap and LavinMQ parity remain open until separately exercised.
 
 Selected initializer source recipes survive layout-body invalidation. The
 existing MaterializedInitializerSource retains the exact Def/arena, owner,

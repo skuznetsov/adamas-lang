@@ -21516,3 +21516,30 @@ adaptation or call emission changes; roll back transport and consumers together.
 Full-prelude hello compiles/links but startup still faults later in Fiber
 enqueue or monitor sleep. Narrow enum widths, fresh bootstrap and LavinMQ
 runtime/upstream-test parity are not certified by this result.
+
+
+## 2026-10-29 — Source spawn identity outlives a copied runtime layout
+
+The LLVM spawn-name override replaced every positional spawn$$..._block body
+with a hand-built Fiber, regardless of its selected source or return type.
+Its alive bit at offset 96 overwrote the installed stdlib's execution_context
+pointer. A bounded LLDB capture observed the exact resulting receiver=0x1 in
+execution-context enqueue. Updating the copied offsets would keep the false
+authority boundary; the entire high-level override and its private trampoline
+are removed. The independent context-switch primitive remains. A read-only
+dependency audit found no other trampoline consumer.
+
+Evidence: source_spawn_body_repro.sh qualifies positional and named calls on
+Crystal 1.22.1 before candidate execution, retaining a stored block's callback
+effect and Int32 result. The parent passes the named control but fails the
+positional case inside its injected Fiber body. Fresh S1 passes both; focused
+LLVM/optimization specs pass 139 examples. Installed-prelude hello compiles and
+links without caches, emits scheduler source calls and now prints hello.
+It then faults during STDOUT.flush: FdLock#handle_last_ref calls UInt32#& with
+self=0xa while that body loads a pointer. This is a separate representation
+frontier; process completion, full Fiber/scheduler behavior, bootstrap and
+LavinMQ runtime/upstream-test parity are not certified. Scoped ROBUST for
+source body/result identity. Refresh after function substitution, mangling,
+callback ABI or source body selection changes; rollback removal and tests
+together. The override's old Hash/Fiber selection comment remains an unproven
+historical explanation, not authority to retain a runtime substitution.
