@@ -131443,6 +131443,7 @@ module Adamas::HIR
 
       # Fallback for stdlib methods that should return a value (like to_a, map, etc.)
       # Same logic as in lower_call for consistency
+      name_pointer_fallback_deferred = false
       if return_type == TypeRef::VOID
         if member_name == "find" || member_name == "find!"
           if type_desc = @module.get_type_descriptor(ctx.type_of(object_id))
@@ -131489,7 +131490,11 @@ module Adamas::HIR
                                              "shuffle", "rotate", "pop", "shift", "slice",
                                              "to_slice", "to_unsafe", "to_h", "to_set", "copy_from"]
           if methods_returning_self_or_value.includes?(member_name)
-            return_type = TypeRef::POINTER
+            # The target is lowered (or force-lowered) below; a name-shaped
+            # guess taken now would suppress that pass, as in lower_call.
+            # `args.each_with_index` in a call argument inside a class body
+            # reached here before `each_with_index$Int32` was lowered.
+            name_pointer_fallback_deferred = true
           end
         end
       end
@@ -131764,6 +131769,9 @@ module Adamas::HIR
         if return_type == TypeRef::VOID && actual_name != primary_name
           return_type = get_function_return_type(primary_name, 0)
         end
+      end
+      if name_pointer_fallback_deferred && return_type == TypeRef::VOID
+        return_type = TypeRef::POINTER
       end
       if !forced_return_type && (func = @module.function_by_name(actual_name))
         if func.return_type != TypeRef::VOID && func.return_type != TypeRef::NIL && func.return_type != return_type
