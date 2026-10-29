@@ -12326,7 +12326,10 @@ module Adamas::HIR
         return name if name == owner_base || name.starts_with?("#{owner_base}::")
       end
 
-      "#{owner_name}::#{name}"
+      # A type nested in a generic owner lives in the generic type's namespace
+      # (`Indexable::ItemIterator`), not in one instantiation or in the header
+      # spelling `Indexable(T)`.
+      "#{owner_base}::#{name}"
     end
 
     private def enum_base_type_for_node(node : Adamas::Compiler::Frontend::EnumNode) : TypeRef
