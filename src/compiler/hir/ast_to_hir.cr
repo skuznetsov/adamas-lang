@@ -101533,6 +101533,23 @@ module Adamas::HIR
     private def callee_is_yield_free?(name : String) : Bool
       base = strip_type_suffix(name)
       def_node = @function_defs[name]? || @function_defs[base]?
+      unless def_node
+        # An include-origin target such as `Array(Int32)#each_with_index$Int32`
+        # (Iterable) has no Def registered under its own name; take the
+        # blockless overload of that arity from the owner's include chain.
+        suffix = method_suffix(name)
+        return false if suffix && suffix_has_block_flag?(suffix)
+        parts = parse_method_name_uncached(name)
+        if parts.is_instance && (method_part = parts.method)
+          arg_count = suffix ? parse_types_from_suffix(strip_mangled_suffix_flags(suffix)).size : 0
+          if origin = find_included_module_def_origin_for_owner(parts.owner, method_part, arg_count, false)
+            # Not cached under `name`: the lowering lookup owns that binding.
+            origin_def, origin_arena, _ = origin
+            origin_stats = build_param_stats_from_infos(function_param_infos(origin_def, origin_arena))
+            return !origin_stats.has_block && !def_contains_yield?(origin_def, origin_arena)
+          end
+        end
+      end
       return false unless def_node
       stats = function_param_stats(name, def_node)
       # has_block includes both explicit &block and implicit yield (via
@@ -131926,6 +131943,23 @@ module Adamas::HIR
         return_type = get_function_return_type(actual_name, 0)
         if return_type == TypeRef::VOID && actual_name != primary_name
           return_type = get_function_return_type(primary_name, 0)
+        end
+      end
+      # Inside an inline-yield body the force pass above refuses every callee,
+      # so `e = xs.each_with_index` in a `wrap do ... end` block took the
+      # name-shaped Pointer guess. Lower a yield-free target for its return
+      # type only in place of that guess: elsewhere the depth-capped nested
+      # lowering would fix a degraded return (`WithIndexIterator#next` as
+      # `Tuple(Unknown, Int32)`) that later demand would have resolved.
+      if return_type == TypeRef::VOID && name_pointer_fallback_deferred &&
+         (@inline_yield_function_depth > 0 || @inline_yield_block_body_depth > 0 ||
+         @inline_yield_proc_depth > 0 || !@inline_yield_name_stack.empty?)
+        [actual_name, primary_name].uniq.each do |name|
+          next unless return_type == TypeRef::VOID
+          next unless function_state(name).pending?
+          if force_lower_function_for_return_type(name, bypass_inline_yield: true)
+            return_type = get_function_return_type(name, 0)
+          end
         end
       end
       if name_pointer_fallback_deferred && return_type == TypeRef::VOID
