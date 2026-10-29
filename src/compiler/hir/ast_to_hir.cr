@@ -96652,6 +96652,9 @@ module Adamas::HIR
       return nil unless members
       value = members[ident_name]?
       return nil unless value
+      # Constant lookup only reaches the member from inside the enum; elsewhere
+      # a member name that also names a type (`Bool`, `Int32`) is that type.
+      return nil if type_name_exists?(ident_name) && !lexical_scope_within_enum?(enum_name)
       enum_type = enum_base_type(enum_name)
       lit = Literal.new(ctx.next_id, enum_type, value)
       ctx.emit(lit)
@@ -96660,6 +96663,16 @@ module Adamas::HIR
       ctx.emit(eq)
       ctx.register_type(eq.id, TypeRef::BOOL)
       eq.id
+    end
+
+    # @current_class may be the raw or a resolved form of the enclosing name
+    # (same probes as emit_enum_sibling_member?).
+    private def lexical_scope_within_enum?(enum_name : String) : Bool
+      cc = @current_class
+      return false unless cc
+      {cc, resolve_type_name_in_context(cc), resolve_path_string_in_context(cc)}.any? do |cand|
+        cand == enum_name || cand.starts_with?("#{enum_name}::")
+      end
     end
 
     private def emit_case_equality_fallback(ctx : LoweringContext, subject_id : ValueId, cond_expr : ExprId) : ValueId
