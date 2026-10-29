@@ -96869,7 +96869,20 @@ module Adamas::HIR
             end
           end
 
-          if is_predicate
+          subject_param_type = @module.get_type_descriptor(ctx.type_of(subject_id)).try(&.type_params[idx]?)
+          if !is_predicate && subject_param_type && subject_param_type != TypeRef::VOID &&
+             case_condition_type_name(elem_node)
+            # `when {Int64, Bool}` tests each element's type (`Int64 === left`);
+            # the element comparison keeps enum-member names as value matches.
+            idx_lit = Literal.new(ctx.next_id, TypeRef::INT32, idx.to_i64)
+            ctx.emit(idx_lit)
+            ctx.register_type(idx_lit.id, TypeRef::INT32)
+
+            subject_elem = IndexGet.new(ctx.next_id, subject_param_type, subject_id, idx_lit.id)
+            ctx.emit(subject_elem)
+            ctx.register_type(subject_elem.id, subject_param_type)
+            element_checks << emit_case_comparison(ctx, subject_elem.id, elem_expr)
+          elsif is_predicate
             # Extract subject tuple element with correct type from type descriptor
             elem_type = TypeRef::INT32 # fallback (covers most enum base types)
             subject_type = ctx.type_of(subject_id)
@@ -97415,6 +97428,40 @@ module Adamas::HIR
       false
     end
 
+    # `case {left, right} when {Int64, Int64}` narrows each local element of
+    # the subject tuple to its pattern type: original Crystal expands the
+    # pattern to `Int64 === left && Int64 === right`.
+    private def apply_case_tuple_pattern_narrowing(
+      ctx : LoweringContext,
+      subject_expr : ExprId,
+      cond_expr : ExprId,
+    ) : Nil
+      subject_node = node_for_expr(subject_expr)
+      return unless subject_node.is_a?(Adamas::Compiler::Frontend::TupleLiteralNode)
+      cond_node = node_for_expr(cond_expr)
+      return unless cond_node.is_a?(Adamas::Compiler::Frontend::TupleLiteralNode)
+      return unless cond_node.elements.size == subject_node.elements.size
+
+      targets = [] of IsANarrowingTarget
+      subject_node.elements.each_with_index do |elem_expr, idx|
+        next unless name = case_subject_var_name(ctx, elem_expr)
+        next unless local_id = ctx.lookup_local(name)
+        next unless type_name = case_condition_type_name(node_for_expr(cond_node.elements[idx]))
+        target_ref = type_ref_for_name(type_name)
+        next if target_ref == TypeRef::VOID
+        local_type = ctx.type_of(local_id)
+        # An enum element has no type to narrow to; the comparison may still
+        # match a member of the same name.
+        next if enum_value_name_for(ctx, local_id) || enum_name_for_type_ref(local_type)
+        if is_union_type?(local_type)
+          next unless get_union_member_variant_for_type_check(local_type, target_ref) ||
+                      get_union_descendant_carrier_variant_for_type_check(local_type, target_ref)
+        end
+        targets << IsANarrowingTarget.new(name, target_ref)
+      end
+      apply_is_a_narrowing(ctx, targets)
+    end
+
     private def case_subject_var_name(
       ctx : LoweringContext,
       expr_id : ExprId,
@@ -97745,6 +97792,9 @@ module Adamas::HIR
               apply_case_type_set_narrowing(ctx, svn, type_set_targets)
             end
           end
+        end
+        if (subj_expr = node.value) && when_branch.conditions.size == 1
+          apply_case_tuple_pattern_narrowing(ctx, subj_expr, when_branch.conditions.first)
         end
 
         ctx.push_scope(ScopeKind::Block)
