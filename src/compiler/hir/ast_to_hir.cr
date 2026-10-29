@@ -28971,15 +28971,8 @@ module Adamas::HIR
                       candidate && candidate.object_id != selected[1].object_id
                     end
                   end
-                  declared_base = strip_type_suffix(selected[0])
-                  inferred = with_namespace_override(method_owner(declared_base)) do
-                    resolve_return_type_from_def(selected[0], declared_base, type_ref_for_name(obj_name), call_arg_types.size, selected[1])
-                  end
-                  return inferred if inferred && inferred != TypeRef::VOID
-                  if selected[1].return_type.nil?
-                    if inferred = infer_return_type_from_callsite(selected[1], obj_name, expr_node.args, expr_node.named_args, self_type_name)
-                      return inferred if inferred != TypeRef::VOID
-                    end
+                  if inferred = infer_selected_class_call_return_type(selected, obj_name, expr_node, self_type_name, call_arg_types.size)
+                    return inferred
                   end
                 end
               end
@@ -29164,6 +29157,20 @@ module Adamas::HIR
             return type_ref_for_name(self_type_name)
           end
           if self_type_name
+            # A selected class-method body owns the dispatch kind even while
+            # yield inference retains an unrelated caller's lowering flags.
+            # Do not let a same-named instance method/cache answer first.
+            source_class_method = if current_def = @current_def_node
+                                    def_arena = registered_arena_for_def(current_def) || @arena
+                                    def_receiver_is_self_from_node(current_def, def_arena)
+                                  else
+                                    @current_method_is_class
+                                  end
+            if source_class_method && !block_expr && !block_pass_expr
+              if class_base = resolve_class_method_with_inheritance(self_type_name, method_name)
+                return infer_bare_class_call_return_type(class_base, self_type_name, expr_node)
+              end
+            end
             base = resolve_method_with_inheritance(self_type_name, method_name) || "#{self_type_name}##{method_name}"
             # Bare same-owner calls still need overload-aware return inference.
             # Using only the shared base cache can select a block overload's
@@ -29280,6 +29287,9 @@ module Adamas::HIR
             # When a class method calls another class method bare (e.g. `each_child`
             # invoking `read_entry(dir)` inside `Dir::Globber`), we need the `.` form.
             if class_base = resolve_class_method_with_inheritance(self_type_name, method_name)
+              unless block_expr || block_pass_expr
+                return infer_bare_class_call_return_type(class_base, self_type_name, expr_node)
+              end
               if ret_type = @function_base_return_types[class_base]?
                 return ret_type if ret_type != TypeRef::VOID
               end
@@ -30104,6 +30114,74 @@ module Adamas::HIR
                TypeRef::UINT64
              end
       {type, uint_value}
+    end
+
+    # Both explicit and implicit class receivers consume the selected source
+    # declaration. A representative class-base cache is not a specialization.
+    private def infer_selected_class_call_return_type(
+      selected : Tuple(String, Adamas::Compiler::Frontend::DefNode),
+      receiver_name : String,
+      call : Adamas::Compiler::Frontend::CallNode,
+      caller_self_type_name : String?,
+      call_arg_count : Int32,
+    ) : TypeRef?
+      declared_base = strip_type_suffix(selected[0])
+      inferred = with_namespace_override(method_owner(declared_base)) do
+        resolve_return_type_from_def(selected[0], declared_base, type_ref_for_name(receiver_name), call_arg_count, selected[1])
+      end
+      return inferred if inferred && inferred != TypeRef::VOID
+      return nil if selected[1].return_type
+
+      # This producer already owns per-definition/specialization cycle cuts.
+      # An enclosing active body is not, by itself, a recursive dependency.
+      inferred = infer_return_type_from_callsite(selected[1], receiver_name, call.args, call.named_args, caller_self_type_name)
+      inferred && inferred != TypeRef::VOID ? inferred : nil
+    end
+
+    private def infer_bare_class_call_return_type(
+      base_name : String,
+      receiver_name : String,
+      call : Adamas::Compiler::Frontend::CallNode,
+    ) : TypeRef?
+      # Callsite return inference does not bind expanded argument packs.
+      return nil if call.args.any? do |arg|
+        node = node_for_expr(arg)
+        node.is_a?(Adamas::Compiler::Frontend::SplatNode) ||
+          (node.is_a?(Adamas::Compiler::Frontend::UnaryNode) && {"*", "**"}.includes?(String.new(node.operator)))
+      end
+      arg_types = infer_arg_types_for_call(call.args, receiver_name)
+      named_args = call.named_args
+      has_named_args = !!(named_args && !named_args.empty?)
+      named_names = named_args ? named_arg_names_for(named_args) : nil
+      if has_named_args && named_args && named_names
+        # The resolver pairs the named suffix with canonical label order,
+        # rather than treating named actuals as arity-only evidence.
+        named_types = {} of String => TypeRef
+        named_args.each do |arg|
+          name = safe_slice_to_string(arg.name) || ""
+          return nil if name.empty? || named_types.has_key?(name)
+          named_types[name] = infer_type_from_expr(arg.value, receiver_name) || TypeRef::VOID
+        end
+        named_names.each { |name| arg_types << named_types[name] }
+      end
+      call_count = arg_types.size
+      selected = lookup_function_def_for_call(
+        base_name, call_count, false, arg_types, false, has_named_args,
+        named_names, has_named_args ? call.args.size : nil, has_named_args,
+      )
+      return nil unless selected
+      if arg_types.any? { |type| type == TypeRef::VOID || type == TypeRef::POINTER }
+        return nil if function_def_overloads(base_name).any? do |name|
+          candidate = @function_defs[name]?
+          candidate && !candidate.same?(selected[1])
+        end
+      end
+      if selected[1].return_type.nil? && function_param_infos(selected[1]).any? do |param|
+           !named_only_separator?(param) && (param.is_splat || param.is_double_splat)
+         end
+        return nil
+      end
+      infer_selected_class_call_return_type(selected, receiver_name, call, receiver_name, call_count)
     end
 
     private def infer_arg_types_for_call(args : Array(ExprId), self_type_name : String?) : Array(TypeRef)
@@ -69477,6 +69555,7 @@ module Adamas::HIR
     ) : TypeRef?
       local_map = {} of String => TypeRef
       name_map = {} of String => String
+      supplied_named_params = Set(String).new
 
       if params = node.params
         call_index = 0
@@ -69505,8 +69584,16 @@ module Adamas::HIR
       end
 
       if named_args
+        param_infos = function_param_infos(node, registered_arena_for_def(node) || resolve_arena_for_def(node, @arena))
         named_args.each do |named|
-          name = (safe_slice_to_string(named.name) || "")
+          label = safe_slice_to_string(named.name) || ""
+          param = param_infos.find do |info|
+            !info.is_block && !info.is_splat && !info.is_double_splat && named_parameter_label(info) == label
+          end
+          next unless param && (name = param.name)
+          # Labels belong to the call; body locals use internal parameter
+          # names. Track supplied unknowns too, so defaults cannot replace them.
+          supplied_named_params << name
           if inferred = infer_type_from_expr(named.value, self_type_name)
             if inferred != TypeRef::VOID
               local_map[name] = inferred
@@ -69538,8 +69625,7 @@ module Adamas::HIR
                 if default_value = param.default_value
                   if param_name_slice = param.name
                     param_name = safe_slice_to_string(param_name_slice) || "_"
-                    supplied_by_name = named_args.try(&.any? { |named| slice_eq?(named.name, param_name) }) || false
-                    unless supplied_by_name
+                    unless supplied_named_params.includes?(param_name)
                       if default_type = infer_type_from_expr(default_value, owner_name)
                         if default_type != TypeRef::VOID
                           local_map[param_name] = default_type

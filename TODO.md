@@ -22364,3 +22364,31 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   inference. The bare class-method path suppresses a missing return-cache body
   walk under an active inference context; qualify this source hypothesis with
   a discriminator before changing return inference.
+
+### Infer bare class-helper results from the selected declaration (2026-10-29)
+- [x] Reproduce the cold-cache failure inside an active class-method body:
+  the bare helper path skips body inference merely because another body is
+  active, while the selected helper actually returns its receiver's class.
+  File.open consequently loses the type of `file = new_internal(...)`.
+- [x] Share the selected-declaration return producer with explicit receivers;
+  use the existing per-definition/concrete-argument recursion guard instead
+  of the blanket active-body cut. Resolve class calls before same-name
+  instance return caches. Do not publish callsite results as a shared base type.
+- [x] Pass named actual types to overload selection in canonical label order.
+  Bind external labels to internal parameter locals in callsite inference and
+  keep supplied unknowns distinct from omitted defaults. Retain unknown-type,
+  recursive-cycle and unsupported expanded-pack guards.
+- [x] Eighteen cold-cache examples and four neighboring HIR files pass 48
+  examples total. Fresh S1 builds; bare_class_call_return_contract_repro.sh
+  matches installed Crystal 1.22.1 on ten observed results and strict Float64
+  named-argument rejection. This uses the installed unmodified stdlib.
+- [x] The neighboring receiver_class_literal suite has the same five failures
+  and three errors on the exact parent and candidate (60 examples); it is a
+  recorded existing red suite, not part of the passing 48-example claim.
+- [ ] File.open now compiles and links, but its native run still fails: a saved
+  Thread initializer callback reads `self` from a restored temporary global
+  cell. The no-thread stored_block_capture_lifetime_repro.sh qualifies all
+  four fixtures on Crystal and reproduces SIGSEGV on S1's first stored block.
+  Fix the selected initializer's escaping callback contract next; do not add
+  a Thread/File special case or change stdlib. Full bootstrap and LavinMQ
+  runtime/test parity remain open.

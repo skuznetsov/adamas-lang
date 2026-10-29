@@ -4947,3 +4947,30 @@ Scoped adversary: ROBUST for exact registered-Def precedence. The legacy
 unregistered fallback is not certified: a stale same-shaped arena can still
 fit its structural checks. Registration coverage needs a separate audit before
 that fallback can be replaced by mandatory identity or fail-closed behavior.
+
+### Selected class-helper return inference (2026-10-29)
+
+A bare class call during body inference resolves a source definition and uses
+its annotation or callsite-bound body result, as an explicit class receiver
+does. An active enclosing inference body is not itself a recursive edge;
+the existing selected-definition/concrete-argument cycle owner decides that.
+A same-name instance method or family-level return cache cannot supply the
+class call's result. Callsite-specific results do not populate shared caches.
+Named overload selection consumes both canonical external labels and actual
+types. Body inference maps those labels to selected internal parameter names;
+an unknown supplied actual stays unknown rather than admitting its default.
+Unknown overload discriminators and unsupported expanded argument packs remain
+uncertified, without weakening source type checking.
+
+DoD: 18 forced-cold-cache examples plus four neighboring files pass 48 HIR
+examples. A fresh S1 and bare_class_call_return_contract_repro.sh match the
+installed original on ten observed result markers and strict named Float64
+rejection. Intermediate named-overload and external-label defects have their
+own fail-before/pass-after probes. The existing receiver_class_literal suite
+has identical five failures/three errors on the exact parent and candidate;
+it is not a passing-suite claim. Refresh after selection, parameter binding
+or inference recursion changes; roll back this slice and tests together.
+
+The live File.open program now compiles/links, but a separate stored-block
+capture lifetime defect still crashes its runtime. A no-thread stored callback
+probe also reproduces it. This slice does not certify bootstrap or LavinMQ.

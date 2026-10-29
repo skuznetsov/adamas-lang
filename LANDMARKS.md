@@ -21711,3 +21711,39 @@ missing fact is the type of `file = new_internal(...)`. The baseline native
 harness still expects that File.open failure. It does not certify File.open,
 bootstrap or LavinMQ parity. The next discriminator compares bare class-helper
 return inference against an explicit class receiver under nested inference.
+
+## 2026-10-29 — Selected class helpers own their inferred result
+
+The live File.open yield chain uses the correct file.cr arena, but its bare
+new_internal call lost its File result during nested body inference. The old
+bare class path forbade the helper body walk whenever any body was active;
+with no return cache, this erased the local before forwarding it to a block.
+A cold-cache HIR probe reproduces nil instead of the factory type. The fix
+shares explicit class calls' selected-declaration return producer, with the
+existing specialization-aware cycle guard. Same-name instance caches cannot
+answer a call from a selected class-method body, and inferred callsite types
+are not written as a representative family result.
+
+Adversarial probes rejected intermediate candidates: named actuals must carry
+types, not just arity; the bare `*` separator is not an expanded argument pack;
+and an external `label value` must bind the internal `value` local. Supplied
+unknown named values cannot be overwritten by a default. The corrected named
+binding uses the selected definition's parameter labels and internal names.
+Eighteen direct cases plus neighboring return/specialization/yield/arena tests
+pass 48 examples. Fresh S1 builds and the original-first native regression
+observes ten exact result markers and strict Float64 rejection on both S1 and
+installed Crystal 1.22.1. Source restrictions and stdlib remain unchanged.
+Refresh this certificate after call selection, parameter binding, inference
+environment or cycle-guard changes; revert producer, consumers and tests
+together. The 60-example receiver_class_literal suite has identical five
+failures and three errors on parent/candidate and remains separately open.
+
+File.open now compiles and links; it is not a working-runtime certificate.
+The resulting program hits a stored callback whose lexical self was carried
+through a temporary global cell and restored before callback entry. A new
+no-thread original-first probe qualifies four cases on Crystal and segfaults
+on the first S1 case. Its IR stores self into a closure cell, creates a Proc
+with no environment, restores the cell, then reads it after the factory has
+returned. The next obligation is the exact selected initializer's stored
+block lifetime/carrier contract. Bootstrap and unchanged LavinMQ parity are
+still open.
