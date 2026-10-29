@@ -9128,6 +9128,15 @@ module Adamas::HIR
       contract.proc_type
     end
 
+    # `T ->` (and `->`): a callback annotation without a return type.
+    private def block_annotation_leaves_return_open?(text : Slice(UInt8)) : Bool
+      last = text.size - 1
+      while last >= 0 && text[last].unsafe_chr.ascii_whitespace?
+        last -= 1
+      end
+      last >= 1 && text[last] == '>'.ord.to_u8 && text[last - 1] == '-'.ord.to_u8
+    end
+
     # Register a callback ABI on the exact target selected for this callsite.
     # The first contract may use the existing shape target. A second contract
     # gets a direct source-def alias, preserving both identities without
@@ -9149,9 +9158,16 @@ module Adamas::HIR
       params = source_def.params
       block_param = params ? find_param(params.not_nil!) { |param| param.is_block } : nil
       if block_param
-        # Explicit Proc/callback annotations already carry their ABI. This bridge
-        # is only for the raw untyped `&block` carrier.
-        return nil if block_param.type_annotation
+        # Explicit Proc/callback annotations already carry their ABI when they
+        # name the return type. An anonymous `& : T ->` cannot be captured, so
+        # the return is left to each block and it needs this bridge like the
+        # raw untyped `&block` carrier; otherwise blocks returning `Bool` and
+        # `Bool | Nil` share one yield type. A named `&block : T ->` may be
+        # captured, where the output-less Proc discards the value instead.
+        if block_annotation = block_param.type_annotation
+          anonymous = block_param.name.try(&.empty?) != false
+          return nil unless anonymous && block_annotation_leaves_return_open?(block_annotation)
+        end
       else
         # A bare-`yield` def gets an implicit untyped block carrier
         # (`__implicit_block`) when the call is not inlined; it needs the same
@@ -140814,6 +140830,12 @@ module Adamas::HIR
     end
 
     private def strip_mangled_suffix_flags(suffix : String) : String
+      # A raw callback alias tail (`__rawcb_<shape>_r<return>`, see
+      # register_raw_callback_contract_target) names a callback contract, not
+      # call argument types.
+      if alias_start = suffix.index("__rawcb_")
+        suffix = suffix.byte_slice(0, alias_start)
+      end
       # Source labels are not runtime type or block ABI components.
       if named_start = named_shape_suffix_start(suffix)
         suffix = suffix.byte_slice(0, named_start)
