@@ -1024,6 +1024,14 @@ module Adamas::HIR
     previous_type : TypeRef,
     previous_prefer : Bool
 
+  # A raw callback's global transport slot belongs to one synchronous call.
+  # Recursive activations must restore the suspended call's slot afterwards.
+  record BlockProcCaptureCarrier,
+    cell_class : String,
+    cell_name : String,
+    cell_type : TypeRef,
+    previous_value : ValueId
+
   # Lowering timing entry (used for exclusive time accounting).
   private struct LowerMethodTiming
     getter name : String
@@ -7639,6 +7647,7 @@ module Adamas::HIR
     @closure_body_block_stack = [] of Adamas::Compiler::Frontend::BlockNode
     # Pending capture write-backs keyed by {caller function, raw thunk value}.
     @block_proc_capture_writebacks = {} of {String, ValueId} => Array(BlockProcCaptureWriteback)
+    @block_proc_capture_carriers = {} of {String, ValueId} => Array(BlockProcCaptureCarrier)
 
     # Inline return handling for yield-function inlining.
     class InlineReturnContext
@@ -8335,6 +8344,7 @@ module Adamas::HIR
       @closure_ref_prefer_cell = Set(String).new
       @closure_cell_counter = 0
       @block_proc_capture_writebacks = {} of {String, ValueId} => Array(BlockProcCaptureWriteback)
+      @block_proc_capture_carriers = {} of {String, ValueId} => Array(BlockProcCaptureCarrier)
       @sources_by_arena = sources_by_arena || {} of UInt64 => String
       @main_arenas = [] of Adamas::Compiler::Frontend::ArenaLike
       if configured_main_arenas = main_arenas
@@ -137356,6 +137366,7 @@ module Adamas::HIR
         end
       end
       captures = [] of {String, ValueId, TypeRef}
+      raw_box_captures = {} of String => LoweringContext::BoxedLocal
       referenced_names.each do |name|
         next if block_param_names.includes?(name)
         if parent_value_id = parent_locals[name]?
@@ -137364,9 +137375,11 @@ module Adamas::HIR
           # A local boxed for an earlier proc literal is written through its
           # box; the SSA binding still names the pre-box value (a nilable
           # branch-join phi for `t` first assigned in an earlier `if`). The
-          # thunk must capture the box's current payload, as a read would.
+          # Capture typing must use its current payload, as a read would;
+          # raw callbacks retain the same box as their runtime storage.
           if (box_info = ctx.lookup_boxed_local_for_local(name, parent_value_id)) &&
              !ctx.call_stable_box_narrowed_binding?(name, parent_value_id)
+            raw_box_captures[name] = box_info unless heap_proc
             load = PointerLoad.new(ctx.next_id, box_info.payload_type, box_info.box_ptr)
             ctx.emit(load)
             ctx.register_type(load.id, box_info.payload_type)
@@ -137442,6 +137455,9 @@ module Adamas::HIR
       new_capture_cells = Set(String).new
       previous_prefer_cell = {} of String => Bool
       captured_vars = [] of CapturedVar
+      raw_box_cells = {} of String => String
+      scalar_written_captures = written_captures.dup
+      capture_carriers = [] of BlockProcCaptureCarrier
 
       if heap_proc
         captured_vars = captured_vars_for_env(ctx, captures, written_captures, write_enums)
@@ -137482,6 +137498,25 @@ module Adamas::HIR
           cell_name = "__closure_cell_#{@closure_cell_counter}"
           @closure_cell_counter += 1
           class_name = "__closure"
+          carrier_type = raw_box_captures.has_key?(cap_name) ? TypeRef::POINTER : cap_type
+          previous = ClassVarGet.new(ctx.next_id, carrier_type, class_name, cell_name)
+          ctx.emit(previous)
+          ctx.register_type(previous.id, carrier_type)
+          capture_carriers << BlockProcCaptureCarrier.new(class_name, cell_name, carrier_type, previous.id)
+          if box_info = raw_box_captures[cap_name]?
+            # The raw ABI transports the existing box, never a second copy of
+            # its payload. A sibling Proc and this callback share one owner.
+            emit_capture_cell_init(ctx, class_name, cell_name, TypeRef::POINTER, box_info.box_ptr)
+            raw_box_cells[cap_name] = cell_name
+            scalar_written_captures.delete(cap_name)
+            @closure_ref_cells.delete(cap_name)
+            @closure_ref_prefer_cell.delete(cap_name)
+            if written_captures.includes?(cap_name) && box_info.enum_name != write_enums[cap_name]?
+              ctx.register_boxed_local(cap_name, box_info.box_ptr, box_info.payload_type, box_info.owner_local, nil)
+              raw_box_captures[cap_name] = LoweringContext::BoxedLocal.new(box_info.box_ptr, box_info.payload_type, box_info.owner_local, nil)
+            end
+            next
+          end
           emit_capture_cell_init(ctx, class_name, cell_name, cap_type, parent_vid)
           @closure_ref_cells[cap_name] = {class_name, cell_name, cap_type}
           @closure_ref_prefer_cell.add(cap_name) if written_captures.includes?(cap_name)
@@ -137507,6 +137542,16 @@ module Adamas::HIR
           materialize_env_captures(proc_ctx, env_param.id, captured_vars)
         end
       else
+        # Snapshot only the pointer on callback entry. Loads and assignments
+        # retain the shared payload, including writes made by sibling Procs.
+        raw_box_cells.each do |cap_name, cell_name|
+          box_info = raw_box_captures[cap_name]
+          box_get = ClassVarGet.new(proc_ctx.next_id, TypeRef::POINTER, "__closure", cell_name)
+          proc_ctx.emit(box_get)
+          proc_ctx.register_type(box_get.id, TypeRef::POINTER)
+          proc_ctx.register_local(cap_name, box_get.id)
+          proc_ctx.register_boxed_local(cap_name, box_get.id, box_info.payload_type, box_get.id, box_info.enum_name)
+        end
         # Bind captured lexical `self` into the proc context so implicit receiver
         # calls inside the block resolve as instance calls, not bare extern calls.
         if captures.any? { |name, _, _| name == "self" }
@@ -137767,7 +137812,7 @@ module Adamas::HIR
         @expected_proc_return_type_hint_stack.pop? if pushed_return_type_hint
         unless heap_proc
           captures.each do |cap_name, _, _|
-            next if written_captures.includes?(cap_name)
+            next if scalar_written_captures.includes?(cap_name)
             if previous = previous_capture_cells[cap_name]?
               @closure_ref_cells[cap_name] = previous
             elsif new_capture_cells.includes?(cap_name)
@@ -137911,7 +137956,10 @@ module Adamas::HIR
       fp = FuncPointer.new(ctx.next_id, proc_type, proc_func_name)
       ctx.emit(fp)
       ctx.register_type(fp.id, proc_type)
-      record_block_proc_capture_writebacks(ctx, fp.id, captures, written_captures, previous_capture_cells, previous_prefer_cell)
+      record_block_proc_capture_writebacks(ctx, fp.id, captures, scalar_written_captures, previous_capture_cells, previous_prefer_cell)
+      unless capture_carriers.empty?
+        @block_proc_capture_carriers[{ctx.function.name, fp.id}] = capture_carriers
+      end
 
       fp.id
     end
@@ -137947,10 +137995,11 @@ module Adamas::HIR
     # instead would make later reads observe a cell that sibling control-flow
     # paths (lowered before the thunk existed) never wrote.
     private def write_back_block_proc_captures(ctx : LoweringContext, arg_ids : Array(ValueId)) : Nil
-      return if @block_proc_capture_writebacks.empty?
+      return if @block_proc_capture_writebacks.empty? && @block_proc_capture_carriers.empty?
       arg_ids.each do |arg_id|
-        next unless entries = @block_proc_capture_writebacks.delete({ctx.function.name, arg_id})
-        entries.each do |entry|
+        key = {ctx.function.name, arg_id}
+        entries = @block_proc_capture_writebacks.delete(key)
+        entries.try &.each do |entry|
           name = entry.name
           current = @closure_ref_cells[name]?
           next unless current
@@ -137989,6 +138038,15 @@ module Adamas::HIR
               ctx.register_type(copy.id, entry.cell_type)
               ctx.register_local(name, copy.id)
             end
+          end
+        end
+        # Copy scalar writes back before restoring the transport. Boxed
+        # captures already wrote their sole payload through the shared pointer.
+        if carriers = @block_proc_capture_carriers.delete(key)
+          carriers.each do |carrier|
+            restore = ClassVarSet.new(ctx.next_id, carrier.cell_type, carrier.cell_class, carrier.cell_name, carrier.previous_value)
+            ctx.emit(restore)
+            ctx.register_type(restore.id, carrier.cell_type)
           end
         end
       end

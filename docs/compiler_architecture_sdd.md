@@ -4656,3 +4656,28 @@ including no-double-wrap; union1751 exact parent concrete-wrap assertion RED.
 Scoped ROBUST. Manifest 18a1f9248a33b971b6b96afc0ce575599d925e5b4b55b5a748b16d5f0f62276c; host b7aacdbd5461ca777c425cdef9fdd97c93a7e3a502b4e34862de41fefe8179e3. Expiry: array lowering, union
 coercion, MIR allocation and payload ownership. JSON serialization, bootstrap
 and produced-stage LavinMQ parity remain unverified.
+
+### Share an existing capture owner across raw and heap callbacks (2026-10-29)
+An already-boxed lexical binding has one payload owner. A synchronous raw
+yield callback transports that box pointer, binds it as a BoxedLocal on entry,
+and uses the same payload type and owner-aware read/write paths as a heap Proc.
+The raw slot is transport, not another scalar payload to copy back later.
+Do not carry a narrowed SSA snapshot into this path without its existing
+call-stability proof; block parameter bindings remain distinct owners.
+
+On the ordinary call and inline-yield fallback paths, each raw transport slot
+saves its prior runtime value before the receiving call and restores it after
+normal return, after any legacy scalar copy-back.
+The callback's entry pointer survives nested calls, and restoration lets a
+suspended receiving call yield again after recursive reentry. This retains
+the legacy raw function-pointer ABI: exceptional exits, concurrent fiber
+interleaving and escaping callbacks are separate obligations, not certified
+by the synchronous normal-return contract.
+
+Validation uses original Crystal 1.22.1 before Adamas on bidirectional writes,
+post-call coherence, repeated recursive yields, scalar-only transport,
+parameter shadowing and nullable payload. Neighboring
+capture narrowing and enum overload regressions retain type-rejection guards.
+Refresh this evidence after capture storage, callback argument coercion,
+post-call lowering or raw ABI changes. Current external-stdlib hello, fresh
+bootstrap and unchanged LavinMQ runtime/test parity remain separate gates.

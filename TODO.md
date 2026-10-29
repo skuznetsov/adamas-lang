@@ -22006,3 +22006,33 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   literal: run12512 exposes two rejected class-value positives and two
   incorrectly accepted instance negatives. Keep the capture/typeof/tuple
   obligations and unchanged LavinMQ/bootstrap gates open.
+
+### Share boxed capture storage with synchronous raw callbacks (2026-10-29)
+- [x] Transport an existing BoxedLocal pointer into a raw yield callback;
+  register the callback binding against that box and keep scalar write-back
+  away from its payload. A sibling heap Proc and the callback now read and
+  write one storage owner, including a nilable payload.
+- [x] Save every raw capture transport slot before initializing a receiving
+  call and restore it after normal return, after scalar write-back. Recursive
+  activations no longer replace a suspended callback's next yield captures.
+- [x] Original Crystal 1.22.1 and the fresh S1 pass all nine original-first
+  shared_box_raw_callback cases. Five neighboring no-prelude suites pass
+  another 44 cases, including three type-rejection controls. The fresh S1
+  itself builds with installed Crystal 1.22.1 and its unmodified stdlib.
+- [ ] Raw callbacks still use global transport slots. Exceptional exits,
+  concurrent fiber interleaving and callbacks escaping the receiving call
+  need an activation-owned environment ABI; normal-return restoration does
+  not establish those capabilities.
+- [ ] Audit non-ordinary post-call consumers: try_emit_union_receiver_dispatch
+  can return before the capture write-back hook. The attempted struct/class
+  union probe used an ordinary call in LLVM and passed, so it is not a
+  discriminator for that source-based concern. Require actual branch-call
+  emission before claiming coverage or changing that path.
+- [ ] Current-stdlib hello still fails before native code generation:
+  Int#times receives Slice(Tuple(UInt64, UInt64, Pointer(UInt8))) while lowering
+  Crystal::DWARF::Backtraces#preload_function_names. Locate the first wrong
+  receiver/result decision; do not bypass the source method check.
+- [ ] Separately qualify review hypotheses: omitted bare/nested block break
+  results in typeof; real Pointer(Void) confused with an unresolved typeof;
+  blockless overload fallback ignoring implicit yield. Fresh S2, bootstrap
+  fixed point and unchanged LavinMQ runtime/test parity remain open.

@@ -1472,3 +1472,17 @@ costs and choose a separating probe. No tools or edits requested.
 a model answer. No review signal or cost saving; no claim relies on this call.
 Local source inspection, isolated regression-runner probes, and opposed Luna
 Max analyses continued without waiting for Grok availability.
+
+### Session 57 — 2026-10-29 — Raw callback shared-box audit
+
+**Task:** read-only audit of the reproduced heap Proc/raw yield callback
+storage split, bounded to capture construction, entry materialization and
+post-call write-back in ast_to_hir.cr at eaded7f6. No edits or builds.
+**Invocation:** grok_acp_delegate.py with a task file, 15-second request and
+45-second prompt timeouts. API-key environment variables were omitted.
+**Outcome:** session/new failed with RuntimeError: Authentication required
+before any answer. No review signal or claim relies on this interaction.
+**Fallback evidence:** local original-first regression probes and a bounded
+Luna Max source audit. Repeated recursive yield falsified the initial
+pointer-only bridge and required runtime transport restoration.
+**Cost saved:** none; debugging continued without waiting for authentication.
