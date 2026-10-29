@@ -137069,6 +137069,20 @@ module Adamas::HIR
         if parent_value_id = parent_locals[name]?
           parent_type = ctx.type_of(parent_value_id)
           next if parent_type == TypeRef::VOID
+          # A local boxed for an earlier proc literal is written through its
+          # box; the SSA binding still names the pre-box value (a nilable
+          # branch-join phi for `t` first assigned in an earlier `if`). The
+          # thunk must capture the box's current payload, as a read would.
+          if box_info = ctx.lookup_boxed_local_for_local(name, parent_value_id)
+            load = PointerLoad.new(ctx.next_id, box_info.payload_type, box_info.box_ptr)
+            ctx.emit(load)
+            ctx.register_type(load.id, box_info.payload_type)
+            if box_enum = box_info.enum_name
+              track_enum_value(load.id, box_enum)
+            end
+            parent_value_id = load.id
+            parent_type = box_info.payload_type
+          end
           captures << {name, parent_value_id, parent_type}
         end
       end
