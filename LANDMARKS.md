@@ -21413,3 +21413,22 @@ or type-literal transport changes. Full typeof environment isolation, current
 bootstrap and unchanged LavinMQ parity remain open. The current unmodified
 stdlib hello frontier is Atomic#compare_and_set receiving Symbol ordering
 arguments. See TODO and compiler_architecture_sdd for the continuation.
+
+## 2026-10-29 — Receiver-owned primitive integer result types
+
+The first false type in the current Atomic ordering failure was arithmetic:
+head &+ 1 was inferred as Int32 despite its UInt32 receiver and Crystal's
+self result contract. Failed overload selection then left ordering symbols
+unconverted. A shared concrete-integer result helper now feeds preliminary
+inference and ordinary binary HIR emission; the incompatible unsigned-literal
+heuristic is removed. The helper does not grant numeric argument conversions.
+
+Evidence: integer_binary_result_contract_repro.sh passes 18 original-first
+native cases and one strict signed-expression rejection under Crystal 1.22.1
+and fresh S1; source_integer_autocast_repro.sh passes 21 positives and
+24 rejections. The minimal generic enum call fails on the parent with release?
+for Symbol and returns 17 after the change. Scoped ROBUST for these result
+types; refresh after operator inference/lowering or call-binding changes.
+The unmodified installed-stdlib hello frontier advances to MIR ambiguity
+for Thread#initialize; no bootstrap or LavinMQ closure follows. See TODO for
+the separate Atomic substring interception and non-atomic override obligation.

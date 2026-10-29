@@ -4709,3 +4709,30 @@ Three neighboring suites pass 19 cases. Scoped ROBUST; refresh after lexical
 frame push/pop, member receiver classification or type-literal transport changes.
 Installed-stdlib hello advances to a Symbol/Atomic::Ordering mismatch; fresh
 bootstrap and unchanged LavinMQ runtime/test parity remain open.
+
+### Primitive integer binary results have a receiver owner (2026-10-29)
+Preliminary inference and emitted HIR share the result rule for the listed
+primitive integer arithmetic, wrapping, bitwise, shift, floor-div and modulo
+operators. Crystal's integer overloads return self even when the right
+integer has a wider width or different signedness. Operand promotion and
+integer literal representability are not authority to replace that return
+type. The helper admits only concrete primitive integer operands; existing
+Char, enum, pointer, float and custom-method handling remain separate.
+
+The discriminating failure was the installed stdlib's Runnables#shift? call
+to Atomic(UInt32)#compare_and_set: inference typed head &+ 1 as Int32, then
+source Def selection failed and both ordering symbols missed enum conversion.
+The no-prelude EnumCell counterpart fails on the parent with release? for
+Symbol and returns 17 under original Crystal 1.22.1 and the changed S1.
+The regression passes 18 native positives and one strict signed-expression
+rejection; source_integer_autocast adds 21 positives and 24 rejections.
+Scoped ROBUST for the result-type rule, including typeof and single operand
+evaluation. Refresh after numeric inference, operator lowering or call binding
+changes. Full overflow/runtime-width semantics and broader float/Char/enum
+contracts are not certified by these probes.
+
+Unmodified installed-stdlib hello now passes HIR and reaches an ambiguous
+Thread#initialize target in MIR; it has not linked or run. Fresh bootstrap
+and unchanged LavinMQ runtime/test parity remain separate obligations.
+Rollback: revert this result helper, its two consumers and the regression
+together; preserve strict source argument admission.

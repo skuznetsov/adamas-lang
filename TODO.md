@@ -22053,10 +22053,38 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   Three neighboring suites pass 19 additional cases, including a missing-method
   rejection. The getter side effect executes once, and type-valued getters
   and explicit generic type receivers preserve class dispatch.
-- [ ] Unmodified installed-stdlib hello now reaches Atomic#compare_and_set,
-  then rejects `release?` on Symbol at atomic.cr:112. Locate the first lost
-  enum parameter conversion; do not add a Symbol predicate or stdlib bypass.
+- [x] Locate the first false type at the Atomic ordering boundary: preliminary
+  inference called `head &+ 1` Int32 instead of UInt32, preventing selection
+  of the source Def and its enum conversions. Closed by the integer binary
+  result contract below; no Symbol predicate or stdlib bypass was added.
 - [ ] Full typeof frame/cache isolation is a separate obligation: receiver
   admission and inline local fallback do not certify every inference consumer.
   Fresh S2, bootstrap fixed point and unchanged LavinMQ runtime/test parity
   remain open.
+
+### Share the receiver-owned primitive integer result contract (2026-10-29)
+- [x] Infer the listed integer arithmetic, wrapping, bitwise, shift, floor-div
+  and modulo results from the primitive receiver type, as the Crystal source
+  declarations specify. Share that helper with ordinary HIR binary lowering;
+  operand promotion and literal representability do not select this result.
+  Keep non-integer operands, Char and nominal enum handling outside the helper.
+- [x] Original Crystal 1.22.1 and fresh S1 pass 18 no-prelude runtime cases plus
+  one strict Int32-to-UInt32 expression rejection. The cases check mixed widths
+  and signs, unsigned and signed literal receivers, typeof, overload selection,
+  generic enum arguments and single evaluation of both operands. The parent
+  rejects the generic enum case with `release?` for Symbol; the new S1 returns 17.
+  The existing source_integer_autocast suite passes all 21 positives and
+  24 rejections under both compilers. Five additional candidate-identity
+  controls preserve exact source targets, range rejection and ambiguity.
+- [ ] Unmodified installed-stdlib hello now reaches MIR and rejects an ambiguous
+  Thread#initialize target: the emitted family contains both the zero-argument
+  initializer and the nilable-name/block initializer. Preserve source identity
+  when binding the call instead of choosing the first family member.
+- [ ] A separate no-prelude probe found that MIR's includes?("Atomic") receiver
+  interception replaces user AtomicLike#get/set/swap/compare_and_set bodies.
+  It can replace a scalar compare_and_set result with a tuple pointer. The
+  same high-level interception emits non-atomic operations for real Atomic;
+  audit removal in favor of stdlib bodies and exact low-level Ops primitives.
+- [ ] This result-type contract does not certify overflow behavior, all wide
+  mixed-width runtime operations, exponentiation, floating arithmetic, fresh
+  bootstrap or unchanged LavinMQ runtime/test parity.

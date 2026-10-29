@@ -29423,19 +29423,8 @@ module Adamas::HIR
           return TypeRef::CHAR if right_type.nil? || integer_like_type_ref?(right_type)
         end
         if left_type && right_type
-          integer_op =op == "+" || op == "-" || op == "*" || op == "&" || op == "|" ||
-                       op == "^" || op == "<<" || op == ">>"
-          if integer_op
-            left_node = node_for_expr(expr_node.left)
-            right_node = node_for_expr(expr_node.right)
-            if left_node.is_a?(Adamas::Compiler::Frontend::NumberNode) &&
-               unsigned_integer_type?(right_type) && signed_integer_type?(left_type)
-              return right_type
-            end
-            if right_node.is_a?(Adamas::Compiler::Frontend::NumberNode) &&
-               unsigned_integer_type?(left_type) && signed_integer_type?(right_type)
-              return left_type
-            end
+          if result_type = primitive_integer_binary_result_type(op, left_type, right_type)
+            return result_type
           end
         end
         if left_type && right_type
@@ -47913,6 +47902,21 @@ module Adamas::HIR
         true
       else
         false
+      end
+    end
+
+    # These primitive integer operators return the receiver's type, even with a
+    # wider or differently signed integer operand. This is a method-result
+    # contract, not a common numeric type for the two operands. Share it with
+    # eager inference so overload selection sees the same type as emitted HIR.
+    private def primitive_integer_binary_result_type(op : String, left : TypeRef, right : TypeRef) : TypeRef?
+      return nil unless signed_integer_primitive?(left) || unsigned_integer_type?(left)
+      return nil unless signed_integer_primitive?(right) || unsigned_integer_type?(right)
+      case op
+      when "+", "-", "*", "&+", "&-", "&*", "&", "|", "^", "<<", ">>", "//", "%"
+        left
+      else
+        nil
       end
     end
 
@@ -90761,8 +90765,7 @@ module Adamas::HIR
                       # a `Char | Int32` union and silently read the type-id as the value.
                       TypeRef::INT32
                     else
-                      # For arithmetic ops, infer type from left operand
-                      ctx.type_of(left_id)
+                      primitive_integer_binary_result_type(op_str, left_type, ctx.type_of(right_id)) || left_type
                     end
       binop = BinaryOperation.new(ctx.next_id, result_type, op, left_id, right_id)
       ctx.emit(binop)
