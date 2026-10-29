@@ -3,12 +3,13 @@
 # the box, typed with the declared (nilable) payload. A `return nil unless
 # arena` guard rebound only the SSA value, so after the guard `src(arena)` still
 # saw `Nil | AstArena | ...` ("no overload matches source_for_arena" in
-# AstToHir#macro_block_value_for while building stage 2).
-# A box that no closure body writes and whose address is not taken is
-# call-stable: a truthy guard now registers a block-bound proof for it that
-# survives calls, follows the condition's edges (including the right operand
-# of `||`/`&&`) and is dropped by the owner's own writes. A closure that
-# writes the local keeps it un-narrowed, as in original Crystal.
+# AstToHir#macro_block_value_for, then slice_source_for_expr_in_arena inside
+# a `source.try { }` block, while building stage 2).
+# A box that only its defining assignment writes (no closure body or second
+# assignment, no `pointerof`) is call-stable: a truthy guard now binds the
+# local to a narrowed load of the box, and reads use that binding while the
+# local machinery keeps it (branch arms, joins, inlined blocks, thunks, loops).
+# A closure that writes the local keeps it un-narrowed, as in original Crystal.
 # Expected output is checked against original Crystal.
 #
 # Usage: ADAMAS_BIN=path/to/adamas [CRYSTAL_BIN=path/to/original/crystal] $0
@@ -205,6 +206,75 @@ STDERR.puts parent_write(7)
 STDERR.puts thunk_write(4)
 STDERR.puts loop_write(4)
 STDERR.puts loop_write(0)'
+
+add_case reads_inside_blocks 's3 3| 1|none|t2 2|12,22 2|-1,-1,1,2,2|nil -1|x1|2 2' "$COMMON"'
+def name_for(a : A) : String?
+  a.size > 1 ? "s" : nil
+end
+
+def src2(a : A, t : String) : String
+  "#{t}#{a.size}"
+end
+
+def wy(c : Bool, &)
+  return yield if c
+  yield
+end
+
+def m(k : Int32) : String
+  arena = get(k)
+  return "none" unless arena
+  source = name_for(arena)
+  bs = source.try { |text| src2(arena, text) } || ""
+  pr = -> { arena.size }
+  "#{bs} #{pr.call}"
+end
+
+def thunk(k : Int32) : String
+  arena = get(k)
+  return "none" unless arena
+  r = wy(true) { src2(arena, "t") }
+  pr = -> { arena.size }
+  "#{r} #{pr.call}"
+end
+
+def mapped(k : Int32) : String
+  arena = get(k)
+  return "none" unless arena
+  r = [1, 2].map { |i| src2(arena, i.to_s) }.join(",")
+  pr = -> { arena.size }
+  "#{r} #{pr.call}"
+end
+
+def per_iteration(n : Int32) : String
+  acc = [] of Int32
+  n.times do |j|
+    a = get(j - 1)
+    pr = -> { a.try(&.size) || -1 }
+    if a && a.size > 1
+      acc << src(a)
+    end
+    acc << pr.call
+  end
+  acc.join(",")
+end
+
+def guard_in_block(xs : Array(Int32), k : Int32) : String
+  a = get(k)
+  pr = -> { a.try(&.size) || -1 }
+  xs.each { |x| return "x#{x}" unless a }
+  "#{a.try(&.size).inspect} #{pr.call}"
+end
+
+STDERR.puts m(3)
+STDERR.puts m(1)
+STDERR.puts m(0)
+STDERR.puts thunk(2)
+STDERR.puts mapped(2)
+STDERR.puts per_iteration(4)
+STDERR.puts guard_in_block([] of Int32, 0)
+STDERR.puts guard_in_block([1], 0)
+STDERR.puts guard_in_block([1], 2)'
 
 # A closure that writes the guarded local must keep it nilable: both compilers
 # reject the program.
