@@ -22293,7 +22293,7 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   protected Scheduler#enter_syscall error and stops later at the strict
   unmaterialized concrete module target guard for Iterator(T)/Indexable(T)
   #each$block. It has not yet compiled or executed the complete probe.
-- [ ] Repair the independently reproduced generic restriction false acceptance:
+- [x] Repair the independently reproduced generic restriction false acceptance:
   Box(::Path).accept(value : T?) accepts Crystal::System::Path although the
   original rejects it. A Nil-returning body with no narrowing still reproduces
   on both s1_loop_results and s1_union_identity. The applied Box type argument
@@ -22309,3 +22309,34 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   the live caller override when no explicit owner context is passed. A distinct
   same-short-name generic head in caller/callee namespaces is the next
   discriminator. This is a static adjacent risk, not a reproduced failure.
+
+### Share bound annotation contracts with argument admission (2026-10-29)
+- [x] Close the preceding Box(::Path) restriction false acceptance without
+  changing source restrictions. Signature resolution already knew the bound
+  owner's canonical Path; argument compatibility and its source rejection
+  fence reparsed T? under Crystal::System and selected its different Path.
+  Share the bound annotation producer across ordinary/splat admission and the
+  source generic rejection fence; isolate canonical consumers from live
+  class, namespace and generic substitutions. Unbound annotations stay lexical.
+- [x] Keep both the canonical source restriction and its HIR TypeRef in
+  BoundAnnotationTypeContract. An intermediate TypeRef-only candidate regressed
+  T | Int by replacing abstract Int with an Int32 carrier. The original and
+  parent accept UInt64; the corrected candidate preserves 0x1_0000_0001_u64
+  through the callee and still rejects Float64. A second falsifier exposes the
+  same source-domain erasure in typed-splat alias resolution; preserve abstract
+  Int there for both bound and unbound restrictions. This is a source-domain
+  rule, not permission for numeric widening or a different representation.
+- [x] Focused admission/lexical/union specs pass 81 examples. The original-first
+  regression qualifies eleven scenarios on installed Crystal 1.22.1 and fresh
+  S1, including both nominal rejection controls. The guarded Array(Path)
+  positive checks typing without constructing an Array; it does not certify
+  generic collection runtime layout. Native UInt64 payload is observed in
+  regular, applied-splat and plain Int splat calls.
+- [x] Fresh no-cache S2 still stops at AstCache#write_string_table(Pointer,
+  Hash(String, UInt32)), exit 1 after about 36s, peak RSS about 973 MiB.
+- [ ] Resolve File.open's forwarded yield input producer next. A separate
+  original-first File.open callback reproduces the missing IO contract.
+  Do not relax IO compatibility or add File.open-specific type guesses.
+- [ ] Keep the separately tracked method-forall generic-head collision and
+  allocator/source-order issues open. These tests are not a full generic
+  dispatch, bootstrap or LavinMQ parity certificate.

@@ -21637,3 +21637,47 @@ union-identity S1 admit it. The bound type argument is root Path, but argument
 compatibility normalizes it in the nested consumer context. Concrete generic
 T?/Array(T)? narrowing positives pass. This negative needs its own root fix,
 without loosening restrictions or changing application/stdlib sources.
+
+## 2026-10-29 — Bound restrictions keep identity and source domain together
+
+Box(::Path).accept(value : T?) admitted a different nested Path and rejected
+the actual root Path. Its signature producer held the correct owner binding,
+but argument admission reparsed that canonical spelling in the consumer's
+namespace. An independent no-narrowing body reproduced the false acceptance
+on both earlier S1 binaries. Ordinary parameters, typed splats and the source
+generic rejection fence now consume the shared bound annotation contract.
+Canonical consumers isolate class/namespace/substitution state; annotations
+without a bound formal retain their declaration's lexical resolution.
+
+The contract owns both restriction_name and type_ref. A TypeRef-only
+intermediate candidate converted the source domain T | Int into T | Int32;
+it rejected UInt64 accepted by both original Crystal and the parent. The
+corrected producer preserves abstract restriction names separately from their
+HIR carriers. The native adversary control observes 0x1_0000_0001_u64 inside
+the callee and retains rejection of Float64, rather than merely ignoring the
+argument after an accepting overload check.
+
+Adversarial review then found typed-splat alias resolution erasing Int again.
+The added HIR UInt64 discriminator failed before the consumer fix; it now
+preserves abstract Int through recursive alias/union resolution for bound and
+unbound splats. Float64 and unrelated nominal values remain rejected.
+
+Evidence: 81 focused HIR admission/lexical/union examples pass. The eleven-case
+original-first regression passes installed Crystal 1.22.1 and fresh S1,
+covering root/Nil acceptance, nested nominal rejection, composite Array(Path)
+identity and abstract Int membership. The Array positive uses a guarded
+typed opaque value; it certifies compilation, not collection allocation.
+Applied and plain numeric-splat positives observe the same high UInt64 payload.
+Scoped adversary ROBUST for the tested identity/source-domain boundary; the
+same-lineage source review is correlated, with native oracle controls providing
+the behavioral discriminator.
+Refresh after binding producers, generic projection, alias resolution or
+compatibility policy changes; roll back shared producer/consumers and tests
+together. Method-forall generic-head ownership remains a distinct untested
+collision risk, and scalar overload ranking is only a bounded control.
+
+Fresh no-cache S2 still rejects AstCache#write_string_table(Pointer,
+Hash(String, UInt32)), exit 1 after about 36s, peak RSS 996080 KiB. File.open's
+forwarded callback input is the next producer frontier; no IO acceptance
+relaxation or stdlib/application source change is authorized by this evidence.
+Bootstrap and unchanged LavinMQ runtime/test parity remain open.

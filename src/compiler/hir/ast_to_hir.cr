@@ -24880,16 +24880,45 @@ module Adamas::HIR
 
     # Applied owner and formal bindings contain canonical type identities.
     # Source annotation fragments still use their declaration namespace.
-    private def canonical_bound_type_ref(name : String) : TypeRef
+    private def with_canonical_type_scope(&)
       old_class = @current_class
       @current_class = nil
       with_namespace_override_or_clear(nil) do
         with_isolated_type_param_map(EMPTY_DEFERRED_TYPE_PARAM_SNAPSHOT) do
-          type_ref_for_name(name)
+          yield
         end
       end
     ensure
       @current_class = old_class
+    end
+
+    private def canonical_bound_type_ref(name : String) : TypeRef
+      with_canonical_type_scope { type_ref_for_name(name) }
+    end
+
+    private def annotation_type_bindings(owner_name : String?) : Hash(String, String)
+      bindings = @type_param_map
+      if owner_name
+        if owner_map = type_param_map_for_receiver_name("#{owner_name}#_")
+          bindings = owner_map unless owner_map.empty?
+        end
+      end
+      bindings
+    end
+
+    # A restriction's source domain and its HIR carrier are different facts:
+    # abstract Int, for example, may normalize to an Int32 carrier but still
+    # admits UInt64 at a source restriction boundary.
+    private record BoundAnnotationTypeContract,
+      restriction_name : String,
+      type_ref : TypeRef
+
+    private def annotation_type_contract_fragment(name : String, owner_name : String?) : BoundAnnotationTypeContract
+      ref = annotation_type_ref(name, owner_name)
+      restriction = normalize_declared_type_name(name, owner_name, specialize_bare_generics: false)
+      restriction = resolve_type_alias_chain(restriction, preserve_abstract_int: true)
+      restriction = generic_param_type_name_from_ref(ref) if restriction == "self"
+      BoundAnnotationTypeContract.new(restriction, ref)
     end
 
     private def bound_annotation_type_ref(
@@ -24897,32 +24926,43 @@ module Adamas::HIR
       owner_name : String?,
       bindings : Hash(String, String),
     ) : TypeRef?
+      bound_annotation_type_contract(source_name, owner_name, bindings).try(&.type_ref)
+    end
+
+    private def bound_annotation_type_contract(
+      source_name : String,
+      owner_name : String?,
+      bindings : Hash(String, String),
+    ) : BoundAnnotationTypeContract?
       name = normalize_tuple_literal_type_name(source_name.strip)
       return nil unless bindings.any? { |formal, actual| actual != formal && contains_type_param_token?(name, formal) }
       if actual = bindings[name]?
         ref = canonical_bound_type_ref(actual)
-        return ref == TypeRef::VOID ? nil : ref
+        return ref == TypeRef::VOID ? nil : BoundAnnotationTypeContract.new(actual, ref)
       end
 
       if name.ends_with?('?')
         inner = name[0, name.bytesize - 1].strip
-        inner_ref = bound_annotation_type_ref(inner, owner_name, bindings) || annotation_type_ref(inner, owner_name)
-        return nil if inner_ref == TypeRef::VOID
-        return canonical_bound_type_ref("#{generic_param_type_name_from_ref(inner_ref)} | Nil")
+        inner_contract = bound_annotation_type_contract(inner, owner_name, bindings) || annotation_type_contract_fragment(inner, owner_name)
+        return nil if inner_contract.type_ref == TypeRef::VOID
+        restriction = "#{inner_contract.restriction_name} | Nil"
+        return BoundAnnotationTypeContract.new(restriction, canonical_bound_type_ref(restriction))
       end
       if has_top_level_union_separator?(name)
         parts = split_union_type_name(name).map do |part|
-          ref = bound_annotation_type_ref(part, owner_name, bindings) || annotation_type_ref(part, owner_name)
-          return nil if ref == TypeRef::VOID
-          generic_param_type_name_from_ref(ref)
+          contract = bound_annotation_type_contract(part, owner_name, bindings) || annotation_type_contract_fragment(part, owner_name)
+          return nil if contract.type_ref == TypeRef::VOID
+          contract.restriction_name
         end
-        return canonical_bound_type_ref(parts.join(" | "))
+        restriction = parts.join(" | ")
+        return BoundAnnotationTypeContract.new(restriction, canonical_bound_type_ref(restriction))
       end
       if name.ends_with?('*') && proc_type_argument_names(name).nil?
         inner = name[0, name.bytesize - 1].strip
-        inner_ref = bound_annotation_type_ref(inner, owner_name, bindings) || annotation_type_ref(inner, owner_name)
-        return nil if inner_ref == TypeRef::VOID
-        return canonical_bound_type_ref("Pointer(#{generic_param_type_name_from_ref(inner_ref)})")
+        inner_contract = bound_annotation_type_contract(inner, owner_name, bindings) || annotation_type_contract_fragment(inner, owner_name)
+        return nil if inner_contract.type_ref == TypeRef::VOID
+        restriction = "Pointer(#{inner_contract.restriction_name})"
+        return BoundAnnotationTypeContract.new(restriction, canonical_bound_type_ref(restriction))
       end
       generic = split_generic_base_and_args(name)
       return nil unless generic
@@ -24931,17 +24971,18 @@ module Adamas::HIR
         if value_literal_name?(part.strip)
           part.strip
         elsif entry = split_named_tuple_entry(part)
-          ref = bound_annotation_type_ref(entry[1], owner_name, bindings) || annotation_type_ref(entry[1], owner_name)
-          return nil if ref == TypeRef::VOID
-          "#{entry[0]}: #{generic_param_type_name_from_ref(ref)}"
+          contract = bound_annotation_type_contract(entry[1], owner_name, bindings) || annotation_type_contract_fragment(entry[1], owner_name)
+          return nil if contract.type_ref == TypeRef::VOID
+          "#{entry[0]}: #{contract.restriction_name}"
         else
-          ref = bound_annotation_type_ref(part, owner_name, bindings) || annotation_type_ref(part, owner_name)
-          return nil if ref == TypeRef::VOID
-          generic_param_type_name_from_ref(ref)
+          contract = bound_annotation_type_contract(part, owner_name, bindings) || annotation_type_contract_fragment(part, owner_name)
+          return nil if contract.type_ref == TypeRef::VOID
+          contract.restriction_name
         end
       end
-      ref = canonical_bound_type_ref("#{base}(#{args.join(", ")})")
-      ref == TypeRef::VOID ? nil : ref
+      restriction = "#{base}(#{args.join(", ")})"
+      ref = canonical_bound_type_ref(restriction)
+      ref == TypeRef::VOID ? nil : BoundAnnotationTypeContract.new(restriction, ref)
     end
 
     private def annotation_type_ref(type_name : String, owner_name : String? = nil) : TypeRef
@@ -24964,12 +25005,7 @@ module Adamas::HIR
         owner_name || "",
       )
       absolute_annotation = ascii_strip(type_name).starts_with?("::")
-      bindings = @type_param_map
-      if owner_name
-        if owner_map = type_param_map_for_receiver_name("#{owner_name}#_")
-          bindings = owner_map unless owner_map.empty?
-        end
-      end
+      bindings = annotation_type_bindings(owner_name)
       if bound_ref = bound_annotation_type_ref(type_name, owner_name, bindings)
         @annotation_type_ref_cache[cache_key] = bound_ref
         return bound_ref
@@ -55651,11 +55687,13 @@ module Adamas::HIR
         next if param.is_block
         break if arg_index >= arg_types.size
         if restriction_text = param.type_annotation
-          declared_name = normalize_declared_type_name(restriction_text, context, specialize_bare_generics: false)
-          actual_name = generic_param_type_name_from_ref(arg_types[arg_index])
-          if source_generic_restriction_match?(actual_name, declared_name) == false
-            return {actual_name, declared_name}
+          mismatch = with_parameter_restriction(restriction_text, context) do |declared_name, _contract_type|
+            actual_name = generic_param_type_name_from_ref(arg_types[arg_index])
+            if source_generic_restriction_match?(actual_name, declared_name) == false
+              {actual_name, declared_name}
+            end
           end
+          return mismatch if mismatch
         end
         arg_index += 1
       end
@@ -56021,291 +56059,323 @@ module Adamas::HIR
         next if named_only_separator?(param)
         if param.is_splat || param.is_double_splat
           if param.is_splat && !param.is_double_splat && (ta = param.type_annotation)
-            splat_type_name = ta
-            if !splat_type_name.empty? && context
-              splat_type_name = normalize_declared_type_name(splat_type_name, context, specialize_bare_generics: false)
-            end
-
-            unless splat_type_name.empty? || splat_type_name == "_" || unresolved_type_param_annotation?(splat_type_name)
-              splat_resolved_name = resolve_type_alias_chain(splat_type_name)
-              unless unresolved_type_param_annotation?(splat_resolved_name)
-                splat_type = type_ref_for_name(splat_resolved_name)
-                splat_variants = splat_resolved_name.includes?('|') ? split_union_type_name(splat_resolved_name) : nil
-
-                # Packed-splat unpacking: when the call passes a single Tuple at the
-                # splat slot (produced by empty-splat padding or pack_splat_args_for_call),
-                # compare the splat formal against the Tuple's element types, not the
-                # Tuple itself. Skip unpacking when the splat formal is itself Tuple-typed
-                # (e.g. `def foo(*x : Tuple)`), since the Tuple arg is intentional there.
-                splat_check_args = arg_types
-                if arg_idx + 1 == arg_types.size
-                  packed_arg = arg_types[arg_idx]
-                  if packed_arg != TypeRef::VOID
-                    packed_desc = @module.get_type_descriptor(packed_arg)
-                    if packed_desc && (packed_desc.kind == TypeKind::Tuple || packed_desc.name.starts_with?("Tuple("))
-                      splat_formal_is_tuple = false
-                      if splat_variants
-                        splat_formal_is_tuple = splat_variants.any? do |variant_name|
-                          variant_name == "Tuple" || variant_name.starts_with?("Tuple(")
-                        end
-                      else
-                        splat_formal_is_tuple = splat_resolved_name == "Tuple" || splat_resolved_name.starts_with?("Tuple(")
-                      end
-                      unless splat_formal_is_tuple
-                        unpacked = packed_desc.type_params.reject { |t| t == TypeRef::VOID }
-                        new_args = arg_types[0, arg_idx]
-                        new_args.concat(unpacked)
-                        splat_check_args = new_args
-                      end
-                    end
-                  end
-                end
-
-                check_idx = arg_idx
-                while check_idx < splat_check_args.size
-                  splat_arg_type = splat_check_args[check_idx]
-                  return false if splat_arg_type == TypeRef::VOID
-                  generic_match = source_generic_restriction_match?(generic_param_type_name_from_ref(splat_arg_type), splat_resolved_name)
-                  unless generic_match.nil?
-                    return false unless generic_match
-                    check_idx += 1
-                    next
-                  end
-                  if module_like_type_name?(splat_resolved_name) || collection_module_type_name?(splat_resolved_name)
-                    return false if primitive_type?(splat_arg_type)
-                    check_idx += 1
-                    next
-                  end
-
-                  if splat_variants
-                    variant_match = splat_variants.any? do |variant_name|
-                      !!declared_type_match_score(splat_arg_type, variant_name)
-                    end
-                    return false unless variant_match
-                  end
-
-                  if splat_type != TypeRef::VOID && splat_arg_type != TypeRef::VOID
-                    if splat_arg_type != splat_type && !needs_union_coercion?(splat_arg_type, splat_type)
-                      if numeric_compatible?(splat_arg_type, splat_type)
-                        check_idx += 1
-                        next
-                      end
-                      if numeric_param_target_type(splat_resolved_name, splat_arg_type)
-                        check_idx += 1
-                        next
-                      end
-                      splat_arg_desc = @module.get_type_descriptor(splat_arg_type)
-                      if splat_arg_desc && resolve_type_alias_chain(splat_arg_desc.name) == splat_resolved_name
-                        check_idx += 1
-                        next
-                      end
-                      return false
-                    end
-                  end
-                  check_idx += 1
-                end
-              end
+            return with_parameter_restriction(ta, context, normalize_unbound: !context.nil?) do |type_name, contract_type|
+              splat_params_compatible_with_args?(type_name, contract_type, arg_types, arg_idx)
             end
           end
           return true
         end
         break if arg_idx >= arg_types.size
 
-        param_type_name = param.type_annotation || ""
-        param_resolved_name = param_type_name
-        if !param_type_name.empty?
-          param_type_name = normalize_declared_type_name(param_type_name, context, specialize_bare_generics: false)
-        end
-        arg_type = arg_types[arg_idx]
-        if arg_type != TypeRef::VOID && !param_type_name.empty?
-          generic_match = source_generic_restriction_match?(generic_param_type_name_from_ref(arg_type), param_type_name)
-          unless generic_match.nil?
-            return false unless generic_match
-            arg_idx += 1
-            next
-          end
-        end
-
-        # "_" is a wildcard type in Crystal (matches any argument).
-        if param_type_name == "_"
-          arg_idx += 1
-          next
-        end
-
-        # Unresolved generic type variables (for example, `default : T` before
-        # T is bound from call-site args) must behave as wildcard parameters.
-        if !param_type_name.empty? && unresolved_type_param_annotation?(param_type_name)
-          arg_idx += 1
-          next
-        end
-
-        if !param_type_name.empty?
-          # Resolve type alias chain FIRST, then get type ref
-          resolved_name = resolve_type_alias_chain(param_type_name)
-          if unresolved_type_param_annotation?(resolved_name)
-            arg_idx += 1
-            next
-          end
-          param_resolved_name = resolved_name
-          if trace
-            STDERR.puts "[COMPAT]  p#{arg_idx} ann=#{param.type_annotation} norm=#{param_type_name} resolved=#{resolved_name} modlike=#{module_like_type_name?(resolved_name)} collmod=#{collection_module_type_name?(resolved_name)} tref=#{type_ref_for_name(resolved_name).inspect} void=#{type_ref_for_name(resolved_name) == TypeRef::VOID} arg=#{get_type_name_from_ref(arg_type)} argref=#{arg_type.inspect}"
-          end
-          if !resolved_name.ends_with?('?') &&
-             (module_like_type_name?(resolved_name) || collection_module_type_name?(resolved_name))
-            STDERR.puts "[COMPAT]  p#{arg_idx} branch=module_like prim=#{primitive_type?(arg_type)}" if trace
-            return false if primitive_type?(arg_type)
-            # Concrete collections (Tuple/Array/Slice/StaticArray) match
-            # any Enumerable/Indexable/Iterable param. For other types,
-            # require explicit module inclusion to avoid binding scalar
-            # references like String to `patterns : Enumerable` (String
-            # does NOT include Enumerable in stdlib).
-            unless concrete_collection_type_ref?(arg_type)
-              if collection_module_type_name?(resolved_name)
-                # A forwarded argument that already has this exact collection
-                # module type needs no concrete-class inclusion proof. Keep
-                # VOID and differently typed values on the existing fail-closed path.
-                exact_module_type = type_ref_for_name(resolved_name)
-                if arg_type != TypeRef::VOID && exact_module_type != TypeRef::VOID && arg_type == exact_module_type
-                  arg_idx += 1
-                  next
-                end
-                arg_class_name = nil
-                if arg_desc = @module.get_type_descriptor(arg_type)
-                  arg_class_name = arg_desc.name
-                end
-                arg_class_name ||= get_type_name_from_ref(arg_type)
-                module_base = strip_generics_simple(resolved_name)
-                arg_base = strip_generics_simple(arg_class_name)
-                unless class_includes_module?(arg_class_name, module_base) ||
-                       (arg_base != arg_class_name && class_includes_module?(arg_base, module_base))
-                  return false
-                end
-              end
-            end
-            arg_idx += 1
-            next
-          end
-          # Use resolved name for type lookup
-          param_type = type_ref_for_name(resolved_name)
-        else
-          param_type = TypeRef::VOID
-        end
-
-        if trace
-          STDERR.puts "[COMPAT]  p#{arg_idx} param_type=#{param_type.inspect} pt_void=#{param_type == TypeRef::VOID} arg_void=#{arg_type == TypeRef::VOID} union_name=#{union_type_name?(param_resolved_name)} presolved=#{param_resolved_name}"
-        end
-
-        if param_type == TypeRef::VOID && !param_resolved_name.empty? && union_type_name?(param_resolved_name)
-          return false unless declared_type_match_score(arg_type, param_resolved_name)
-          arg_idx += 1
-          next
-        end
-
-        if param_type != TypeRef::VOID && arg_type != TypeRef::VOID
-          if param_type != arg_type && !needs_union_coercion?(arg_type, param_type)
-            # A namespaced alias can resolve to a textual union before its
-            # TypeRef descriptor is registered as a union. Keep the declared
-            # union authoritative so a concrete member does not lose its
-            # overload merely because descriptor materialization is late.
-            if union_type_name?(param_resolved_name) &&
-               declared_type_match_score(arg_type, param_resolved_name)
-              arg_idx += 1
-              next
-            end
-            # Enum backing storage is not source-level compatibility; nominal enum actuals
-            # arrive here with their proven enum TypeRef from enum_tracked_type.
-            if numeric_compatible?(arg_type, param_type)
-              arg_idx += 1
-              next
-            end
-            if pointer_erased_compatible?(arg_type, param_type, param_resolved_name)
-              arg_idx += 1
-              next
-            end
-            if !param_type_name.empty?
-              if numeric_param_target_type(param_type_name, arg_type)
-                arg_idx += 1
-                next
-              end
-            end
-            # Also check if arg type's name matches after alias resolution
-            arg_desc = @module.get_type_descriptor(arg_type)
-            if arg_desc && resolve_type_alias_chain(arg_desc.name) == resolve_type_alias_chain(param_type_name)
-              # They're the same type after alias resolution, allow
-              arg_idx += 1
-              next
-            end
-            # Allow generic base match: Hash matches Hash(Int32, T), Array matches Array(T), etc.
-            if arg_desc && !param_resolved_name.empty?
-              param_base = strip_generic_args(param_resolved_name)
-              if BUILTIN_GENERIC_BASES.includes?(param_base) && arg_desc.name.starts_with?("#{param_base}(")
-                arg_idx += 1
-                next
-              end
-            end
-            # Check if arg type is a subclass of the param type (e.g., IO::FileDescriptor -> IO)
-            # arg_desc is nil for builtin-reserved TypeRef ids (String, Char, Symbol, ...)
-            # since get_type_descriptor only covers the user-type table; fall back to the
-            # hardcoded name resolver so builtin stdlib classes still get their ancestor
-            # chain checked (e.g. String < Reference) instead of silently skipping to `false`.
-            if !param_resolved_name.empty?
-              arg_class = if arg_desc
-                resolve_type_alias_chain(arg_desc.name)
-              else
-                resolve_type_alias_chain(get_type_name_from_ref(arg_type))
-              end
-              if class_inherits_from?(arg_class, param_resolved_name) ||
-                 (!builtin_hierarchy_parent(arg_class).nil? && get_parent_chain(arg_class).includes?(param_resolved_name))
-                arg_idx += 1
-                next
-              end
-            end
-            # A union of reference subclasses has the same pointer ABI as its
-            # declared parent. Admit it only when every arm proves that upcast;
-            # mixed, nilable, and value unions remain fail-closed.
-            if class_union_upcast_compatible?(arg_type, param_resolved_name)
-              arg_idx += 1
-              next
-            end
-            # Check if arg type includes the param type (for module methods)
-            # e.g., IO::FileDescriptor includes Crystal::System::FileDescriptor
-            if arg_desc
-              arg_class = arg_desc.name
-              param_base = strip_generic_args(param_type_name)
-              if class_includes_module_transitively?(arg_class, param_base)
-                arg_idx += 1
-                next
-              end
-            end
-            # Symbol → Enum autocast compatibility:
-            # Crystal allows symbol literals like :sched to autocast to enum values.
-            # The enum backing type is usually Int32, but arg_type will be Symbol.
-            if arg_type == TypeRef::SYMBOL && @enum_info.try(&.has_key?(param_resolved_name))
-              arg_idx += 1
-              next
-            end
-            # Union of integers → Int parameter compatibility:
-            # When arg is a union like UInt32|Int32 and param is an Int type,
-            # allow it since at runtime only one branch is taken.
-            if arg_desc && union_of_integers?(arg_desc.name) && integer_param_type?(param_resolved_name)
-              arg_idx += 1
-              next
-            end
-            # $arityN suffix on arg type name: the function arity discriminator
-            # can leak into union type names (e.g. "Nil | String$arity2" vs
-            # "Nil | String"). Strip and re-compare.
-            if arg_desc && arg_desc.name.includes?("$arity")
-              clean_name = arg_desc.name.gsub(/\$arity\d+/, "")
-              if clean_name == param_resolved_name || clean_name == resolve_type_alias_chain(param_type_name)
-                arg_idx += 1
-                next
-              end
-            end
-            return false
-          end
-        end
+        return false unless param_compatible_with_arg?(param, arg_types[arg_idx], context, trace, arg_idx)
 
         arg_idx += 1
+      end
+
+      true
+    end
+
+    private def splat_params_compatible_with_args?(
+      splat_type_name : String,
+      contract_type : TypeRef?,
+      arg_types : Array(TypeRef),
+      arg_idx : Int32,
+    ) : Bool
+      unless splat_type_name.empty? || splat_type_name == "_" || unresolved_type_param_annotation?(splat_type_name)
+        splat_resolved_name = resolve_type_alias_chain(splat_type_name, preserve_abstract_int: true)
+        unless unresolved_type_param_annotation?(splat_resolved_name)
+          splat_type = contract_type || type_ref_for_name(splat_resolved_name)
+          splat_variants = splat_resolved_name.includes?('|') ? split_union_type_name(splat_resolved_name) : nil
+
+          # Packed-splat unpacking: when the call passes a single Tuple at the
+          # splat slot (produced by empty-splat padding or pack_splat_args_for_call),
+          # compare the splat formal against the Tuple's element types, not the
+          # Tuple itself. Skip unpacking when the splat formal is itself Tuple-typed
+          # (e.g. `def foo(*x : Tuple)`), since the Tuple arg is intentional there.
+          splat_check_args = arg_types
+          if arg_idx + 1 == arg_types.size
+            packed_arg = arg_types[arg_idx]
+            if packed_arg != TypeRef::VOID
+              packed_desc = @module.get_type_descriptor(packed_arg)
+              if packed_desc && (packed_desc.kind == TypeKind::Tuple || packed_desc.name.starts_with?("Tuple("))
+                splat_formal_is_tuple = false
+                if splat_variants
+                  splat_formal_is_tuple = splat_variants.any? do |variant_name|
+                    variant_name == "Tuple" || variant_name.starts_with?("Tuple(")
+                  end
+                else
+                  splat_formal_is_tuple = splat_resolved_name == "Tuple" || splat_resolved_name.starts_with?("Tuple(")
+                end
+                unless splat_formal_is_tuple
+                  unpacked = packed_desc.type_params.reject { |t| t == TypeRef::VOID }
+                  new_args = arg_types[0, arg_idx]
+                  new_args.concat(unpacked)
+                  splat_check_args = new_args
+                end
+              end
+            end
+          end
+
+          check_idx = arg_idx
+          while check_idx < splat_check_args.size
+            splat_arg_type = splat_check_args[check_idx]
+            return false if splat_arg_type == TypeRef::VOID
+            generic_match = source_generic_restriction_match?(generic_param_type_name_from_ref(splat_arg_type), splat_resolved_name)
+            unless generic_match.nil?
+              return false unless generic_match
+              check_idx += 1
+              next
+            end
+            if module_like_type_name?(splat_resolved_name) || collection_module_type_name?(splat_resolved_name)
+              return false if primitive_type?(splat_arg_type)
+              check_idx += 1
+              next
+            end
+
+            if splat_variants
+              variant_match = splat_variants.any? do |variant_name|
+                !!declared_type_match_score(splat_arg_type, variant_name)
+              end
+              return false unless variant_match
+            end
+
+            if splat_type != TypeRef::VOID && splat_arg_type != TypeRef::VOID
+              if splat_arg_type != splat_type && !needs_union_coercion?(splat_arg_type, splat_type)
+                if numeric_compatible?(splat_arg_type, splat_type)
+                  check_idx += 1
+                  next
+                end
+                if numeric_param_target_type(splat_resolved_name, splat_arg_type)
+                  check_idx += 1
+                  next
+                end
+                splat_arg_desc = @module.get_type_descriptor(splat_arg_type)
+                if splat_arg_desc && resolve_type_alias_chain(splat_arg_desc.name) == splat_resolved_name
+                  check_idx += 1
+                  next
+                end
+                return false
+              end
+            end
+            check_idx += 1
+          end
+        end
+      end
+      true
+    end
+
+    # Signature collection and argument admission share the bound annotation
+    # producer. Keep a source fragment lexical until it is bound; the complete
+    # resulting identity is then consumed without caller substitutions.
+    private def with_parameter_restriction(
+      source_name : String,
+      context : String?,
+      normalize_unbound : Bool = true,
+      &
+    )
+      bindings = annotation_type_bindings(context)
+      if contract = bound_annotation_type_contract(source_name, context, bindings)
+        return with_canonical_type_scope do
+          yield contract.restriction_name, contract.type_ref
+        end
+      end
+      type_name = source_name.empty? || !normalize_unbound ? source_name :
+        normalize_declared_type_name(source_name, context, specialize_bare_generics: false)
+      yield type_name, nil
+    end
+
+    # Bound owner arguments are resolved identities. Use the same annotation
+    # producer as signature collection, then keep every compatibility fallback
+    # in that canonical scope. Unbound source restrictions remain lexical.
+    private def param_compatible_with_arg?(
+      param : DefParamInfo,
+      arg_type : TypeRef,
+      context : String?,
+      trace : Bool,
+      arg_idx : Int32,
+    ) : Bool
+      source_annotation = param.type_annotation || ""
+      with_parameter_restriction(source_annotation, context) do |type_name, contract_type|
+        resolved_param_compatible_with_arg?(arg_type, type_name, source_annotation, trace, arg_idx, contract_type)
+      end
+    end
+
+    private def resolved_param_compatible_with_arg?(
+      arg_type : TypeRef,
+      param_type_name : String,
+      source_annotation : String,
+      trace : Bool,
+      arg_idx : Int32,
+      contract_type : TypeRef? = nil,
+    ) : Bool
+      param_resolved_name = param_type_name
+      if arg_type != TypeRef::VOID && !param_type_name.empty?
+        generic_match = source_generic_restriction_match?(generic_param_type_name_from_ref(arg_type), param_type_name)
+        unless generic_match.nil?
+          return false unless generic_match
+          return true
+        end
+      end
+
+      # "_" is a wildcard type in Crystal (matches any argument).
+      if param_type_name == "_"
+        return true
+      end
+
+      # Unresolved generic type variables (for example, `default : T` before
+      # T is bound from call-site args) must behave as wildcard parameters.
+      if !param_type_name.empty? && unresolved_type_param_annotation?(param_type_name)
+        return true
+      end
+
+      if !param_type_name.empty?
+        # Resolve type alias chain FIRST, then get type ref
+        resolved_name = resolve_type_alias_chain(param_type_name)
+        if unresolved_type_param_annotation?(resolved_name)
+          return true
+        end
+        param_resolved_name = resolved_name
+        if trace
+          STDERR.puts "[COMPAT]  p#{arg_idx} ann=#{source_annotation} norm=#{param_type_name} resolved=#{resolved_name} modlike=#{module_like_type_name?(resolved_name)} collmod=#{collection_module_type_name?(resolved_name)} tref=#{contract_type || type_ref_for_name(resolved_name)} arg=#{get_type_name_from_ref(arg_type)} argref=#{arg_type.inspect}"
+        end
+        if !resolved_name.ends_with?('?') &&
+           (module_like_type_name?(resolved_name) || collection_module_type_name?(resolved_name))
+          STDERR.puts "[COMPAT]  p#{arg_idx} branch=module_like prim=#{primitive_type?(arg_type)}" if trace
+          return false if primitive_type?(arg_type)
+          # Concrete collections (Tuple/Array/Slice/StaticArray) match
+          # any Enumerable/Indexable/Iterable param. For other types,
+          # require explicit module inclusion to avoid binding scalar
+          # references like String to `patterns : Enumerable` (String
+          # does NOT include Enumerable in stdlib).
+          unless concrete_collection_type_ref?(arg_type)
+            if collection_module_type_name?(resolved_name)
+              # A forwarded argument that already has this exact collection
+              # module type needs no concrete-class inclusion proof. Keep
+              # VOID and differently typed values on the existing fail-closed path.
+              exact_module_type = contract_type || type_ref_for_name(resolved_name)
+              if arg_type != TypeRef::VOID && exact_module_type != TypeRef::VOID && arg_type == exact_module_type
+                return true
+              end
+              arg_class_name = nil
+              if arg_desc = @module.get_type_descriptor(arg_type)
+                arg_class_name = arg_desc.name
+              end
+              arg_class_name ||= get_type_name_from_ref(arg_type)
+              module_base = strip_generics_simple(resolved_name)
+              arg_base = strip_generics_simple(arg_class_name)
+              unless class_includes_module?(arg_class_name, module_base) ||
+                     (arg_base != arg_class_name && class_includes_module?(arg_base, module_base))
+                return false
+              end
+            end
+          end
+          return true
+        end
+        # Use resolved name for type lookup
+        param_type = contract_type || type_ref_for_name(resolved_name)
+      else
+        param_type = TypeRef::VOID
+      end
+
+      if trace
+        STDERR.puts "[COMPAT]  p#{arg_idx} param_type=#{param_type.inspect} pt_void=#{param_type == TypeRef::VOID} arg_void=#{arg_type == TypeRef::VOID} union_name=#{union_type_name?(param_resolved_name)} presolved=#{param_resolved_name}"
+      end
+
+      if param_type == TypeRef::VOID && !param_resolved_name.empty? && union_type_name?(param_resolved_name)
+        return false unless declared_type_match_score(arg_type, param_resolved_name)
+        return true
+      end
+
+      if param_type != TypeRef::VOID && arg_type != TypeRef::VOID
+        if param_type != arg_type && !needs_union_coercion?(arg_type, param_type)
+          # A namespaced alias can resolve to a textual union before its
+          # TypeRef descriptor is registered as a union. Keep the declared
+          # union authoritative so a concrete member does not lose its
+          # overload merely because descriptor materialization is late.
+          if union_type_name?(param_resolved_name) &&
+             declared_type_match_score(arg_type, param_resolved_name)
+            return true
+          end
+          # Enum backing storage is not source-level compatibility; nominal enum actuals
+          # arrive here with their proven enum TypeRef from enum_tracked_type.
+          if numeric_compatible?(arg_type, param_type)
+            return true
+          end
+          if pointer_erased_compatible?(arg_type, param_type, param_resolved_name)
+            return true
+          end
+          if !param_type_name.empty?
+            if numeric_param_target_type(param_type_name, arg_type)
+              return true
+            end
+          end
+          # Also check if arg type's name matches after alias resolution
+          arg_desc = @module.get_type_descriptor(arg_type)
+          if arg_desc && resolve_type_alias_chain(arg_desc.name) == resolve_type_alias_chain(param_type_name)
+            # They're the same type after alias resolution, allow
+            return true
+          end
+          # Allow generic base match: Hash matches Hash(Int32, T), Array matches Array(T), etc.
+          if arg_desc && !param_resolved_name.empty?
+            param_base = strip_generic_args(param_resolved_name)
+            if BUILTIN_GENERIC_BASES.includes?(param_base) && arg_desc.name.starts_with?("#{param_base}(")
+              return true
+            end
+          end
+          # Check if arg type is a subclass of the param type (e.g., IO::FileDescriptor -> IO)
+          # arg_desc is nil for builtin-reserved TypeRef ids (String, Char, Symbol, ...)
+          # since get_type_descriptor only covers the user-type table; fall back to the
+          # hardcoded name resolver so builtin stdlib classes still get their ancestor
+          # chain checked (e.g. String < Reference) instead of silently skipping to `false`.
+          if !param_resolved_name.empty?
+            arg_class = if arg_desc
+              resolve_type_alias_chain(arg_desc.name)
+            else
+              resolve_type_alias_chain(get_type_name_from_ref(arg_type))
+            end
+            if class_inherits_from?(arg_class, param_resolved_name) ||
+               (!builtin_hierarchy_parent(arg_class).nil? && get_parent_chain(arg_class).includes?(param_resolved_name))
+              return true
+            end
+          end
+          # A union of reference subclasses has the same pointer ABI as its
+          # declared parent. Admit it only when every arm proves that upcast;
+          # mixed, nilable, and value unions remain fail-closed.
+          if class_union_upcast_compatible?(arg_type, param_resolved_name)
+            return true
+          end
+          # Check if arg type includes the param type (for module methods)
+          # e.g., IO::FileDescriptor includes Crystal::System::FileDescriptor
+          if arg_desc
+            arg_class = arg_desc.name
+            param_base = strip_generic_args(param_type_name)
+            if class_includes_module_transitively?(arg_class, param_base)
+              return true
+            end
+          end
+          # Symbol → Enum autocast compatibility:
+          # Crystal allows symbol literals like :sched to autocast to enum values.
+          # The enum backing type is usually Int32, but arg_type will be Symbol.
+          if arg_type == TypeRef::SYMBOL && @enum_info.try(&.has_key?(param_resolved_name))
+            return true
+          end
+          # Union of integers → Int parameter compatibility:
+          # When arg is a union like UInt32|Int32 and param is an Int type,
+          # allow it since at runtime only one branch is taken.
+          if arg_desc && union_of_integers?(arg_desc.name) && integer_param_type?(param_resolved_name)
+            return true
+          end
+          # $arityN suffix on arg type name: the function arity discriminator
+          # can leak into union type names (e.g. "Nil | String$arity2" vs
+          # "Nil | String"). Strip and re-compare.
+          if arg_desc && arg_desc.name.includes?("$arity")
+            clean_name = arg_desc.name.gsub(/\$arity\d+/, "")
+            if clean_name == param_resolved_name || clean_name == resolve_type_alias_chain(param_type_name)
+              return true
+            end
+          end
+          return false
+        end
       end
 
       true

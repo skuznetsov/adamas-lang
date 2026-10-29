@@ -4894,3 +4894,35 @@ startup still fails. Fresh bootstrap and unchanged LavinMQ runtime/test parity
 remain separate obligations.
 Rollback: revert this result helper, its two consumers and the regression
 together; preserve strict source argument admission.
+
+### Bound annotation identity and source restriction domain (2026-10-29)
+
+BoundAnnotationTypeContract is the shared producer result for an applied
+owner/formal annotation. Its restriction_name is the canonical source domain;
+its type_ref is the HIR carrier. These facts are not interchangeable: abstract
+Int can retain a broader legal source domain than its Int32 carrier. Source
+fragments are resolved in their declaration namespace, while substituted
+actuals retain their already-resolved identity. A canonical consumer clears
+the live class, namespace override and substitution map, restoring all three
+on exit. An unbound source annotation keeps the existing lexical path.
+
+Signature collection, ordinary/splat argument admission and the source generic
+rejection fence share this producer. Admission does not infer namespace from
+an argument's printed name or use carrier normalization to redefine a source
+restriction. Existing arity, wildcard, numeric, module and subclass policies
+remain the decision rules; this slice changes their input ownership.
+
+DoD: applied_generic_argument_identity_repro.sh first qualifies eleven scenarios
+against the installed Crystal, then fresh S1; focused HIR specs pass 81 examples.
+The strongest counterexample to a TypeRef-only design is T | Int with an
+observed UInt64 payload above 32 bits. It failed the intermediate candidate
+and passes the dual contract, while nested Path and Float64 remain rejected.
+Typed splats must also preserve the restriction domain through recursive alias
+resolution. A second failing UInt64 discriminator exposed the legacy erasure;
+both applied T | Int and unbound Int splat calls now observe the high payload,
+with Float64 rejections retained.
+Guarded Array(Path) typing does not establish allocation/layout behavior.
+Fresh no-cache S2 retains the separate File.open Pointer/IO failure. Bootstrap,
+method-forall head ownership and LavinMQ parity are not certified here.
+Refresh after contract production, alias/projection or compatibility changes.
+Rollback producer, consumers and their regression/specs together.
