@@ -1080,7 +1080,14 @@ module Adamas
                 return evaluate_body_expressions(else_body, context)
               end
               return macro_nil_value
-            elsif node.is_a?(Frontend::TypeDeclarationNode) || node.is_a?(Frontend::AssignNode) || node.is_a?(Frontend::GenericNode)
+            elsif node.is_a?(Frontend::AssignNode)
+              if target = node_for_expr?(node.target)
+                if target.is_a?(Frontend::IdentifierNode)
+                  return evaluate_macro_variable_assignment(node, target, context)
+                end
+              end
+              return MacroNodeValue.new(expr_id, @arena, @string_pool)
+            elsif node.is_a?(Frontend::TypeDeclarationNode) || node.is_a?(Frontend::GenericNode)
               return MacroNodeValue.new(expr_id, @arena, @string_pool)
             elsif node.is_a?(Frontend::PathNode)
               name = path_to_string(node)
@@ -2445,6 +2452,24 @@ module Adamas
           end
         end
 
+        # Assignment is an expression: its value is the exact evaluated RHS.
+        # Keep the binding in this context so condition consumers and later
+        # expressions observe the same value, including false and nil.
+        private def evaluate_macro_variable_assignment(
+          node : Frontend::AssignNode,
+          target : Frontend::IdentifierNode,
+          context : Context
+        ) : MacroValue
+          value = evaluate_to_macro_value(node.value, context)
+          if name = Frontend.node_literal_string(target)
+            context.variables[name] = value unless name == "_"
+            if ENV["DEBUG_MACRO_ASSIGN"]?
+              STDERR.puts "[MACRO_ASSIGN] #{name}=#{value.class_name}: #{value.to_macro_output[0, 80].inspect}"
+            end
+          end
+          value
+        end
+
         private def evaluate_expression(expr_id : ExprId, context : Context) : String
           node = node_for_expr?(expr_id)
           return "" unless node
@@ -2486,12 +2511,7 @@ module Adamas
             target = node_for_expr?(node.target)
             return "" unless target
             if target.is_a?(Frontend::IdentifierNode)
-              if name = Frontend.node_literal_string(target)
-                context.variables[name] = evaluate_to_macro_value(node.value, context)
-                if ENV["DEBUG_MACRO_ASSIGN"]?
-                  STDERR.puts "[MACRO_ASSIGN] #{name}=#{context.variables[name].class_name}: #{context.variables[name].to_macro_output[0, 80].inspect}"
-                end
-              end
+              evaluate_macro_variable_assignment(node, target, context)
             elsif target.is_a?(Frontend::IndexNode)
               apply_macro_index_assignment(target, node.value, context)
             end
@@ -3259,21 +3279,18 @@ module Adamas
             STDERR.puts "[MACRO_IF_PHASE] condition node expr=#{expr_id.index} kind=#{Frontend.node_kind(node).value}"
           end
 
+          if node.is_a?(Frontend::MacroExpressionNode) || node.is_a?(Frontend::GroupingNode)
+            return evaluate_condition(node.expression, context)
+          end
+
           # Handle assignment in condition: {% if ann = expr %}
           # This binds the variable and checks truthiness of the assigned value
           if node.is_a?(Frontend::AssignNode)
             target = node_for_expr?(node.target)
             return {false, context} unless target
             if target.is_a?(Frontend::IdentifierNode)
-              var_name = Frontend.node_literal_string(target)
-              if var_name
-                # Evaluate value as MacroValue
-                value = evaluate_to_macro_value(node.value, context)
-                # Bind variable in new context
-                new_context = context.with_variable(var_name, value)
-                # Return truthiness and new context
-                return {value.truthy?, new_context}
-              end
+              value = evaluate_macro_variable_assignment(node, target, context)
+              return {value.truthy?, context}
             end
           end
 

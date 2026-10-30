@@ -22175,3 +22175,28 @@ Scoped adversary: ROBUST for declared-head recognition and these negative
 controls. Native module-value admission and generic argument matching remain
 separate obligations. Refresh after declaration indexing, name normalization or
 source-pattern changes; roll back the canonicalizer and its spec together.
+
+## 2026-10-30 — Macro assignment is a preserved condition and value
+
+Root cause: macro conditions used expression-prefix parsing, leaving `=` and
+its RHS for the closer scanner to skip. Even with a correct AssignNode, the
+public value evaluator treated assignment as an opaque AST instead of executing
+it. The parser now uses its existing assignment grammar at the three macro
+condition entry points; one evaluator owns exact-RHS evaluation and the shared
+identifier binding for value, statement and condition consumers.
+
+Observed DoD: isolated 288e7706 plus only this slice passes 11 examples in
+spec/semantic/macro_assignment_value_spec.cr, including both condition AST
+representations, elsif, malformed/missing RHS, falsy values, nested assignment,
+short circuit and single RHS execution. The producer-red run has 3 failures and
+1 error; logs spec.macro-assignment-producer-before.log and
+spec.macro-assignment-isolated-after.log are in the oct29 root-cause scratch.
+All runs use run_safe.sh and stock Crystal 1.22.1.
+
+Scoped adversary: ROBUST for identifier-assignment value and binding; review is
+same-lineage and correlated. Ordinary parser entry points are unchanged. The
+closer scanner can still skip other valid-prefix junk, so broad rejection of
+malformed conditions is not certified. Refresh on macro condition parsing,
+assignment evaluation or context ownership changes. Roll back parser, evaluator
+and this spec together. Annotation expression ownership and LavinMQ parity
+remain separate obligations.

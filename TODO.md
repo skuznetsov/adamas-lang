@@ -22661,3 +22661,17 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   the new case fails on the parent. Missing(Int32) and unbound T(Int32) remain
   invalid. This is a structural-recognition certificate, not native generic
   module conformance, bootstrap or LavinMQ parity.
+
+### Macro assignment conditions retain their value and binding (2026-10-30)
+
+- [x] Parse macro if/elsif/unless/while conditions through the existing assignment
+  grammar. Preserve the AssignNode instead of letting closer recovery discard
+  the right-hand side after an identifier prefix.
+- [x] Evaluate identifier assignment once, return its exact RHS MacroValue and
+  store that value in the shared variable context, including false and nil.
+- [x] An isolated 288e7706 plus this parser/evaluator slice passes all 11
+  macro_assignment_value_spec examples under run_safe.sh with Crystal 1.22.1.
+  Before the parser correction, four producer checks fail or error.
+- [ ] General malformed-condition recovery can still skip unrelated trailing
+  tokens. This slice does not establish arbitrary macro syntax, annotation AST
+  transport, bootstrap, or LavinMQ runtime/test parity.

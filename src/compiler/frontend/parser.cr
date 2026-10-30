@@ -15514,7 +15514,7 @@ current_token.kind == Token::Kind::Identifier &&
               iter_vars, iterable = parse_macro_for_header
             when :if, :unless, :while, :elsif
               skip_macro_whitespace
-              expr = parse_macro_control_expression_with_recovery(current_token)
+              expr = parse_macro_condition_with_recovery(current_token)
             when :verbatim
               # verbatim requires 'do' keyword before %}: {% verbatim do %}
               skip_macro_whitespace
@@ -15916,7 +15916,7 @@ current_token.kind == Token::Kind::Identifier &&
         private def parse_macro_if_control(start_span : Span, keyword : String) : ExprId
           branches = [] of NamedTuple(span: Span, condition: ExprId, body: ExprId)
 
-          condition = parse_expression(0)
+          condition = parse_macro_condition_with_recovery(current_token)
           return PREFIX_ERROR if condition.invalid?
           if keyword == "unless"
             op_slice = @string_pool.intern("!".to_slice)
@@ -15963,7 +15963,7 @@ current_token.kind == Token::Kind::Identifier &&
 
             case branch_keyword
             when "elsif"
-              branch_condition = parse_expression(0)
+              branch_condition = parse_macro_condition_with_recovery(current_token)
               return PREFIX_ERROR if branch_condition.invalid?
 
               skip_trivia
@@ -16284,6 +16284,17 @@ current_token.kind == Token::Kind::Identifier &&
           @diagnostics << Diagnostic.new("Recovered from macro control parse index error", error_token.span)
           fast_forward_macro_expression
           @arena.add_typed(NilNode.new(error_token.span))
+        end
+
+        # Crystal macro conditions accept assignment expressions. Parsing only
+        # the expression prefix leaves `=` for closer recovery to skip, losing
+        # both the assigned value and its binding without a diagnostic.
+        private def parse_macro_condition_with_recovery(error_token : Token) : ExprId
+          condition = parse_macro_control_assign_with_recovery(error_token)
+          if condition.invalid?
+            @diagnostics << Diagnostic.new("Expected expression in macro condition", error_token.span)
+          end
+          condition
         end
 
         # Statement-position `{% ... %}` (output=false) accepts Crystal postfix

@@ -5167,3 +5167,21 @@ unknown/unbound controls remain rejected. Scoped adversary: ROBUST for this
 structural boundary. Refresh on indexing, normalization or pattern changes;
 roll back the producer and spec together. Native generic module-value behavior,
 bootstrap and LavinMQ parity require their own evidence.
+
+### Macro assignment has one evaluated value and shared binding (2026-10-30)
+
+Admitted: macro conditions use the ordinary assignment grammar; an identifier
+assignment evaluates its RHS once, stores that exact MacroValue in the active
+context and returns it. False and nil still bind and remain falsy. Statement
+directives discard the returned value only at the output boundary.
+Rejected: parsing only an identifier prefix and silently skipping `= RHS`,
+turning assignment into opaque source AST, or copying a condition-only context
+that drops the binding in later branches.
+
+Observed DoD: isolated 288e7706 plus this slice passes all 11 assignment specs
+under run_safe.sh with stock Crystal 1.22.1. Producer tests fail before the parser
+correction. Scoped adversary: ROBUST for the exercised assignment boundary;
+ordinary parser callers are unchanged. General closer recovery, annotation AST
+transport, bootstrap and LavinMQ runtime parity are outside this certificate.
+Refresh after parser/evaluator/context changes; roll back the slice and its spec
+together.
