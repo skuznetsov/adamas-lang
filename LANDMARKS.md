@@ -21981,3 +21981,28 @@ source-call and tested constructor contracts. Requalify after overload ordering,
 argument expansion, import registration, declaration ordering or allocator ABI
 changes; revert this producer/test slice together. Process.new(Nil), source
 callback result contracts, bootstrap and LavinMQ parity remain separate work.
+
+## 2026-10-30 — Literal block presence belongs to source overload selection
+
+Cold bare class-call inference excluded literal blocks before consulting an
+exact declared return type. The positional integer-conversion retry likewise
+excluded block parameters and later reselected as a no-block call. These are
+selection defects: a literal block supplies overload evidence, not an ordinary
+argument slot. Preserve its presence through initial selection and numeric
+reselection, and require the same Def after the unchanged source restrictions
+accept the converted actual types. Do not route positional actuals through an
+empty-label named binder or weaken runtime integer domain checks.
+
+For a selected literal-block class helper, the exact declared result and its
+arena/owner supply inference. An unannotated yielding body needs a separate
+callsite result contract; neither a no-block fallback nor a family return cache
+provides it. Strip normalized trailing blocks before counting actuals.
+
+Three HIR files pass 40 examples. Nine new cold-inference examples discriminate
+selection, ownership, missing annotations and numeric restrictions. Fresh S1
+matches installed Crystal 1.22.1 on native top-level/class/instance/named calls,
+runtime widening, reversed overload and warm-up order, and seven strict source
+rejections. Scoped adversary: ROBUST for these selection contracts. Requalify
+after block normalization, overload selection, integer conversion or declared
+result ownership changes; revert the producer, specs and native regression
+together. Callback output/default provenance, bootstrap and LavinMQ remain open.

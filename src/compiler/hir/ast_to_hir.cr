@@ -29264,9 +29264,9 @@ module Adamas::HIR
                                   else
                                     @current_method_is_class
                                   end
-            if source_class_method && !block_expr && !block_pass_expr
+            if source_class_method && !block_pass_expr
               if class_base = resolve_class_method_with_inheritance(self_type_name, method_name)
-                return infer_bare_class_call_return_type(class_base, self_type_name, expr_node)
+                return infer_bare_class_call_return_type(class_base, self_type_name, expr_node, block_expr)
               end
             end
             base = resolve_method_with_inheritance(self_type_name, method_name) || "#{self_type_name}##{method_name}"
@@ -29385,8 +29385,8 @@ module Adamas::HIR
             # When a class method calls another class method bare (e.g. `each_child`
             # invoking `read_entry(dir)` inside `Dir::Globber`), we need the `.` form.
             if class_base = resolve_class_method_with_inheritance(self_type_name, method_name)
-              unless block_expr || block_pass_expr
-                return infer_bare_class_call_return_type(class_base, self_type_name, expr_node)
+              unless block_pass_expr
+                return infer_bare_class_call_return_type(class_base, self_type_name, expr_node, block_expr)
               end
               if ret_type = @function_base_return_types[class_base]?
                 return ret_type if ret_type != TypeRef::VOID
@@ -30245,14 +30245,29 @@ module Adamas::HIR
       base_name : String,
       receiver_name : String,
       call : Adamas::Compiler::Frontend::CallNode,
+      literal_block : ExprId? = nil,
     ) : TypeRef?
+      # A literal block is selection evidence, not a positional actual. Some
+      # normalized call nodes retain it (or &block) at the end of args.
+      positional_args = call.args
+      if literal_block
+        return nil unless node_for_expr(literal_block).is_a?(Adamas::Compiler::Frontend::BlockNode)
+        if last_arg = positional_args.last?
+          last_node = node_for_expr(last_arg)
+          if last_arg == literal_block ||
+             (last_node.is_a?(Adamas::Compiler::Frontend::UnaryNode) &&
+              slice_eq?(last_node.operator, "&") && last_node.operand == literal_block)
+            positional_args = positional_args[0, positional_args.size - 1]
+          end
+        end
+      end
       # Callsite return inference does not bind expanded argument packs.
-      return nil if call.args.any? do |arg|
+      return nil if positional_args.any? do |arg|
         node = node_for_expr(arg)
         node.is_a?(Adamas::Compiler::Frontend::SplatNode) ||
           (node.is_a?(Adamas::Compiler::Frontend::UnaryNode) && {"*", "**"}.includes?(String.new(node.operator)))
       end
-      arg_types = infer_arg_types_for_call(call.args, receiver_name)
+      arg_types = infer_arg_types_for_call(positional_args, receiver_name)
       named_args = call.named_args
       has_named_args = !!(named_args && !named_args.empty?)
       named_names = named_args ? named_arg_names_for(named_args) : nil
@@ -30269,8 +30284,8 @@ module Adamas::HIR
       end
       call_count = arg_types.size
       selected = lookup_function_def_for_call(
-        base_name, call_count, false, arg_types, false, has_named_args,
-        named_names, has_named_args ? call.args.size : nil, has_named_args,
+        base_name, call_count, !literal_block.nil?, arg_types, false, has_named_args,
+        named_names, has_named_args ? positional_args.size : nil, has_named_args,
       )
 
       # If ordinary matching has no winner, reuse the source-level integer
@@ -30292,16 +30307,20 @@ module Adamas::HIR
                      end
                      unless duplicate
                        source_named_integer_autocast_entry(
-                         base_name, call.args, named_exprs, named_names, arg_types, @arena,
+                         base_name, positional_args, named_exprs, named_names, arg_types, @arena,
+                         has_block_call: !literal_block.nil?,
                        )
                      end
                    else
-                     source_integer_autocast_entry(base_name, call.args, arg_types, @arena)
+                     source_integer_autocast_entry(
+                       base_name, positional_args, arg_types, @arena,
+                       has_block_call: !literal_block.nil?,
+                     )
                    end
         if autocast
           selected = {autocast[0], autocast[1]}
           source_call_types = [] of TypeRef
-          positional_count = call.args.size
+          positional_count = positional_args.size
           return nil if autocast[2].size != positional_count + (named_names.try(&.size) || 0)
           positional_count.times do |idx|
             source_call_types << autocast[2][idx]
@@ -30314,6 +30333,13 @@ module Adamas::HIR
           end
         end
       end
+      # The exact annotation owns a selected block call's result. A yielding
+      # body without one still needs an explicit callsite block-result binding;
+      # neither a family cache nor the no-block numeric fallback supplies it.
+      if literal_block
+        return nil unless selected && selected[1].return_type
+      end
+
       return nil unless selected
       if arg_types.any? { |type| type == TypeRef::VOID || type == TypeRef::POINTER }
         return nil if function_def_overloads(base_name).any? do |name|
@@ -108171,9 +108197,12 @@ module Adamas::HIR
                 full_method_name, call_arg_types.size, has_block_call, call_arg_types,
                 call_has_splat, call_has_named_args, call_named_arg_names,
               )
-              if selected_class_method_entry.nil? && !has_block_call && !call_has_splat && !call_has_named_args &&
+              if selected_class_method_entry.nil? && !call_has_splat && !call_has_named_args &&
                  call_arg_types.all? { |type| type != TypeRef::VOID }
-                if numeric_entry = source_integer_autocast_entry(full_method_name, call_args, call_arg_types, call_arena)
+                if numeric_entry = source_integer_autocast_entry(
+                     full_method_name, call_args, call_arg_types, call_arena,
+                     has_block_call: has_block_call,
+                   )
                   selected_class_method_entry = {numeric_entry[0], numeric_entry[1]}
                 end
               end
@@ -121758,11 +121787,13 @@ module Adamas::HIR
       call_arena : Adamas::Compiler::Frontend::ArenaLike,
       candidate_name : String,
       candidate_def : Adamas::Compiler::Frontend::DefNode,
+      has_block_call : Bool = false,
     ) : Tuple(String, Adamas::Compiler::Frontend::DefNode, Array(TypeRef))?
-      # Keep source slots positional until named/splat/block autocasting has
-      # an equivalent binding contract. No ABI-only fallback is admitted.
+      # Literal blocks participate in selection, but never consume a source
+      # argument slot. Expanded packs still need their own binding evidence.
       params = function_param_infos(candidate_def)
-      return nil if params.any? { |param| param.is_splat || param.is_double_splat || param.is_block }
+      return nil if params.any? { |param| !named_only_separator?(param) && (param.is_splat || param.is_double_splat) }
+      params = params.reject { |param| param.is_block || named_only_separator?(param) }
       return nil unless return_def_accepts_positional?(candidate_def, positional_args.size)
       return nil unless named_args_compatible_with_def?(candidate_def, [] of String, positional_args.size, positional_args.size)
       context = function_context_for_lookup_candidate(func_name, candidate_name)
@@ -121782,7 +121813,7 @@ module Adamas::HIR
       return nil unless source_generic_argument_mismatch_for_def(candidate_def, converted_types, context).nil?
       # The unchanged resolver must select this very declaration with the
       # validated vector. This preserves owner/arity/default/type scoring.
-      selected = lookup_function_def_for_call(func_name, converted_types.size, false, converted_types)
+      selected = lookup_function_def_for_call(func_name, converted_types.size, has_block_call, converted_types)
       return nil unless selected && selected[1].same?(candidate_def)
       {selected[0], candidate_def, converted_types}
     end
@@ -121793,6 +121824,7 @@ module Adamas::HIR
       arg_types : Array(TypeRef),
       call_arena : Adamas::Compiler::Frontend::ArenaLike,
       exact_candidate_arenas : Bool = false,
+      has_block_call : Bool = false,
     ) : Tuple(String, Adamas::Compiler::Frontend::DefNode, Array(TypeRef))?
       return nil unless arg_types.any? { |type| signed_integer_primitive?(type) || unsigned_integer_type?(type) }
       candidates = [] of Tuple(String, Adamas::Compiler::Frontend::DefNode, Array(TypeRef))
@@ -121805,13 +121837,13 @@ module Adamas::HIR
                             with_arena(candidate_arena) do
                               source_integer_autocast_candidate_entry(
                                 func_name, positional_args, arg_types, call_arena,
-                                candidate_name, candidate_def,
+                                candidate_name, candidate_def, has_block_call,
                               )
                             end
                           else
                             source_integer_autocast_candidate_entry(
                               func_name, positional_args, arg_types, call_arena,
-                              candidate_name, candidate_def,
+                              candidate_name, candidate_def, has_block_call,
                             )
                           end
         if candidate_entry
@@ -121930,8 +121962,11 @@ module Adamas::HIR
       end
       func_entry = lookup_function_def_for_call(func_name, positional_args.size, has_block_call, arg_types)
       literal_types : Array(TypeRef)? = nil
-      if func_entry.nil? && !has_block_call
-        if literal_entry = source_integer_autocast_entry(func_name, positional_args, arg_types, call_arena)
+      if func_entry.nil?
+        if literal_entry = source_integer_autocast_entry(
+             func_name, positional_args, arg_types, call_arena,
+             has_block_call: has_block_call,
+           )
           func_entry = {literal_entry[0], literal_entry[1]}
           literal_types = literal_entry[2]
         end

@@ -22541,3 +22541,23 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   Process.new still reaches the separate System::Process.new(Nil) frontier.
   Next: selected class helpers with literal blocks and source callback output
   contracts; do not use omitted default values as caller-supplied forall proof.
+
+### Selected class block calls retain source selection (2026-10-30)
+- [x] Infer a cold bare class helper with a literal block from the exact selected
+  Def's declared result, in its declaration arena and lexical owner. Normalize
+  trailing literal blocks out of positional actuals; leave unannotated yielding
+  results unresolved instead of borrowing an overload-family cache.
+- [x] Admit source integer conversions for positional block-bearing calls using
+  the same representability/domain checks as ordinary calls. Skip block and
+  named-only separator pseudo-slots, then require ordinary overload resolution
+  with the actual block presence to select the same Def. Named and positional
+  paths retain their own source slot maps.
+- [x] Three focused HIR files pass 40 examples. Fresh S1 and installed Crystal
+  1.22.1 match native output and seven semantic rejections in
+  `regression_tests/source_integer_block_autocast_repro.sh`, including reversed
+  declaration/warm-call order, runtime widening, out-of-range literals, runtime
+  narrowing, block presence and arity. Nine cold-inference specs include cases
+  that fail before this slice; native agreement alone is not that evidence.
+- [ ] Source callback output validation still needs supplied/default slot
+  provenance and structural generic restrictions. Full bootstrap, Process.new
+  and unchanged LavinMQ runtime/test parity remain open.
