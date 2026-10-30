@@ -55,10 +55,10 @@ module Adamas
         HeapProcObject
       end
 
-      # Per-argument action used to bridge a yielded value to a known raw
+      # Per-argument action used to bridge a yielded value to a known
       # callback formal. The indirect-call node only has a call-wide union flag,
       # so mixed signatures need these explicit MIR operations first.
-      private enum RawYieldArgAction : UInt8
+      private enum YieldArgAction : UInt8
         Preserve
         Unwrap
         Wrap
@@ -339,12 +339,11 @@ module Adamas
         end
       end
 
-      # A `&blk` param the def invokes via `blk.call` (and never yields to)
-      # receives a heap Proc object from its callers (HIR lowers the block
-      # with make_proc), so its carrier must agree; see coerce_call_args for
-      # raw arguments forwarded into such a param.
+      # The selected HIR signature owns the source block's carrier. Storing or
+      # referencing the block requires its Proc environment even when the same
+      # body also contains Yield instructions.
       private def heap_block_param?(func : HIR::Function, param : HIR::Parameter) : Bool
-        param.is_block && func.heap_block_param && !function_contains_yield?(func)
+        param.is_block && func.heap_block_param
       end
 
       # A zero-capture Proc can be passed directly to a raw yield callback
@@ -4622,9 +4621,8 @@ module Adamas
         @value_map = {} of HIR::ValueId => ValueId
         @hir_value_types = {} of HIR::ValueId => HIR::TypeRef
         @hir_value_carriers = {} of HIR::ValueId => ProcCarrier
-        # Runtime yield callbacks are still raw function pointers. Mark only
-        # the inferred yield block parameter; future heap-yield dispatch needs
-        # callsite carrier propagation instead of a type-only Proc heuristic.
+        # Legacy inferred block slots start raw; the selected parameter carrier
+        # below replaces this default when the HIR signature requires a Proc.
         if block_param_id = @current_block_param_id
           @hir_value_carriers[block_param_id] = ProcCarrier::RawFnptrCallback
         end
@@ -10728,74 +10726,88 @@ module Adamas
       end
 
       # `IndirectCall#unwrap_union_args` is a call-wide backend switch. A known
-      # raw callback signature gets an explicit argument plan first: a full
+      # callback signature gets an explicit argument plan first: a full
       # union formal keeps or receives a union value, while a concrete formal
       # receives a MIR UnionUnwrap payload. The indirect call then preserves
       # unions globally, so a mixed callback cannot strip a different full-union
-      # argument by accident. Unknown signatures retain the legacy payload ABI.
-      private def prepare_raw_yield_callback_args(
+      # argument by accident. The final bit certifies the complete ABI argument
+      # plan, after source-kind admission in HIR. Only raw callbacks may use the
+      # unproven legacy payload fallback;
+      # heap Proc calls always preserve union arguments at the call boundary.
+      private def prepare_yield_callback_args(
         block_type : HIR::TypeRef,
         hir_args : Array(HIR::ValueId),
         mir_args : Array(ValueId),
         builder : MIR::Builder,
-      ) : {Array(ValueId), Bool}
+        require_complete_abi : Bool,
+      ) : {Array(ValueId), Bool, Bool}
         signature = proc_callback_hir_signature(block_type)
-        return {mir_args, true} unless signature
+        return {mir_args, true, false} unless signature
 
         callback_params = signature.not_nil!
-        return {mir_args, true} if callback_params.empty? || hir_args.size != callback_params.size - 1
+        return {mir_args, true, false} if callback_params.empty? || hir_args.size != callback_params.size - 1
 
         # Each tuple entry stores the HIR actual, HIR formal, action, and (when
         # an explicit union bridge needs it) the union discriminator. Build the
         # whole plan before emitting any bridge instructions so an unresolved
         # later argument cannot leave a partially rewritten call behind.
-        plans = [] of {HIR::TypeRef, HIR::TypeRef, RawYieldArgAction, Int32?}
+        plans = [] of {HIR::TypeRef, HIR::TypeRef, YieldArgAction, Int32?}
         has_union_arg = false
         arg_idx = 0
         while arg_idx < hir_args.size
           actual_type = @hir_value_types[hir_args.unsafe_fetch(arg_idx)]?
-          return {mir_args, true} unless actual_type
+          return {mir_args, true, false} unless actual_type
           formal_type = callback_params.unsafe_fetch(arg_idx)
+          if require_complete_abi
+            return {mir_args, true, false} if actual_type == HIR::TypeRef::VOID || formal_type == HIR::TypeRef::VOID
+            lowered_type = get_mir_value_type(mir_args.unsafe_fetch(arg_idx))
+            return {mir_args, true, false} unless lowered_type &&
+              yield_callback_carriers_compatible?(lowered_type, convert_type(actual_type))
+          end
           actual_is_union = hir_union_type?(actual_type)
           formal_is_union = hir_union_type?(formal_type)
           unless actual_is_union || formal_is_union
-            plans << {actual_type, formal_type, RawYieldArgAction::Preserve, nil}
+            if require_complete_abi &&
+               !yield_callback_carriers_compatible?(convert_type(actual_type), convert_type(formal_type))
+              return {mir_args, true, false}
+            end
+            plans << {actual_type, formal_type, YieldArgAction::Preserve, nil}
             arg_idx += 1
             next
           end
 
           has_union_arg = true
           if actual_is_union && formal_is_union && same_hir_type?(actual_type, formal_type)
-            plans << {actual_type, formal_type, RawYieldArgAction::Preserve, nil}
+            plans << {actual_type, formal_type, YieldArgAction::Preserve, nil}
             arg_idx += 1
             next
           end
 
           if actual_is_union && !formal_is_union
             variant_type_id = raw_yield_union_variant_id(actual_type, formal_type)
-            return {mir_args, true} unless variant_type_id
-            plans << {actual_type, formal_type, RawYieldArgAction::Unwrap, variant_type_id}
+            return {mir_args, true, false} unless variant_type_id
+            plans << {actual_type, formal_type, YieldArgAction::Unwrap, variant_type_id}
           elsif !actual_is_union && formal_is_union
             variant_type_id = raw_yield_union_variant_id(formal_type, actual_type)
-            return {mir_args, true} unless variant_type_id
-            plans << {actual_type, formal_type, RawYieldArgAction::Wrap, variant_type_id}
+            return {mir_args, true, false} unless variant_type_id
+            plans << {actual_type, formal_type, YieldArgAction::Wrap, variant_type_id}
           else
             # Two distinct union descriptors need a layout conversion, which
             # this raw callback bridge cannot prove from a type id alone.
-            return {mir_args, true}
+            return {mir_args, true, false}
           end
           arg_idx += 1
         end
 
-        return {mir_args, true} unless has_union_arg
+        return {mir_args, true, true} unless has_union_arg
 
         prepared_args = mir_args.dup
         plans.each_with_index do |plan, idx|
           variant_type_id = plan[3]
           case plan[2]
-          when RawYieldArgAction::Preserve
+          when YieldArgAction::Preserve
             next
-          when RawYieldArgAction::Unwrap
+          when YieldArgAction::Unwrap
             formal_mir_type = convert_type(plan[1])
             unwrap = UnionUnwrap.new(
               builder.next_id,
@@ -10806,7 +10818,7 @@ module Adamas
             )
             builder.emit(unwrap)
             prepared_args[idx] = unwrap.id
-          when RawYieldArgAction::Wrap
+          when YieldArgAction::Wrap
             prepared_args[idx] = builder.union_wrap(
               prepared_args.unsafe_fetch(idx),
               variant_type_id.not_nil!,
@@ -10815,7 +10827,21 @@ module Adamas
           end
         end
 
-        {prepared_args, false}
+        {prepared_args, false, true}
+      end
+
+      private def yield_callback_carriers_compatible?(actual : TypeRef, formal : TypeRef) : Bool
+        return false if actual == TypeRef::VOID || formal == TypeRef::VOID
+        return true if actual == formal
+
+        actual_type = @mir_module.type_registry.get(actual)
+        formal_type = @mir_module.type_registry.get(formal)
+        return false unless actual_type && formal_type
+        # HIR admits source subtypes before this bridge. Distinct class/pointer
+        # references share the canonical pointer-reference representation, but
+        # equal byte sizes do not prove scalar or aggregate ABI compatibility.
+        Adamas::LayoutContract.repr(actual_type.kind, actual_type.size, actual_type.name, false).pointer_reference? &&
+          Adamas::LayoutContract.repr(formal_type.kind, formal_type.size, formal_type.name, false).pointer_reference?
       end
 
       private def raw_yield_union_variant_id(
@@ -10865,10 +10891,8 @@ module Adamas
         if ENV.has_key?("ADAMAS_PROC_CARRIER_TRACE")
           STDERR.puts "[PROC_CARRIER] yield func=#{@current_lowering_func_name} target=#{block_param_id} carrier=#{yield_carrier}"
         end
-        # MIR_YIELD_DISPATCH_MODE: raw_fnptr_only
-        # Runtime-yield callbacks are still bare function pointers in the
-        # hybrid closure ABI. Do not switch this to heap Proc dispatch without
-        # a coupled raw callback carrier/signature/yield rewrite.
+        # The selected source block slot carries either a raw callback or a
+        # Proc object. Yield uses that carrier, just like an explicit Proc call.
         args = [] of ValueId
         hir_args = [] of HIR::ValueId
         yld.args.each do |arg|
@@ -10944,20 +10968,28 @@ module Adamas
         unless callback_return_type
           raise "MIR yield callback ABI unresolved for Proc block type #{block_type.id} in #{@current_lowering_func_name}"
         end
-        args, unwrap_union_args = prepare_raw_yield_callback_args(
+        args, unwrap_union_args, argument_plan_complete = prepare_yield_callback_args(
           block_type,
           hir_args,
           args,
-          builder
+          builder,
+          yield_carrier == ProcCarrier::HeapProcObject
         )
-        call_value = builder.call_indirect(
-          block_val,
-          args,
-          convert_type(callback_return_type),
-          unwrap_union_args
-        )
+        call_value = if yield_carrier == ProcCarrier::HeapProcObject
+                       unless argument_plan_complete
+                         raise "MIR heap yield argument ABI unresolved for block type #{block_type.id} in #{@current_lowering_func_name}"
+                       end
+                       call_heap_proc(block_val, args, convert_type(callback_return_type))
+                     else
+                       builder.call_indirect(
+                         block_val,
+                         args,
+                         convert_type(callback_return_type),
+                         unwrap_union_args
+                       )
+                     end
         # Preserve the HIR yield result contract (for example `Nil | Int32`)
-        # after calling the raw callback with its concrete ABI return (`Int32`).
+        # after calling the callback with its concrete ABI return (`Int32`).
         # This emits the same canonical union wrap used by ordinary returns and
         # keeps the indirect-call declaration compatible with the block body.
         if callback_return_type != yield_type

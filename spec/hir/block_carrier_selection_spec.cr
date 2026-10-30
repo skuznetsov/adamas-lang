@@ -131,7 +131,7 @@ describe "selected block carrier" do
     ).should be_true
   end
 
-  it "uses the materialized HIR carrier bit and rejects HIR bodies that yield" do
+  it "uses the materialized HIR carrier bit independently of yield uses" do
     arena, defs = block_carrier_parse(<<-CRYSTAL)
     def raw_yield(&block)
       yield
@@ -169,8 +169,8 @@ describe "selected block carrier" do
       contains_yield: false,
     ).should be_false
 
-    # A real HIR Yield means the callback uses the raw-yield carrier, even if
-    # stale registration metadata says heap Proc.
+    # Yield is an operation on the selected block, not evidence that its
+    # environment can be discarded. A stored block may also be yielded to.
     converter.__test_materialized_block_arg_requires_heap_proc?(
       "Owner#yielding$Int32_block",
       defs["stored_block"],
@@ -179,6 +179,39 @@ describe "selected block carrier" do
       block_parameter: true,
       heap_block_parameter: true,
       contains_yield: true,
+    ).should be_true
+  end
+
+  it "retains captured and referenced block environments when the same def yields" do
+    arena, defs = block_carrier_parse(<<-CRYSTAL)
+    def captured_and_yielded(&@callback : -> Int32)
+      yield
+    end
+
+    def assigned_and_yielded(&callback : -> Int32)
+      @callback = callback
+      yield
+    end
+
+    def returned_after_yield(&callback : -> Int32)
+      yield
+      callback
+    end
+
+    def yield_only(&callback : -> Int32)
+      yield
+    end
+    CRYSTAL
+
+    converter = Adamas::HIR::AstToHir.new(arena)
+    converter.arena = arena
+    ["captured_and_yielded", "assigned_and_yielded", "returned_after_yield"].each do |name|
+      converter.__test_block_arg_requires_heap_proc?(
+        "Owner##{name}_block", defs[name], arena,
+      ).should be_true
+    end
+    converter.__test_block_arg_requires_heap_proc?(
+      "Owner#yield_only_block", defs["yield_only"], arena,
     ).should be_false
   end
 

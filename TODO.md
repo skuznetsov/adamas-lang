@@ -22408,3 +22408,28 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   zero-input signatures, and Proc(Int32, Nil) for their one-input counterparts.
 - [ ] This source-type certificate does not establish escaping callback
   lifetime, complete Proc ABI coverage, bootstrap or unchanged LavinMQ parity.
+
+### Stored source blocks retain their selected environment (2026-10-29)
+- [x] Reproduce a saved initializer block reading a restored global capture
+  after its factory returns. Keep Parameter.is_block as source slot identity;
+  the exact selected definition independently owns its heap/raw lifetime bit.
+  A body containing yield does not prove that the same block cannot escape.
+- [x] Allocators, materialized HIR and MIR consume the same carrier contract.
+  Yield on a stored block uses its Proc environment. HIR admits source inputs
+  before coercion; MIR requires a complete argument ABI plan before either
+  heap indirect-call arm, retaining full unions and canonical pointer subtypes.
+- [x] Fresh S1 matches original Crystal 1.22.1 on nine no-thread native cases,
+  including distinct receivers, stored-and-yielded blocks, a preceding ordinary
+  Proc, nullable input/result round trips and subtype inputs. Both reject three
+  invalid input/result programs with semantic Int32/String diagnostics.
+- [x] Nine focused HIR/MIR files pass 43 examples. The adjacent raw Proc pair
+  constructor suite has identical seven errors on exact parent and candidate;
+  it remains open and is excluded from the passing certificate. An adversarial
+  nullable whole-block annotation is rejected by original Crystal itself; it
+  does not justify widening the source block gate.
+- [ ] File.open compiles/links but still times out. Its saved Monitor callback
+  now carries lexical self in the Proc environment; this is an IR observation,
+  not a working-runtime certificate. A loop backedge carries null instead of
+  its updated reference in the same IR; qualify a separate root-cause probe.
+- [ ] Legacy unknown raw callback ABI fallback remains uncertified. Full
+  bootstrap and unchanged LavinMQ runtime/test parity remain open.

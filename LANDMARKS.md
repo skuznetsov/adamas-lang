@@ -21774,3 +21774,42 @@ plus six neighboring Proc files pass 79 examples. This is a type-production
 certificate, not a runtime or bootstrap certificate. Refresh after arrow
 parsing, alias resolution, applied binding or Proc interning changes; revert
 the producer changes and the new precedence spec together.
+
+## 2026-10-29 — Stored blocks own an escaping Proc environment
+
+The no-thread stored initializer callback probe reproduced a lifetime failure:
+the factory restored a temporary global capture before invoking the saved
+callback. Source block identity and runtime carrier had been conflated. A
+captured &@ivar lost its block slot marker, and the presence of yield overrode
+the selected definition's heap lifetime requirement. Neither property permits
+discarding an escaping environment.
+
+The source parameter keeps is_block; the selected definition's heap_block_param
+owns lifetime independently. Allocator forwarding, HIR materialization and MIR
+consume that contract. A stored block invoked through yield uses the ordinary
+Proc environment dispatch. HIR validates source input kinds first; MIR rejects
+an incomplete heap argument ABI plan before emitting indirect calls. Full
+unions remain full on both environment/raw-code arms; admitted class subtypes
+share the canonical pointer representation, not an arbitrary equal-size cast.
+
+Fresh S1 and installed Crystal 1.22.1 agree on nine no-thread native results
+and three semantic rejections. The cases include saved receiver state, two
+independent receivers, stored-and-yielded callbacks, an ordinary Proc before
+the marked source block, nullable input/output and subtype inputs. Refresh
+after selected-definition, carrier, source-admission or layout changes; revert
+HIR/MIR producers, consumers and their regression tests together.
+
+Nine focused HIR/MIR files pass 43 examples. An expanded run also includes the
+raw Proc pair constructor suite: all seven errors match the exact parent, so
+those existing errors are not included in the green claim. An adversarial
+proposal to admit a nullable whole-block annotation was refuted by installed
+Crystal, which requires a function type for the source &block restriction.
+Ordinary nullable Proc restrictions do not imply nullable source block syntax.
+Scoped adversary: ROBUST for the tested stored-block lifetime and complete
+heap argument-plan boundary, with the raw fallback and full runtime excluded.
+
+File.open remains a runtime timeout. Its Monitor callback now saves and loads
+self through the Proc environment, but a live loop backedge in the same IR
+also carries null instead of its updated reference. That observation needs a
+separate original-first discriminator. The legacy unknown raw callback ABI,
+fresh bootstrap and unchanged LavinMQ parity are not certified by this slice.

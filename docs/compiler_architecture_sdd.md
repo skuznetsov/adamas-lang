@@ -4997,3 +4997,32 @@ Installed Crystal macro inspection independently shows the normalized output
 spellings. This does not certify callback lifetime, all Proc ABIs, bootstrap
 or LavinMQ. Refresh on parser, binding, alias or interner changes and roll back
 the producer/spec slice together.
+
+### Stored block identity and escaping environment (2026-10-29)
+
+Parameter.is_block identifies the source block slot. The exact selected
+definition's Function.heap_block_param independently owns its lifetime and
+carrier; storing/referencing a block retains its Proc environment even when
+the same body yields. Allocator forwarding, HIR materialization and MIR must
+consume this decision rather than inferring lifetime from a Yield instruction
+or the presence of another Proc-shaped parameter.
+
+Yield on a heap block uses the ordinary Proc environment/code dispatch. HIR's
+shared Proc input validator admits source values before ABI coercion. MIR
+requires a complete per-argument ABI plan before either indirect-call arm:
+registered identical unions are preserved, concrete inputs are explicitly
+wrapped/unwrapped, and admitted nominal subtypes use canonical pointer
+representation. Unknown source types, unsupported distinct-union conversions
+and incompatible scalar carriers are rejected. Equal byte size proves nothing.
+The legacy raw callback fallback is outside this certificate.
+
+DoD: a fresh S1 and installed Crystal 1.22.1 agree on nine no-thread stored
+callback results and three strict wrong-input/result rejections. Focused HIR
+and MIR tests pass 43 examples, checking marked-slot identity and rejection
+before IndirectCall. The adjacent seven raw Proc pair constructor errors are
+identical on the exact parent and candidate and remain outside this claim.
+File.open compiles/links but still times out; environment IR is corrected,
+while a separate loop-backedge observation remains under investigation.
+This slice does not certify bootstrap or LavinMQ parity. Refresh on selected
+Def/carrier/admission/layout changes; roll back the producers, consumers and
+regressions together.

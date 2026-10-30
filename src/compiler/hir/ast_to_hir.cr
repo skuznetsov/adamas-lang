@@ -23690,11 +23690,11 @@ module Adamas::HIR
                observed_return_type != TypeRef::VOID &&
                existing_desc.type_params.last != observed_return_type
               raise "captured initializer Proc ABI conflict for #{owner}#{ivar.name}: " \
-                    "#{existing_desc.name} vs return #{get_type_name_from_ref(observed_return_type)}"
+                    "#{proc_source_signature_name(existing_desc)} vs return #{get_type_name_from_ref(observed_return_type)}"
             end
             next if existing_desc.type_params == proc_desc.type_params
             raise "captured initializer Proc ABI conflict for #{owner}#{ivar.name}: " \
-                  "#{existing_desc.name} vs #{proc_desc.name}"
+                  "#{proc_source_signature_name(existing_desc)} vs #{proc_source_signature_name(proc_desc)}"
           end
         end
         if init_params = @init_params[owner]?
@@ -23711,11 +23711,11 @@ module Adamas::HIR
                observed_return_type != TypeRef::VOID &&
                existing_desc.type_params.last != observed_return_type
               raise "captured initializer Proc ABI conflict for #{owner}#{ivar_name}: " \
-                    "#{existing_desc.name} vs return #{get_type_name_from_ref(observed_return_type)}"
+                    "#{proc_source_signature_name(existing_desc)} vs return #{get_type_name_from_ref(observed_return_type)}"
             end
             next if existing_desc.type_params == proc_desc.type_params
             raise "captured initializer Proc ABI conflict for #{owner}#{ivar_name}: " \
-                  "#{existing_desc.name} vs #{proc_desc.name}"
+                  "#{proc_source_signature_name(existing_desc)} vs #{proc_source_signature_name(proc_desc)}"
           end
         end
       end
@@ -43146,10 +43146,8 @@ module Adamas::HIR
       matched_init_arena : Adamas::Compiler::Frontend::ArenaLike? = nil
       resolved_init_arena : Adamas::Compiler::Frontend::ArenaLike? = nil
       block_param_info : {String, TypeRef}? = nil
-      # Carrier of the initializer's block slot: a yielded `&blk` is a raw
-      # callback; a captured `&@ivar` is a materialized Proc (see lower_method
-      # param_infos). The forwarded allocator param must use the same carrier.
-      block_param_raw_callback = true
+      # Source block identity is independent of its carrier. The allocator
+      # forwards the selected initializer's heap/raw lifetime contract below.
       initializer_call_arg_types = call_arg_types
       initializer_has_block = call_has_block
       forwarded_initializer_block_index : Int32? = nil
@@ -43261,7 +43259,6 @@ module Adamas::HIR
                 param_is_ivar = p.is_instance_var || pname.starts_with?('@')
                 pname = pname.lstrip('@')
                 if p.is_block
-                  block_param_raw_callback = !param_is_ivar
                   ptype = if ta = p.type_annotation
                             annotation_type_ref((safe_slice_to_string(ta) || ""), class_name)
                           else
@@ -43432,13 +43429,10 @@ module Adamas::HIR
         block_param_id = param_ids[forwarded_block_index]?
       elsif initializer_has_block && (block_info = block_param_info)
         block_name, block_type = block_info
-        # A yielding initializer receives its block as a raw callback, so the
-        # allocator forwards it with the block flag. Without it, callers coerce
-        # the block arg to a heap Proc box (make_proc) and the initializer's
-        # yield calls the box as a fn pointer. A captured `&@ivar` initializer
-        # takes a Proc value instead, so that slot stays a plain Proc param.
-        hir_param = func.add_param(block_name, block_type, is_block: block_param_raw_callback)
-        if block_param_raw_callback && (heap_init_def = matched_init_def) && (heap_init_arena = matched_init_arena)
+        # Retain the source block slot even when the initializer stores it.
+        # Its selected definition owns the carrier, including when it also yields.
+        hir_param = func.add_param(block_name, block_type, is_block: true)
+        if (heap_init_def = matched_init_def) && (heap_init_arena = matched_init_arena)
           func.heap_block_param = true if def_requires_heap_block?(heap_init_def, heap_init_arena)
         end
         ctx.register_local(block_name, hir_param.id)
@@ -45477,9 +45471,9 @@ module Adamas::HIR
             param_type_map[param_name] = local_inference_type
             param_info_names << param_name
             param_info_types << exact_runtime_param_type
-            # `&@capture` is forwarded by allocator wrappers as a complete Proc
-            # object. Only ordinary `&block` parameters use the raw callback flag.
-            param_info_is_blocks << (param.is_block && !is_ivar_param)
+            # Keep source block identity separate from its heap/raw carrier.
+            # A captured block can also be invoked through yield.
+            param_info_is_blocks << param.is_block
             param_info_instance_vars << is_ivar_param
             param_default_literals << extract_param_default_literal(param)
             enum_name = call_index < call_enum_names.size ? call_enum_names[call_index] : nil
@@ -59128,15 +59122,13 @@ module Adamas::HIR
       result = false
       if params = node.params
         if block_param = find_param(params) { |param| param.is_block }
-          unless def_contains_yield?(node, resolved_arena)
-            result = block_param.is_instance_var
-            unless result
-              if (name_slice = block_param.name) && (body = node.body)
-                block_name = safe_slice_to_string(name_slice) || ""
-                unless block_name.empty?
-                  result = with_arena(resolved_arena) do
-                    collect_proc_body_identifiers(body).includes?(block_name)
-                  end
+          result = block_param.is_instance_var
+          unless result
+            if (name_slice = block_param.name) && (body = node.body)
+              block_name = safe_slice_to_string(name_slice) || ""
+              unless block_name.empty?
+                result = with_arena(resolved_arena) do
+                  collect_proc_body_identifiers(body).includes?(block_name)
                 end
               end
             end
@@ -59168,7 +59160,7 @@ module Adamas::HIR
         # admitted. In either case heap_block_param's default false is not an ABI
         # decision. Use HIR metadata only after both the body and block slot exist.
         if @module.has_function_with_body?(target_name) && function.params.any?(&.is_block)
-          return function.heap_block_param && !hir_function_contains_yield?(function)
+          return function.heap_block_param
         end
       end
 
@@ -59182,12 +59174,6 @@ module Adamas::HIR
       end
 
       false
-    end
-
-    private def hir_function_contains_yield?(function : Adamas::HIR::Function) : Bool
-      function.blocks.any? do |block|
-        block.instructions.any?(&.is_a?(Adamas::HIR::Yield))
-      end
     end
 
     private def def_accepts_block_param?(node : Adamas::Compiler::Frontend::DefNode) : Bool
@@ -98813,6 +98799,19 @@ module Adamas::HIR
         STDERR.puts "[L13_YIELD] func=#{ctx.function.name} ret=#{get_type_name_from_ref(return_type)} args=#{args.size}"
       end
       yield_target = @explicit_yield_target_stack.last? || function_block_param_id(ctx.function)
+      if target = yield_target
+        if ctx.function.heap_block_param && ctx.function.params.any? { |param| param.id == target && param.is_block }
+          # A stored source block is the same Proc whether invoked by `yield`
+          # or `.call`. Admit its inputs before introducing representation
+          # coercions; a pointer-shaped String must not become an Int32 input.
+          descriptor = @module.get_type_descriptor(ctx.type_of(target))
+          unless descriptor && descriptor.kind == TypeKind::Proc
+            raise LoweringError.new("cannot yield to a stored block without a concrete Proc signature", node)
+          end
+          source_args = node.args.try(&.reject(&.invalid?)) || [] of ExprId
+          args = validate_proc_call_source_kinds(ctx, descriptor, args, source_args, @arena, node)
+        end
+      end
       if yield_target && env_get("DEBUG_EXPLICIT_YIELD_TARGET")
         STDERR.puts "[EXPLICIT_YIELD_TARGET] emit_yield func=#{ctx.function.name} target=%#{yield_target} args=#{args.size} return=#{get_type_name_from_ref(return_type)}"
       end
@@ -115119,7 +115118,9 @@ module Adamas::HIR
                      has_named_args, call_named_arg_names,
                    )
                   # Generated allocators inherit their block contract from the
-                  # selected initializer, including a discarded Nil result.
+                  # selected initializer, including its environment lifetime
+                  # and a discarded Nil result.
+                  heap_block_proc = def_requires_heap_block?(selected_init[1], selected_init[2])
                   block_proc_expected_return_type = with_arena(selected_init[2]) do
                     expected_nil_block_return_type_for_def(selected_init[0], selected_init[1])
                   end
@@ -118626,7 +118627,7 @@ module Adamas::HIR
 
     private def raw_proc_parameter?(function : Function, param : Parameter) : Bool
       if param.is_block
-        return !function.heap_block_param || hir_function_contains_yield?(function)
+        return !function.heap_block_param
       end
       raw_block_callback_param?(function, param)
     end

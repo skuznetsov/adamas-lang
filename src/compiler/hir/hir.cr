@@ -1923,8 +1923,9 @@ module Adamas::HIR
     @param_names : Array(String)
     @param_default_literals : Array(String?)
     @param_is_blocks : Array(Bool)
-    # The def calls its block parameter (`blk.call`), so callers hand it a
-    # heap Proc object; yield-style block params stay raw fn pointers.
+    # The selected def stores or references its source block as a Proc, so its
+    # callers must retain the environment in a heap object. The same block may
+    # also be invoked through yield; is_block preserves source slot identity.
     # Lives on Function because `params` rebuilds Parameter objects.
     property heap_block_param : Bool = false
     @revision_ledger : FunctionRevisionLedger
