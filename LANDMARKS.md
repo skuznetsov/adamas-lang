@@ -22156,3 +22156,22 @@ through it was demonstrated here. Refresh on named binding, constructor
 precedence, pending-callsite selection or physical slot checking changes.
 Roll back this slice and its regression together. Bootstrap, Process.new
 and LavinMQ runtime/test parity remain open.
+
+## 2026-10-30 — Generic module declarations prove structural head identity
+
+Root cause: source_block_result_canonical_base rejected type_param_like? names
+before consulting the declaration index. Generic modules are registered under
+Marker(T), so the structural bare head Marker was mistaken for an unbound
+parameter and Marker(Int32) became an invalid restriction pattern.
+
+The canonicalizer now accepts that head only when module_defs_stripped_lookup
+finds the source declaration. An isolated f044e5a0 plus this four-line producer
+correction passes 24 source_block_result_pattern_spec examples under run_safe.sh
+with Crystal 1.22.1 and stock stdlib. The new assertion fails before the fix;
+unknown Missing(Int32) and unbound T(Int32) still produce invalid patterns.
+Logs: spec.generic-module-head-before.log and
+spec.generic-module-head-isolated-after.log in the oct29 root-cause scratch.
+Scoped adversary: ROBUST for declared-head recognition and these negative
+controls. Native module-value admission and generic argument matching remain
+separate obligations. Refresh after declaration indexing, name normalization or
+source-pattern changes; roll back the canonicalizer and its spec together.

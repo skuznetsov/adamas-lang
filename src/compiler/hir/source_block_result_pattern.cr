@@ -269,7 +269,11 @@ class Adamas::HIR::AstToHir
   private def source_block_result_canonical_base(name : String, owner : String?) : String?
     resolved = normalize_declared_type_name(name, owner, specialize_bare_generics: false)
     resolved = resolve_type_alias_chain(resolved)
-    return nil if resolved.empty? || type_param_like?(resolved)
+    return nil if resolved.empty?
+    # Generic module declarations are indexed as Marker(T), while structural
+    # patterns keep the bare Marker head. The declaration index proves that
+    # this head is a type identity rather than an unbound source parameter.
+    return nil if type_param_like?(resolved) && !module_defs_stripped_lookup(resolved)
     resolved
   end
 

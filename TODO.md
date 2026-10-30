@@ -22651,3 +22651,13 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] An explicit bound-slot bit on retained callsite records remains a future
   provenance guard for fallback routes. This direct named-call certificate does
   not close arbitrary delayed remapping, bootstrap or LavinMQ test parity.
+
+### Declared generic module heads in source patterns (2026-10-30)
+
+- [x] Resolve a bare structural head through the module declaration index before
+  classifying it as an unbound type parameter. A registered Marker(T) proves
+  that Marker in Marker(Int32) is a declared identity.
+- [x] Isolated f044e5a0 plus this correction passes all 24 source-pattern specs;
+  the new case fails on the parent. Missing(Int32) and unbound T(Int32) remain
+  invalid. This is a structural-recognition certificate, not native generic
+  module conformance, bootstrap or LavinMQ parity.

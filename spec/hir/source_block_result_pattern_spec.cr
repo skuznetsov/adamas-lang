@@ -5,6 +5,11 @@ require "../../src/compiler/frontend/parser"
 require "../../src/compiler/frontend/lexer"
 
 class Adamas::HIR::AstToHir
+  def __test_source_block_result_pattern_shape(output : String) : Tuple(String, Bool, String?)
+    pattern = build_source_block_result_pattern(output, nil, [] of String, {} of String => String)
+    {pattern.kind.to_s, pattern.valid, pattern.base_name}
+  end
+
   def __test_source_block_result_pattern(
     output : String,
     actual : String,
@@ -35,6 +40,9 @@ end
 private def source_block_result_pattern_fixture
   source = <<-CRYSTAL
     class Path
+    end
+
+    module Marker(T)
     end
 
     module Scope
@@ -70,7 +78,7 @@ private def source_block_result_pattern_fixture
   program = parser.parse_program
   parser.diagnostics.should be_empty
   converter = Adamas::HIR::AstToHir.new(program.arena)
-  converter.seed_top_level_type_names(["Path", "Scope"])
+  converter.seed_top_level_type_names(["Path", "Marker", "Scope"])
   program.roots.each do |expression|
     case node = program.arena[expression]
     when Adamas::Compiler::Frontend::ClassNode
@@ -83,6 +91,13 @@ private def source_block_result_pattern_fixture
 end
 
 describe "source block result patterns" do
+  it "recognizes a declared generic module head without admitting unknown heads" do
+    converter = source_block_result_pattern_fixture
+    converter.__test_source_block_result_pattern_shape("Marker(Int32)").should eq({"Generic", true, "Marker"})
+    converter.__test_source_block_result_pattern_shape("Missing(Int32)").should eq({"Invalid", false, nil})
+    converter.__test_source_block_result_pattern_shape("T(Int32)").should eq({"Invalid", false, nil})
+  end
+
   it "retains a tuple field's metaclass alternatives through structural matching" do
     converter = source_block_result_pattern_fixture
     _, _, accepted = converter.__test_source_block_result_pattern(

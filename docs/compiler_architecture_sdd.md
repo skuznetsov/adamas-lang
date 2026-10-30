@@ -5153,3 +5153,17 @@ Scoped adversary: ROBUST within these direct named-constructor routes. Retained
 callsite fallback provenance, bootstrap and LavinMQ parity remain outside the
 certificate. Refresh after source ordering, argument binding, pending callsite
 or materializer compatibility changes; roll back this slice with its tests.
+
+### Declared generic module heads are source identities (2026-10-30)
+
+Admitted: a canonical structural head may use the module declaration index as
+identity proof when the generic declaration is indexed with its formal suffix.
+Rejected: accepting unknown or unbound heads merely because they have generic
+syntax. This recognition rule does not establish module-value conformance.
+
+Observed DoD: isolated f044e5a0 plus the canonicalizer correction passes 24
+source-pattern examples; the new declared-head assertion fails before it, and
+unknown/unbound controls remain rejected. Scoped adversary: ROBUST for this
+structural boundary. Refresh on indexing, normalization or pattern changes;
+roll back the producer and spec together. Native generic module-value behavior,
+bootstrap and LavinMQ parity require their own evidence.
