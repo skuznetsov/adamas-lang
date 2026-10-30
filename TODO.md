@@ -22466,3 +22466,22 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   lifetime rules, rather than treating every register_local call as a write.
 - [ ] Fresh S2 at a55ef9af still rejects Process.new(Nil); no S2 binary,
   bootstrap fixed point or unchanged LavinMQ parity is certified by this fix.
+
+### Extern result inference retains the selected source effect (2026-10-29)
+- [x] Reproduce a terminal FFI branch entering speculative return inference as
+  Void, contaminating a Tuple slot through nested yields. Ordinary lowering
+  already marks the call terminal; the inference producer must read the same
+  selected ExternFunction.noreturn contract, separately from its void ABI slot.
+- [x] Share that source result contract between parenthesized and bare lib
+  calls. Resolve qualified lib aliases after contextual path resolution. Intern
+  canonical bottom independently of a caller's nominal Scope::NoReturn.
+- [x] The initial six semantic-effect falsifiers fail on the parent; three
+  further adversarial tests expose qualified aliases and caller shadowing.
+  After the fix, three focused HIR files pass 38 examples. A fresh S1 matches
+  installed Crystal on four native Process-shaped controls and strict Nil
+  rejection; the nested-yield Tuple control fails on the parent. Two existing
+  FFI positives and Bool/arity rejections also agree with original Crystal.
+- [ ] Full-prelude Process.new still rejects System::Process.new(Nil) after
+  this fix. The speculative local-assignment collector only projects literal
+  Tuple RHS nodes; qualify a nonliteral Tuple-call falsifier next. No bootstrap
+  fixed point, exception-runtime compatibility or LavinMQ parity is certified.

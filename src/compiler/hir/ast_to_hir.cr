@@ -27625,6 +27625,16 @@ module Adamas::HIR
       end
     end
 
+    private def extern_source_result_type(extern_func : ExternFunction) : TypeRef
+      # The C ABI represents both Void and NoReturn with a void return slot.
+      # Source inference must retain the selected declaration's bottom effect;
+      # otherwise a terminal branch contributes Void to ordinary value unions.
+      return extern_func.return_type unless extern_func.noreturn
+      # This is the declaration's canonical effect, not a type lookup in the
+      # caller's namespace (which may contain a nominal Scope::NoReturn).
+      @module.intern_type(TypeDescriptor.new(TypeKind::Class, "NoReturn"))
+    end
+
     # Bottom is a control-flow effect, not the unresolved/void ABI type.
     # Follow only exact completed direct targets; incomplete bodies, cycles,
     # virtual dispatch and local exception handling provide no such proof.
@@ -27835,6 +27845,7 @@ module Adamas::HIR
                     else
                       resolve_path_string_in_context(raw_path)
                     end
+        full_path = resolve_type_alias_chain_no_context(full_path)
         @module.is_lib?(full_path) ? full_path : nil
       else
         nil
@@ -28197,6 +28208,9 @@ module Adamas::HIR
         if lib_name
           if extern = @module.get_extern_global(lib_name, member_name)
             return extern.type
+          end
+          if extern_func = @module.get_extern_function(lib_name, member_name)
+            return extern_source_result_type(extern_func)
           end
         end
         if member_name == "new"
@@ -28665,7 +28679,7 @@ module Adamas::HIR
           # return type; generic `.new` inference reads arguments through here.
           if lib_name = infer_lib_receiver_name(node_for_expr(callee_node.object))
             if extern_func = @module.get_extern_function(lib_name, member_name)
-              return extern_func.return_type
+              return extern_source_result_type(extern_func)
             end
           end
           if member_name == "call" && block_expr.nil? && block_pass_expr.nil?

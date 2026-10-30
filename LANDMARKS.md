@@ -21868,3 +21868,34 @@ through _Unwind_RaiseException, but Adamas emits setjmp/longjmp handlers without
 native unwind landing pads. Actual exception tests must exercise that ABI;
 normal-flow tests with fail-fast support symbols do not certify it. Bootstrap,
 File.open runtime and unchanged LavinMQ test parity remain open.
+
+## 2026-10-29 — FFI ABI return slots do not own source bottom effects
+
+ExternFunction stores a C ABI return_type and a separate source noreturn effect.
+Both Void and NoReturn have a void ABI slot. Speculative lib-call inference
+previously returned that slot directly, so a terminal branch contributed Void
+to a value union although ordinary lowering correctly terminated its block.
+In a nested-yield Tuple reproducer, the concrete callee and late-repaired call
+had Tuple(Int32 | Nil, Int32), while the already-created IndexGet retained the
+speculative Nil | Int32 | Void element type. Repairing the consumer or dropping
+ordinary Void union arms would hide the producer defect.
+
+Use the selected declaration's noreturn effect for both CallNode and bare
+MemberAccess inference. Canonical bottom is interned without caller namespace
+lookup: a nominal Scope::NoReturn remains a distinct ordinary type. Resolve a
+qualified lib alias after contextual path resolution, without a second caller
+namespace lookup. The selected C symbol name alone does not determine effects;
+an alternate declaration of that symbol with an Int32 result stays Int32.
+
+The initial six effect tests fail on the parent. A scoped adversarial review
+produced three additional failing alias/shadow cases, all now passing. Three
+focused HIR files pass 38 examples; the ABI guard still sees return_type Void
+and noreturn true. Fresh S1 and installed Crystal agree on four native flow
+controls (including nested-yield Tuple multi-assignment) and strict Nil-to-Int32
+rejection. Two existing FFI positives and Bool/arity rejections also agree.
+Scoped adversary: ROBUST for the selected effect and qualified alias changes.
+Refresh after extern declaration resolution, lib receiver inference or bottom
+representation changes; revert the producer, spec and native regression slice
+together. Full-prelude Process.new remains a four-second semantic failure at
+System::Process.new(Nil); nonliteral tuple-local inference is a separate next
+falsifier. Bootstrap, actual exception handling and LavinMQ parity remain open.
