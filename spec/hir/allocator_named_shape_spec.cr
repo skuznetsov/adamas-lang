@@ -26,6 +26,16 @@ private def allocator_shape_calls(converter : Adamas::HIR::AstToHir, name : Stri
   function.blocks.flat_map(&.instructions).compact_map(&.as?(Adamas::HIR::Call))
 end
 
+private def allocator_shape_constructors(converter : Adamas::HIR::AstToHir, owner : String)
+  allocator_shape_calls(converter, "probe").select do |call|
+    next false unless call.method_name.starts_with?("#{owner}.")
+    function = converter.module.function_by_name(call.method_name).not_nil!
+    # Source-bound allocators have private symbols. Test their allocation and
+    # initializer bodies rather than requiring the public `.new` spelling.
+    function.blocks.any? { |block| block.instructions.any?(&.is_a?(Adamas::HIR::Allocate)) }
+  end
+end
+
 describe "allocator identity across named and positional calls" do
   [true, false].each do |named_first|
     it "preserves both initializer bodies when named_first=#{named_first}" do
@@ -46,7 +56,7 @@ describe "allocator identity across named and positional calls" do
         end
       CRYSTAL
 
-      allocators = allocator_shape_calls(converter, "probe").select(&.method_name.starts_with?("ReaderShape.new"))
+      allocators = allocator_shape_constructors(converter, "ReaderShape")
       allocators.size.should eq(2)
       allocators.map(&.method_name).uniq.size.should eq(2)
       initializers = allocators.map do |allocator|
@@ -76,7 +86,7 @@ describe "allocator identity across named and positional calls" do
         MultiNamed.new(second: 2)
       end
     CRYSTAL
-    allocators = allocator_shape_calls(converter, "probe").select(&.method_name.starts_with?("MultiNamed.new"))
+    allocators = allocator_shape_constructors(converter, "MultiNamed")
     allocators.size.should eq(2)
     allocators.map(&.method_name).uniq.size.should eq(2)
     initializers = allocators.map do |allocator|

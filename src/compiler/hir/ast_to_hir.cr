@@ -1287,6 +1287,20 @@ module Adamas::HIR
       end
     end
 
+    # One source call owns its already evaluated argument values. Keep the
+    # source expressions for literal restrictions and diagnostics, without
+    # letting later binders evaluate them again or reread a mutable local.
+    private record LoweredCallSiteArguments,
+      node : Adamas::Compiler::Frontend::CallNode,
+      positional_values : Array(ValueId),
+      positional_sources : Array(ExprId?),
+      source_values : Hash(ExprId, ValueId),
+      terminal_value : ValueId?
+
+    private record HoistedCallSiteSplats,
+      values : Hash(Int32, ValueId),
+      terminal_value : ValueId?
+
     # Legacy resolver result. The symbol is explicit serialization, not semantic
     # identity; the T1 CallResolution contract must be produced by the semantic
     # owner rather than extending this HIR compatibility carrier.
@@ -3214,6 +3228,14 @@ module Adamas::HIR
     # Keep emitted allocator identities separate from source-defined `.new`
     # overloads when both have the same runtime shape.
     @allocator_generated_target_cache : Hash(String, String) = {} of String => String
+    # Source declaration order is recorded before lazy generic registration.
+    # The arena stays retained with the source coordinates; mangled aliases and
+    # recovered signature sidecars share the originating declaration identity.
+    @source_declaration_order = {} of Tuple(Adamas::Compiler::Frontend::ArenaLike, Int32, Int32, String, Bool) => Array(Int32)
+    @source_declaration_node_order = {} of Tuple(Adamas::Compiler::Frontend::ArenaLike, UInt64) => Array(Int32)
+    @source_declaration_order_next : Int32 = 0
+    @source_declaration_origin : Array(Int32)? = nil
+    @bound_allocator_targets = {} of Tuple(String, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike) => String
     @allocator_init_name_cache : Hash(String, String) = {} of String => String
     @allocator_init_mangled_prefix_cache : Hash(String, String) = {} of String => String
     @allocator_instance_new_name_cache : Hash(String, String) = {} of String => String
@@ -6868,6 +6890,7 @@ module Adamas::HIR
       def_node : Adamas::Compiler::Frontend::DefNode,
       arena : Adamas::Compiler::Frontend::ArenaLike,
     )
+      source_declaration_order_for(def_node, arena)
       set_function_def_entry(full_name, def_node)
       set_function_def_arena(full_name, arena)
     end
@@ -7300,6 +7323,9 @@ module Adamas::HIR
     @function_type_param_maps : Hash(String, Hash(String, String))
     # Namespace overrides for module instance methods copied into concrete classes.
     @function_namespace_overrides : Hash(String, String)
+    # An included initializer keeps its module Def and arena even when indexed
+    # under a class symbol. It does not declare a synthesized new on that class.
+    @included_initializer_def_origins = {} of Tuple(Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike) => String
 
     # Generic class templates (base name -> template)
     @generic_templates : Hash(String, GenericClassTemplate)
@@ -8530,6 +8556,11 @@ module Adamas::HIR
       # Allocator name caches
       @allocator_new_name_cache = {} of String => String
       @allocator_generated_target_cache = {} of String => String
+      @source_declaration_order = {} of Tuple(Adamas::Compiler::Frontend::ArenaLike, Int32, Int32, String, Bool) => Array(Int32)
+      @source_declaration_node_order = {} of Tuple(Adamas::Compiler::Frontend::ArenaLike, UInt64) => Array(Int32)
+      @source_declaration_order_next = 0
+      @source_declaration_origin = nil
+      @bound_allocator_targets = {} of Tuple(String, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike) => String
       @allocator_init_name_cache = {} of String => String
       @allocator_init_mangled_prefix_cache = {} of String => String
       @allocator_instance_new_name_cache = {} of String => String
@@ -14391,6 +14422,20 @@ module Adamas::HIR
       offset_ref : Pointer(Int32)? = nil,
     ) : Nil
       return if expr_id.invalid?
+      with_source_declaration_origin(@arena[expr_id], @arena) do
+        register_class_members_from_expansion_in_source_order(class_name, expr_id, defined_class_method_full_names, visited_extends, ivars, offset_ref)
+      end
+    end
+
+    private def register_class_members_from_expansion_in_source_order(
+      class_name : String,
+      expr_id : ExprId,
+      defined_class_method_full_names : Set(String),
+      visited_extends : Set(String),
+      ivars : Array(IVarInfo)? = nil,
+      offset_ref : Pointer(Int32)? = nil,
+    ) : Nil
+      return if expr_id.invalid?
       member = unwrap_visibility_member(@arena[expr_id])
       if filter = env_get("DEBUG_CLASS_EXPANSION_TRACE")
         if filter == "1" || class_name.includes?(filter)
@@ -16484,6 +16529,9 @@ module Adamas::HIR
           macro_arena,
           output,
         )
+        if origin = @source_declaration_origin
+          record_source_declaration_order(macro_arena[expanded_id], macro_arena, origin)
+        end
       end
       if env_get("DEBUG_MACRO_EXPANDED_SHAPE") && !expanded_id.invalid? && macro_name == "[]"
         expanded_node = macro_arena[expanded_id]
@@ -25674,6 +25722,9 @@ module Adamas::HIR
                         record_type_literal_return(full_name, member, member_arena)
                       end
                     end
+                    if method_name == "initialize"
+                      @included_initializer_def_origins[{member, member_arena}] = module_full_name
+                    end
                     register_function_type(full_name, return_type)
                     set_function_def_entry(full_name, member)
                     set_function_def_arena(full_name, member_arena)
@@ -31757,7 +31808,9 @@ module Adamas::HIR
                     next
                   end
                   macro_args, macro_block = extract_macro_block_from_args(member.args, member.block)
-                  expanded_id = expand_macro_expr(macro_def, macro_arena, macro_args, member.named_args, macro_block, macro_key)
+                  expanded_id = with_source_declaration_origin(member, @arena) do
+                    expand_macro_expr(macro_def, macro_arena, macro_args, member.named_args, macro_block, macro_key)
+                  end
                   unless expanded_id.invalid?
                     old_arena = @arena
                     @arena = macro_arena
@@ -31782,7 +31835,9 @@ module Adamas::HIR
                   # Already handled in PASS 1.75 to ensure type availability.
                   next
                 end
-                expanded_id = expand_macro_expr(macro_def, macro_arena, [] of ExprId, nil, nil, macro_key)
+                expanded_id = with_source_declaration_origin(member, @arena) do
+                  expand_macro_expr(macro_def, macro_arena, [] of ExprId, nil, nil, macro_key)
+                end
                 unless expanded_id.invalid?
                   old_arena = @arena
                   @arena = macro_arena
@@ -34140,6 +34195,7 @@ module Adamas::HIR
       known_arena : Adamas::Compiler::Frontend::ArenaLike? = nil,
       prefer_source_yield_scan : Bool = false,
     )
+      source_declaration_order_for(member, known_arena || @arena)
       method_name = def_method_name_from_node(member, known_arena || @arena) || return
       is_class_method = def_receiver_is_self_from_node(member, known_arena || @arena)
       base_name = if is_class_method
@@ -34642,6 +34698,18 @@ module Adamas::HIR
       offset_ref : Pointer(Int32)? = nil,
       init_capture : InitParamsCapture? = nil,
     )
+      with_source_declaration_origin(node, @arena) do
+        process_macro_if_in_class_in_source_order(node, class_name, ivars, offset_ref, init_capture)
+      end
+    end
+
+    private def process_macro_if_in_class_in_source_order(
+      node : Adamas::Compiler::Frontend::MacroIfNode,
+      class_name : String,
+      ivars : Array(IVarInfo)? = nil,
+      offset_ref : Pointer(Int32)? = nil,
+      init_capture : InitParamsCapture? = nil,
+    )
       if begin_style_body_macro?(node)
         process_begin_macro_if_in_class(node, class_name, ivars, offset_ref, init_capture)
         return
@@ -34800,6 +34868,18 @@ module Adamas::HIR
     end
 
     private def process_macro_literal_in_class(
+      node : Adamas::Compiler::Frontend::MacroLiteralNode,
+      class_name : String,
+      ivars : Array(IVarInfo)? = nil,
+      offset_ref : Pointer(Int32)? = nil,
+      init_capture : InitParamsCapture? = nil,
+    )
+      with_source_declaration_origin(node, @arena) do
+        process_macro_literal_in_class_in_source_order(node, class_name, ivars, offset_ref, init_capture)
+      end
+    end
+
+    private def process_macro_literal_in_class_in_source_order(
       node : Adamas::Compiler::Frontend::MacroLiteralNode,
       class_name : String,
       ivars : Array(IVarInfo)? = nil,
@@ -35023,6 +35103,18 @@ module Adamas::HIR
     end
 
     private def process_macro_for_in_class(
+      node : Adamas::Compiler::Frontend::MacroForNode,
+      class_name : String,
+      ivars : Array(IVarInfo)? = nil,
+      offset_ref : Pointer(Int32)? = nil,
+      init_capture : InitParamsCapture? = nil,
+    )
+      with_source_declaration_origin(node, @arena) do
+        process_macro_for_in_class_in_source_order(node, class_name, ivars, offset_ref, init_capture)
+      end
+    end
+
+    private def process_macro_for_in_class_in_source_order(
       node : Adamas::Compiler::Frontend::MacroForNode,
       class_name : String,
       ivars : Array(IVarInfo)? = nil,
@@ -39164,7 +39256,9 @@ module Adamas::HIR
                     STDERR.puts "[DEBUG_MACRO_TYPE_REG] expand name=#{method_name} in #{class_name}"
                   end
                   macro_args, macro_block = extract_macro_block_from_args(member.args, member.block)
-                  expanded_id = expand_macro_expr(macro_def, macro_arena, macro_args, member.named_args, macro_block, macro_key)
+                  expanded_id = with_source_declaration_origin(member, @arena) do
+                    expand_macro_expr(macro_def, macro_arena, macro_args, member.named_args, macro_block, macro_key)
+                  end
                   unless expanded_id.invalid?
                     old_arena = @arena
                     @arena = macro_arena
@@ -39195,7 +39289,9 @@ module Adamas::HIR
               if macro_lookup
                 macro_entry, macro_key = macro_lookup
                 macro_def, macro_arena = macro_entry
-                expanded_id = expand_macro_expr(macro_def, macro_arena, [] of ExprId, nil, nil, macro_key)
+                expanded_id = with_source_declaration_origin(member, @arena) do
+                  expand_macro_expr(macro_def, macro_arena, [] of ExprId, nil, nil, macro_key)
+                end
                 unless expanded_id.invalid?
                   old_arena = @arena
                   @arena = macro_arena
@@ -42074,11 +42170,26 @@ module Adamas::HIR
       call_has_named_args : Bool = false,
       call_has_block : Bool = false,
       call_named_arg_names : Array(String)? = nil,
+      selected_init_target : SelectedCallTarget? = nil,
     ) : String
       source_name = allocator_overload_name_for_call(
         class_name, call_arg_types, call_has_named_args, call_has_block, call_named_arg_names,
+        selected_init_target.try(&.def_node),
       )
       base_name = allocator_new_name_for(class_name)
+      if selected = selected_init_target
+        arena = selected.source_arena || resolve_arena_for_def(selected.def_node, @arena)
+        key = {source_name, selected.def_node, arena}
+        if target = @bound_allocator_targets[key]?
+          return target
+        end
+        suffix = source_name.byte_slice(base_name.bytesize) || ""
+        # Never encode addresses in emitted symbols: this ordinal is local to
+        # deterministic source lowering and keeps bootstrap IR reproducible.
+        target = "#{class_name}.__adamas_allocator_new#{suffix}_bound#{@bound_allocator_targets.size}"
+        @bound_allocator_targets[key] = target
+        return target
+      end
       return source_name if source_name == base_name
       return source_name unless @function_defs.has_key?(source_name)
       if cached = @allocator_generated_target_cache[source_name]?
@@ -42520,6 +42631,7 @@ module Adamas::HIR
       call_block_param_types : Array(TypeRef)? = nil,
       call_block_return_name : String? = nil,
       selected_initializer : Bool = false,
+      selected_init_target : SelectedCallTarget? = nil,
     )
       allocator_stats_index, allocator_stats_start = begin_lower_method_allocator_stats
       begin
@@ -42560,6 +42672,18 @@ module Adamas::HIR
       # be stale if the class was registered with empty ivars and later updated).
       if latest = @class_info[class_name]?
         class_info = latest
+      end
+
+      if selected_init_target
+        # A source-bound named call already owns its Def, arena and complete
+        # ABI slots. Emit only its private wrapper; it must not populate the
+        # shared class-wide allocator from that call's initializer selection.
+        generate_allocator_overload(
+          class_name, class_info, call_arg_types, call_has_named_args, call_has_block,
+          call_named_arg_names, call_block_node, call_block_param_types,
+          call_block_return_name, true, selected_init_target,
+        )
+        return
       end
 
       # Keep the legacy allocator body positional when this first call selects
@@ -42684,6 +42808,20 @@ module Adamas::HIR
         allocator_params,
         call_arg_types,
       )
+      if init_base = allocator_init_base_name
+        unless allocator_initializer_def_for(
+                 init_base, init_base, allocator_initializer_arg_types,
+                 false, base_allocator_has_named_args,
+                 base_allocator_has_named_args ? call_named_arg_names : nil,
+               )
+          generate_allocator_overload(
+            class_name, class_info, call_arg_types, call_has_named_args, call_has_block,
+            call_named_arg_names, call_block_node, call_block_param_types,
+            call_block_return_name, selected_initializer,
+          )
+          return
+        end
+      end
       # The base allocator body is shared by every call that reaches the bare
       # `Class.new` symbol. A block call with concrete arguments is served by
       # its own `_block` overload, so its block flag must not leak into the
@@ -43121,6 +43259,7 @@ module Adamas::HIR
       call_block_param_types : Array(TypeRef)? = nil,
       call_block_return_name : String? = nil,
       selected_initializer : Bool = false,
+      selected_init_target : SelectedCallTarget? = nil,
     ) : Nil
       return unless call_arg_types
 
@@ -43140,9 +43279,9 @@ module Adamas::HIR
       base_name = allocator_new_name_for(class_name)
       overload_name = allocator_overload_name_for_call(
         class_name, call_arg_types, call_has_named_args, call_has_block,
-        allocator_named_arg_names,
+        allocator_named_arg_names, selected_init_target.try(&.def_node),
       )
-      return if overload_name == base_name
+      return if overload_name == base_name && selected_init_target.nil?
 
       debug_string_new = env_get("DEBUG_STRING_NEW_OVERLOAD") &&
                          class_name == "String" &&
@@ -43229,15 +43368,15 @@ module Adamas::HIR
         call_arg_types,
         call_has_named_args,
         call_has_block,
-        allocator_named_arg_names,
+        allocator_named_arg_names, selected_init_target.try(&.def_node),
       )
-      return if source_overload_name == base_name
+      return if source_overload_name == base_name && selected_init_target.nil?
       overload_name = allocator_generated_target_name_for_call(
         class_name,
         call_arg_types,
         call_has_named_args,
         call_has_block,
-        allocator_named_arg_names,
+        allocator_named_arg_names, selected_init_target,
       )
       return if @module.has_function_with_body?(overload_name)
 
@@ -43246,7 +43385,7 @@ module Adamas::HIR
       # generate a custom allocator that calls __adamas_file_open to get the fd
       # instead of the wrong ptrtoint conversion.
       init_params = @init_params[class_name]? || [] of {String, TypeRef}
-      if init_params.size > 0 && class_name == "File"
+      if selected_init_target.nil? && init_params.size > 0 && class_name == "File"
         non_void_call = call_arg_types.reject { |t| t == TypeRef::VOID }
         # File.new(String, String, ...) — first two concrete args are both String
         # but initialize expects (String path, Int32 fd, String mode, ...)
@@ -43262,7 +43401,7 @@ module Adamas::HIR
       # Slice.new(size : Int32) — explicit self.new allocates memory then creates Slice.
       # Auto-allocator would wrongly map Int32 → @pointer (ptrtoint). Intercept and fix.
       init_params2 = @init_params[class_name]? || [] of {String, TypeRef}
-      if init_params2.size >= 2 && class_name.includes?("Slice")
+      if selected_init_target.nil? && init_params2.size >= 2 && class_name.includes?("Slice")
         non_void_call2 = call_arg_types.reject { |t| t == TypeRef::VOID }
         # Slice.new(Int32, ...) but init expects (Pointer, Int32, Bool)
         if non_void_call2.size >= 1 && non_void_call2[0] == TypeRef::INT32
@@ -43322,8 +43461,13 @@ module Adamas::HIR
             end
           end
         end
-        init_match = lookup_function_def_for_call(init_base, call_arg_types.size, call_has_block, call_arg_types, false, call_has_named_args, allocator_named_arg_names)
-        if init_match.nil? && !call_has_named_args && call_arg_types.size > 0
+        init_match = if selected = selected_init_target
+                       resolved_init_arena = selected.source_arena || resolve_arena_for_def(selected.def_node, @arena)
+                       {selected.symbol_name, selected.def_node}
+                     else
+                       lookup_function_def_for_call(init_base, call_arg_types.size, call_has_block, call_arg_types, false, call_has_named_args, allocator_named_arg_names)
+                     end
+        if selected_init_target.nil? && init_match.nil? && !call_has_named_args && call_arg_types.size > 0
           init_match = lookup_function_def_for_call(init_base, call_arg_types.size, call_has_block, call_arg_types, false, true, allocator_named_arg_names)
         end
         # A wrapper can forward `&block` as an explicit trailing Proc argument.
@@ -43333,7 +43477,7 @@ module Adamas::HIR
         # the ordinary Proc-parameter lookup missed and the block overload
         # matches, so real Proc-valued initializer parameters keep their normal
         # positional meaning.
-        if init_match.nil? && !call_has_block && !call_arg_types.empty? &&
+        if selected_init_target.nil? && init_match.nil? && !call_has_block && !call_arg_types.empty? &&
            proc_type_ref?(call_arg_types.last)
           forwarded_regular_types = call_arg_types[0, call_arg_types.size - 1]
           if forwarded_match = lookup_function_def_for_call(
@@ -43351,7 +43495,7 @@ module Adamas::HIR
             forwarded_initializer_block_index = call_arg_types.size - 1
           end
         end
-        if init_match.nil? || (!call_has_named_args && allocator_def_has_named_only?(init_match.not_nil![1]))
+        if selected_init_target.nil? && (init_match.nil? || (!call_has_named_args && allocator_def_has_named_only?(init_match.not_nil![1])))
           requested_init_name = if class_name.starts_with?("::") && !init_base.starts_with?("::")
                                   "::#{init_base}"
                                 else
@@ -43547,6 +43691,37 @@ module Adamas::HIR
         end
       end
 
+      bound_initializer_body_name : String? = nil
+      if selected = selected_init_target
+        source_arena = selected.source_arena || resolve_arena_for_def(selected.def_node, @arena)
+        source_owner = function_context_from_name(selected.symbol_name) || class_name
+        source_info = @class_info[source_owner]? || class_info
+        source_base = strip_type_suffix(selected.symbol_name)
+        physical_suffix = overload_name.byte_slice(class_name.bytesize + 1) || overload_name
+        body_name = "#{mangle_function_name(source_base, initializer_call_arg_types, initializer_has_block)}__#{physical_suffix}"
+        with_arena(source_arena) { register_function_def(body_name, selected.def_node, source_arena) }
+        remember_callsite_arg_types(body_name, initializer_call_arg_types, nil, nil, initializer_has_block)
+        if initializer_has_block && (blk_node = call_block_node)
+          if chosen = register_raw_callback_abi_target(
+               body_name, selected.def_node, source_arena, initializer_call_arg_types,
+               blk_node, call_block_param_types, call_block_return_name,
+               raw_callback_callsite(initializer_call_arg_types, has_named_args: call_has_named_args, named_arg_names: allocator_named_arg_names))
+            body_name = chosen
+          end
+        end
+        # Publish ivars from this exact body before freezing the wrapper's
+        # object layout and field defaults. No name-level lookup is authority.
+        rematerialize_missing_function_body(body_name) do
+          with_arena(source_arena) do
+            lower_method(source_owner, source_info, selected.def_node, initializer_call_arg_types, nil, nil, body_name)
+          end
+        end
+        bound_initializer_body_name = body_name
+        if latest = @class_info[class_name]?
+          class_info = latest
+        end
+      end
+
       func = @module.create_function(overload_name, class_info.type_ref)
       ctx = LoweringContext.new(func, @module, @arena)
 
@@ -43731,7 +43906,7 @@ module Adamas::HIR
           initializer_call_arg_types,
           true,
         )
-        init_name = matched_init_name || mangle_function_name(init_base_name, init_param_types, initializer_has_block)
+        init_name = bound_initializer_body_name || matched_init_name || mangle_function_name(init_base_name, init_param_types, initializer_has_block)
         specializes_declared_union = false
         specialization_idx = 0
         # Keep the paired scan on the arrays: the blockless each_with_index
@@ -43747,7 +43922,7 @@ module Adamas::HIR
           end
           specialization_idx += 1
         end
-        if matched_init_name &&
+        if selected_init_target.nil? && matched_init_name &&
            (matched_init_name.not_nil!.includes?("$arity") || specializes_declared_union) &&
            !init_param_types.empty? && init_param_types.none? { |t| t == TypeRef::VOID }
           typed_init_name = mangle_function_name(init_base_name, init_param_types, initializer_has_block)
@@ -43781,7 +43956,7 @@ module Adamas::HIR
                               else
                                 false
                               end
-        if matched_init_name && matched_init_name.not_nil!.includes?("$arity") &&
+        if selected_init_target.nil? && matched_init_name && matched_init_name.not_nil!.includes?("$arity") &&
            base_has_named_only && !class_name.includes?("(")
           if resolved = allocator_initializer_def_for(
                init_base_name,
@@ -43795,7 +43970,7 @@ module Adamas::HIR
             init_name = resolved_name if resolved_name.includes?("$arity")
           end
         end
-        if allocator_initializer_base_request?(init_name, init_base_name) && !call_has_named_args
+        if selected_init_target.nil? && allocator_initializer_base_request?(init_name, init_base_name) && !call_has_named_args
           if resolved = allocator_initializer_def_for(
                init_base_name,
                init_name,
@@ -43811,7 +43986,7 @@ module Adamas::HIR
         # runtime parameter types coincide. Materialize the selected body under
         # the same canonical shape identity as its allocator so two named-only
         # definitions with identical types cannot share a lowered initializer.
-        if call_has_named_args && matched_init_def && allocator_def_has_named_only?(matched_init_def.not_nil!)
+        if selected_init_target.nil? && call_has_named_args && matched_init_def && allocator_def_has_named_only?(matched_init_def.not_nil!)
           if shape_suffix = allocator_named_shape_suffix(allocator_named_arg_names)
             init_base_mangled = mangle_function_name(init_base_name, init_param_types, initializer_has_block)
             init_name = "#{init_base_mangled}_#{shape_suffix}"
@@ -43829,15 +44004,14 @@ module Adamas::HIR
                                    else
                                      param_ids.dup
                                    end
-        init_call_args, _, _ = apply_default_args(
-          ctx,
-          forwarded_init_param_ids,
-          init_base_name,
-          init_name,
-          initializer_has_block,
-          call_has_named_args,
-          alloc.id
-        )
+        init_call_args = if selected_init_target
+                           forwarded_init_param_ids
+                         else
+                           apply_default_args(
+                             ctx, forwarded_init_param_ids, init_base_name, init_name,
+                             initializer_has_block, call_has_named_args, alloc.id,
+                           )[0]
+                         end
         init_call_args.each_with_index do |arg_id, index|
           actual_type = ctx.type_of(arg_id)
           if index >= init_param_types.size
@@ -43891,7 +44065,8 @@ module Adamas::HIR
             end
           end
           if init_def
-            init_arena = @function_def_arenas[init_def_name]? || @function_def_arenas[init_base_name]?
+            init_arena = selected_init_target.try(&.source_arena) ||
+                         @function_def_arenas[init_def_name]? || @function_def_arenas[init_base_name]?
             init_arena ||= resolve_arena_for_def(init_def, @arena)
             callsite_types = init_param_types.empty? ? nil : init_param_types
             with_arena(init_arena) do
@@ -52397,6 +52572,9 @@ module Adamas::HIR
         module_owner,
         store_base: false,
       )
+      if method_name == "initialize"
+        @included_initializer_def_origins[{found[0], found[1]}] = module_owner
+      end
       set_function_def_entry(included_target_name, found[0], false)
       set_function_def_arena(included_target_name, found[1])
       {included_target_name, found[0]}
@@ -88229,24 +88407,12 @@ module Adamas::HIR
             end
           end
           if module_method_base
-            full_name = mangle_function_name(module_method_base, [] of TypeRef)
-            return_type = @function_types[full_name]? || @function_types[module_method_base]? || TypeRef::VOID
-            lower_function_if_needed(full_name)
-            if return_type == TypeRef::VOID
-              force_pending_call_targets_for_return_type(full_name, context: "bare_class")
-              return_type = get_function_return_type(full_name)
-              if return_type == TypeRef::VOID && full_name != module_method_base
-                return_type = get_function_return_type(module_method_base)
-              end
-            end
-            call = Call.without_receiver(ctx.next_id, return_type, full_name, [] of ValueId)
-            ctx.emit(call)
-            ctx.register_type(call.id, return_type)
-            if function_returns_type_literal?(full_name, module_method_base)
-              ctx.mark_type_literal(call.id)
-            end
-            track_enum_return_value(call.id, full_name, return_type)
-            return call.id
+            # Source spelling without parentheses is still a zero-argument
+            # call. Share selection, admission and default expansion with
+            # `name()` instead of emitting a name-only call that bypasses them.
+            callee_id = @arena.add(node)
+            bare_call = Adamas::Compiler::Frontend::CallNode.new(node.span, callee_id, [] of ExprId)
+            return lower_call(ctx, bare_call)
           end
         end
       end
@@ -105275,6 +105441,52 @@ module Adamas::HIR
       end
     end
 
+    # Built-in class getters have an accessor declaration and a generated HIR
+    # body, but no DefNode for the source overload resolver. Their exact shape
+    # is still source evidence; an absent selected Def is not a failed overload.
+    # An explicit Def with the same call shape retains resolver authority;
+    # overloads with other arities do not erase the getter signature.
+    private def generated_class_getter_accepts_call_shape?(
+      name : String,
+      arg_count : Int32,
+      has_block : Bool,
+      has_splat : Bool,
+      has_named : Bool,
+    ) : Bool
+      return false unless arg_count == 0 && !has_block && !has_splat && !has_named
+      !generated_class_getter_entry_for_name(name).nil?
+    end
+
+    private def generated_class_getter_entry_for_name(name : String) : ClassAccessorEntry?
+      parts = parse_method_name_compact(name)
+      method_name = parts.method
+      return nil unless parts.separator == '.' && method_name
+      current = normalize_method_owner_name(parts.owner)
+      visited = Set(String).new
+      loop do
+        break unless visited.add?(current)
+        base_name = "#{current}.#{method_name}"
+        input = CallResolutionInput.new(base_name, 0, [] of TypeRef, false, false, false, nil)
+        candidates = function_def_overload_keys(base_name)
+        # A same-shape explicit Def owns this signature. Different arities
+        # remain overloads and must not erase an inherited zero-arg getter.
+        if exact_def = @function_defs[base_name]?
+          return nil if call_target_matches_call_shape?(input, exact_def)
+        end
+        return nil if candidates.any? do |candidate|
+          definition = @function_defs[candidate]?
+          definition && call_target_matches_call_shape?(input, definition)
+        end
+        if entry = @class_accessor_entries[base_name]?
+          return entry.kind == :getter ? entry : nil
+        end
+        parent = parent_name_for_hierarchy_lookup(current)
+        break unless parent
+        current = normalize_method_owner_name(parent)
+      end
+      nil
+    end
+
     private def maybe_generate_class_accessor_for_name(name : String) : Bool
       return false unless v2_string_readable?(name)
 
@@ -105283,12 +105495,26 @@ module Adamas::HIR
         base_name = strip_type_suffix(name)
         entry = @class_accessor_entries[base_name]?
       end
+      # The declaration owns its AST and lexical namespace. Crystal gives an
+      # inherited class variable separate storage in the concrete receiver,
+      # so materialize the accessor for that receiver rather than forwarding
+      # to the declaring parent's storage.
+      if entry.nil? && name == strip_type_suffix(name)
+        entry = generated_class_getter_entry_for_name(name)
+      end
       return false unless entry
 
       with_arena(entry.arena) do
         case entry.kind
         when :getter
-          generate_class_getter_method(entry.owner, entry.spec, entry.arena)
+          receiver_owner = parse_method_name_compact(strip_type_suffix(name)).owner
+          with_namespace_override(entry.owner) do
+            generate_class_getter_method(receiver_owner, entry.spec, entry.arena)
+          end
+          requested_name = mangle_function_name(strip_type_suffix(name), [] of TypeRef)
+          if function = @module.function_by_name(requested_name)
+            register_function_type(requested_name, function.return_type)
+          end
         when :setter
           generate_class_setter_method(entry.owner, entry.spec)
         end
@@ -105669,56 +105895,206 @@ module Adamas::HIR
       ctx.type_literal?(first_arg.not_nil!)
     end
 
-    # `f(a, **nt)` passes each entry of the NamedTuple `nt` as a named
-    # argument, as in the original compiler. Once the operand's layout is
-    # known, rewrite the call to `f(a, k: nt[:k], ...)` so overload selection
-    # and ABI binding see the entry names instead of one positional NamedTuple.
-    # Only a variable operand is rewritten: reading it once per entry is pure
-    # and keeps the source evaluation order of the other arguments.
-    private def expand_call_site_double_splat(
+    # Macro inputs are AST data. Crystal expands a matching macro before
+    # preparing splat temporaries, so no supplied expression may execute first.
+    # Use the same scoped/inherited lookup and mandatory-parameter admission as
+    # the ordinary bare/type-receiver paths below.
+    private def expand_double_splat_source_macro(
       ctx : LoweringContext,
       node : Adamas::Compiler::Frontend::CallNode,
       call_arena : Adamas::Compiler::Frontend::ArenaLike,
-    ) : Adamas::Compiler::Frontend::CallNode?
-      splat_index = node.args.index do |arg_id|
-        arg_node = call_arena[arg_id]
-        arg_node.is_a?(Adamas::Compiler::Frontend::SplatNode) && arg_node.double?
-      end
-      return nil unless splat_index
-      splat = call_arena[node.args[splat_index]].as(Adamas::Compiler::Frontend::SplatNode)
-      operand = splat.expr
-      return nil if operand.invalid?
-      case operand_node = call_arena[operand]
+    ) : ValueId?
+      callee = call_arena[node.callee]
+      method_name = ""
+      qualified_owner : String? = nil
+      case callee
       when Adamas::Compiler::Frontend::IdentifierNode
-        return nil unless ctx.lookup_local(safe_slice_to_string(operand_node.name) || "")
-      when Adamas::Compiler::Frontend::InstanceVarNode
+        method_name = identifier_name_text(callee, call_arena)
+        if method_name.includes?('.')
+          qualified_owner = method_owner(method_name)
+          method_name = method_short_from_name(method_name) || method_name
+          qualified_owner = resolve_path_string_in_context(qualified_owner.not_nil!)
+        end
+      when Adamas::Compiler::Frontend::MemberAccessNode
+        method_name = member_access_name_text(callee)
+        receiver_node = call_arena[callee.object]
+        return nil unless receiver_node.is_a?(Adamas::Compiler::Frontend::PathNode) ||
+                          receiver_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
+        qualified_owner = with_typeof_local_bindings(ctx) do
+          with_arena(call_arena) { infer_type_literal_name_from_expr(callee.object) }
+        end
+        return nil unless qualified_owner
       else
         return nil
       end
-
-      operand_type = with_arena(call_arena) { ctx.type_of(lower_expr(ctx, operand)) }
-      info = split_generic_base_and_args(get_type_name_from_ref(operand_type))
-      return nil unless info && info.base == "NamedTuple"
-      keys = [] of String
-      split_generic_type_args(info.args).each do |entry|
-        parsed = split_named_tuple_entry(entry)
-        return nil unless parsed
-        keys << parsed[0]
+      macro_lookup = if owner = qualified_owner
+                       lookup_macro_entry_with_inheritance(method_name, owner, allow_global: false)
+                     elsif current_scope = @current_class
+                       lookup_macro_entry_with_inheritance(method_name, current_scope)
+                     else
+                       lookup_macro_entry(method_name, nil) || lookup_macro_entry(method_name, "Object")
+                     end
+      return nil unless macro_lookup
+      args = node.args
+      block_expr = node.block
+      if block_expr.nil? && (last_id = args.last?)
+        last_node = call_arena[last_id]
+        if last_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
+          block_expr = last_id
+          args = args[0...-1]
+        elsif last_node.is_a?(Adamas::Compiler::Frontend::UnaryNode) &&
+              (safe_slice_to_string(last_node.operator) || "") == "&" &&
+              call_arena[last_node.operand].is_a?(Adamas::Compiler::Frontend::BlockNode)
+          block_expr = last_node.operand
+          args = args[0...-1]
+        end
       end
-
-      named = node.named_args.try(&.dup) || [] of Adamas::Compiler::Frontend::NamedArgument
-      keys.each do |key|
-        symbol = call_arena.add_typed(Adamas::Compiler::Frontend::SymbolNode.new(splat.span, key.to_slice))
-        value = call_arena.add_typed(Adamas::Compiler::Frontend::IndexNode.new(splat.span, operand, [symbol]))
-        named << Adamas::Compiler::Frontend::NamedArgument.new(key.to_slice, value, splat.span, splat.span)
-      end
-      args = node.args.dup
-      args.delete_at(splat_index)
-      if named.empty?
-        Adamas::Compiler::Frontend::CallNode.new(node.span, node.callee, args, node.block)
+      return nil if macro_call_misses_mandatory_param?(macro_lookup[0][0], call_arena, args, node.named_args)
+      macro_entry, macro_key = macro_lookup
+      macro_def, macro_arena = macro_entry
+      if owner = qualified_owner
+        expand_macro_for_owner(ctx, macro_def, macro_arena, args, node.named_args, block_expr, macro_key, owner)
       else
-        Adamas::Compiler::Frontend::CallNode.new(node.span, node.callee, args, node.block, named)
+        expand_macro(ctx, macro_def, macro_arena, args, node.named_args, block_expr, macro_key)
       end
+    end
+
+    # Match Crystal::MainVisitor#replace_call_splats: complex * and ** operands
+    # become temporaries before the receiver and ordinary arguments. Simple
+    # variable operands are deliberately not hoisted; an earlier actual may
+    # reassign one to a different layout before its own evaluation point.
+    private def hoist_call_site_splat_operands(
+      ctx : LoweringContext,
+      node : Adamas::Compiler::Frontend::CallNode,
+      call_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : HoistedCallSiteSplats
+      values = {} of Int32 => ValueId
+      terminal : ValueId? = nil
+      node.args.each_with_index do |arg_id, index|
+        splat = call_arena[arg_id]
+        next unless splat.is_a?(Adamas::Compiler::Frontend::SplatNode)
+        operand = call_arena[splat.expr]
+        simple_variable = case operand
+                          when Adamas::Compiler::Frontend::InstanceVarNode,
+                               Adamas::Compiler::Frontend::ClassVarNode,
+                               Adamas::Compiler::Frontend::GlobalNode
+                            true
+                          when Adamas::Compiler::Frontend::IdentifierNode
+                            name = safe_slice_to_string(operand.name) || ""
+                            !!(ctx.lookup_local(name) || inline_caller_local_id(name))
+                          else
+                            false
+                          end
+        next if simple_variable
+        value = with_arena(call_arena) { lower_expr(ctx, splat.expr) }
+        values[index] = value
+        if control_flow_dead_block?(ctx, ctx.current_block)
+          terminal = value
+          break
+        end
+      end
+      HoistedCallSiteSplats.new(values, terminal)
+    end
+
+    # At the argument boundary, expand each double splat from its captured
+    # operand. Receiver and earlier ordinary actuals have already executed;
+    # complex operands retain the separate pre-call hoisting contract above.
+    private def lower_call_site_double_splat(
+      ctx : LoweringContext,
+      node : Adamas::Compiler::Frontend::CallNode,
+      positional_args : Array(ExprId),
+      call_arena : Adamas::Compiler::Frontend::ArenaLike,
+      hoisted_splats : HoistedCallSiteSplats?,
+    ) : LoweredCallSiteArguments?
+      return nil unless hoisted_splats
+      args = [] of ExprId
+      named = [] of Adamas::Compiler::Frontend::NamedArgument
+      values = [] of ValueId
+      positional_sources = [] of ExprId?
+      source_values = {} of ExprId => ValueId
+      terminal : ValueId? = nil
+      positional_args.each_with_index do |arg_id, occurrence_index|
+        splat = call_arena[arg_id]
+        unless splat.is_a?(Adamas::Compiler::Frontend::SplatNode) && splat.double?
+          occurrence = call_arena.add_typed(splat)
+          args << occurrence
+          if hoisted = hoisted_splats.values[occurrence_index]?
+            descriptor = @module.get_type_descriptor(ctx.type_of(hoisted))
+            unless descriptor && descriptor.kind == TypeKind::Tuple
+              raise LoweringError.new("argument to splat must be a tuple, not #{get_type_name_from_ref(ctx.type_of(hoisted))}", splat)
+            end
+            lowered = descriptor.type_params.map_with_index do |element_type, index|
+              emit_named_tuple_literal_element(ctx, hoisted, {index.to_i32, element_type})
+            end
+          else
+            lowered = expand_splat_args(ctx, [arg_id], call_arena)
+          end
+          values.concat(lowered)
+          # A Tuple projection is a typed value, even when its initializer
+          # contained a literal. Only an unsplatted source occurrence retains
+          # integer-literal conversion privileges.
+          source_expr = splat.is_a?(Adamas::Compiler::Frontend::SplatNode) ? nil : occurrence
+          lowered.size.times { positional_sources << source_expr }
+          source_values[occurrence] = lowered[0] if lowered.size == 1
+          if control_flow_dead_block?(ctx, ctx.current_block)
+            terminal = lowered.last?
+            break
+          end
+          next
+        end
+        operand = splat.expr
+        value = hoisted_splats.values[occurrence_index]? || with_arena(call_arena) { lower_expr(ctx, operand) }
+        if control_flow_dead_block?(ctx, ctx.current_block)
+          terminal = value
+          break
+        end
+        operand_type = ctx.type_of(value)
+        operand_name = get_type_name_from_ref(operand_type)
+        next if operand_name == "NamedTuple" # The empty NamedTuple.
+        info = split_generic_base_and_args(operand_name)
+        unless info && info.base == "NamedTuple"
+          raise LoweringError.new("argument to double splat must be a named tuple, not #{operand_name}", splat)
+        end
+        split_generic_type_args(info.args).each_with_index do |entry, index|
+          parsed = split_named_tuple_entry(entry)
+          raise LoweringError.new("invalid named tuple entry #{entry}", splat) unless parsed
+          key = parsed[0]
+          # Each source occurrence owns a fresh projection id, including when
+          # a synthetic producer reuses its original ExprId. These nodes carry
+          # diagnostics only; all consumers use this call's captured value.
+          symbol = call_arena.add_typed(Adamas::Compiler::Frontend::SymbolNode.new(splat.span, key.to_slice))
+          projection = call_arena.add_typed(Adamas::Compiler::Frontend::IndexNode.new(splat.span, operand, [symbol]))
+          element_type = type_ref_for_name(parsed[1])
+          field = emit_named_tuple_literal_element(ctx, value, {index.to_i32, element_type})
+          source_values[projection] = field
+          named << Adamas::Compiler::Frontend::NamedArgument.new(key.to_slice, projection, splat.span, splat.span)
+        end
+      end
+      unless terminal
+        if explicit_named = node.named_args
+          explicit_named.each do |argument|
+            occurrence = call_arena.add_typed(call_arena[argument.value])
+            named << Adamas::Compiler::Frontend::NamedArgument.new(argument.name, occurrence, argument.name_span, argument.value_span)
+            value = with_arena(call_arena) { lower_expr(ctx, argument.value) }
+            source_values[occurrence] = value
+            if control_flow_dead_block?(ctx, ctx.current_block)
+              terminal = value
+              break
+            end
+          end
+        end
+        seen_names = Set(String).new
+        named.each do |argument|
+          name = safe_slice_to_string(argument.name) || ""
+          raise LoweringError.new("duplicate key: #{name}", node) unless seen_names.add?(name)
+        end
+      end
+      rewritten = if named.empty?
+                    Adamas::Compiler::Frontend::CallNode.new(node.span, node.callee, args, node.block)
+                  else
+                    Adamas::Compiler::Frontend::CallNode.new(node.span, node.callee, args, node.block, named)
+                  end
+      LoweredCallSiteArguments.new(rewritten, values, positional_sources, source_values, terminal)
     end
 
     private def lower_call(
@@ -105734,8 +106110,13 @@ module Adamas::HIR
       debug_lower_call_arena_phase(ctx, node, "call_arena_set", call_arena)
       debug_lower_call_arena_expr(ctx, node, "call_arena.callee", node.callee, call_arena, "lower_call.call")
 
-      if expanded = expand_call_site_double_splat(ctx, node, call_arena)
-        return lower_call(ctx, expanded, expr_id)
+      hoisted_call_splats : HoistedCallSiteSplats? = nil
+      if node.args.any? { |arg| (splat = call_arena[arg]).is_a?(Adamas::Compiler::Frontend::SplatNode) && splat.double? }
+        if macro_value = expand_double_splat_source_macro(ctx, node, call_arena)
+          return macro_value
+        end
+        hoisted_call_splats = hoist_call_site_splat_operands(ctx, node, call_arena)
+        return hoisted_call_splats.terminal_value.not_nil! if hoisted_call_splats.terminal_value
       end
 
       call_named_arg_names = named_arg_names_for(node.named_args)
@@ -105928,14 +106309,18 @@ module Adamas::HIR
         if current_is_class && (current = @current_class) && method_name == "new"
           full_method_name = "#{current}.#{method_name}"
           static_class_name = current
-          prefer_allocator_new_call = true
-          constructor_arg_binding_name = resolve_method_with_inheritance(current, "initialize") || "#{current}#initialize"
+          unless class_method_declared_in_ancestry?(current, "new")
+            prefer_allocator_new_call = true
+            constructor_arg_binding_name = resolve_method_with_inheritance(current, "initialize") || "#{current}#initialize"
+          end
         end
         if @current_method == "new" && (current = @current_class) && method_name == "new"
           full_method_name = "#{current}.#{method_name}"
           static_class_name = current
-          prefer_allocator_new_call = true
-          constructor_arg_binding_name = resolve_method_with_inheritance(current, "initialize") || "#{current}#initialize"
+          unless class_method_declared_in_ancestry?(current, "new")
+            prefer_allocator_new_call = true
+            constructor_arg_binding_name = resolve_method_with_inheritance(current, "initialize") || "#{current}#initialize"
+          end
         end
         # Bare `new()` inside constant initialization (e.g., Time::Location::UTC = new("UTC", ...))
         # @current_class is set by deferred constant init processing but current_is_class
@@ -105961,8 +106346,10 @@ module Adamas::HIR
             method_name = method_short_from_name(method_name) || method_name
             full_method_name = "#{resolved_owner}.#{method_name}"
             if method_name == "new"
-              prefer_allocator_new_call = true
-              constructor_arg_binding_name = resolve_method_with_inheritance(resolved_owner, "initialize") || "#{resolved_owner}#initialize"
+              unless class_method_declared_in_ancestry?(resolved_owner, "new")
+                prefer_allocator_new_call = true
+                constructor_arg_binding_name = resolve_method_with_inheritance(resolved_owner, "initialize") || "#{resolved_owner}#initialize"
+              end
             end
           end
         end
@@ -107797,7 +108184,11 @@ module Adamas::HIR
               elsif method_name != "new" && !call_has_splat && !call_has_named_args &&
                     call_arg_types.size == call_args.size &&
                     call_arg_types.all? { |t| t != TypeRef::VOID && !is_union_type?(t) && !unresolved_generic_return_type?(t) && !noreturn_type?(t) } &&
-                    class_method_declared_in_ancestry?(class_name_str, method_name)
+                    class_method_declared_in_ancestry?(class_name_str, method_name) &&
+                    !generated_class_getter_accepts_call_shape?(
+                      full_method_name, call_arg_types.size, has_block_call,
+                      call_has_splat, call_has_named_args,
+                    )
                 actual_names = call_arg_types.map { |type| get_type_name_from_ref(type) }.join(", ")
                 block_suffix = has_block_call ? " with block" : ""
                 raise LoweringError.new(
@@ -108526,6 +108917,17 @@ module Adamas::HIR
         return receiver_id.not_nil!
       end
 
+      # Receiver evaluation has completed. Capture double-splat source values
+      # before selecting/reordering named ABI slots; the callee sees each source
+      # expression exactly once, even if earlier actuals reassign later operands.
+      lowered_call_arguments = lower_call_site_double_splat(ctx, node, call_args, call_arena, hoisted_call_splats)
+      if lowered_call_arguments
+        return lowered_call_arguments.terminal_value.not_nil! if lowered_call_arguments.terminal_value
+        node = lowered_call_arguments.node
+        call_args = node.args
+        call_named_arg_names = named_arg_names_for(node.named_args)
+      end
+
       # Handle named arguments by reordering them to match parameter positions
       # Also expand splat arguments (*array -> individual elements)
       has_named_args = !node.named_args.nil?
@@ -108558,6 +108960,7 @@ module Adamas::HIR
       arg_binding_full_method_name = constructor_arg_binding_name || full_method_name
       arg_lowering_arena : Adamas::Compiler::Frontend::ArenaLike = call_arena || @arena
       source_named_entry : Tuple(String, Adamas::Compiler::Frontend::DefNode)? = nil
+      source_initializer_entry : SelectedCallTarget? = nil
       source_default_entry : Tuple(String, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike)? = nil
       source_named_rest_packed = false
       args = with_arena(call_arena) do
@@ -108572,7 +108975,7 @@ module Adamas::HIR
           STDERR.puts "[SPLAT_TRACE_ARGS] #{@last_splat_context || "func=#{ctx.function.name}"} args=#{kinds.join(",")}"
         end
         args_result = if named_args = node.named_args
-                        reordered = reorder_named_args(ctx, call_args, named_args, method_name, arg_binding_full_method_name, has_block_call, receiver_id, call_arena)
+                        reordered = reorder_named_args(ctx, call_args, named_args, method_name, arg_binding_full_method_name, has_block_call, receiver_id, call_arena, lowered_call_arguments)
                         # An allocator consumes the selected initializer's
                         # slots, but its physical target remains the allocator.
                         if selected_binding = reordered[1]
@@ -108580,12 +108983,19 @@ module Adamas::HIR
                             prefer_allocator_new_call = true
                             constructor_arg_binding_name = strip_type_suffix(selected_binding[0])
                             arg_binding_full_method_name = constructor_arg_binding_name
+                            source_arena = @function_def_arenas[selected_binding[0]]? ||
+                                           resolve_arena_for_def(selected_binding[1], call_arena)
+                            source_initializer_entry = SelectedCallTarget.new(
+                              selected_binding[0], selected_binding[1], source_arena,
+                            )
                           else
                             source_named_entry = selected_binding unless constructor_arg_binding_name
                           end
                         end
                         source_named_rest_packed = reordered[2]
                         reordered[0]
+                      elsif lowered_call_arguments
+                        lowered_call_arguments.positional_values
                       elsif has_splat
                         expand_splat_args(ctx, call_args, call_arena)
                       elsif lowered_arg = prelowered_puts_arg_id
@@ -108623,7 +109033,9 @@ module Adamas::HIR
       # would materialize an unused full-shape `.new` overload and then split its
       # union arguments into concrete initializer bodies. Keep the source call
       # shape and let the allocator wrapper evaluate each default exactly once.
-      args, has_named_args, default_arg_entry_name = if source_named_entry
+      args, has_named_args, default_arg_entry_name = if source_initializer_entry
+                                                       {args, has_named_args, source_initializer_entry.symbol_name}
+                                                     elsif source_named_entry
                                                        {args, has_named_args, source_named_entry[0]}
                                                      elsif constructor_arg_binding_name &&
                                                         !has_named_args && !has_splat && !has_block_call
@@ -110399,7 +110811,11 @@ module Adamas::HIR
       # canonicalized, and the resolver is called exactly once. Other lookup sites
       # still use the legacy tuple adapter; cache keys and materialization are
       # unchanged.
-      m3e_input = admitted_self_dispatch_root.nil? && v2_string_readable?(lookup_name) ? CallResolutionInput.new(
+      # The named binder already admitted this exact initializer and filled
+      # its ABI slots. Reinterpreting them as positional `.new` source actuals
+      # can select an unrelated factory or reject a valid named-only argument.
+      # Keep its source target separate from the generated allocator body.
+      m3e_input = source_initializer_entry.nil? && admitted_self_dispatch_root.nil? && v2_string_readable?(lookup_name) ? CallResolutionInput.new(
         func_name: lookup_name,
         arg_count: args.size,
         arg_types: arg_types,
@@ -110407,6 +110823,7 @@ module Adamas::HIR
         has_splat: has_splat,
         has_named: has_named_args,
         named_names: canonical_named_arg_names(call_named_arg_names),
+        raw_positional_count: has_named_args ? raw_call_positional_count : nil,
       ) : nil
       if receiver_id &&
          abi_guard_explicit_arg_count > 0 &&
@@ -110439,7 +110856,7 @@ module Adamas::HIR
           end
         end
       end
-      semantic_target = expr_id.invalid? ? nil : semantic_call_target(expr_id, lookup_name)
+      semantic_target = source_initializer_entry || expr_id.invalid? ? nil : semantic_call_target(expr_id, lookup_name)
       if semantic_target && m3e_input && !call_target_matches_call_shape?(m3e_input, semantic_target.def_node)
         semantic_target = nil
       end
@@ -110461,6 +110878,25 @@ module Adamas::HIR
                           semantic_target
                         end
       selected_target ||= (m3e_input ? resolve_call_target(m3e_input, source_call_rejections) : nil)
+      # An implicit class receiver has the same source admission boundary as
+      # `Owner.method`. Do not resurrect a rejected call through the later
+      # name-only yield shortcuts, even when its unused formals disappear
+      # completely during inline expansion.
+      if selected_target.nil? && receiver_id.nil? &&
+         (source_class_owner = static_class_name) && method_name != "new" &&
+         !has_splat && !has_named_args &&
+         arg_types.all? { |type| type != TypeRef::VOID && !is_union_type?(type) &&
+                                 !unresolved_generic_return_type?(type) && !noreturn_type?(type) } &&
+         class_method_declared_in_ancestry?(source_class_owner, method_name) &&
+         !generated_class_getter_accepts_call_shape?(
+           lookup_name, args.size, has_block_call, has_splat, has_named_args,
+         )
+        block_suffix = has_block_call ? " with a block" : ""
+        raise LoweringError.new(
+          "no overload matches '#{source_class_owner}.#{method_name}' with types #{arg_types.map { |type| get_type_name_from_ref(type) }.join(", ")}#{block_suffix}",
+          node,
+        )
+      end
       if env_get("DEBUG_JOIN_PICK") && lookup_name.includes?("join")
         STDERR.puts "[JOIN_SRC] src=#{semantic_target ? "semantic" : (selected_target ? "resolver" : "none")} " \
                     "sym=#{selected_target.try(&.symbol_name) || "nil"} lookup=#{lookup_name} " \
@@ -110509,6 +110945,9 @@ module Adamas::HIR
                 module_owner,
                 store_base: false,
               )
+              if method_name == "initialize"
+                @included_initializer_def_origins[{found[0], found[1]}] = module_owner
+              end
               set_function_def_entry(included_target_name, found[0], false)
               set_function_def_arena(included_target_name, found[1])
               selected_target = SelectedCallTarget.new(included_target_name, found[0])
@@ -111028,6 +111467,7 @@ module Adamas::HIR
               call_block_param_types: alloc_block.try(&.[1]),
               call_block_return_name: alloc_block.try(&.[2]),
               selected_initializer: prefer_allocator_new_call,
+              selected_init_target: source_initializer_entry,
             )
             allocator_call_shape_target = allocator_generated_target_name_for_call(
               class_name,
@@ -111035,6 +111475,7 @@ module Adamas::HIR
               allocator_has_named_args,
               !!has_block_call,
               call_named_arg_names,
+              source_initializer_entry,
             )
             if has_block_call && !has_unknown_arg_types
               generated_block_name = mangle_function_name(full_method_name, arg_types, true)
@@ -112311,13 +112752,20 @@ module Adamas::HIR
         end
       end
       if !has_block_call && !has_splat && !has_named_args
-        final_def = selected_call_entry_def || @function_defs[mangled_method_name]?
+        final_def = source_initializer_entry.try(&.def_node) ||
+                    selected_call_entry_def || @function_defs[mangled_method_name]?
         final_context = function_context_for_lookup_candidate(
-          lookup_name, selected_call_entry_name || mangled_method_name,
+          lookup_name, source_initializer_entry.try(&.symbol_name) || selected_call_entry_name || mangled_method_name,
         )
         candidate_scope = enter_lookup_candidate_scope(final_context)
         begin
-          source_rejection = final_def ? source_generic_argument_mismatch_for_def(final_def, arg_types, final_context) : nil
+          source_rejection = if initializer = source_initializer_entry
+                               with_arena(initializer.source_arena || call_arena) do
+                                 source_generic_argument_mismatch_for_def(initializer.def_node, arg_types, final_context)
+                               end
+                             else
+                               final_def ? source_generic_argument_mismatch_for_def(final_def, arg_types, final_context) : nil
+                             end
           if prior_rejection = source_call_rejections.first?
             # A later owner-aware rematch may legitimately find a different Def.
             # It must establish compatibility before superseding a typed rejection.
@@ -117866,12 +118314,14 @@ module Adamas::HIR
       call_arena : Adamas::Compiler::Frontend::ArenaLike,
       extern_func : ExternFunction? = nil,
       parameter_offset : Int32 = 0,
+      source_slot_exprs : Array(ExprId?)? = nil,
     ) : Array(ValueId)
       result = [] of ValueId
 
       old_arena = @arena
       begin
         arg_exprs.each do |arg_expr|
+          source_slot_start = result.size
           @arena = call_arena
           if env_get("DEBUG_SPLAT_ARENA")
             inline_desc = if arenas = @inline_arenas
@@ -117890,6 +118340,7 @@ module Adamas::HIR
             nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
             ctx.emit(nil_lit)
             result << nil_lit.id
+            source_slot_exprs.try(&.push(nil))
             next
           end
           arg_node = @arena[arg_expr]
@@ -117901,6 +118352,7 @@ module Adamas::HIR
               nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
               ctx.emit(nil_lit)
               result << nil_lit.id
+              source_slot_exprs.try(&.push(nil))
               next
             end
             @arena = call_arena
@@ -117999,6 +118451,10 @@ module Adamas::HIR
             if env_get("DEBUG_SPLAT_TRACE")
               STDERR.puts "[SPLAT_TRACE_DONE] expr=#{arg_expr.index}"
             end
+          end
+          if source_slot_exprs
+            source_expr = arg_node.is_a?(Adamas::Compiler::Frontend::SplatNode) ? nil : arg_expr
+            (result.size - source_slot_start).times { source_slot_exprs << source_expr }
           end
           @arena = call_arena
         end
@@ -119540,19 +119996,32 @@ module Adamas::HIR
       )
     end
 
-    # A resolved Def is admissible only for the original named-argument shape.
-    # This final check protects memoized and compatibility return paths that may
-    # otherwise bypass overload candidate validation.
+    # Every selected Def must accept the source call shape. Semantic targets,
+    # direct symbol hits and memo entries can bypass the normal scorer; none
+    # may bypass arity or block admission. Read the exact Def, not name-level
+    # parameter caches that may describe another overload in the same family.
     private def call_target_matches_call_shape?(input : CallResolutionInput, def_node : Adamas::Compiler::Frontend::DefNode) : Bool
-      return true unless input.has_named
-      named_names = input.named_names
-      return false unless named_names
+      stats = build_param_stats(def_node)
+      unless stats.has_block
+        source_arena = registered_arena_for_def(def_node) || resolve_arena_for_def(def_node, @arena)
+        stats = block_accepting_param_stats(stats) if def_contains_yield?(def_node, source_arena)
+      end
+      return false unless input.has_block == stats.has_block
 
-      arg_count = if raw_positional_count = input.raw_positional_count
-                    raw_positional_count + named_names.size
+      named_names = input.named_names
+      return false if input.has_named && named_names.nil?
+
+      arg_count = if input.has_named && (raw_positional_count = input.raw_positional_count)
+                    raw_positional_count + named_names.not_nil!.size
                   else
                     input.arg_count
                   end
+      maximum, required, splat, double_splat, skip = effective_arity_stats_for_call(stats, input.has_named)
+      return false if skip || arg_count < required
+      return false if arg_count > maximum && !splat && !double_splat
+      return true unless input.has_named
+
+      named_names = named_names.not_nil!
       positional_arg_count = arg_count - named_names.size +
                              packed_double_splat_key_count(input.arg_types, named_names)
       positional_arg_count = 0 if positional_arg_count < 0
@@ -119753,6 +120222,228 @@ module Adamas::HIR
       target = resolve_call_target(input)
       return nil unless target
       {target.symbol_name, target.def_node}
+    end
+
+    # Record accepted source roots in ordered collection before lazy generic
+    # registration. Generated class members inherit the macro invocation path,
+    # so their relative order survives arena changes and registration replay.
+    def record_source_declaration_order(
+      node : Adamas::Compiler::Frontend::Node,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+      parent : Array(Int32)? = nil,
+    ) : Nil
+      node = unwrap_visibility_member_in_arena(node, arena)
+      key = {arena, node.object_id.to_u64}
+      return if @source_declaration_node_order.has_key?(key)
+      order = (parent || [] of Int32) + [@source_declaration_order_next]
+      @source_declaration_order_next += 1
+      @source_declaration_node_order[key] = order
+      children = [] of ExprId
+      case node
+      when Adamas::Compiler::Frontend::DefNode
+        @source_declaration_order[source_declaration_key(node, arena)] = order
+      when Adamas::Compiler::Frontend::ClassNode, Adamas::Compiler::Frontend::ModuleNode
+        node.body.try { |body| children.concat(body) }
+      when Adamas::Compiler::Frontend::BeginNode, Adamas::Compiler::Frontend::BlockNode
+        children.concat(node.body)
+      when Adamas::Compiler::Frontend::IfNode
+        children.concat(node.then_body)
+        node.elsifs.try &.each { |branch| children.concat(branch.body) }
+        node.else_body.try { |body| children.concat(body) }
+      when Adamas::Compiler::Frontend::MacroIfNode
+        children << node.then_body
+        node.else_body.try { |body| children << body }
+      when Adamas::Compiler::Frontend::MacroForNode
+        children << node.body
+      end
+      children.each { |id| record_source_declaration_order(arena[id], arena, order) unless id.invalid? }
+    end
+
+    private def source_declaration_order_for(
+      node : Adamas::Compiler::Frontend::Node,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Array(Int32)
+      node = unwrap_visibility_member_in_arena(node, arena)
+      key = {arena, node.object_id.to_u64}
+      if existing = @source_declaration_node_order[key]?
+        return existing
+      end
+      if node.is_a?(Adamas::Compiler::Frontend::DefNode) &&
+         !@macro_generated_parameter_def_ids.includes?(node.object_id.to_u64)
+        # Signature recovery can replace a parsed Def object while retaining
+        # its original source coordinates. Expansion spans are output-local
+        # and cannot use this alias across different invocations.
+        if original = @source_declaration_order[source_declaration_key(node, arena)]?
+          @source_declaration_node_order[key] = original
+          return original
+        end
+      end
+      order = (@source_declaration_origin || [] of Int32) + [@source_declaration_order_next]
+      @source_declaration_order_next += 1
+      @source_declaration_node_order[key] = order
+      order
+    end
+
+    private def with_source_declaration_origin(
+      node : Adamas::Compiler::Frontend::Node,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+      &
+    )
+      saved = @source_declaration_origin
+      @source_declaration_origin = source_declaration_order_for(node, arena)
+      begin
+        yield
+      ensure
+        @source_declaration_origin = saved
+      end
+    end
+
+    private def source_declaration_key(
+      node : Adamas::Compiler::Frontend::DefNode,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    )
+      {arena, node.span.start_offset, node.span.end_offset,
+       def_method_name_from_node(node, arena) || "",
+       def_receiver_is_self_from_node(node, arena)}
+    end
+
+    # Synthesized new and explicit factories are one source overload family.
+    # Keep the local owner boundary: inherited factories/initializers are not
+    # appended to a nearer owner's declared constructors.
+    private def source_named_constructor_family(
+      lookup_name : String,
+      factory_names : Array(String),
+    ) : Array(String)
+      owner = method_owner(strip_type_suffix(lookup_name)) || return factory_names
+      init_base = allocator_init_name_for(owner)
+      init_names = function_def_overload_keys(init_base).select do |name|
+        parts = parse_method_name(name)
+        next false unless parts.separator == '#' && parts.owner == owner && parts.method == "initialize"
+        definition = @function_defs[name]? || next false
+        arena = @function_def_arenas[name]? || resolve_arena_for_def(definition, @arena)
+        !@included_initializer_def_origins.has_key?({definition, arena})
+      end
+      return factory_names if init_names.empty?
+      names = (factory_names + init_names).select do |name|
+        parts = parse_method_name(name)
+        parts.owner == owner && @function_defs.has_key?(name)
+      end
+      # Several mangled keys may expose the very same source declaration.
+      seen = Set(Adamas::Compiler::Frontend::DefNode).new
+      names = names.select { |name| seen.add?(@function_defs[name]) }
+      names.sort! do |left_name, right_name|
+        left = @function_defs[left_name]
+        right = @function_defs[right_name]
+        left_arena = @function_def_arenas[left_name]? || resolve_arena_for_def(left, @arena)
+        right_arena = @function_def_arenas[right_name]? || resolve_arena_for_def(right, @arena)
+        left_order = @source_declaration_node_order[{left_arena, left.object_id.to_u64}]? ||
+                     @source_declaration_order[source_declaration_key(left, left_arena)]?
+        right_order = @source_declaration_node_order[{right_arena, right.object_id.to_u64}]? ||
+                      @source_declaration_order[source_declaration_key(right, right_arena)]?
+        if left_order && right_order
+          left_order <=> right_order
+        elsif left_arena.same?(right_arena)
+          left.span.start_offset <=> right.span.start_offset
+        else
+          raise LoweringError.new("source declaration order is unavailable for constructor family #{lookup_name}")
+        end
+      end
+      ordered = [] of String
+      names.each do |name|
+        placed = false
+        ordered.each_with_index do |existing, index|
+          relation = source_constructor_signature_precedence(lookup_name, name, existing)
+          if relation == 0
+            ordered[index] = name
+            placed = true
+            break
+          elsif relation == 1
+            ordered.insert(index, name)
+            placed = true
+            break
+          end
+        end
+        ordered << name unless placed
+      end
+      ordered
+    end
+
+    # Crystal's default (legacy) overload order compares required named labels,
+    # not the number of defaults that happen to be needed at this call. Different
+    # required-name sets are incomparable and retain source insertion order.
+    private def source_constructor_signature_precedence(
+      lookup_name : String, left_name : String, right_name : String,
+    ) : Int32?
+      left = source_constructor_restriction_of?(lookup_name, left_name, right_name)
+      right = source_constructor_restriction_of?(lookup_name, right_name, left_name)
+      return nil if left.nil? || right.nil?
+      return 0 if left && right
+      return 1 if left
+      return -1 if right
+      nil
+    end
+
+    private def source_constructor_restriction_of?(
+      lookup_name : String, left_name : String, right_name : String,
+    ) : Bool?
+      left_def = @function_defs[left_name]
+      right_def = @function_defs[right_name]
+      left_stats = function_param_stats(left_name, left_def)
+      right_stats = function_param_stats(right_name, right_def)
+      return false unless left_stats.has_block == right_stats.has_block
+      left_params = function_param_infos(left_name, left_def).reject(&.is_block)
+      right_params = function_param_infos(right_name, right_def).reject(&.is_block)
+      left_splat = left_params.index(&.is_splat)
+      right_splat = right_params.index(&.is_splat)
+      left_double = left_params.find(&.is_double_splat)
+      right_double = right_params.find(&.is_double_splat)
+      return false if left_double && !right_double
+      return true if right_double && !left_double
+      return false if left_splat && !right_splat
+      return true if right_splat && !left_splat
+      left_pos = left_splat ? left_params[0, left_splat] : left_params.reject(&.is_double_splat)
+      right_pos = right_splat ? right_params[0, right_splat] : right_params.reject(&.is_double_splat)
+      left_min = left_pos.count { |param| param.default_value.nil? }
+      right_min = right_pos.count { |param| param.default_value.nil? }
+      return true if left_min > right_pos.size && !right_splat
+      return false if right_min > left_pos.size && !left_splat
+      # Real rest segments need their own restriction comparison. The ordinary
+      # resolver still admits them; do not invent a strictness relation here.
+      return nil if left_params.any? { |p| p.is_splat && !named_only_separator?(p) } ||
+                    right_params.any? { |p| p.is_splat && !named_only_separator?(p) }
+      left_context = function_context_for_lookup_candidate(lookup_name, left_name)
+      right_context = function_context_for_lookup_candidate(lookup_name, right_name)
+      Math.min(left_pos.size, right_pos.size).times do |index|
+        relation = source_constructor_param_restriction_of?(left_pos[index], left_context, right_pos[index], right_context)
+        return relation unless relation
+      end
+      left_named = left_splat.try { |index| left_params[index + 1..].reject(&.is_double_splat).select { |p| p.default_value.nil? }.sort_by { |p| p.external_name || p.name || "" } }
+      right_named = right_splat.try { |index| right_params[index + 1..].reject(&.is_double_splat).select { |p| p.default_value.nil? }.sort_by { |p| p.external_name || p.name || "" } }
+      if left_named && right_named
+        return false unless left_named.map { |p| p.external_name || p.name } == right_named.map { |p| p.external_name || p.name }
+        left_named.each_with_index do |param, index|
+          relation = source_constructor_param_restriction_of?(param, left_context, right_named[index], right_context)
+          return relation unless relation
+        end
+      elsif left_named || right_named
+        return false
+      end
+      if left_double && right_double
+        return source_constructor_param_restriction_of?(left_double, left_context, right_double, right_context)
+      end
+      true
+    end
+
+    private def source_constructor_param_restriction_of?(
+      left : DefParamInfo, left_context : String?, right : DefParamInfo, right_context : String?,
+    ) : Bool?
+      left_annotation = left.type_annotation
+      right_annotation = right.type_annotation
+      return right_annotation.nil? if left_annotation.nil?
+      return true if right_annotation.nil?
+      relation = source_restriction_specificity(left_annotation, left_context, right_annotation, right_context)
+      return nil unless relation
+      relation >= 0
     end
 
     # Tuple-producing legacy resolver core. Named args are canonicalized by the
@@ -119980,6 +120671,10 @@ module Adamas::HIR
           end
         end
       end
+      source_constructor_family = input.source_named_types && base_name.ends_with?(".new")
+      if source_constructor_family
+        overload_keys = source_named_constructor_family(func_name, overload_keys)
+      end
       if debug_call_lookup
         STDERR.puts "[CALL_LOOKUP_OVERLOADS] func=#{func_name} overloads=#{overload_keys.join(",")}"
       end
@@ -120158,7 +120853,7 @@ module Adamas::HIR
                            params_compatible_with_args?(def_node, match_arg_types, func_context, match_param_infos, ovl_trace)
                          end
             STDERR.puts "[OVL]   cand=#{name} pc=#{param_count} req=#{required} ctx=#{func_context} compat=#{compatible}" if ovl_trace
-            if compatible && single_candidate_fast_path
+            if compatible && (single_candidate_fast_path || source_constructor_family)
               if env_get("DEBUG_JOIN_PICK") && debug_overload_pick_suspicious?(name, arg_count)
                 debug_report_overload_pick("fastpath", func_name, name, def_node, arg_types, func_context, arg_count)
               end
@@ -120797,6 +121492,7 @@ module Adamas::HIR
       expected_type_name : String?,
       context : String? = nil,
       preferred_arena : Adamas::Compiler::Frontend::ArenaLike? = nil,
+      lowered_arguments : LoweredCallSiteArguments? = nil,
     ) : ValueId
       arg_node = node_for_expr(arg_expr, preferred_arena)
       if expected_type_name && arg_node.is_a?(Adamas::Compiler::Frontend::SymbolNode)
@@ -120810,6 +121506,9 @@ module Adamas::HIR
         end
       end
 
+      if lowered_arguments
+        return lowered_arguments.source_values[arg_expr]
+      end
       if arena = preferred_arena
         with_arena(arena) { lower_expr(ctx, arg_expr) }
       else
@@ -120929,7 +121628,7 @@ module Adamas::HIR
     # A source slot is retyped only from an integer literal that fits its
     # restriction, or from an integer value whose whole domain fits it.
     private def source_integer_slot_autocast_target(
-      arg_node : Adamas::Compiler::Frontend::Node,
+      arg_node : Adamas::Compiler::Frontend::Node?,
       source_type : TypeRef,
       restriction_text : String?,
       context : String?,
@@ -120958,10 +121657,14 @@ module Adamas::HIR
       call_arena : Adamas::Compiler::Frontend::ArenaLike,
       candidate_name : String,
       candidate_def : Adamas::Compiler::Frontend::DefNode,
+      has_block_call : Bool = false,
+      positional_slot_exprs : Array(ExprId?)? = nil,
     ) : Tuple(String, Adamas::Compiler::Frontend::DefNode, Array(TypeRef))?
+      positional_sources = positional_slot_exprs || positional_args.map { |id| id.as(ExprId?) }
+      return nil unless positional_sources.size + names.size == source_types.size
       params = function_param_infos(candidate_def)
-      return nil if params.any? { |param| param.is_splat || param.is_double_splat }
-      return nil unless named_args_compatible_with_def?(candidate_def, names, positional_args.size, positional_args.size)
+      return nil if params.any? { |param| !named_only_separator?(param) && (param.is_splat || param.is_double_splat) }
+      return nil unless named_args_compatible_with_def?(candidate_def, names, positional_sources.size, positional_sources.size)
       context = function_context_for_lookup_candidate(func_name, candidate_name)
       converted_types = source_types.dup
       changed = false
@@ -120975,17 +121678,18 @@ module Adamas::HIR
         end
         slot = nil
         arg_expr = nil
-        if !in_named_only && positional_index < positional_args.size
+        if !in_named_only && positional_index < positional_sources.size
           slot = positional_index
-          arg_expr = positional_args[positional_index]
+          arg_expr = positional_sources[positional_index]
           positional_index += 1
         elsif (label = named_parameter_label(param)) && (named_index = names.index(label))
-          slot = positional_args.size + named_index
+          slot = positional_sources.size + named_index
           arg_expr = named_exprs[label]
         end
-        next unless slot && arg_expr
+        next unless slot
+        source_node = arg_expr ? call_arena[arg_expr] : nil
         target_type = source_integer_slot_autocast_target(
-          call_arena[arg_expr], source_types[slot], param.type_annotation, context,
+          source_node, source_types[slot], param.type_annotation, context,
         )
         next unless target_type
         converted_types[slot] = target_type
@@ -120995,8 +121699,8 @@ module Adamas::HIR
       # The unchanged resolver must select this very declaration with the
       # validated vector, as in the positional path.
       selected = lookup_function_def_for_call(
-        func_name, converted_types.size, false, converted_types,
-        false, true, names, positional_args.size, true,
+        func_name, converted_types.size, has_block_call, converted_types,
+        false, true, names, positional_sources.size, true,
       )
       return nil unless selected && selected[1].same?(candidate_def)
       {selected[0], candidate_def, converted_types}
@@ -121009,15 +121713,21 @@ module Adamas::HIR
       names : Array(String),
       source_types : Array(TypeRef),
       call_arena : Adamas::Compiler::Frontend::ArenaLike,
+      has_block_call : Bool = false,
+      positional_slot_exprs : Array(ExprId?)? = nil,
     ) : Tuple(String, Adamas::Compiler::Frontend::DefNode, Array(TypeRef))?
       return nil unless source_types.any? { |type| signed_integer_primitive?(type) || unsigned_integer_type?(type) }
       candidates = [] of Tuple(String, Adamas::Compiler::Frontend::DefNode, Array(TypeRef))
-      function_def_overload_keys(func_name).each do |candidate_name|
+      candidate_names = function_def_overload_keys(func_name)
+      if strip_type_suffix(func_name).ends_with?(".new")
+        candidate_names = source_named_constructor_family(func_name, candidate_names)
+      end
+      candidate_names.each do |candidate_name|
         candidate_def = @function_defs[candidate_name]?
         next unless candidate_def
         candidate_entry = source_named_integer_autocast_candidate_entry(
           func_name, positional_args, named_exprs, names, source_types, call_arena,
-          candidate_name, candidate_def,
+          candidate_name, candidate_def, has_block_call, positional_slot_exprs,
         )
         next unless candidate_entry
         duplicate = candidates.any? do |existing|
@@ -121028,6 +121738,7 @@ module Adamas::HIR
         candidates << candidate_entry unless duplicate
       end
       return nil if candidates.empty?
+      return candidates.first if strip_type_suffix(func_name).ends_with?(".new")
       survivors = candidates.reject do |candidate|
         candidates.any? do |other|
           !other[1].same?(candidate[1]) &&
@@ -121327,25 +122038,41 @@ module Adamas::HIR
       has_block_call : Bool,
       receiver_id : ValueId?,
       call_arena : Adamas::Compiler::Frontend::ArenaLike,
+      lowered_arguments : LoweredCallSiteArguments? = nil,
     ) : Tuple(Array(ValueId), Tuple(String, Adamas::Compiler::Frontend::DefNode), Bool)?
-      return nil if has_block_call || named_args.empty?
+      return nil if named_args.empty?
       # Source argument types must select the declaration before its named
       # values and defaults are rearranged into ABI slots. The rest-only path
       # already establishes this contract; ordinary named calls need it too.
-      return nil unless initial_entry
-      initial_params = function_param_infos(initial_entry[0], initial_entry[1])
-      return nil if initial_params.any?(&.is_double_splat)
+      if initial_entry
+        initial_params = function_param_infos(initial_entry[0], initial_entry[1])
+        return nil if initial_params.any?(&.is_double_splat)
+      else
+        # A failed shape lookup in a known family is a rejection, not licence
+        # to fall back to an unbound call symbol. The source lookup below
+        # checks the actual labels and types before constructing ABI slots.
+        return nil if function_def_overload_keys(func_name).empty?
+      end
       # Symbol-to-enum conversion needs a contextual restriction. Preserve its
       # existing path until source overload matching carries that contract.
       return nil if positional_args.any? { |id| call_arena[id].is_a?(Adamas::Compiler::Frontend::SymbolNode) }
       return nil if named_args.any? { |arg| call_arena[arg.value].is_a?(Adamas::Compiler::Frontend::SymbolNode) }
 
-      positional_values = expand_splat_args(ctx, positional_args, call_arena)
+      positional_slot_exprs = lowered_arguments ? lowered_arguments.positional_sources : [] of ExprId?
+      positional_values = if lowered_arguments
+                            lowered_arguments.positional_values.dup
+                          else
+                            expand_splat_args(ctx, positional_args, call_arena, source_slot_exprs: positional_slot_exprs)
+                          end
       named_values = {} of String => ValueId
       named_args.each do |arg|
         label = safe_slice_to_string(arg.name) || ""
         raise LoweringError.new("duplicate named argument #{label}") if named_values.has_key?(label)
-        named_values[label] = with_arena(call_arena) { lower_expr(ctx, arg.value) }
+        named_values[label] = if lowered_arguments
+                                lowered_arguments.source_values[arg.value]
+                              else
+                                with_arena(call_arena) { lower_expr(ctx, arg.value) }
+                              end
       end
       names = named_values.keys.sort
       # Enum arguments use an integer carrier in HIR, but source overload
@@ -121358,26 +122085,10 @@ module Adamas::HIR
         func_name, source_types.size, has_block_call, source_types,
         false, true, names, positional_values.size, true,
       )
-      # initialize also contributes generated new overloads when the class
-      # declares explicit factories. Test that source signature with the same
-      # actual values; do not reject a valid allocator because a shape-only
-      # lookup happened to find an incompatible explicit factory first.
-      unless selected
-        base_name = strip_type_suffix(func_name)
-        if base_name.ends_with?(".new") || base_name.ends_with?("#new")
-          if owner = method_owner(base_name)
-            init_name = allocator_init_name_for(owner)
-            selected = lookup_function_def_for_call(
-              init_name, source_types.size, has_block_call, source_types,
-              false, true, names, positional_values.size, true,
-            )
-          end
-        end
-      end
       # Integer literals autocast to named restrictions exactly as they do to
       # positional ones (`AdjustedMantissa.new(power2: 0, mantissa: 0)`).
       unless selected
-        if positional_values.size == positional_args.size
+        if positional_values.size == positional_slot_exprs.size
           named_exprs = {} of String => ExprId
           named_args.each do |arg|
             named_exprs[safe_slice_to_string(arg.name) || ""] = arg.value
@@ -121391,7 +122102,7 @@ module Adamas::HIR
           end
           lookup_names.each do |lookup_name|
             autocast = source_named_integer_autocast_entry(
-              lookup_name, positional_args, named_exprs, names, source_types, call_arena,
+              lookup_name, positional_args, named_exprs, names, source_types, call_arena, has_block_call, positional_slot_exprs,
             )
             next unless autocast
             converted_types = autocast[2]
@@ -121599,6 +122310,7 @@ module Adamas::HIR
       has_block_call : Bool,
       receiver_id : ValueId?,
       call_arena : Adamas::Compiler::Frontend::ArenaLike,
+      lowered_arguments : LoweredCallSiteArguments? = nil,
     ) : Tuple(Array(ValueId), Tuple(String, Adamas::Compiler::Frontend::DefNode)?, Bool)
       # Get parameter names from function definition
       func_name = full_method_name || method_name
@@ -121616,7 +122328,7 @@ module Adamas::HIR
         end
       end
       func_entry = lookup_function_def_for_call(func_name, positional_args.size + named_args.size, has_block_call, nil, false, !named_args.empty?, named_arg_names, raw_positional_count)
-      if bound = lower_source_named_args(ctx, positional_args, named_args, func_name, func_entry, has_block_call, receiver_id, call_arena)
+      if bound = lower_source_named_args(ctx, positional_args, named_args, func_name, func_entry, has_block_call, receiver_id, call_arena, lowered_arguments)
         return {bound[0], bound[1], bound[2]}
       end
       func_def = func_entry ? func_entry[1] : nil
@@ -121733,15 +122445,30 @@ module Adamas::HIR
         provided = [] of Bool
         old_arena = @arena
         begin
-          positional_args.each_with_index do |arg_expr, idx|
-            @arena = call_arena
-            if idx < param_types.size
-              result << lower_arg_with_expected_type(ctx, arg_expr, param_types[idx], param_type_names[idx], func_context, call_arena)
-            else
-              result << lower_expr(ctx, arg_expr)
+          if lowered_arguments
+            result.concat(lowered_arguments.positional_values)
+            # Symbol-to-enum conversion is contextual and has no side effects.
+            # Reuse every captured runtime value; only convert an actual Symbol
+            # whose original source node and selected restriction prove it.
+            if result.size == positional_args.size
+              positional_args.each_with_index do |arg_expr, idx|
+                if idx < param_types.size && call_arena[arg_expr].is_a?(Adamas::Compiler::Frontend::SymbolNode)
+                  result[idx] = lower_arg_with_expected_type(ctx, arg_expr, param_types[idx], param_type_names[idx], func_context, call_arena, lowered_arguments)
+                end
+              end
             end
-            provided << true
-            @arena = call_arena
+            result.size.times { provided << true }
+          else
+            positional_args.each_with_index do |arg_expr, idx|
+              @arena = call_arena
+              if idx < param_types.size
+                result << lower_arg_with_expected_type(ctx, arg_expr, param_types[idx], param_type_names[idx], func_context, call_arena)
+              else
+                result << lower_expr(ctx, arg_expr)
+              end
+              provided << true
+              @arena = call_arena
+            end
           end
 
           extra_named = [] of Adamas::Compiler::Frontend::NamedArgument
@@ -121762,7 +122489,7 @@ module Adamas::HIR
                 provided << false
               end
               @arena = call_arena
-              result[idx] = lower_arg_with_expected_type(ctx, named_arg.value, param_types[idx], param_type_names[idx], func_context, call_arena)
+              result[idx] = lower_arg_with_expected_type(ctx, named_arg.value, param_types[idx], param_type_names[idx], func_context, call_arena, lowered_arguments)
               provided[idx] = true
             else
               extra_named << named_arg
@@ -121780,7 +122507,7 @@ module Adamas::HIR
             unless provided[double_splat_index]
               tuple_values = extra_named.map do |arg|
                 @arena = call_arena
-                lower_expr(ctx, arg.value)
+                lowered_arguments ? lowered_arguments.source_values[arg.value] : lower_expr(ctx, arg.value)
               end
               tuple_keys = extra_named.map { |arg| safe_slice_to_string(arg.name) || "" }
               result[double_splat_index] = allocate_named_tuple(ctx, tuple_values, tuple_keys)
@@ -121799,7 +122526,7 @@ module Adamas::HIR
 
           extra_named.each do |named_arg|
             @arena = call_arena
-            result << lower_expr(ctx, named_arg.value)
+            result << (lowered_arguments ? lowered_arguments.source_values[named_arg.value] : lower_expr(ctx, named_arg.value))
             provided << true
           end
 
@@ -121850,13 +122577,17 @@ module Adamas::HIR
         end
       else
         # No function definition found - just append named args in order
-        result = positional_args.map do |arg|
-          @arena = call_arena
-          lower_expr(ctx, arg)
-        end
+        result = if lowered_arguments
+                   lowered_arguments.positional_values.dup
+                 else
+                   positional_args.map do |arg|
+                     @arena = call_arena
+                     lower_expr(ctx, arg)
+                   end
+                 end
         named_args.each do |named_arg|
           @arena = call_arena
-          result << lower_expr(ctx, named_arg.value)
+          result << (lowered_arguments ? lowered_arguments.source_values[named_arg.value] : lower_expr(ctx, named_arg.value))
         end
       end
 

@@ -97,6 +97,7 @@ module Adamas
       @pipeline_cache_misses : Int32 = 0
       @parse_trace : Bool = BootstrapEnv.enabled?("ADAMAS_PARSE_TRACE")
       @compile_flags : Set(String)? = nil
+      @active_source_order_roots : Array(Tuple(Frontend::ExprId, Frontend::ArenaLike))? = nil
 
       private def compilation_flags : Set(String)
         @compile_flags || Runtime.target_flags
@@ -1639,6 +1640,9 @@ module Adamas
 
       # Full compilation (driver.cr functionality)
       private def compile(input_file : String, options : Options, out_io : IO, err_io : IO) : Int32
+        # Collection can fail partway through. Do not let a later compile on
+        # this CLI instance append roots into a stale per-build buffer.
+        @active_source_order_roots = nil
         timings = {} of String => Float64
         debug_profile = options.debug_profile
         stage2_debug("[STAGE2_DEBUG] compile start", err_io)
@@ -2052,6 +2056,8 @@ module Adamas
         # pairs refer to the existing node/arena inventories without copying
         # AST nodes or merging their concrete node types.
         ordered_type_nodes = [] of Tuple(Frontend::NodeKind, Int32)
+        source_order_roots = [] of Tuple(Frontend::ExprId, Frontend::ArenaLike)
+        @active_source_order_roots = source_order_roots
         enum_nodes = [] of Tuple(Frontend::EnumNode, Frontend::ArenaLike)
         macro_nodes = [] of MacroEntry
         alias_nodes = [] of Tuple(Frontend::AliasNode, Frontend::ArenaLike)
@@ -2112,6 +2118,10 @@ module Adamas
           end
           bootstrap_trace_puts "[S2_HIR_SETUP] phase=collect_arena_done idx=#{arena_i} defs=#{def_nodes.size} classes=#{class_nodes.size} modules=#{module_nodes.size} enums=#{enum_nodes.size} aliases=#{alias_nodes.size} libs=#{lib_nodes.size} type_names=#{top_level_type_names.size}"; STDERR.flush
           arena_i += 1
+        end
+        @active_source_order_roots = nil
+        source_order_roots.each do |expr_id, arena|
+          hir_converter.record_source_declaration_order(arena[expr_id], arena)
         end
         # Generated main ExprIds must resolve against their owning parser arena.
         hir_converter.bootstrap_bind_main_arenas(main_arenas)
@@ -5304,6 +5314,9 @@ module Adamas
             return
           end
           def_nodes << {node, arena}
+          if roots = @active_source_order_roots
+            roots << {expr_id, arena}
+          end
           pending_annotations.clear
         when Frontend::ClassNode
           name = String.new(node.name)
@@ -5314,11 +5327,17 @@ module Adamas
           top_level_type_names.add(name)
           top_level_class_kinds[name] = node.is_struct == true
           class_nodes << {node, arena}
+          if roots = @active_source_order_roots
+            roots << {expr_id, arena}
+          end
           ordered_type_nodes << {Frontend::NodeKind::Class, class_nodes.size - 1} if ordered_type_nodes
           pending_annotations.clear
         when Frontend::ModuleNode
           top_level_type_names.add(String.new(node.name))
           module_nodes << {node, arena}
+          if roots = @active_source_order_roots
+            roots << {expr_id, arena}
+          end
           ordered_type_nodes << {Frontend::NodeKind::Module, module_nodes.size - 1} if ordered_type_nodes
           pending_annotations.clear
         when Frontend::EnumNode

@@ -21943,3 +21943,41 @@ exact declared-result inference, and unannotated yielding wrappers need an
 explicit callsite block-result contract. Do not remove their context guard or
 borrow a representative family cache to force a result. Bootstrap, exception
 runtime compatibility and unchanged LavinMQ parity remain open.
+
+## 2026-10-30 — Source arguments and selected Def own named call binding
+
+A source call's admissible shape and restrictions must be checked before ABI
+normalization adds default slots. Preserve lowered values alongside their source
+expressions and labels, evaluate each actual once, and retain extracted tuple
+field types instead of granting them literal integer conversion. A source Def's
+arena, arity, block and named-only shape are authoritative; generated accessors
+have their own exact zero-argument contract. Defaults use the selected lexical
+owner, while inherited class self and class-variable storage use the receiver.
+
+Named constructors expose synthesized initialize signatures and explicit new
+factories as a single local source family. Legacy Crystal precedence compares
+required named labels; it does not rank by how many defaults a call needs.
+Record accepted declarations during ordered collection and preserve hierarchical
+macro invocation order across expansion arenas and replay. A selected initializer
+owns a private physical allocator and its exact body. Rematching normalized
+actuals can enter an unrelated factory or recurse into itself (Time::Span).
+An unrequested positional wrapper cannot borrow a named-only initializer.
+
+Included initialize methods demonstrate why symbol ownership is insufficient:
+module Defs are indexed under Class#initialize. Their source order is still the
+module's, but they do not declare a synthesized Class.new against a local
+factory. Stamp exact Def/arena module provenance at eager and lazy import sites;
+retain ordinary initialization lookup. The adversarial two-include-order probe
+changed from II to the original compiler's FF; a no-factory and a class-local
+initializer control also agree. Never infer this provenance from a namespace
+string alone.
+
+Fresh S1 and installed Crystal 1.22.1 agree on nine constructor programs,
+source-call admission positives/negatives and NamedTuple expansion/evaluation
+order positives/negatives. Full-prelude hello compiles and runs. The expanded
+HIR gate is 58/62, with the same four failures measured on the parent; this is
+not a green full-suite certificate. Scoped adversary: ROBUST for the guarded
+source-call and tested constructor contracts. Requalify after overload ordering,
+argument expansion, import registration, declaration ordering or allocator ABI
+changes; revert this producer/test slice together. Process.new(Nil), source
+callback result contracts, bootstrap and LavinMQ parity remain separate work.

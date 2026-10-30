@@ -22511,3 +22511,33 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   seconds. Qualify exact selected class helpers with blocks next: the current
   inference path excludes them before consuming their declared return contract.
   Bootstrap, actual exception handling and unchanged LavinMQ parity remain open.
+
+### Source call admission precedes named ABI binding (2026-10-30)
+- [x] Preserve source actual expressions and evaluate each once in Crystal's
+  order, including complex splat hoisting. Expand literal/local NamedTuple
+  double splats before admission, retaining source field types and external
+  labels. Reject duplicate/unknown/missing keys and incompatible source types.
+- [x] Use the exact Def and arena for arity, block, named-only, default and
+  integer-conversion checks. Check literal representability separately from a
+  runtime integer's entire domain; extracted tuple fields are not literals.
+  Generated getters admit only their source zero-argument shape. Inherited
+  class getters keep concrete receiver class-variable storage.
+- [x] Select the named constructor's source overload before inserting defaults.
+  Compare local synthesized new and explicit factory declarations in source
+  order, including require/reopening and macro-expansion order. Retain the
+  selected initializer in a private allocator identity and lower that exact
+  body without rematching default-filled slots. Do not emit a positional base
+  wrapper for a named-only initializer.
+- [x] Qualify imported initializer provenance by exact Def plus arena at import
+  producers. An included initializer remains available for normal allocation,
+  but does not declare a synthesized new competing with a local explicit factory.
+- [x] Fresh S1 matches installed Crystal 1.22.1 on nine named constructor cases,
+  the source-call admission regression and the NamedTuple expansion regression,
+  including strict negative cases. Full-prelude hello compiles and runs.
+  The extended HIR gate passes 58 of 62 examples; all four other failures also
+  reproduce on the parent (undefined no-prelude exit fixture, named default
+  return inference, and two noncanonical Union spelling expectations).
+- [ ] Bootstrap, full regression parity and unchanged LavinMQ remain open.
+  Process.new still reaches the separate System::Process.new(Nil) frontier.
+  Next: selected class helpers with literal blocks and source callback output
+  contracts; do not use omitted default values as caller-supplied forall proof.
