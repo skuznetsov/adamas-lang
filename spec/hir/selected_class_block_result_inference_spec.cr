@@ -177,6 +177,39 @@ private def selected_class_block_result_source : String
         unannotated_yield { pair }
       end
 
+      def self.early_unless(flag : Bool, &block : -> String)
+        unless flag
+          return 41
+        end
+        yield
+      end
+
+      def self.early_unless_caller(flag : Bool)
+        early_unless(flag) { "ok" }
+      end
+
+      def self.early_while(flag : Bool, &block : -> String)
+        while flag
+          return 41
+        end
+        yield
+      end
+
+      def self.early_while_caller(flag : Bool)
+        early_while(flag) { "ok" }
+      end
+
+      def self.early_until(flag : Bool, &block : -> String)
+        until flag
+          return 41
+        end
+        yield
+      end
+
+      def self.early_until_caller(flag : Bool)
+        early_until(flag) { "ok" }
+      end
+
       def self.byte_result(value : UInt8, &block : -> Tuple(Int32, Int64)) : ::SelectedClassBlockGlobalOutput
         ::SelectedClassBlockGlobalOutput.new
       end
@@ -252,6 +285,36 @@ describe "selected class block result inference with a fresh converter" do
     converter.__test_selected_class_block_result(
       "SelectedClassBlockResultProbe", "unannotated_yield_caller",
     ).should be_nil
+  end
+
+  it "does not erase an unless early return when inferring a selected class block call" do
+    converter = parse_selected_class_block_result_probe(selected_class_block_result_source)
+    inferred = converter.__test_selected_class_block_result(
+      "SelectedClassBlockResultProbe", "early_unless_caller",
+    )
+    if inferred
+      inferred.split(" | ").sort.should eq(["Int32", "String"])
+    end
+  end
+
+  it "does not erase a while early return when inferring a selected class block call" do
+    converter = parse_selected_class_block_result_probe(selected_class_block_result_source)
+    inferred = converter.__test_selected_class_block_result(
+      "SelectedClassBlockResultProbe", "early_while_caller",
+    )
+    if inferred
+      inferred.split(" | ").sort.should eq(["Int32", "String"])
+    end
+  end
+
+  it "does not erase an until early return when inferring a selected class block call" do
+    converter = parse_selected_class_block_result_probe(selected_class_block_result_source)
+    inferred = converter.__test_selected_class_block_result(
+      "SelectedClassBlockResultProbe", "early_until_caller",
+    )
+    if inferred
+      inferred.split(" | ").sort.should eq(["Int32", "String"])
+    end
   end
 
   it "does not count a normalized trailing literal block as a positional argument" do

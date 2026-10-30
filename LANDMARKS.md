@@ -22035,3 +22035,56 @@ Its fresh S1 passes both original-first native prelude cases. The combined
 callback candidate passes these too; without replay it crashed before stdout
 and its dispatch lacked the real Parallel getter. Scoped adversary: ROBUST for
 layout replay and unchanged owner/DCE boundaries, not a bootstrap certificate.
+
+
+## 2026-10-30 — Selected callback restrictions consume source values before ABI erasure
+
+A callback output restriction belongs to the selected Def and its registered
+arena. Its free variables may consume caller-supplied argument facts, including
+value kind, but not inserted defaults or another call's specialization map.
+Owner and method formals have separate authority. Cold class-call inference
+and lowering now consume this selection and the same terminal-yield proof.
+
+Normal completion and block-local next supply source result edges; non-local
+return and break do not. Inspect their SSA leaves through Phi, UnionWrap and
+Copy before checking the structural restriction. A cast owns a new type.
+Method Nil adaptation is separate from discarding a callback result. Unknown
+inference is not evidence for Nil or Void, and an upper-bound annotation does
+not add a missing Nil alternative to a proven direct-yield result.
+
+TypeRef alone cannot distinguish an instance from its class value. Proc slots
+retain scalar kind and canonical mixed source alternatives in descriptor
+identity; signature parameters and call results publish those facts into the
+lowering context. Tuple and NamedTuple source child names retain the same
+distinction. The matcher consumes them recursively without weakening concrete
+generic invariance or Proc numeric restrictions. Before the correction, a
+Tuple(Foo.class | Int32) result was rejected and a mixed Foo/Foo.class result
+was accepted as Tuple(Foo). Both are discriminating semantic regressions.
+
+Evidence on fresh s1_source_callback_facts_final: the 17 named HIR files pass
+130 examples; selected_block_output_contract_repro.sh passes 24 cases,
+source_block_result_pattern_oracle_repro.sh passes 16, and
+nested_block_value_kind_repro.sh passes 11 against installed Crystal 1.22.1.
+Selected class-result inference, ordinary-prelude replay and both Proc guards
+pass. All compiler and native runs use scripts/run_safe.sh with stock stdlib.
+The neighboring callback run passes 17 of 20 entries; the same three failures
+exist on the parent (undefined Pointer join, undefined UInt64.new and a Bash 3
+empty-array fixture). This bounded run introduces no new failure.
+
+An adversary suggested admitting Class/Value union arms in Proc slots. The
+original rejects Proc(Class | Int32, Nil) and Proc(Value | String, Nil) because
+those broad types cannot be stored in unions (Crystal semantic/type_lookup.cr,
+lookup(Union)). The alleged false rejection is not a valid-source falsifier;
+do not widen admission on its authority. Specific Foo.class | Int32 slots are
+valid source and are covered by the nested kind regression.
+Scoped adversary: ROBUST for the selected callback/aggregate/Proc paths checked
+here; the source review is same-lineage and is not an independent reviewer.
+
+Scope is selected callback contracts, not universal one-owner completion.
+Ordinary overload admission still prints II for a direct kind probe where
+Crystal prints CC; the same failure exists at ca5357f2. Array literal child
+kinds and terminal ensure control-flow are separate pending falsifiers.
+Process.new, bootstrap and LavinMQ runtime/test parity remain open. Requalify
+after source selection, default binding, SSA result edges, aggregate naming,
+Proc interning or coercion changes; roll back the producer, matcher and tests
+together. Source facts live only for their converter/context/descriptor owner.

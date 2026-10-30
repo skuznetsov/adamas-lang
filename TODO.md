@@ -22578,3 +22578,41 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   pass 15 examples; a fresh S1 and Crystal 1.22.1 agree on both ordinary-prelude
   native cases. The combined in-progress callback candidate also passes both.
   The original callback candidate crashes before user stdout without this fix.
+
+
+### Selected source callbacks retain output contracts (2026-10-30)
+- [x] Bind a callback restriction to its exact selected Def and registered arena.
+  Preserve caller-supplied argument types/kinds separately from inserted defaults;
+  owner parameters and method-level forall parameters have distinct authority.
+- [x] Match resolved structural output restrictions without converting unknown
+  results to Nil/Void. Preserve normal completion/next SSA values, exclude
+  non-local return/break escapes, and keep method Nil return adaptation separate
+  from the actual value forwarded by yield.
+- [x] Infer cold explicit class block calls through source selection. Publish a
+  bare generic namespace's requested class-method family before normal overload
+  admission, using the existing transparent class-registration body view.
+- [x] Preserve full Proc signatures and class-result slots when interning Tuple
+  and NamedTuple values. Mixed instance/metaclass alternatives need per-slot
+  source facts, not an all-literal bit. Carry those facts through Proc parameters,
+  call results, returns and aggregate children before checking restrictions.
+  The nested union probes include both a false rejection and a false acceptance
+  before this producer correction. Transparent-begin registration has a separate
+  failing-before probe.
+- [x] The focused 17-file HIR gate passes 130 examples. A fresh S1 matches
+  Crystal 1.22.1 on 24 block contract cases, 16 structural restriction cases and
+  11 nested kind cases, including strict negative cases and the oracle's distinct
+  Proc adaptation rules inside Tuple/NamedTuple. Nullable metaclass binding,
+  concrete-first singleton union matching, and Class/Value/Object restrictions
+  are included. Both ordinary-prelude cases and the two Proc guards pass.
+- [x] The neighboring callback rerun passes 17 of 20 entries. The three failures
+  reproduce on the parent: undefined Pointer join, undefined UInt64.new, and a
+  Bash 3 empty-array fixture failure. No new failure appears in this bounded set.
+- [ ] Ordinary overload admission still loses value kind: a direct Foo versus
+  Foo.class overload probe prints II instead of Crystal's CC on both ca5357f2
+  and this candidate. Keep that resolver producer separate from the selected
+  callback contract. Array literal child kinds and terminal ensure control-flow
+  remain separate falsifiers, not claims closed by these tests.
+- [ ] LavinMQ currently reaches Log.for(self) in a deferred constant initializer.
+  The initializer records its namespace name but does not bind lexical self as
+  a class/module value. Keep this next producer fix separate from source callback
+  closure. Process.new, bootstrap and LavinMQ test parity remain open.

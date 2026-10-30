@@ -5071,3 +5071,42 @@ virtual/pending/initializer replay files passes 15 examples; a fresh S1 passes
 both native cases in prelude_virtual_layout_replay_repro.sh. All compiler and
 test processes use scripts/run_safe.sh. Scoped adversary: ROBUST for this
 invalidation boundary. Bootstrap and LavinMQ remain outside the certificate.
+
+
+### Selected callback values retain type and kind until source admission (2026-10-30)
+
+Admitted: one source call binding identifies the selected Def, registered arena,
+semantic receiver and supplied ordinary slots before defaults fill physical
+arguments. Structural output restrictions bind only their declared variables.
+Cold inference uses that selected declaration and its own arena, including a
+bare generic namespace's published class-method family. Ordinary overload
+resolution continues to own call admission.
+
+Result evidence comes from actual flowing SSA values, including block-local
+next, rather than family return caches or an annotation's absent union arms.
+Nil/Void callback discard and method Nil adaptation remain distinct. Proc
+descriptor identity includes canonical mixed instance/metaclass alternatives
+per slot; parameter and call-result producers register those source facts in
+their lowering context. Tuple/NamedTuple producers retain source child names
+and the matcher checks them recursively. Physical carriers do not acquire the
+authority to change source kind or generic invariance.
+
+Rejected: deriving forall bindings from omitted defaults; replacing unknown
+results with Nil/Void; re-resolving a selected Def through a family/arity cache;
+or accepting an instance/metaclass collision because both share one TypeRef.
+The direct ordinary-overload kind producer remains a measured separate defect;
+Array literal kind preservation and terminal ensure behavior remain probes.
+
+Observed DoD: the 17 focused HIR files pass 130 examples. A fresh S1 agrees with
+Crystal 1.22.1 on 24 selected output, 16 structural and 11 nested kind cases,
+including negative admission. Selected class-result inference, ordinary-prelude
+startup/module dispatch and both Proc guards pass with unchanged stock stdlib.
+The neighboring callback run passes 17 of 20 entries; all three failures also
+reproduce on the parent. An alleged Proc Class-union false rejection was
+refuted by the original compiler's can_be_stored? union restriction, so it does
+not authorize broader admission.
+Scoped adversary: ROBUST within the exercised selected callback contract.
+
+Refresh on changes to selection, binding, result SSA, names, Proc interning or
+coercion. Roll back this contract and its tests together. This certificate does
+not establish Process.new, bootstrap or LavinMQ test parity.
