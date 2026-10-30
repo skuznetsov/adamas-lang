@@ -22433,3 +22433,18 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   its updated reference in the same IR; qualify a separate root-cause probe.
 - [ ] Legacy unknown raw callback ABI fallback remains uncertified. Full
   bootstrap and unchanged LavinMQ runtime/test parity remain open.
+
+### Validated integer conversions reach selected body inference (2026-10-29)
+- [x] Reproduce a cold-cache bare class helper returning no inferred type for
+  a representable UInt8 literal. Reuse ordinary lowering's source integer
+  autocast selection and carry its validated converted actuals with the exact
+  reselected definition into callsite body binding and memo identity.
+- [x] Bind named converted actuals once by canonical external label, then map
+  to the selected definition's internal names. Do not replace actuals with
+  formal restrictions or re-infer the raw literal in the body binder.
+- [x] Five HIR files pass 50 examples. Fresh S1 and installed Crystal agree
+  on thirteen native result markers and three strict type rejections. These
+  include UInt8 positional/named/external-label literals, out-of-range 300 and
+  a runtime Int32 value whose complete domain does not fit UInt8.
+- [ ] This closes a selected-call inference mismatch, not the independent
+  Process.spawn Nil result frontier, rescue-local state, bootstrap or LavinMQ.

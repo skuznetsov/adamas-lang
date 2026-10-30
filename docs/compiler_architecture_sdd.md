@@ -5026,3 +5026,22 @@ while a separate loop-backedge observation remains under investigation.
 This slice does not certify bootstrap or LavinMQ parity. Refresh on selected
 Def/carrier/admission/layout changes; roll back the producers, consumers and
 regressions together.
+
+### Validated source conversion flows into selected body inference (2026-10-29)
+
+When ordinary bare class-call matching fails, inference may consume the same
+integer-autocast admission as lowering. Its result is an exact reselected Def
+plus validated converted actual types, not permission to replace all actuals
+with formal restrictions. Those positional and canonical named types own body
+bindings and callsite memo identity. The binder must not re-infer a literal
+and lose the admitted conversion. Named actual inference has one producer;
+external labels map to selected internal names, with unknowns distinct from
+omitted defaults. Existing source-kind and cycle guards remain in force.
+
+DoD: the parent cold-cache UInt8 literal probe returns no type; five focused
+HIR files pass 50 examples after the fix. A fresh S1 and installed Crystal
+agree on thirteen native result markers and three semantic rejections,
+including out-of-range literals and runtime Int32-to-UInt8 rejection. This is
+not a bootstrap/LavinMQ or exception-local certificate. Refresh after source
+admission, selection, binding or memo changes; roll back this slice and tests
+together.

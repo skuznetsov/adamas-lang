@@ -15,6 +15,7 @@ class Adamas::HIR::AstToHir
     additional_helper_methods : Array(String) = [] of String,
     seed_base_return_type : String? = nil,
     seed_instance_base_return_type : String? = nil,
+    caller_type_bindings : Hash(String, String) = {} of String => String,
   ) : String?
     caller_name = "#{owner_name}.#{caller_method}"
     helper_base = "#{helper_owner_name}.#{helper_method}"
@@ -23,7 +24,11 @@ class Adamas::HIR::AstToHir
       helper_bases << "#{helper_owner_name}.#{name}"
     end
 
-    caller_def = @function_defs[caller_name]? || raise "missing registered caller #{caller_name}"
+    caller_defs = @function_defs.select do |name, _|
+      name == caller_name || name.starts_with?("#{caller_name}$")
+    end.values.uniq(&.object_id)
+    raise "expected one registered caller #{caller_name}, got #{caller_defs.size}" unless caller_defs.size == 1
+    caller_def = caller_defs.first
     caller_body = caller_def.body || raise "caller #{caller_name} has no body"
     call_expr = caller_body.last? || raise "caller #{caller_name} has an empty body"
     raise "probe caller tail must be a CallNode" unless node_for_expr(call_expr).is_a?(Adamas::Compiler::Frontend::CallNode)
@@ -97,8 +102,16 @@ class Adamas::HIR::AstToHir
       @current_def_node = caller_def
       @infer_self_type_name = owner_name
       @current_method_is_class = true
-      @current_typeof_locals = {} of String => Adamas::HIR::TypeRef
-      @current_typeof_local_names = {} of String => String
+      caller_locals = {} of String => Adamas::HIR::TypeRef
+      caller_local_names = {} of String => String
+      caller_type_bindings.each do |name, type_name|
+        type = type_ref_for_name(type_name)
+        next if type == Adamas::HIR::TypeRef::VOID
+        caller_locals[name] = type
+        caller_local_names[name] = get_type_name_from_ref(type)
+      end
+      @current_typeof_locals = caller_locals
+      @current_typeof_local_names = caller_local_names
 
       inferred = infer_type_from_expr(call_expr, owner_name)
       inferred.try { |type| get_type_name_from_ref(type) }
@@ -203,6 +216,34 @@ private def bare_class_call_return_probe_source : String
 
       def self.external_payload_caller
         external_payload(label: 65_i32)
+      end
+
+      def self.echo_uint8(value : UInt8)
+        value
+      end
+
+      def self.echo_uint8_external(external value : UInt8)
+        value
+      end
+
+      def self.echo_uint8_positional_literal_caller
+        echo_uint8(65)
+      end
+
+      def self.echo_uint8_named_literal_caller
+        echo_uint8(value: 65)
+      end
+
+      def self.echo_uint8_external_literal_caller
+        echo_uint8_external(external: 65)
+      end
+
+      def self.echo_uint8_runtime_caller(value : Int32)
+        echo_uint8(value)
+      end
+
+      def self.echo_uint8_out_of_range_caller
+        echo_uint8(300)
       end
 
       def self.external_default_payload(label value = "fallback")
@@ -420,6 +461,30 @@ describe "bare class call return inference with cold caches" do
     converter.__test_bare_class_call_return_with_cold_cache(
       "BareClassCallReturnFactory", "external_default_omitted_caller", "external_default_payload",
     ).should eq("String")
+  end
+
+  it "preserves validated UInt8 literal conversions in selected body inference" do
+    converter = parse_bare_class_call_return_probe(bare_class_call_return_probe_source)
+    converter.__test_bare_class_call_return_with_cold_cache(
+      "BareClassCallReturnFactory", "echo_uint8_positional_literal_caller", "echo_uint8",
+    ).should eq("UInt8")
+    converter.__test_bare_class_call_return_with_cold_cache(
+      "BareClassCallReturnFactory", "echo_uint8_named_literal_caller", "echo_uint8",
+    ).should eq("UInt8")
+    converter.__test_bare_class_call_return_with_cold_cache(
+      "BareClassCallReturnFactory", "echo_uint8_external_literal_caller", "echo_uint8_external",
+    ).should eq("UInt8")
+  end
+
+  it "keeps UInt8 literal admission bounded by representability and runtime domain" do
+    converter = parse_bare_class_call_return_probe(bare_class_call_return_probe_source)
+    converter.__test_bare_class_call_return_with_cold_cache(
+      "BareClassCallReturnFactory", "echo_uint8_out_of_range_caller", "echo_uint8",
+    ).should be_nil
+    converter.__test_bare_class_call_return_with_cold_cache(
+      "BareClassCallReturnFactory", "echo_uint8_runtime_caller", "echo_uint8",
+      caller_type_bindings: {"value" => "Int32"},
+    ).should be_nil
   end
 
   it "does not use an external-label default when its supplied actual is unknown" do

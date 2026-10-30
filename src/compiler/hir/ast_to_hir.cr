@@ -30141,6 +30141,8 @@ module Adamas::HIR
       call : Adamas::Compiler::Frontend::CallNode,
       caller_self_type_name : String?,
       call_arg_count : Int32,
+      source_call_types : Array(TypeRef)? = nil,
+      source_named_types : Array({String, TypeRef})? = nil,
     ) : TypeRef?
       declared_base = strip_type_suffix(selected[0])
       inferred = with_namespace_override(method_owner(declared_base)) do
@@ -30151,7 +30153,10 @@ module Adamas::HIR
 
       # This producer already owns per-definition/specialization cycle cuts.
       # An enclosing active body is not, by itself, a recursive dependency.
-      inferred = infer_return_type_from_callsite(selected[1], receiver_name, call.args, call.named_args, caller_self_type_name)
+      inferred = infer_return_type_from_callsite(
+        selected[1], receiver_name, call.args, call.named_args, caller_self_type_name,
+        source_call_types, source_named_types,
+      )
       inferred && inferred != TypeRef::VOID ? inferred : nil
     end
 
@@ -30186,6 +30191,48 @@ module Adamas::HIR
         base_name, call_count, false, arg_types, false, has_named_args,
         named_names, has_named_args ? call.args.size : nil, has_named_args,
       )
+
+      # If ordinary matching has no winner, reuse the source-level integer
+      # autocast admission used by lowering. Only the returned, reselected
+      # exact Def and its validated converted slots may seed body inference.
+      source_call_types = nil.as(Array(TypeRef)?)
+      source_named_types = nil.as(Array({String, TypeRef})?)
+      if selected.nil?
+        autocast = if has_named_args && named_args && named_names
+                     named_exprs = {} of String => ExprId
+                     duplicate = false
+                     named_args.each do |arg|
+                       label = safe_slice_to_string(arg.name) || ""
+                       if label.empty? || named_exprs.has_key?(label)
+                         duplicate = true
+                         break
+                       end
+                       named_exprs[label] = arg.value
+                     end
+                     unless duplicate
+                       source_named_integer_autocast_entry(
+                         base_name, call.args, named_exprs, named_names, arg_types, @arena,
+                       )
+                     end
+                   else
+                     source_integer_autocast_entry(base_name, call.args, arg_types, @arena)
+                   end
+        if autocast
+          selected = {autocast[0], autocast[1]}
+          source_call_types = [] of TypeRef
+          positional_count = call.args.size
+          return nil if autocast[2].size != positional_count + (named_names.try(&.size) || 0)
+          positional_count.times do |idx|
+            source_call_types << autocast[2][idx]
+          end
+          if named_names
+            source_named_types = [] of {String, TypeRef}
+            named_names.each_with_index do |name, idx|
+              source_named_types << {name, autocast[2][positional_count + idx]}
+            end
+          end
+        end
+      end
       return nil unless selected
       if arg_types.any? { |type| type == TypeRef::VOID || type == TypeRef::POINTER }
         return nil if function_def_overloads(base_name).any? do |name|
@@ -30198,7 +30245,10 @@ module Adamas::HIR
          end
         return nil
       end
-      infer_selected_class_call_return_type(selected, receiver_name, call, receiver_name, call_count)
+      infer_selected_class_call_return_type(
+        selected, receiver_name, call, receiver_name, call_count,
+        source_call_types, source_named_types,
+      )
     end
 
     private def infer_arg_types_for_call(args : Array(ExprId), self_type_name : String?) : Array(TypeRef)
@@ -69459,8 +69509,14 @@ module Adamas::HIR
       call_args : Array(ExprId),
       named_args : Array(Adamas::Compiler::Frontend::NamedArgument)?,
       self_type_name : String?,
+      source_call_types : Array(TypeRef)? = nil,
+      source_named_types : Array({String, TypeRef})? = nil,
     ) : TypeRef?
-      call_types = call_args.map do |arg|
+      return nil if source_call_types && source_call_types.size != call_args.size
+      if source_named_types && source_named_types.size != (named_args.try(&.size) || 0)
+        return nil
+      end
+      call_types = source_call_types || call_args.map do |arg|
         inferred = infer_type_from_expr(arg, self_type_name) || TypeRef::VOID
         if inferred == TypeRef::VOID && callsite_arg_type_expression?(arg)
           if type_str = stringify_type_expr(arg)
@@ -69470,11 +69526,14 @@ module Adamas::HIR
         end
         inferred
       end
-      named_types = [] of {String, TypeRef}
-      if named_args
-        named_args.each do |arg|
-          named_types << {(safe_slice_to_string(arg.name) || ""), infer_type_from_expr(arg.value, self_type_name) || TypeRef::VOID}
+      named_types = source_named_types || begin
+        types = [] of {String, TypeRef}
+        if named_args
+          named_args.each do |arg|
+            types << {(safe_slice_to_string(arg.name) || ""), infer_type_from_expr(arg.value, self_type_name) || TypeRef::VOID}
+          end
         end
+        types
       end
       # Cache generations change during recursive inference; the active key
       # instead follows the selected definition and its concrete specialization.
@@ -69499,7 +69558,7 @@ module Adamas::HIR
       completed = false
       result = nil.as(TypeRef?)
       begin
-        result = infer_return_type_from_callsite_inner(node, owner_name, call_types, named_args, self_type_name)
+        result = infer_return_type_from_callsite_inner(node, owner_name, call_types, named_types, self_type_name)
         completed = true
       ensure
         @infer_callsite_return_stack.delete(key)
@@ -69553,9 +69612,10 @@ module Adamas::HIR
       node : Adamas::Compiler::Frontend::DefNode,
       owner_name : String?,
       call_types : Array(TypeRef),
-      named_args : Array(Adamas::Compiler::Frontend::NamedArgument)?,
+      named_types : Array({String, TypeRef})?,
       self_type_name : String?,
     ) : TypeRef?
+      named_types ||= [] of {String, TypeRef}
       local_map = {} of String => TypeRef
       name_map = {} of String => String
       supplied_named_params = Set(String).new
@@ -69586,10 +69646,9 @@ module Adamas::HIR
         end
       end
 
-      if named_args
+      unless named_types.empty?
         param_infos = function_param_infos(node, registered_arena_for_def(node) || resolve_arena_for_def(node, @arena))
-        named_args.each do |named|
-          label = safe_slice_to_string(named.name) || ""
+        named_types.each do |label, inferred|
           param = param_infos.find do |info|
             !info.is_block && !info.is_splat && !info.is_double_splat && named_parameter_label(info) == label
           end
@@ -69597,11 +69656,9 @@ module Adamas::HIR
           # Labels belong to the call; body locals use internal parameter
           # names. Track supplied unknowns too, so defaults cannot replace them.
           supplied_named_params << name
-          if inferred = infer_type_from_expr(named.value, self_type_name)
-            if inferred != TypeRef::VOID
-              local_map[name] = inferred
-              name_map[name] = get_type_name_from_ref(inferred)
-            end
+          if inferred != TypeRef::VOID
+            local_map[name] = inferred
+            name_map[name] = get_type_name_from_ref(inferred)
           end
         end
       end

@@ -21813,3 +21813,30 @@ self through the Proc environment, but a live loop backedge in the same IR
 also carries null instead of its updated reference. That observation needs a
 separate original-first discriminator. The legacy unknown raw callback ABI,
 fresh bootstrap and unchanged LavinMQ parity are not certified by this slice.
+
+## 2026-10-29 — Converted source actuals own selected body bindings
+
+Source integer conversion had two inconsistent consumers. Ordinary lowering
+validated literal representability or whole runtime-domain inclusion and
+reselected the exact definition, while bare class-helper return inference
+stopped after ordinary matching. Even after reusing selection, its body binder
+could re-infer the raw Int32 literal and erase the admitted UInt8 conversion.
+
+Bare class inference now reuses the existing positional/named source-autocast
+entry only if ordinary matching has no winner. The returned exact definition
+and validated converted positional/named types travel into body binding and
+the callsite memo key. Named values are inferred once; canonical external
+labels map to the selected internal parameter names. Unknown supplied values,
+omitted defaults, expanded-pack guards and specialization cycle cuts retain
+their distinct meanings. A formal restriction is not an actual value type.
+
+The cold-cache UInt8 probe fails on the parent. Five focused HIR files pass
+50 examples after the fix, and a fresh S1 matches installed Crystal on thirteen
+native markers and three semantic rejections. In-range literal conversions
+work positionally, by name and with an external label; 300 and runtime Int32
+remain invalid UInt8 inputs. Refresh after source admission, selection, binding
+or callsite memo changes; revert the selected producer, binder and regression
+slice together. Process.spawn, exception-edge local state, bootstrap and
+unchanged LavinMQ parity are separate open obligations.
+Scoped adversary: ROBUST for the changed fallback and converted binding path;
+this is not a certificate for all numeric overload or allocator paths.

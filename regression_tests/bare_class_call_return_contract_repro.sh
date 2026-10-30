@@ -50,6 +50,12 @@ class ClassReturnProbe
   def self.external_default(label value = "fallback")
     value
   end
+  def self.echo_uint8(value : UInt8)
+    value
+  end
+  def self.echo_uint8_external(label value : UInt8)
+    value
+  end
   def self.collide
     1
   end
@@ -62,6 +68,9 @@ class ClassReturnProbe
   def self.observe(value : String)
     LibC.putchar(83)
   end
+  def self.observe(value : UInt8)
+    LibC.putchar(85)
+  end
   def self.run
     observe(pick(value: 1))
     observe(pick(value: "named"))
@@ -73,12 +82,15 @@ class ClassReturnProbe
     observe(external(label: 4))
     observe(external_default(label: 5))
     observe(external_default())
+    observe(echo_uint8(65))
+    observe(echo_uint8(value: 65))
+    observe(echo_uint8_external(label: 65))
     LibC.putchar(10)
   end
 end
 ClassReturnProbe.run
 CRYSTAL
-printf 'ISISSSIIIS\n' >"$WORK/expected"
+printf 'ISISSSIIISUUU\n' >"$WORK/expected"
 
 cat >"$WORK/reject_named_value.cr" <<'CRYSTAL'
 class ClassReturnNegative
@@ -93,6 +105,30 @@ class ClassReturnNegative
   end
 end
 ClassReturnNegative.run
+CRYSTAL
+
+cat >"$WORK/reject_uint8_range.cr" <<'CRYSTAL'
+class ClassReturnRangeNegative
+  def self.echo_uint8(value : UInt8)
+    value
+  end
+  def self.run
+    echo_uint8(300)
+  end
+end
+ClassReturnRangeNegative.run
+CRYSTAL
+
+cat >"$WORK/reject_uint8_runtime.cr" <<'CRYSTAL'
+class ClassReturnRuntimeNegative
+  def self.echo_uint8(value : UInt8)
+    value
+  end
+  def self.run(value : Int32)
+    echo_uint8(value)
+  end
+end
+ClassReturnRuntimeNegative.run(65)
 CRYSTAL
 
 ORIGINAL_LINK_ARGS=()
@@ -139,5 +175,22 @@ assert "pick" in text and "float64" in text, text
 assert "syntax error" not in text and "parser errors" not in text, text
 assert "error" in text, text
 PY_REJECT
-  echo "PASS[$stage]: selected class results and strict named-value rejection"
+  for name in reject_uint8_range reject_uint8_runtime; do
+    status=0
+    compile_case "$stage" "$name" || status=$?
+    if [[ "$status" != 1 || -e "$WORK/$stage.$name.bin" ]]; then
+      cat "$WORK/$stage.$name.compile.log" >&2
+      echo "FAIL[$stage/$name]: expected semantic rejection" >&2
+      exit 1
+    fi
+    python3 - "$WORK/$stage.$name.compile.log" <<'PY_NUMERIC_REJECT'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text(errors="replace").lower()
+assert "echo_uint8" in text and "uint8" in text and "int32" in text, text
+assert "syntax error" not in text and "parser errors" not in text, text
+assert "error" in text, text
+PY_NUMERIC_REJECT
+  done
+  echo "PASS[$stage]: thirteen selected results and three strict rejections"
 done
