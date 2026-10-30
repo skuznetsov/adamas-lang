@@ -4974,3 +4974,26 @@ or inference recursion changes; roll back this slice and tests together.
 The live File.open program now compiles/links, but a separate stored-block
 capture lifetime defect still crashes its runtime. A no-thread stored callback
 probe also reproduces it. This slice does not certify bootstrap or LavinMQ.
+
+### Proc source signature construction precedes postfix consumption (2026-10-29)
+
+Direct and bound annotation producers parse a top-level Proc arrow before
+applying whole-expression postfix operators. Each input and the output has
+its own annotation contract; applied canonical bindings do not borrow the
+consumer namespace. Parentheses can move a nullable suffix onto the whole
+Proc, as in (A -> B)?. Consumers must not repair a lost output type by stripping
+a union arm.
+
+For source Proc types, explicit or omitted Void output normalizes to Nil, as
+in Crystal's Program#proc_of. The source domain must prove Void: an unresolved
+TypeRef::VOID sentinel is insufficient. NoReturn and metaclass outputs retain
+their distinct source contracts. Internal raw callback ABI facts remain
+separate from source annotation normalization.
+
+DoD: proc_arrow_nullable_precedence_spec.cr plus six adjacent Proc spec files
+pass 79 examples (13 new cases); the initial seven-case precedence probe fails
+three assertions/two nil checks with just the precedence blocks removed.
+Installed Crystal macro inspection independently shows the normalized output
+spellings. This does not certify callback lifetime, all Proc ABIs, bootstrap
+or LavinMQ. Refresh on parser, binding, alias or interner changes and roll back
+the producer/spec slice together.

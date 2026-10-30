@@ -22392,3 +22392,19 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   Fix the selected initializer's escaping callback contract next; do not add
   a Thread/File special case or change stdlib. Full bootstrap and LavinMQ
   runtime/test parity remain open.
+
+### Proc arrow precedence and discarded-output identity (2026-10-29)
+- [x] Reproduce `Int32? -> Int32?` becoming a nullable Proc with a nonnullable
+  output. Parse the top-level arrow before whole-expression postfix operators,
+  both in direct type construction and the applied-binding annotation producer.
+  Grouped `(A -> B)?` remains a genuinely nullable Proc.
+- [x] Match Crystal's Program#proc_of: explicit or omitted Void output becomes
+  Nil. Require an explicit resolved Void source domain before normalization;
+  the internal unknown/VOID sentinel and NoReturn do not establish that fact.
+- [x] Seven initial direct/bound falsifiers fail with three failures/two errors
+  when only the precedence changes are removed, then pass with the changes.
+  The expanded 13-case spec and six neighboring Proc files pass 79 examples.
+  Installed Crystal prints Proc(Nil) for both the omitted and explicit Void
+  zero-input signatures, and Proc(Int32, Nil) for their one-input counterparts.
+- [ ] This source-type certificate does not establish escaping callback
+  lifetime, complete Proc ABI coverage, bootstrap or unchanged LavinMQ parity.

@@ -24941,6 +24941,23 @@ module Adamas::HIR
         return ref == TypeRef::VOID ? nil : BoundAnnotationTypeContract.new(actual, ref)
       end
 
+      # Bind the parsed Proc inputs/output independently. A trailing nullable
+      # suffix belongs to the output until parentheses close the whole Proc.
+      # Keep canonical formal bindings and lexical source fragments distinct.
+      proc_name = strip_fully_grouped_type_name(name)
+      if find_top_level_arrow(proc_name)
+        arguments = proc_type_argument_names(proc_name) || return nil
+        parts = arguments.map_with_index do |part, index|
+          contract = bound_annotation_type_contract(part, owner_name, bindings) || annotation_type_contract_fragment(part, owner_name)
+          explicit_void_result = index == arguments.size - 1 && contract.restriction_name.lchop("::") == "Void"
+          return nil if contract.type_ref == TypeRef::VOID && !explicit_void_result
+          contract.restriction_name
+        end
+        restriction = "Proc(#{parts.join(", ")})"
+        ref = canonical_bound_type_ref(restriction)
+        return ref == TypeRef::VOID ? nil : BoundAnnotationTypeContract.new(restriction, ref)
+      end
+
       if name.ends_with?('?')
         inner = name[0, name.bytesize - 1].strip
         inner_contract = bound_annotation_type_contract(inner, owner_name, bindings) || annotation_type_contract_fragment(inner, owner_name)
@@ -72410,7 +72427,7 @@ module Adamas::HIR
       names = type_names
       names = ["Nil"] if names.empty?
       type_literal_slots = [] of Bool
-      type_refs = names.map do |tn|
+      type_refs = names.map_with_index do |tn, index|
         normalized = normalize_tuple_literal_type_name(substitute_type_params_in_type_name(tn.strip))
         if normalized == "self" || normalized == "Self"
           normalized = @current_class || @current_namespace_override || normalized
@@ -72427,8 +72444,18 @@ module Adamas::HIR
             normalized = override if owner_prefix == override
           end
         end
-        type_literal_slots << proc_annotation_type_literal?(normalized)
-        type_ref_for_name(normalized)
+        type_literal = proc_annotation_type_literal?(normalized)
+        type_literal_slots << type_literal
+        ref = type_ref_for_name(normalized)
+        # Crystal's Program#proc_of normalizes an explicit Void output to Nil.
+        # Unresolved type parameters can use the internal VOID sentinel, so
+        # require the resolved source spelling rather than every VOID ref.
+        if index == names.size - 1 && !type_literal && ref == TypeRef::VOID &&
+           resolve_type_alias_chain(normalized).lchop("::") == "Void"
+          TypeRef::NIL
+        else
+          ref
+        end
       end
       intern_proc_source_contract(type_refs, type_literal_slots)
     end
@@ -142082,6 +142109,17 @@ module Adamas::HIR
           name = name[1..-2].strip
         end
       end
+      # The Proc arrow has lower precedence than postfix type operators. Its
+      # output owns `?`, `*`, and `.class` in `A -> B?`, `A -> B*`, and
+      # `A -> B.class`; applying those operators to the whole spelling first
+      # loses the callback's source signature. Grouped `(A -> B)?` has no
+      # top-level arrow here and still takes the ordinary nullable-type path.
+      if find_top_level_arrow(name)
+        if proc_ref = proc_type_ref_for_name(name)
+          return proc_ref
+        end
+      end
+
       if static_array_name = static_array_sugar_type_name(name)
         return type_ref_for_name(static_array_name)
       end

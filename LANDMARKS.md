@@ -21747,3 +21747,30 @@ with no environment, restores the cell, then reads it after the factory has
 returned. The next obligation is the exact selected initializer's stored
 block lifetime/carrier contract. Bootstrap and unchanged LavinMQ parity are
 still open.
+
+## 2026-10-29 — Proc arrow output owns its postfix operators
+
+A top-level Proc arrow binds more loosely than postfix nullable, pointer and
+metaclass operators. The old direct and applied-binding type producers treated
+a final question mark as nullability of the whole spelling before recognizing
+the arrow. Thus Int32? -> Int32? lost result nullability and became a union of
+Nil and Proc(Int32?, Int32). Removing the Nil arm in a consumer cannot recover
+the lost signature. Both producers now use the shared arrow argument parser
+first; applied bindings retain canonical actuals and lexical source fragments
+independently. Parentheses around the complete arrow still delimit an outer
+nullable Proc.
+
+The neighboring tests also exposed missing output normalization, not stale
+test expectations. Crystal's type lookup initially supplies Void, but
+Program#proc_of normalizes a Void output to Nil. Installed Crystal's macro
+inspection confirms Proc(Nil) / Proc(Int32, Nil) for omitted and explicit Void
+outputs. The source interner now normalizes only a resolved explicit Void
+output; unknown types that share the internal VOID sentinel remain unknown.
+NoReturn and metaclass result slots are not discarded.
+
+The initial seven direct/bound probes fail three assertions/two nil checks
+without the precedence changes and pass with them. Thirteen focused cases
+plus six neighboring Proc files pass 79 examples. This is a type-production
+certificate, not a runtime or bootstrap certificate. Refresh after arrow
+parsing, alias resolution, applied binding or Proc interning changes; revert
+the producer changes and the new precedence spec together.
