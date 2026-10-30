@@ -25001,7 +25001,7 @@ module Adamas::HIR
     end
 
     private def canonical_bound_type_ref(name : String) : TypeRef
-      with_canonical_type_scope { type_ref_for_name(name) }
+      with_canonical_type_scope { type_ref_for_name(root_anchored_canonical_type_name(name)) }
     end
 
     private def annotation_type_bindings(owner_name : String?) : Hash(String, String)
@@ -26923,12 +26923,13 @@ module Adamas::HIR
         end
         path_text = raw_path.not_nil!
         type_name = if absolute_path
-                      strip_absolute_name_prefix(path_text)
+                      # A rooted source path has already chosen its namespace.
+                      # Do not reinterpret its bare identity in the caller.
+                      resolve_path_type_alias_chain(strip_absolute_name_prefix(path_text), true)
                     else
-                      resolve_path_string_in_context(path_text)
+                      contextual = resolve_path_string_in_context(path_text)
+                      resolve_type_alias_chain(resolve_type_name_in_context(contextual))
                     end
-        type_name = resolve_type_name_in_context(type_name)
-        type_name = resolve_type_alias_chain(type_name)
         return type_name if type_name_exists?(type_name) || @module_defs.has_key?(type_name) || @generic_templates.has_key?(type_name)
       when Adamas::Compiler::Frontend::GenericNode
         if type_name = stringify_type_expr(expr_id)
@@ -28151,12 +28152,12 @@ module Adamas::HIR
           return infer_named_collection_literal_type(custom_name, [] of ExprId)
         end
         key_type = if key_type_expr = expr_node.of_key_type
-                     type_ref_for_name(normalize_declared_type_name((safe_slice_to_string(key_type_expr) || "")))
+                     annotation_type_ref(safe_slice_to_string(key_type_expr) || "", @current_class)
                    else
                      TypeRef::VOID
                    end
         value_type = if value_type_expr = expr_node.of_value_type
-                       type_ref_for_name(normalize_declared_type_name((safe_slice_to_string(value_type_expr) || "")))
+                       annotation_type_ref(safe_slice_to_string(value_type_expr) || "", @current_class)
                      else
                        TypeRef::VOID
                      end
@@ -28207,6 +28208,9 @@ module Adamas::HIR
         raw_path = collect_path_string(expr_node)
         absolute = raw_path.starts_with?("::")
         full_name = absolute ? absolute_path_body(raw_path) : resolve_path_string_in_context(raw_path)
+        # Rooted aliases select a canonical owner before value/type inference.
+        # Their qualified tail must follow the alias target, not the caller.
+        full_name = resolve_path_type_alias_chain(full_name, true) if absolute
         if type_param_like?(full_name) && @type_param_map.has_key?(full_name)
           return nil
         end
@@ -28220,7 +28224,8 @@ module Adamas::HIR
             end
           end
         end
-        if resolved = resolve_constant_name_in_context(full_name)
+        resolved_constant = absolute ? (constant_name_exists?(full_name) ? full_name : nil) : resolve_constant_name_in_context(full_name)
+        if resolved = resolved_constant
           if const_type = @constant_types[resolved]?
             return const_type if const_type != TypeRef::VOID
           end
@@ -28241,7 +28246,8 @@ module Adamas::HIR
         if parts.size >= 2
           member = parts.last
           enum_candidate = parts[0...-1].join("::")
-          if enum_name = resolve_enum_name(enum_candidate)
+          enum_name = absolute ? (@enum_info.try(&.has_key?(enum_candidate)) ? enum_candidate : nil) : resolve_enum_name(enum_candidate)
+          if enum_name
             if enum_info = @enum_info
               if enum_info[enum_name]?.try(&.has_key?(member))
                 enum_ref = enum_type_ref(enum_name)
@@ -28251,7 +28257,7 @@ module Adamas::HIR
           end
         end
         if type_name_exists?(full_name)
-          return type_ref_for_name(absolute ? raw_path : full_name)
+          return absolute ? canonical_bound_type_ref(full_name) : type_ref_for_name(full_name)
         end
       when Adamas::Compiler::Frontend::ConstantNode
         name = (safe_slice_to_string(expr_node.name) || "")
@@ -30283,7 +30289,7 @@ module Adamas::HIR
       end
       if block_expr
         declaration_arena = registered_arena_for_def(selected[1]) || resolve_arena_for_def(selected[1], @arena)
-        receiver_type = type_ref_for_name(receiver_name)
+        receiver_type = canonical_bound_type_ref(receiver_name)
         source_binding = source_ast_call_binding(selected[0], selected[1], declaration_arena,
           call, caller_self_type_name, source_call_types, source_named_types)
         bindings = source_block_result_bindings(selected[1], declaration_arena, selected[0],
@@ -30304,7 +30310,7 @@ module Adamas::HIR
             # An unannotated method forwards the source yield result even
             # when its callback restriction permits discarding that result.
             # Declared method results take the annotation path below.
-            return type_ref_for_name(output_name)
+            return canonical_bound_type_ref(output_name)
           end
           if output_bindings && (return_text = selected[1].return_type)
             return_type = with_arena(declaration_arena) do
@@ -30319,7 +30325,7 @@ module Adamas::HIR
                    selected_body_returns_yield_result?(selected[1], declaration_arena)
                   pattern = build_source_block_result_pattern(return_name, owner,
                     [] of String, output_bindings)
-                  actual = type_ref_for_name(output_name)
+                  actual = canonical_bound_type_ref(output_name)
                   literal = proc_annotation_type_literal?(output_name)
                   annotated = actual if pattern.valid && source_block_result_pattern_matches_value?(actual, literal, pattern)
                 end
@@ -30334,7 +30340,7 @@ module Adamas::HIR
         return nil if selected[1].return_type.nil? || !forall_type_param_names(selected[1]).empty?
       end
       inferred = with_namespace_override(method_owner(declared_base)) do
-        resolve_return_type_from_def(selected[0], declared_base, type_ref_for_name(receiver_name), call_arg_count, selected[1])
+        resolve_return_type_from_def(selected[0], declared_base, canonical_bound_type_ref(receiver_name), call_arg_count, selected[1])
       end
       return inferred if inferred && inferred != TypeRef::VOID
       return nil if selected[1].return_type
@@ -42099,7 +42105,7 @@ module Adamas::HIR
     # type, block, named-argument, and overload-selection checks.
     private def constructor_source_positional_arity_rejected?(class_name : String, arity : Int32) : Bool
       saw_initializer = false
-      get_ancestor_chain(normalize_method_owner_name(class_name)).each do |owner|
+      get_ancestor_chain(canonical_method_owner_name(class_name)).each do |owner|
         {"#{owner}.new", "#{owner}#initialize"}.each do |base_name|
           candidates = function_def_overloads(base_name).dup
           if @function_defs.has_key?(base_name) && !candidates.includes?(base_name)
@@ -49946,6 +49952,16 @@ module Adamas::HIR
       end
     end
 
+    # A selected receiver's owner is a resolved identity. The ordinary owner
+    # normalizer also accepts source spellings, so isolate its lookup scope and
+    # anchor every child before using it across this semantic boundary.
+    private def canonical_method_owner_name(name : String) : String
+      normalized = with_canonical_type_scope do
+        normalize_method_owner_name(root_anchored_canonical_type_name(name))
+      end
+      normalized.starts_with?("::") ? strip_absolute_name_prefix(normalized) : normalized
+    end
+
     private def normalize_method_owner_name(name : String) : String
       return "" if name.unsafe_as(UInt64) == 0_u64
       return name if name.empty?
@@ -50311,7 +50327,7 @@ module Adamas::HIR
           end
         end
       end
-      class_name = normalize_method_owner_name(class_name)
+      class_name = canonical_method_owner_name(class_name)
       if enum_type_name.nil? && !class_name.empty? && class_name.includes?("::") && !@class_info.has_key?(class_name)
         if resolved = resolve_short_type_in_namespace_chain(class_name)
           class_name = resolved
@@ -65197,12 +65213,12 @@ module Adamas::HIR
         arrow_index = name.includes?("->") ? find_top_level_arrow(name) : nil
         if arrow_index
           input_names = split_proc_type_inputs(name[0, arrow_index].strip)
-          inputs = input_names.map { |input| resolve_type_name_in_context(input) }.join(", ")
+          inputs = input_names.map { |input| resolve_composite_type_argument_in_context(input) }.join(", ")
           result_name = name[arrow_index + 2, name.size - arrow_index - 2].strip
-          result = result_name.empty? ? "" : resolve_type_name_in_context(result_name)
+          result = result_name.empty? ? "" : resolve_composite_type_argument_in_context(result_name)
           "#{inputs} -> #{result}".strip
         elsif has_top_level_union_separator?(name)
-          split_union_type_name(name).map { |part| resolve_type_name_in_context(part) }.join(" | ")
+          split_union_type_name(name).map { |part| resolve_composite_type_argument_in_context(part) }.join(" | ")
         elsif named_tuple = resolve_named_tuple_type_name_in_context(name)
           named_tuple
         elsif @signature_scan_mode
@@ -65215,6 +65231,15 @@ module Adamas::HIR
       end
     end
 
+    # A resolved component is re-parsed when its enclosing type is interned.
+    # Keep an explicit source root across that boundary instead of turning it
+    # back into a relative lookup in the caller's namespace. Relative children
+    # of a rooted generic still resolve in their original lexical context.
+    private def resolve_composite_type_argument_in_context(name : String) : String
+      resolved = resolve_type_name_in_context(name)
+      name.strip.starts_with?("::") ? root_anchored_canonical_type_name(resolved) : resolved
+    end
+
     # A NamedTuple field is key/value syntax in every context. Resolve only
     # its type value, including lexical aliases, self and rooted union members.
     private def resolve_named_tuple_type_name_in_context(name : String) : String?
@@ -65222,10 +65247,10 @@ module Adamas::HIR
       return nil unless info && (info.base == "NamedTuple" || info.base == "::NamedTuple")
       args = split_generic_type_args(info.args).map do |arg|
         if entry = split_named_tuple_entry(arg)
-          value = normalize_tuple_literal_type_name(resolve_type_name_in_context(entry[1]))
+          value = normalize_tuple_literal_type_name(resolve_composite_type_argument_in_context(entry[1]))
           "#{entry[0]}: #{value}"
         else
-          resolve_type_name_in_context(arg.strip)
+          resolve_composite_type_argument_in_context(arg.strip)
         end
       end
       "NamedTuple(#{args.join(", ")})"
@@ -65265,7 +65290,7 @@ module Adamas::HIR
       return name if name.empty?
       name = normalize_missing_generic_parens(name)
       if mapped = @type_param_map[name]?
-        return resolve_type_name_in_context(mapped) if mapped != name
+        return resolve_composite_type_argument_in_context(mapped) if mapped != name
       end
       if target = compiler_internal_alias_target(name)
         return target
@@ -65276,13 +65301,13 @@ module Adamas::HIR
         if info = split_generic_base_and_args(stripped)
           resolved_args = split_generic_type_args(info.args).map do |arg|
             arg = arg.strip
-            if arg.starts_with?(':')
+            if arg.starts_with?(':') && !arg.starts_with?("::")
               arg = arg.size > 1 ? arg[1..] : ""
             end
             if arg == "self"
               @current_class || arg
             else
-              resolve_type_name_in_context(arg)
+              resolve_composite_type_argument_in_context(arg)
             end
           end.join(", ")
           return "#{info.base}(#{resolved_args})"
@@ -65303,12 +65328,12 @@ module Adamas::HIR
       if name.includes?('|')
         parts = split_union_type_name(name)
         if parts.size > 1
-          return parts.map { |part| resolve_type_name_in_context(part) }.join(" | ")
+          return parts.map { |part| resolve_composite_type_argument_in_context(part) }.join(" | ")
         end
       end
       if name.ends_with?('?')
         base = name[0, name.size - 1]
-        return "#{resolve_type_name_in_context(base)}?"
+        return "#{resolve_composite_type_argument_in_context(base)}?"
       end
       if name.ends_with?('*')
         base = name
@@ -65318,7 +65343,7 @@ module Adamas::HIR
           star_count += 1
         end
         base = base.strip
-        resolved_base = base.empty? ? base : resolve_type_name_in_context(base)
+        resolved_base = base.empty? ? base : resolve_composite_type_argument_in_context(base)
         return "#{resolved_base}#{("*" * star_count)}"
       end
 
@@ -65334,7 +65359,7 @@ module Adamas::HIR
           return "Tuple()"
         end
         tuple_args = split_generic_type_args(inner).map do |arg|
-          resolve_type_name_in_context(arg.strip)
+          resolve_composite_type_argument_in_context(arg.strip)
         end
         return "Tuple(#{tuple_args.join(", ")})"
       end
@@ -65344,13 +65369,13 @@ module Adamas::HIR
           resolved_base = resolve_generic_base_name_in_signature_context(info.base)
           resolved_args = split_generic_type_args(info.args).map do |arg|
             arg = arg.strip
-            if arg.starts_with?(':')
+            if arg.starts_with?(':') && !arg.starts_with?("::")
               arg = arg.size > 1 ? arg[1..] : ""
             end
             if type_param_like?(arg) && short_type_param_name?(arg) && !@type_param_map.has_key?(arg)
               normalize_tuple_literal_type_name(arg)
             else
-              normalize_tuple_literal_type_name(resolve_type_name_in_context(arg))
+              normalize_tuple_literal_type_name(resolve_composite_type_argument_in_context(arg))
             end
           end.join(", ")
           return resolved_base == info.base && resolved_args == info.args ? name : "#{resolved_base}(#{resolved_args})"
@@ -65385,7 +65410,7 @@ module Adamas::HIR
       return name if name.empty?
       name = normalize_missing_generic_parens(name)
       if mapped = @type_param_map[name]?
-        return resolve_type_name_in_context(mapped) if mapped != name
+        return resolve_composite_type_argument_in_context(mapped) if mapped != name
       end
       if target = compiler_internal_alias_target(name)
         resolved_type_name_cache_set(name, target)
@@ -65396,7 +65421,7 @@ module Adamas::HIR
         prefix = name.byte_slice(0, idx)
         if mapped = @type_param_map[prefix]?
           mapped_name = "#{mapped}#{name[idx..]}"
-          return resolve_type_name_in_context(mapped_name) if mapped_name != name
+          return resolve_composite_type_argument_in_context(mapped_name) if mapped_name != name
         end
       end
       if name.starts_with?("::")
@@ -65416,7 +65441,7 @@ module Adamas::HIR
             if arg == "self"
               @current_class || arg
             else
-              resolve_type_name_in_context(arg)
+              resolve_composite_type_argument_in_context(arg)
             end
           end.join(", ")
           resolved = "#{info.base}(#{resolved_args})"
@@ -65506,14 +65531,14 @@ module Adamas::HIR
       if has_union
         parts = split_union_type_name(name)
         if parts.size > 1
-          resolved = parts.map { |part| resolve_type_name_in_context(part) }.join(" | ")
+          resolved = parts.map { |part| resolve_composite_type_argument_in_context(part) }.join(" | ")
           resolved_type_name_cache_set(name, resolved)
           return resolved
         end
       end
       if name.ends_with?('?')
         base = name[0, name.size - 1]
-        resolved_base = resolve_type_name_in_context(base)
+        resolved_base = resolve_composite_type_argument_in_context(base)
         resolved = "#{resolved_base}?"
         resolved_type_name_cache_set(name, resolved)
         return resolved
@@ -65526,7 +65551,7 @@ module Adamas::HIR
           star_count += 1
         end
         base = base.strip
-        resolved_base = base.empty? ? base : resolve_type_name_in_context(base)
+        resolved_base = base.empty? ? base : resolve_composite_type_argument_in_context(base)
         resolved = "#{resolved_base}#{("*" * star_count)}"
         resolved_type_name_cache_set(name, resolved)
         return resolved
@@ -65555,7 +65580,7 @@ module Adamas::HIR
           tuple_name = "Tuple()"
         else
           tuple_args = split_generic_type_args(inner).map do |arg|
-            resolve_type_name_in_context(arg.strip)
+            resolve_composite_type_argument_in_context(arg.strip)
           end
           tuple_name = "Tuple(#{tuple_args.join(", ")})"
         end
@@ -65578,7 +65603,7 @@ module Adamas::HIR
             if type_param_like?(arg) && short_type_param_name?(arg) && !@type_param_map.has_key?(arg)
               normalize_tuple_literal_type_name(arg)
             else
-              normalize_tuple_literal_type_name(resolve_type_name_in_context(arg))
+              normalize_tuple_literal_type_name(resolve_composite_type_argument_in_context(arg))
             end
           end.join(", ")
           resolved = resolved_base == info.base && resolved_args == info.args ? name : "#{resolved_base}(#{resolved_args})"
@@ -66896,6 +66921,33 @@ module Adamas::HIR
       "#{resolved_head}#{tail}"
     end
 
+    # A rooted path has already selected the root namespace, so alias components
+    # must be expanded without consulting the caller's lexical namespace. Keep
+    # this separate from `expand_alias_path_head`, whose contextual lookup is
+    # required for relative paths.
+    private def expand_rooted_alias_path_head(name : String) : String?
+      resolved = name
+      10.times do
+        expanded = false
+        ns_idx = namespace_separator_index(resolved)
+        while ns_idx
+          head = resolved.byte_slice(0, ns_idx)
+          if alias_path_head?(head)
+            resolved_head = resolve_type_alias_chain_no_context(head)
+            if resolved_head != head
+              tail = resolved.byte_slice(ns_idx, resolved.bytesize - ns_idx)
+              resolved = "#{resolved_head}#{tail}"
+              expanded = true
+              break
+            end
+          end
+          ns_idx = resolved.index("::", ns_idx + 2)
+        end
+        break unless expanded
+      end
+      resolved == name ? nil : resolved
+    end
+
     private def compiler_internal_alias_target(name : String) : String?
       case name
       when "ValueId", "BlockId", "FunctionId",
@@ -66922,6 +66974,19 @@ module Adamas::HIR
         depth += 1
       end
       resolved
+    end
+
+    # An absolute path has already selected the root namespace. If its leading
+    # `::` was stripped for HIR/type-name lookup, do not re-open lexical lookup
+    # for a single-component name such as `::Signal`.
+    private def resolve_path_type_alias_chain(name : String, absolute : Bool) : String
+      if absolute
+        expanded = expand_rooted_alias_path_head(name)
+        return resolve_type_alias_chain_no_context(expanded) if expanded
+        resolve_type_alias_chain_no_context(name)
+      else
+        resolve_type_alias_chain(name)
+      end
     end
 
     private def resolve_type_alias_chain(name : String, preserve_abstract_int : Bool = false) : String
@@ -68830,6 +68895,21 @@ module Adamas::HIR
       end
       return {} of String => String unless param_names
 
+      # A registered concrete owner's arguments have already been resolved.
+      # Reconstruct semantic bindings from its descriptor instead of treating
+      # the canonical owner spelling as a new lexical type expression.
+      if owner = @class_info[type_name]?
+        if descriptor = @module.get_type_descriptor(owner.type_ref)
+          if descriptor.name == type_name
+            canonical_args = canonical_builtin_generic_params(template_base, descriptor.type_params, args) ||
+                             canonical_nominal_generic_params(template_base, descriptor.type_params, args)
+            if canonical_args
+              args = canonical_args.map { |arg| root_anchored_canonical_type_name(arg) }
+            end
+          end
+        end
+      end
+
       mapping = {} of String => String
       i = 0
       while i < param_names.size
@@ -70337,7 +70417,11 @@ module Adamas::HIR
       formals = source_block_type_param_names(definition, declaration_owner)
       pattern = build_source_block_result_pattern(output, declaration_owner, formals, input_bindings)
       return nil unless pattern.valid
-      actual_value = source_call_argument_from_name(block_return_name)
+      # The block result was inferred from values. Its name is a canonical
+      # identity, unlike the selected declaration's output restriction above.
+      actual_value = with_canonical_type_scope do
+        source_call_argument_from_name(root_anchored_canonical_type_name(block_return_name))
+      end
       actual_type = actual_value.type_ref
       return nil if actual_type == TypeRef::VOID
       inferred = {} of String => SourceCallArgument
@@ -71294,8 +71378,12 @@ module Adamas::HIR
         )
       end
 
-      resolved_names.map do |name|
-        if definition_owner
+      resolved_names.map_with_index do |name, index|
+        if input_names[index]? == "self" && self_target_name
+          # `self` is bound by the selected receiver, not a source spelling
+          # to resolve again in the annotation owner's lexical namespace.
+          receiver_type_value != TypeRef::VOID ? receiver_type_value : canonical_bound_type_ref(self_target_name.not_nil!)
+        elsif definition_owner
           annotation_type_ref(name, definition_owner)
         else
           type_ref_for_name(name)
@@ -73172,7 +73260,7 @@ module Adamas::HIR
     # Note: Returns the base name without mangling - caller should mangle with actual arg types
     private def resolve_method_with_inheritance(class_name : String, method_name : String) : String?
       return nil if class_name.unsafe_as(UInt64) == 0_u64 || method_name.unsafe_as(UInt64) == 0_u64
-      class_name = normalize_method_owner_name(class_name)
+      class_name = canonical_method_owner_name(class_name)
       origin = class_name
       if env_get("DEBUG_METHOD_INHERIT") && method_name == "internal_representation"
         STDERR.puts "[METHOD_INHERIT] class=#{class_name} method=#{method_name}"
@@ -73497,7 +73585,7 @@ module Adamas::HIR
     # Resolve class method name (Class.method) with inheritance.
     # Returns base name without mangling or nil if not found.
     private def resolve_class_method_with_inheritance(class_name : String, method_name : String) : String?
-      class_name = normalize_method_owner_name(class_name)
+      class_name = canonical_method_owner_name(class_name)
       origin = class_name
       ensure_method_inheritance_cache
       cache_key = "#{class_name}.#{method_name}"
@@ -73557,7 +73645,7 @@ module Adamas::HIR
     # Object fallback. Allocator selection only needs to know whether the
     # receiver or one of its registered ancestors declares a class-level method.
     private def class_method_declared_in_ancestry?(class_name : String, method_name : String) : Bool
-      current = normalize_method_owner_name(class_name)
+      current = canonical_method_owner_name(class_name)
       visited = Set(String).new
       loop do
         break if visited.includes?(current)
@@ -93344,8 +93432,39 @@ module Adamas::HIR
       merged
     end
 
+    # A canonical value type is an identity, including every component of a
+    # composite. Clearing the lexical scope alone is insufficient: the source
+    # resolver can still discover an unrelated same-named nested declaration.
     private def root_anchored_canonical_type_name(name : String) : String
-      return name if name.starts_with?("::") || type_param_like?(name)
+      name = name.strip
+      return name if name.empty? || name == "_" || type_param_like?(name) || value_literal_name?(name)
+      if has_top_level_union_separator?(name)
+        return split_union_type_name(name).map { |part| root_anchored_canonical_type_name(part) }.join(" | ")
+      end
+      if arguments = proc_type_argument_names(name)
+        # Use the shared Proc grammar for grouped inputs and braced tuple or
+        # named-tuple shorthand before anchoring their nominal components.
+        rooted = arguments.map { |argument| root_anchored_canonical_type_name(argument) }
+        return "::Proc(#{rooted.join(", ")})"
+      end
+      {".metaclass", ".class", "?", "*"}.each do |suffix|
+        if name.ends_with?(suffix)
+          base = name.byte_slice(0, name.bytesize - suffix.bytesize)
+          return "#{root_anchored_canonical_type_name(base)}#{suffix}"
+        end
+      end
+      if info = split_generic_base_and_args(name)
+        base = root_anchored_canonical_type_name(info.base)
+        args = split_generic_type_args(info.args).map do |argument|
+          if entry = split_named_tuple_entry(argument)
+            "#{entry[0]}: #{root_anchored_canonical_type_name(entry[1])}"
+          else
+            root_anchored_canonical_type_name(argument)
+          end
+        end
+        return "#{base}(#{args.join(", ")})"
+      end
+      return name if name.starts_with?("::")
       "::#{name}"
     end
 
@@ -107786,7 +107905,9 @@ module Adamas::HIR
                   arg_name = normalize_typeof_name.call(arg_name, preserve_explicit_void)
                   arg_name = resolve_type_name_in_context(arg_name)
                   arg_name = substitute_type_params_in_type_name(arg_name)
-                  normalize_tuple_literal_type_name(arg_name)
+                  # Source lookup has selected each argument's identity. Keep
+                  # that selection when the receiver descriptor is interned.
+                  root_anchored_canonical_type_name(normalize_tuple_literal_type_name(arg_name))
                 end
               end
 
@@ -107912,6 +108033,7 @@ module Adamas::HIR
                           else
                             resolve_path_string_in_context(substituted_path)
                           end
+              full_path = resolve_path_type_alias_chain(full_path, absolute_path)
               const_exists = constant_name_exists?(full_path)
               if env_get("DEBUG_CONST_RECV") && method_name == "unsafe_fetch"
                 STDERR.puts "[CONST_RECV] full_path=#{full_path} const_exists=#{const_exists} method=#{method_name}"
@@ -108025,7 +108147,7 @@ module Adamas::HIR
             normalized_class_name = if proc_receiver = proc_constructor_receiver
                                       proc_receiver.dispatch_owner
                                     else
-                                      normalize_method_owner_name(class_name_for_normalization)
+                                      canonical_method_owner_name(class_name_for_normalization)
                                     end
             if normalized_class_name.starts_with?("::")
               normalized_class_name = strip_absolute_name_prefix(normalized_class_name)
@@ -110682,12 +110804,18 @@ module Adamas::HIR
         member_obj = call_arena[member_node.object]
         if member_obj.is_a?(Adamas::Compiler::Frontend::PathNode)
           path_owner = with_arena(call_arena) { collect_path_string(member_obj) }
+          absolute_path_owner = path_owner.starts_with?("::")
           # `::Foo.m`: collect_path_string keeps the absolute prefix, but method
           # owners are registered without it. Unstripped, `::Sig.each` failed the
           # class-method lookup here and fell to the same-named instance method.
-          path_owner = strip_absolute_name_prefix(path_owner) if path_owner.starts_with?("::")
+          path_owner = strip_absolute_name_prefix(path_owner) if absolute_path_owner
           path_owner = substitute_type_params_in_type_name(path_owner)
-          path_owner = resolve_type_alias_chain(path_owner)
+          path_owner = resolve_path_type_alias_chain(path_owner, absolute_path_owner)
+          if absolute_path_owner && !constant_name_exists?(path_owner) &&
+             !type_name_exists?(path_owner) && !@module.is_lib?(path_owner) &&
+             !enum_member_path?(path_owner)
+            raise LoweringError.new("undefined constant ::#{path_owner}", member_obj)
+          end
           path_base = resolve_class_method_with_inheritance(path_owner, method_name) || "#{path_owner}.#{method_name}"
           # M3f: convert this PathNode member-access refine site (same pattern as M3e).
           m3f_input_p = v2_string_readable?(path_base) ? CallResolutionInput.new(
@@ -111788,7 +111916,7 @@ module Adamas::HIR
                                 elsif path_resolved_receiver
                                   class_name
                                 else
-                                  normalize_method_owner_name(resolve_type_name_in_context(class_name))
+                                  canonical_method_owner_name(class_name)
                                 end
           if !path_resolved_receiver && !@class_info.has_key?(resolved_class_name)
             if resolved_short = resolve_short_type_in_namespace_chain(resolved_class_name)
@@ -131746,7 +131874,10 @@ module Adamas::HIR
                 end
               end
               arg_name = resolve_type_name_in_context(arg_name)
-              substitute_type_params_in_type_name(arg_name)
+              arg_name = substitute_type_params_in_type_name(arg_name)
+              # Each source argument has selected its declaration before
+              # the descriptor constructor consumes the resolved identity.
+              root_anchored_canonical_type_name(normalize_tuple_literal_type_name(arg_name))
             end
           end
           # Create specialized class name like Hash(Int32, Int32)
@@ -131777,7 +131908,7 @@ module Adamas::HIR
                   # Mirrors the Generic-receiver branch above.
                   arg = resolve_type_name_in_context(arg)
                   arg = substitute_type_params_in_type_name(arg)
-                  normalize_tuple_literal_type_name(arg)
+                  root_anchored_canonical_type_name(normalize_tuple_literal_type_name(arg))
                 end
                 class_name_str = "#{base_name}(#{type_args.join(", ")})"
                 if lookup_base_name == "Proc"
@@ -131814,7 +131945,12 @@ module Adamas::HIR
                     else
                       resolve_path_string_in_context(raw_path)
                     end
-        is_constant_path = resolve_constant_name_in_context(full_path) != nil
+        full_path = resolve_path_type_alias_chain(full_path, absolute_path)
+        is_constant_path = if absolute_path
+                             constant_name_exists?(full_path)
+                           else
+                             resolve_constant_name_in_context(full_path) != nil
+                           end
         left_name = nil
         if left_id = path_obj.left
           left_node = @arena[left_id]
@@ -131846,7 +131982,12 @@ module Adamas::HIR
                        nil
                      end
 
-        resolved_path = resolve_type_alias_chain(full_path)
+        resolved_path = resolve_path_type_alias_chain(full_path, absolute_path)
+        if absolute_path && !is_constant_path &&
+           !type_name_exists?(resolved_path) && !@module.is_lib?(resolved_path) &&
+           !enum_member_path?(resolved_path)
+          raise LoweringError.new("undefined constant ::#{full_path}", path_obj)
+        end
         if is_constant_path
           if @module.is_lib?(resolved_path) ||
              class_like_namespace?(resolved_path) ||
@@ -138864,7 +139005,10 @@ module Adamas::HIR
              elsif @current_method_is_class
                caller_self_type_name
              end
-      name.try { |value| resolve_type_alias_chain(substitute_type_params(value, @type_param_map)) }
+      # Both the inferred literal and caller self are resolved owner identities.
+      # Substitution may bind generic parameters, but must not reopen lexical
+      # lookup for a root owner whose spelling is also present in this scope.
+      name.try { |value| resolve_type_alias_chain_no_context(substitute_type_params(value, @type_param_map)) }
     end
 
     # AST queries run before lowering has manufactured defaults or packed
@@ -140833,14 +140977,14 @@ module Adamas::HIR
       end
 
       key_type = if key_type_expr = node.of_key_type
-                   type_ref_for_name(normalize_declared_type_name((safe_slice_to_string(key_type_expr) || "")))
+                   annotation_type_ref(safe_slice_to_string(key_type_expr) || "", @current_class)
                  elsif entries.size > 0
                    enum_tracked_type(ctx, entries[0][0])
                  else
                    TypeRef::VOID
                  end
       value_type = if value_type_expr = node.of_value_type
-                     type_ref_for_name(normalize_declared_type_name((safe_slice_to_string(value_type_expr) || "")))
+                     annotation_type_ref(safe_slice_to_string(value_type_expr) || "", @current_class)
                    elsif entries.size > 0
                      ctx.type_of(entries[0][1])
                    else
@@ -140909,7 +141053,9 @@ module Adamas::HIR
       key_name = generic_param_type_name_from_ref(key_type)
       value_name = generic_param_type_name_from_ref(value_type)
       hash_type_name = "Hash(#{key_name}, #{value_name})"
-      hash_type = type_ref_for_name(hash_type_name)
+      # These children are already resolved values, so their printable names
+      # must not bind again in the namespace containing the literal.
+      hash_type = canonical_bound_type_ref(hash_type_name)
       info = HashTypeInfo.new(type: hash_type, name: hash_type_name)
       @hash_type_for_entry_cache[cache_key] = info
       info
@@ -143758,17 +143904,12 @@ module Adamas::HIR
       {best_name, best_def}
     end
 
-    # A name returned by resolve_type_name_in_context is canonical. Resolving
-    # it again in the same lexical context can rebind its first component:
-    # `::File::Info` resolves to `File::Info`, which inside
-    # `Crystal::System::File` binds `File` to that module. Look plain
-    # canonical paths up as absolute paths.
+    # A resolved name is an identity, including an applied owner's children.
+    # Anchoring only qualified nominal paths still rebinds Box(Item)'s Item
+    # in a shadowing caller, even when the selected allocator belongs to the
+    # canonical root Box(Item). Use the same contract as resolved formal facts.
     private def type_ref_for_resolved_name(name : String) : TypeRef
-      if name.includes?("::") && !name.starts_with?("::") && materializable_unknown_named_type?(name)
-        type_ref_for_name("::#{name}")
-      else
-        type_ref_for_name(name)
-      end
+      canonical_bound_type_ref(name)
     end
 
     private def type_ref_for_name(name : String) : TypeRef
@@ -143827,8 +143968,13 @@ module Adamas::HIR
     private def resolve_generic_type_param_name(raw_param : String) : String
       param = raw_param.strip
       param = @type_param_map[param]? || param
+      absolute_param = param.starts_with?("::")
       # Resolve type aliases (e.g., Crystal::System::FileDescriptor::Handle → Int32)
-      alias_resolved = resolve_type_alias_chain(param)
+      alias_resolved = if absolute_param
+                         root_anchored_canonical_type_name(resolve_path_type_alias_chain(strip_absolute_name_prefix(param), true))
+                       else
+                         resolve_type_alias_chain(param)
+                       end
       param = alias_resolved if alias_resolved != param
       # Checked before the short-type-param skip: a one-letter constant such as
       # `N = 5` in `UInt8[N]` is still a constant unless the enclosing generic
@@ -143838,6 +143984,9 @@ module Adamas::HIR
           return value
         end
       end
+      # `::` belongs to the argument, independently of its generic container.
+      # Keep it until the canonical type constructor consumes this component.
+      return normalize_tuple_literal_type_name(param) if absolute_param
       unless type_param_like?(param) && short_type_param_name?(param) && !@type_param_map.has_key?(param)
         if !param.includes?("::")
           if override = @current_namespace_override
@@ -144559,7 +144708,7 @@ module Adamas::HIR
 
         resolve_generic_param_type = ->(param : String) do
           stripped_param = param.strip
-          resolved_param = resolve_type_alias_chain(stripped_param)
+          resolved_param = stripped_param.starts_with?("::") ? stripped_param : resolve_type_alias_chain(stripped_param)
           resolve_key = resolved_param
           if !resolve_key.empty? && union_type_name?(resolve_key)
             normalized_union = normalize_union_type_name(resolve_key)
@@ -144608,7 +144757,9 @@ module Adamas::HIR
               # Resolve complete arguments through the canonical constructor.
               # Only the recursion branch above may publish a provisional union;
               # ordinary generic arguments obey the same value-type join laws.
-              ref = type_ref_for_name(stable_resolve_key)
+              # The normalized key is only a recursion guard. Removing root
+              # anchors must not change the semantic input being resolved.
+              ref = type_ref_for_name(resolved_param)
               if ref == TypeRef::VOID
                 stripped = stripped_param
                 allow_materialize = materializable_unknown_named_type?(stripped)
@@ -144663,6 +144814,8 @@ module Adamas::HIR
                                    "Tuple(#{tuple_names.join(", ")})"
                                  elsif BUILTIN_GENERIC_BASES.includes?(base_name)
                                    builtin_generic_type_name(base_name, type_params)
+                                 elsif canonical_params = canonical_nominal_generic_params(base_name, type_params, substituted_params)
+                                   "#{base_name}(#{canonical_params.join(", ")})"
                                  else
                                    substituted_name
                                  end
@@ -144689,22 +144842,28 @@ module Adamas::HIR
         end
         store_type_cache(cache_key, result)
         if canonical_generic_name != substituted_name
-          store_type_cache(type_cache_key(canonical_generic_name), result)
+          # The published name is a resolved identity, not a source expression
+          # in this caller's namespace. Do not poison its relative spelling.
+          canonical_cache_name = root_anchored_canonical_type_name(canonical_generic_name)
+          store_type_cache(type_cache_key(canonical_cache_name), result)
         end
 
         # Trigger monomorphization if this is a generic class/struct template
         # This ensures included module methods get registered for the specialized type
         if template = @generic_templates[base_name]?
-          # Builtin generic descriptors are interned under the canonical name
+          # Generic descriptors are interned under the canonical name
           # (`Array(Nil | String)` for `Array(String?)`); the class instance and
           # its method owner prefix must use the same spelling, otherwise one
           # TypeRef gets two method families that bind differently.
           mono_name = substituted_name
           mono_params = substituted_params
-          if !named_tuple_entries && canonical_generic_name != substituted_name
-            if canonical_params = canonical_builtin_generic_params(base_name, type_params, substituted_params)
+          if !named_tuple_entries
+            if canonical_params = canonical_builtin_generic_params(base_name, type_params, substituted_params) ||
+                                  canonical_nominal_generic_params(base_name, type_params, substituted_params)
               mono_name = canonical_generic_name
-              mono_params = canonical_params
+              # The owner name is printable identity; bindings are semantic
+              # inputs and must not be looked up again inside the template.
+              mono_params = canonical_params.map { |param| root_anchored_canonical_type_name(param) }
             end
           end
           unless @monomorphized.includes?(mono_name)
@@ -145348,7 +145507,7 @@ module Adamas::HIR
       class_name : String,
       type_args : Array(String),
     ) : {String, Array(String)}
-      return {class_name, type_args} unless BUILTIN_GENERIC_BASES.includes?(lookup_base_name)
+      return {class_name, type_args} unless BUILTIN_GENERIC_BASES.includes?(lookup_base_name) || @generic_templates.has_key?(lookup_base_name)
       return {class_name, type_args} if lookup_base_name == "Proc" || lookup_base_name == "NamedTuple"
       return {class_name, type_args} unless concrete_type_args?(type_args)
       ref = type_ref_for_name(class_name)
@@ -145356,11 +145515,38 @@ module Adamas::HIR
       desc = @module.get_type_descriptor(ref)
       return {class_name, type_args} unless desc
       canonical = desc.name
-      return {class_name, type_args} if canonical == class_name
       return {class_name, type_args} unless info = split_generic_base_and_args(canonical)
       return {class_name, type_args} unless info.base == lookup_base_name
-      return {class_name, type_args} unless canonical_args = canonical_builtin_generic_params(lookup_base_name, desc.type_params, type_args)
-      {canonical, canonical_args}
+      canonical_args = canonical_builtin_generic_params(lookup_base_name, desc.type_params, type_args) ||
+                       canonical_nominal_generic_params(lookup_base_name, desc.type_params, type_args)
+      return {class_name, type_args} unless canonical_args
+      {canonical, canonical_args.map { |param| root_anchored_canonical_type_name(param) }}
+    end
+
+    # Root anchors control lookup, but are not part of a resolved nominal
+    # generic's identity. Publish names from the resolved children while keeping
+    # value arguments and metaclass slots distinct from instance-valued slots.
+    private def canonical_nominal_generic_params(
+      base_name : String,
+      type_params : Array(TypeRef),
+      source_params : Array(String),
+    ) : Array(String)?
+      return nil unless @generic_templates.has_key?(base_name)
+      return nil if BUILTIN_GENERIC_BASES.includes?(base_name)
+      return nil unless type_params.size == source_params.size
+      names = [] of String
+      source_params.each_with_index do |source, index|
+        if value_literal_name?(source)
+          names << source
+          next
+        end
+        type = type_params[index]
+        return nil if type == TypeRef::VOID
+        names << with_canonical_type_scope do
+          source_generic_parameter_name(type, root_anchored_canonical_type_name(source))
+        end
+      end
+      names
     end
 
     private def builtin_generic_type_name(base_name : String, type_params : Array(TypeRef)) : String

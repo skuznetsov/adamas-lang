@@ -5185,3 +5185,33 @@ ordinary parser callers are unchanged. General closer recovery, annotation AST
 transport, bootstrap and LavinMQ runtime parity are outside this certificate.
 Refresh after parser/evaluator/context changes; roll back the slice and its spec
 together.
+
+### Selected type identity has one lookup authority (2026-10-30)
+
+Admitted: source syntax resolves under its lexical context once. Explicit root
+components survive every composite serialization boundary, including mapped
+generic arguments and Proc/union/NamedTuple children. A selected TypeRef,
+allocator owner or dispatch owner is a canonical identity: anchor its semantic
+components and consume it without caller-relative alias or short-name lookup.
+Publish generic instance names from resolved children, retaining separate
+anchored bindings for monomorphization and contextual source-cache keys.
+
+Rejected: stripping root markers before an enclosing type reparses its
+children; using a printed canonical owner as fresh source syntax; assigning two
+generic families to equivalent root-relative spellings; or allowing a later
+call-result repair to certify consumers that already observed a wrong type.
+Value arguments, metaclass slots and NamedTuple keys remain distinct semantic
+coordinates, not names to root indiscriminately.
+
+Observed DoD on isolated a7465c43 plus this slice: 163 HIR examples pass. New
+NamedTuple round-trip checks fail on the parent by merging root and nested
+field TypeRefs, and pass with distinct union children after the correction.
+Fresh S1 and original Crystal 1.22.1 agree on exact native root/relative
+receiver, cold generic, inherited generic method and strict negative cases in
+lazy/eager modes. Both unchanged-prelude native startup/virtual getter cases
+pass. Scoped adversary: ROBUST within these exercised boundaries.
+
+Refresh after source resolution, alias expansion, type serialization, generic
+publication, dispatch ownership or allocator inference changes; roll back the
+slice and tests together. Unreviewed string APIs, full integration, bootstrap
+and LavinMQ runtime/test parity remain separate obligations.

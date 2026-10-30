@@ -22675,3 +22675,28 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] General malformed-condition recovery can still skip unrelated trailing
   tokens. This slice does not establish arbitrary macro syntax, annotation AST
   transport, bootstrap, or LavinMQ runtime/test parity.
+
+### Resolved type identities survive lexical shadowing (2026-10-30)
+
+- [x] Separate lexical source lookup from consumption of a selected type or
+  method owner. Root every component of canonical generic, union, Proc and
+  NamedTuple identities; do not reopen caller-relative lookup after selection.
+- [x] Retain explicit source roots through composite resolution and mapped type
+  parameters in both signature and body contexts. Resolve relative arguments
+  in their lexical context even when the generic container itself is rooted.
+- [x] Publish nominal generic instances under resolved child identities while
+  keeping value and metaclass arguments distinct. Keep rooted semantic bindings
+  separate from printable owner names and contextual source-cache entries.
+- [x] Recover generated allocator results from the selected canonical owner.
+  A late call-result repair formerly hid an earlier wrong result type, which
+  had already reached field access and block inference. Native mixed-root and
+  relative constructors now match Crystal in lazy and eager modes.
+- [x] Isolated a7465c43 plus this slice: 163 HIR examples pass, including new
+  NamedTuple identity round trips that fail in both contexts on the parent.
+  absolute_receiver_root_scope_repro.sh matches Crystal 1.22.1, including cold
+  instantiation, inherited generic class methods and four strict negatives.
+  prelude_virtual_layout_replay_repro.sh passes both original/candidate cases.
+- [ ] Refresh these guards when identity serialization, alias expansion,
+  generic publication, allocator result inference or inheritance changes.
+  Other string-based APIs may still conflate source syntax and canonical
+  identity. Full integration, bootstrap and LavinMQ parity need fresh evidence.

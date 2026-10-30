@@ -22200,3 +22200,48 @@ malformed conditions is not certified. Refresh on macro condition parsing,
 assignment evaluation or context ownership changes. Roll back parser, evaluator
 and this spec together. Annotation expression ownership and LavinMQ parity
 remain separate obligations.
+
+## 2026-10-30 — Canonical type identities cannot re-enter lexical lookup
+
+Confirmed root cause: the compiler serializes selected TypeRefs and method
+owners as strings, then feeds them to APIs that also accept relative source
+syntax. In a shadowing namespace, root Signal became Crystal::System::Signal;
+Box(RootItem)'s child could become Shadow::RootItem. Clearing lexical scope
+alone did not prevent the unique-short-name fallback. Generic publication also
+gave rooted and equivalent relative spellings separate instance families.
+
+Canonical consumers now anchor every semantic component before interning or
+owner normalization. Composite source resolution preserves an explicit root
+through its enclosing string, including mapped T values, while ordinary
+relative children retain lexical lookup. Generic descriptors publish canonical
+child names; monomorphization bindings retain anchored semantic arguments.
+Hash annotations use the annotation resolver, and inferred Hash children use
+their already selected identities. Rooted aliases use context-free expansion.
+
+The decisive native falsifier was a selected root Box(RootItem).new whose
+initial emitted result was Box(Shadow::RootItem). A later HIR repair
+made the final call look correct, hiding the earlier polluted field/block
+types. Fresh emit tracing refuted the proposed inline-local mutation cause.
+type_ref_for_resolved_name now consumes the selected allocator owner through
+canonical_bound_type_ref instead of looking up its children again.
+
+Observed DoD: isolated a7465c43 plus these production hunks, fresh
+s1_root_identity_isolated10, passes 163 HIR examples across 20 files. The new
+NamedTuple descriptor/union-child checks fail on the parent in both signature
+and body contexts. The original-first absolute_receiver_root_scope_repro.sh
+passes lazy/eager exact output, generic superclass/inherited class-method
+counterexamples and four ordinary semantic negatives. Both native cases in
+prelude_virtual_layout_replay_repro.sh pass against Crystal 1.22.1 with its
+unmodified installed stdlib. All compiler/native processes use run_safe.sh.
+Logs in the oct29 root-cause artifact directory: spec.root-identity-final.log,
+spec.named-tuple-identity-parent-red.log,
+regression.absolute-inherited-identity-root10.log and regression.prelude-root10.log.
+
+Scoped adversary: ROBUST for these source-to-identity and canonical-consumer
+boundaries; same-lineage review is correlated. The four prior NamedTuple
+serialization expectations were updated to retain anchors and supplemented by
+descriptor identity checks, rather than treating a spelling check as semantics.
+Refresh after alias, composite grammar, cache publication, owner lookup,
+allocator result or generic ancestry changes. Roll back this slice and its
+tests together. Remaining string-based APIs are an audit risk; this certificate
+does not establish full dirty-tree integration, bootstrap or LavinMQ parity.
