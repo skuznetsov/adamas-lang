@@ -29,6 +29,24 @@ Document contract (hard rules):
 
 ### 0.1 Frontier
 
+Qualified enum and alias declarations retain the complete path and root. Source
+namespace kind is published during ordered traversal, separately from future AST
+inventory used for lazy lookup. Parser-created path wrappers carry an explicit
+fact through AST cache version 9; they can traverse a class while real module
+reopening must preserve module kind. Module aliases select the canonical target
+owner without replacing alias entries. HIR and symbol collection share predefined
+nominal metadata from Crystal's Program initialization. Generated enum registration
+uses the exact retained ExprId/arena source for members, base types and Flags.
+The isolated slice passes 112 focused examples, original-first lazy/eager native
+parity with 36 strict negatives, and unchanged-prelude hello/context probes.
+Generated-owner ablation fails the intended Flags check. The bounded adversary
+verdict is ROBUST; a later-defined macro is rejected by both compilers with
+different diagnostics, so general macro-order/diagnostic parity is unproven. Refresh on
+parser/cache, namespace publication, alias owner or arena-lifetime changes.
+Replaceable-arena HIR consumption needs stable local ids or generations. A
+pre-existing enum merge failure, full integration, bootstrap and LavinMQ parity
+remain open.
+
 Conditional loop results must be owned by Crystal's semantic exit set: only
 literal `while true` omits the normal Nil exit, while `until false` retains it.
 Valueless breaks contribute Nil, valued breaks contribute every result variant,
@@ -680,6 +698,7 @@ a current full-source emitted artifact reproduces it.
 
 | Edge | Owner record | Guard (script + env) | Status |
 |---|---|---|---|
+| source declaration -> namespace and enum registration | complete path; ordered source publication; parser wrapper provenance/cache v9; shared predefined kind; retained generated ExprId/arena | qualified_type_declaration_identity_repro.sh; focused parser/HIR/semantic/cache specs; generated-owner ablation | focused specs and native/prelude gates consumed; replaceable-arena generation and broader parity open |
 | function-list-inline | LLVMEmissionSession / LLVMEmissionFunctionPlan | `REQUIRE_SESSION=1 scripts/llvm_emission_session_source_shape_guard.sh` | consumed |
 | worker-policy-inline | LLVMEmissionSession worker plan | `+ REQUIRE_WORKER_PLAN=1` | consumed |
 | side-effect merge | LLVMEmissionSession side-effect contract | `+ REQUIRE_SIDE_EFFECT_CONTRACT=1` | consumed |
@@ -2761,6 +2780,28 @@ shadow/parity decision records; they must not become behavior authorities
 without a would-change census. `DominanceInfo`
 (mir/optimizations.cr:1681) is the lazy-dominance perf subowner for
 CopyPropagation, not a contract record.
+
+### 6.10 Qualified declaration source authority
+
+An enum/alias name is source syntax. Its complete rooted or relative path enters
+declaration-prefix lookup; selected owner names are not reinterpreted as fresh
+source. Missing path components publish module namespaces. Constants, enums,
+unions, applied generics and non-namespace special types remain rejected. Alias
+RHS uses its lexical context rather than declaration-prefix creation rules.
+
+A future module AST inventory supplies lookup bodies, not source-position kind.
+A distinct publication set records actual traversal and implicit-prefix creation,
+retains kind across reopening, and rejects kind replacement in later passes.
+Parser-generated namespace wrappers are explicit AST facts persisted in cache v9;
+only wrappers can traverse a class without reopening it as a module. Module
+aliases resolve to the target owner while their alias entries remain intact.
+HIR and symbol collection consume one predefined nominal metadata catalog, based
+on Crystal's Program initialization rather than backend type conveniences.
+
+Generated nodes retain source text under exact ExprId and retained arena identity.
+Enum registration consumes this source before primary-file or span heuristics;
+every walker preserves the id. Append-only arena lifetime is an assumption,
+not a certificate for incremental arena replacement.
 
 ## 7. Execution order
 

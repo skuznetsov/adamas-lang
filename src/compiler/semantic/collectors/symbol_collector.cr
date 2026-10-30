@@ -1,4 +1,5 @@
 require "../../frontend/ast"
+require "../../predefined_source_types"
 require "../symbol"
 require "../context"
 require "../symbol_table"
@@ -51,6 +52,10 @@ module Adamas
         @class_stack = [] of ClassSymbol
         @module_stack = [] of ModuleSymbol
         @enum_stack = [] of EnumSymbol
+        @alias_declaration_contexts = {} of UInt64 => {SymbolTable, Symbol?}
+        @resolving_declaration_aliases = [] of AliasSymbol
+        @implicit_declaration_namespaces = [] of ModuleSymbol
+        @predefined_source_type_symbols = [] of Symbol
           # Pending root-level annotations (for example,
           # @[JSON::Serializable::Options] immediately before a class
           # definition). These annotations are attached to the next class we
@@ -804,13 +809,65 @@ module Adamas
 
           symbol = table.lookup_local(name)
 
-          # If there's already a ClassSymbol (e.g., from struct Time), reuse its scope
-          # This handles reopening scenarios where `module Foo` appears after `class Foo`
+          # Crystal removes an alias before accepting a module definition, so
+          # kind checks and body publication must use the aliased type while
+          # leaving the alias entry itself intact.
+          if alias_symbol = symbol.as?(AliasSymbol)
+            case resolved_alias = resolve_declaration_alias(alias_symbol)
+            when ModuleSymbol
+              target_module = resolved_alias
+              target_module.scope.owner_module = target_module
+              @module_stack << target_module
+              push_table(target_module.scope)
+              unless node.namespace_wrapper
+                type_params.try &.each do |type_param_name|
+                  unless target_module.scope.lookup_local(type_param_name)
+                    target_module.scope.define(type_param_name, VariableSymbol.new(type_param_name, node_id))
+                  end
+                end
+              end
+              collect_scoped_body(node.body || [] of Frontend::ExprId)
+              pop_table
+              @module_stack.pop
+              return
+            when ClassSymbol
+              target_class = resolved_alias
+              if node.namespace_wrapper
+                push_table(target_class.scope)
+                collect_scoped_body(node.body || [] of Frontend::ExprId)
+                pop_table
+              else
+                emit_type_redefinition(
+                  name,
+                  "module",
+                  node_id,
+                  target_class,
+                  predefined: predefined_source_type_symbol?(target_class),
+                )
+              end
+              return
+            else
+              emit_invalid_declaration_namespace(node_id, name, alias_symbol)
+              return
+            end
+          end
+
+          # Path scaffolds are not source module declarations. They only
+          # traverse the already-resolved namespace, which may be a class.
           if symbol.is_a?(ClassSymbol)
-            # Reuse the existing class symbol's scope for module-style reopening
-            push_table(symbol.scope)
-            collect_scoped_body(node.body || [] of Frontend::ExprId)
-            pop_table
+            if node.namespace_wrapper
+              push_table(symbol.scope)
+              collect_scoped_body(node.body || [] of Frontend::ExprId)
+              pop_table
+            else
+              emit_type_redefinition(
+                name,
+                "module",
+                node_id,
+                symbol,
+                predefined: predefined_source_type_symbol?(symbol),
+              )
+            end
             return
           end
 
@@ -859,6 +916,370 @@ module Adamas
           class_symbol.class_scope.define("new", constructor)
         end
 
+        # Resolve the namespace prefix of an enum or alias declaration without
+        # treating enclosing lexical namespaces as implicit path components.
+        # Crystal first resolves the complete prefix from the current type (or
+        # root for an absolute path). If that fails, it retries component by
+        # component with `self` disabled, creating missing modules at the
+        # current component.
+        private def declaration_target(raw_name : String, node_id : Frontend::ExprId) : {SymbolTable, String}?
+          absolute = raw_name.starts_with?("::")
+          segments = raw_name.split("::").reject(&.empty?)
+          return {absolute ? root_table : current_table, raw_name} if segments.empty?
+          return {absolute ? root_table : current_table, segments.first} if segments.size == 1
+
+          prefix = segments[0, segments.size - 1]
+          initial_owner = absolute ? nil : declaration_context_owner
+          initial_table = absolute ? root_table : current_table
+
+          if resolved = resolve_declaration_prefix(prefix, initial_owner, initial_table, allow_self: !absolute)
+            if target_scope = declaration_namespace_scope(resolved)
+              return {target_scope, segments.last}
+            end
+          end
+
+          # The whole prefix did not resolve. Restart from the original
+          # namespace, as Crystal does, and create only the missing pieces.
+          owner = initial_owner
+          table = initial_table
+          prefix.each do |segment|
+            existing = if owner
+                         lookup_declaration_path_symbol(owner, segment, allow_self: false)
+                       else
+                         table.lookup_local(segment)
+                       end
+
+            if existing
+              resolved = resolve_declaration_namespace_symbol(existing)
+              if resolved && (scope = declaration_namespace_scope(resolved))
+                owner = resolved
+                table = scope
+              else
+                emit_invalid_declaration_namespace(node_id, segment, existing)
+                return nil
+              end
+            else
+              created = create_declaration_namespace(table, segment, node_id)
+              return nil unless created
+              scope = declaration_namespace_scope(created)
+              return nil unless scope
+              owner = created
+              table = scope
+            end
+          end
+
+          {table, segments.last}
+        end
+
+        private def declaration_context_owner : Symbol?
+          current_table.owner_module || @class_stack.last?
+        end
+
+        private def declaration_namespace_scope(symbol : Symbol) : SymbolTable?
+          case symbol
+          when ClassSymbol
+            symbol.scope
+          when ModuleSymbol
+            symbol.scope
+          else
+            nil
+          end
+        end
+
+        private def resolve_declaration_prefix(
+          segments : Array(String),
+          initial_owner : Symbol?,
+          initial_table : SymbolTable,
+          *,
+          allow_self : Bool
+        ) : Symbol?
+          return nil if segments.empty?
+
+          owner = initial_owner
+          table = initial_table
+          segments.each_with_index do |segment, index|
+            found = if owner
+                      lookup_declaration_path_item(owner, segment, allow_self: allow_self && index == 0)
+                    else
+                      lookup_declaration_type_in_table(table, segment)
+                    end
+            return nil unless found
+            return nil unless scope = declaration_namespace_scope(found)
+            owner = found
+            table = scope
+          end
+
+          owner
+        end
+
+        private def lookup_declaration_type_in_table(table : SymbolTable, name : String) : Symbol?
+          symbol = table.lookup_local(name)
+          return nil unless symbol
+          resolve_declaration_namespace_symbol(symbol)
+        end
+
+        private def resolve_declaration_namespace_symbol(symbol : Symbol) : Symbol?
+          case symbol
+          when ClassSymbol, ModuleSymbol
+            symbol
+          when AliasSymbol
+            resolve_declaration_alias(symbol)
+          else
+            nil
+          end
+        end
+
+        private def resolve_declaration_alias(alias_symbol : AliasSymbol) : Symbol?
+          return nil if @resolving_declaration_aliases.any? { |entry| entry.same?(alias_symbol) }
+
+          @resolving_declaration_aliases << alias_symbol
+          begin
+            table, owner = @alias_declaration_contexts[alias_symbol.object_id.to_u64]? || {root_table, nil}
+            raw_target = alias_symbol.target
+            absolute = raw_target.starts_with?("::")
+            segments = raw_target.split("::").reject(&.empty?)
+            return nil if segments.empty?
+
+            # The RHS of an alias is an ordinary type path. Its first relative
+            # component can resolve in an enclosing lexical namespace, unlike
+            # a qualified enum/alias declaration prefix.
+            first = segments.first
+            first_symbol = if absolute
+                             root_table.lookup_local(first)
+                           else
+                             owner.try { |current_owner| lookup_declaration_path_symbol(current_owner, first, allow_self: true) }
+                           end
+            first_symbol ||= table.lookup(first) unless absolute
+            return nil unless first_symbol
+
+            resolved = resolve_declaration_namespace_symbol(first_symbol)
+            return nil unless resolved
+            return resolved if segments.size == 1
+
+            initial_scope = declaration_namespace_scope(resolved)
+            return nil unless initial_scope
+            resolve_declaration_prefix(segments[1..], resolved, initial_scope, allow_self: false)
+          ensure
+            @resolving_declaration_aliases.pop
+          end
+        end
+
+        private def lookup_declaration_path_item(owner : Symbol, name : String, *, allow_self : Bool) : Symbol?
+          raw = lookup_declaration_path_symbol(owner, name, allow_self: allow_self)
+          raw.try { |symbol| resolve_declaration_namespace_symbol(symbol) }
+        end
+
+        private def lookup_declaration_path_symbol(owner : Symbol, name : String, *, allow_self : Bool) : Symbol?
+          lookup_declaration_path_symbol(owner, name, allow_self, [] of Symbol)
+        end
+
+        private def lookup_declaration_path_symbol(
+          owner : Symbol,
+          name : String,
+          allow_self : Bool,
+          visited : Array(Symbol)
+        ) : Symbol?
+          scope = declaration_namespace_scope(owner)
+          if scope
+            if symbol = scope.lookup_local(name)
+              return symbol
+            end
+          end
+
+          if allow_self && declaration_owner_name(owner) == name
+            return owner
+          end
+
+          return nil if visited.any? { |entry| entry.same?(owner) }
+          visited << owner
+
+          declaration_parent_symbols(owner).each do |parent|
+            if symbol = lookup_declaration_path_symbol(parent, name, false, visited)
+              return symbol
+            end
+          end
+
+          nil
+        end
+
+        private def declaration_owner_name(owner : Symbol) : String
+          owner.name.split("::").last? || owner.name
+        end
+
+        private def declaration_parent_symbols(owner : Symbol) : Array(Symbol)
+          scope = declaration_namespace_scope(owner)
+          return [] of Symbol unless scope
+
+          parents = [] of Symbol
+          scope.included_modules.reverse_each do |included|
+            parents << included.symbol
+          end
+
+          if owner.is_a?(ClassSymbol)
+            if superclass_name = owner.superclass_name
+              if superclass = resolve_root_class_symbol(superclass_name)
+                parents << superclass
+              end
+            end
+          end
+
+          parents
+        end
+
+        private def create_declaration_namespace(table : SymbolTable, name : String, node_id : Frontend::ExprId) : Symbol?
+          if existing = table.lookup_local(name)
+            emit_invalid_declaration_namespace(node_id, name, existing)
+            return nil
+          end
+
+          if table.same?(root_table)
+            if metadata = PredefinedSourceTypes.metadata(name)
+              symbol : Symbol
+              if metadata.is_module
+                scope = SymbolTable.new(table)
+                module_symbol = ModuleSymbol.new(name, node_id, scope: scope, type_parameters: metadata.type_parameters)
+                scope.owner_module = module_symbol
+                symbol = module_symbol
+              else
+                scope = SymbolTable.new(table)
+                class_scope = SymbolTable.new(table)
+                symbol = ClassSymbol.new(
+                  name,
+                  node_id,
+                  scope: scope,
+                  class_scope: class_scope,
+                  superclass_name: metadata.superclass_name,
+                  type_parameters: metadata.type_parameters,
+                  is_struct: metadata.is_struct,
+                  is_abstract: metadata.is_abstract,
+                )
+              end
+              assign_symbol_file(symbol, node_id)
+              table.define(name, symbol)
+              mark_predefined_source_type_symbol(symbol)
+              return symbol
+            end
+          end
+
+          scope = SymbolTable.new(table)
+          symbol = ModuleSymbol.new(name, node_id, scope: scope)
+          assign_symbol_file(symbol, node_id)
+          scope.owner_module = symbol
+
+          table.define(name, symbol)
+          @implicit_declaration_namespaces << symbol
+
+          symbol
+        end
+
+        private def predefined_source_type_symbol?(symbol : Symbol) : Bool
+          @predefined_source_type_symbols.any? { |predefined| predefined.same?(symbol) }
+        end
+
+        private def mark_predefined_source_type_symbol(symbol : Symbol) : Nil
+          @predefined_source_type_symbols << symbol unless predefined_source_type_symbol?(symbol)
+        end
+
+        private def emit_predefined_namespace_redefinition(name : String, replacement_kind : String, node_id : Frontend::ExprId, existing : Symbol) : Nil
+          emit_type_redefinition(name, replacement_kind, node_id, existing, predefined: true)
+        end
+
+        private def emit_type_redefinition(
+          name : String,
+          replacement_kind : String,
+          node_id : Frontend::ExprId,
+          existing : Symbol,
+          *,
+          predefined : Bool = false,
+        ) : Nil
+          existing_kind = predefined_source_type_kind(existing)
+          message = if predefined
+                      "cannot redefine predefined #{existing_kind} '#{name}' as #{replacement_kind}"
+                    else
+                      "cannot redefine #{existing_kind} '#{name}' as #{replacement_kind}"
+                    end
+          secondary_spans = if predefined
+                              [] of SecondarySpan
+                            else
+                              [SecondarySpan.new(span_for(existing.node_id), "previous #{existing_kind} defined here", existing.node_id, file_path_for(existing.node_id))]
+                            end
+          @diagnostics << Diagnostic.new(
+            DiagnosticLevel::Error,
+            "E2001",
+            message,
+            span_for(node_id),
+            secondary_spans,
+            node_id,
+            file_path_for(node_id)
+          )
+        end
+
+        private def predefined_source_type_kind(symbol : Symbol) : String
+          case symbol
+          when ClassSymbol
+            symbol.is_struct? ? "struct" : "class"
+          when ModuleSymbol
+            "module"
+          else
+            symbol_kind(symbol)
+          end
+        end
+
+        private def implicit_declaration_namespace?(symbol : Symbol) : Bool
+          return false unless module_symbol = symbol.as?(ModuleSymbol)
+
+          @implicit_declaration_namespaces.any? { |created| created.same?(module_symbol) }
+        end
+
+        private def emit_implicit_namespace_redefinition(
+          name : String,
+          replacement_kind : String,
+          node_id : Frontend::ExprId,
+          existing : Symbol
+        ) : Nil
+          @diagnostics << Diagnostic.new(
+            DiagnosticLevel::Error,
+            "E2001",
+            "cannot redefine module '#{name}' as #{replacement_kind}",
+            span_for(node_id),
+            [SecondarySpan.new(span_for(existing.node_id), "previous module defined here", existing.node_id, file_path_for(existing.node_id))],
+            node_id,
+            file_path_for(node_id)
+          )
+        end
+
+        private def emit_invalid_declaration_namespace(node_id : Frontend::ExprId, name : String, existing : Symbol) : Nil
+          kind = case existing
+                 when EnumSymbol then "enum"
+                 when ConstantSymbol then "constant"
+                 when AliasSymbol then "alias"
+                 when ClassSymbol then "class"
+                 when ModuleSymbol then "module"
+                 else "symbol"
+                 end
+
+          message = case existing
+                    when EnumSymbol
+                      "can't declare a type inside enum '#{name}'"
+                    when ConstantSymbol
+                      "constant '#{name}' can't be used as a namespace"
+                    when AliasSymbol
+                      "alias '#{name}' doesn't resolve to a namespace"
+                    else
+                      "#{kind} '#{name}' can't be used as a namespace"
+                    end
+
+          @diagnostics << Diagnostic.new(
+            DiagnosticLevel::Error,
+            "E2001",
+            message,
+            span_for(node_id),
+            [SecondarySpan.new(span_for(existing.node_id), "existing #{kind} declared here", existing.node_id, file_path_for(existing.node_id))],
+            node_id,
+            file_path_for(node_id)
+          )
+        end
+
         private def implicit_superclass_name(name : String, is_struct : Bool) : String?
           if is_struct
             case name
@@ -889,8 +1310,9 @@ module Adamas
           name_slice = node.name
           return unless name_slice
 
-          name = intern_name(name_slice)
-          table = current_table
+          target = declaration_target(intern_name(name_slice), node_id)
+          return unless target
+          table, name = target
 
           # Parse base type if specified
           base_type = if bt = node.base_type
@@ -932,6 +1354,14 @@ module Adamas
           end
 
           if existing = table.lookup_local(name)
+            if predefined_source_type_symbol?(existing)
+              emit_predefined_namespace_redefinition(name, "enum", node_id, existing)
+              return
+            end
+            if implicit_declaration_namespace?(existing)
+              emit_implicit_namespace_redefinition(name, "enum", node_id, existing)
+              return
+            end
             enum_symbol.merge_declaration_origins_from(existing) if existing.is_a?(EnumSymbol)
             table.redefine(name, enum_symbol)
           else
@@ -986,18 +1416,30 @@ module Adamas
         end
 
         private def handle_alias(node_id : Frontend::ExprId, node : Frontend::AliasNode)
-          name = intern_name(node.name)
+          source_table = current_table
+          source_owner = declaration_context_owner
+          target_location = declaration_target(intern_name(node.name), node_id)
+          return unless target_location
+          table, name = target_location
           target = intern_name(node.value)
           alias_symbol = AliasSymbol.new(name, node_id, target)
           assign_symbol_file(alias_symbol, node_id)
 
-          table = current_table
           if existing = table.lookup_local(name)
+            if predefined_source_type_symbol?(existing)
+              emit_predefined_namespace_redefinition(name, "alias", node_id, existing)
+              return
+            end
+            if implicit_declaration_namespace?(existing)
+              emit_implicit_namespace_redefinition(name, "alias", node_id, existing)
+              return
+            end
             alias_symbol.merge_declaration_origins_from(existing) if existing.is_a?(AliasSymbol)
             table.redefine(name, alias_symbol)
           else
             table.define(name, alias_symbol)
           end
+          @alias_declaration_contexts[alias_symbol.object_id.to_u64] = {source_table, source_owner}
         end
 
         private def handle_constant(node_id : Frontend::ExprId, node : Frontend::ConstantNode)
@@ -2125,6 +2567,18 @@ module Adamas
         private def handle_class_redefinition(name : String, new_symbol : ClassSymbol, existing : Symbol, table : SymbolTable)
           case existing
           when ClassSymbol
+            predefined_source_type = predefined_source_type_symbol?(existing)
+            if predefined_source_type
+              if existing.is_struct? != new_symbol.is_struct?
+                kind = new_symbol.is_struct? ? "struct" : "class"
+                emit_predefined_namespace_redefinition(name, kind, new_symbol.node_id, existing)
+                return
+              end
+              if new_symbol.explicit_superclass? && new_symbol.superclass_name != existing.superclass_name
+                emit_predefined_namespace_redefinition(name, "class with a different superclass", new_symbol.node_id, existing)
+                return
+              end
+            end
             verify_superclass_consistency(name, new_symbol, existing)
             new_symbol = ClassSymbol.new(
               name,
@@ -2140,8 +2594,19 @@ module Adamas
             new_symbol.merge_semantic_metadata_from(existing)
             assign_symbol_file(new_symbol, new_symbol.node_id)
             new_symbol.merge_declaration_origins_from(existing)
+            mark_predefined_source_type_symbol(new_symbol) if predefined_source_type
             table.redefine(name, new_symbol)
           when ModuleSymbol
+            if implicit_declaration_namespace?(existing)
+              kind = new_symbol.is_struct? ? "struct" : "class"
+              emit_implicit_namespace_redefinition(name, kind, new_symbol.node_id, existing)
+              return
+            end
+            if predefined_source_type_symbol?(existing)
+              kind = new_symbol.is_struct? ? "struct" : "class"
+              emit_predefined_namespace_redefinition(name, kind, new_symbol.node_id, existing)
+              return
+            end
             # Handle the case where a class/struct definition replaces a module
             # This happens when parser creates `module X` for `module A::B::X`
             # (losing the path prefix), and later `struct X` is properly defined.

@@ -15,6 +15,7 @@ require "../frontend/ast"
 require "../frontend/dispatch"
 require "../semantic/identity/dry_run_tracker"
 require "../semantic/types/type_context"
+require "../predefined_source_types"
 require "../mir/mir"
 require "../../runtime"
 require "../semantic/macro_expander"
@@ -7491,6 +7492,9 @@ module Adamas::HIR
     # Class-level accessors (full method name -> entry)
     @class_accessor_entries : Hash(String, ClassAccessorEntry)
 
+    # Retained AST entries can precede their source position. Only actual
+    # declaration visits and qualified-path creation establish module kind.
+    @published_source_module_names : Set(String)
     # Module AST definitions (name -> list of {node, arena}) for mixin expansion.
     # Many stdlib "modules" provide instance methods meant to be included into classes/structs.
     @module_defs : Hash(String, Array({Adamas::Compiler::Frontend::ModuleNode, Adamas::Compiler::Frontend::ArenaLike}))
@@ -8259,6 +8263,7 @@ module Adamas::HIR
       @method_inheritance_cache_class_info_version = 0
       @method_inheritance_cache_module_version = 0
       @type_param_map = Hash(String, String).new(initial_capacity: 4096)
+      @published_source_module_names = Set(String).new
       @macro_defs = {} of String => {Adamas::Compiler::Frontend::MacroDefNode, Adamas::Compiler::Frontend::ArenaLike}
       @macro_params = {} of String => Array(MacroParamInfo)
       @class_accessor_entries = {} of String => ClassAccessorEntry
@@ -12259,6 +12264,12 @@ module Adamas::HIR
       node : Adamas::Compiler::Frontend::EnumNode,
       source : String? = nil,
     ) : String?
+      if base = node.base_type
+        if base_name = safe_slice_to_string(base)
+          return base_name unless base_name.empty?
+        end
+      end
+
       source ||= source_text_for_arena_or_file(@arena)
       return nil unless source
       header = enum_header_text_from_source(node, source)
@@ -12266,7 +12277,8 @@ module Adamas::HIR
 
       rest = header.byte_slice(5, header.bytesize - 5).strip
       return nil if rest.empty?
-      colon_index = rest.index(':')
+      # Namespace separators belong to the declaration name, not its base type.
+      colon_index = rest.index(/(?<!:):(?!:)/)
       return nil unless colon_index
 
       base = rest.byte_slice(colon_index + 1, rest.bytesize - colon_index - 1).strip
@@ -12274,12 +12286,6 @@ module Adamas::HIR
         base = base.byte_slice(0, semi_index).strip
       end
       return base unless base.empty?
-
-      if base = node.base_type
-        if base_name = safe_slice_to_string(base)
-          return base_name unless base_name.empty?
-        end
-      end
 
       nil
     end
@@ -12479,6 +12485,180 @@ module Adamas::HIR
         end
         io << ')'
       end
+    end
+
+    # Raw enum/alias paths are source declarations, not already selected owner
+    # names. Resolve their namespace without searching enclosing namespaces,
+    # then create missing namespace components under the declaring scope, like
+    # Crystal's lookup_type_def_name_creating_modules. Only :: selects root.
+    private def qualified_source_declaration_name(owner_name : String?, source_name : String, publish_namespaces : Bool = true) : String
+      rooted = source_name.starts_with?("::")
+      name = rooted ? strip_absolute_name_prefix(source_name) : source_name
+      owner = rooted ? "" : owner_name.try { |value| strip_generic_args(value) } || ""
+      separator = name.rindex("::")
+      return owner.empty? ? name : "#{owner}::#{name}" unless separator
+
+      namespace_path = name.byte_slice(0, separator).split("::")
+      leaf = name.byte_slice(separator + 2, name.bytesize - separator - 2)
+      selected = owner
+      found = true
+      namespace_path.each_with_index do |part, index|
+        if next_owner = source_declaration_path_item(selected, part, index == 0, publish_namespaces)
+          selected = next_owner
+        else
+          found = false
+          break
+        end
+      end
+      unless found
+        # Crystal restarts creation from the declaring scope, without the
+        # first-component self lookup used by the complete-prefix probe.
+        selected = owner
+        namespace_path.each do |part|
+          if existing = source_declaration_path_item(selected, part, false, publish_namespaces)
+            selected = existing
+          else
+            selected = selected.empty? ? part : "#{selected}::#{part}"
+            # Enum/alias paths create real namespaces, just as class/module
+            # path wrappers do. Preserve any future AST retained by prescan:
+            # it owns lookup bodies, not the kind at this source position.
+            if publish_namespaces
+              unless @module_defs.has_key?(selected)
+                @module_defs[selected] = [] of {Adamas::Compiler::Frontend::ModuleNode, Adamas::Compiler::Frontend::ArenaLike}
+                bump_module_defs_cache_version
+              end
+              @published_source_module_names << selected
+              register_reopened_nested_type_name(selected)
+              invalidate_type_cache_for_namespace(selected)
+            end
+          end
+        end
+      end
+      selected.empty? ? leaf : "#{selected}::#{leaf}"
+    end
+
+    private def source_declaration_path_item(owner : String, part : String, lookup_self : Bool, validate_namespace : Bool = true) : String?
+      candidate = owner.empty? ? part : "#{owner}::#{part}"
+      if source_declaration_type_name_exists?(candidate)
+        resolved = resolve_type_alias_chain_no_context(candidate, preserve_abstract_int: true)
+        return validate_namespace ? source_declaration_namespace(resolved) : resolved
+      end
+      if validate_namespace && (constant_name_exists?(candidate) || enum_member_path?(candidate))
+        raise LoweringError.new("expected #{candidate} to be a type namespace")
+      end
+      return nil if owner.empty?
+      if lookup_self && last_namespace_component(owner) == part
+        return validate_namespace ? source_declaration_namespace(owner) : owner
+      end
+      if inherited = nested_type_full_name_in_parents(owner, part, 0)
+        if source_declaration_type_name_exists?(inherited)
+          resolved = resolve_type_alias_chain_no_context(inherited, preserve_abstract_int: true)
+          return validate_namespace ? source_declaration_namespace(resolved) : resolved
+        end
+      end
+      nil
+    end
+
+    # Source namespace existence follows Program#initialize, not the broader
+    # backend generic-name shortcuts (for example Set and Iterator). Reuse the
+    # predefined class metadata before any source reopening has been visited.
+    private def predefined_source_namespace?(name : String) : Bool
+      Adamas::Compiler::PredefinedSourceTypes.namespace?(name)
+    end
+
+    # Future name inventories support lazy body lookup, but cannot authorize
+    # a declaration prefix at an earlier source position.
+    private def source_declaration_type_name_exists?(name : String) : Bool
+      predefined_source_namespace?(name) || name == "Void" || name == "NoReturn" ||
+        @class_info.has_key?(name) ||
+        @generic_templates.has_key?(name) || @type_aliases.has_key?(name) ||
+        !!@enum_info.try(&.has_key?(name)) || @published_source_module_names.includes?(name) ||
+        @module.is_lib?(name) ||
+        @active_class_declaration_frames.any? { |frame| frame.owner_name == name }
+    end
+
+    # Reopening a module adds retained AST entries without changing its kind.
+    # Neither an empty list nor the presence of a future node proves source
+    # publication, so all leaf declarations consult the publication fact.
+    private def validate_implicit_module_declaration_kind(name : String, kind : String) : Nil
+      base = strip_generic_args(name)
+      if @published_source_module_names.includes?(base) ||
+         Adamas::Compiler::PredefinedSourceTypes.metadata(base).try(&.is_module) == true
+        raise LoweringError.new("can't declare #{kind} #{name} because it's already defined as a module")
+      end
+    end
+
+    private def source_declaration_namespace(name : String) : String
+      name = strip_absolute_name_prefix(name) if name.starts_with?("::")
+      if @enum_info.try(&.has_key?(name))
+        raise LoweringError.new("can't declare type inside enum #{name}")
+      end
+      unless source_declaration_namespace_type?(name)
+        raise LoweringError.new("#{name} can't be used as a namespace")
+      end
+      name
+    end
+
+    # Crystal permits a namespace prefix only when the resolved owner is a
+    # named module-like type. A union or an applied generic may have a valid
+    # HIR carrier, but it is not a declaration namespace. Consult the nominal
+    # registries instead of treating any resolvable type spelling as a module.
+    private def source_declaration_namespace_type?(name : String) : Bool
+      # Generic instances can be cached in @class_info after specialization;
+      # their presence there does not make them NamedType namespace owners.
+      return false if split_generic_base_and_args(name)
+
+      return true if predefined_source_namespace?(name)
+
+      @class_info.has_key?(name) ||
+        @generic_templates.has_key?(name) ||
+        @published_source_module_names.includes?(name) ||
+        @module.is_lib?(name) ||
+        @type_aliases[name]? == name ||
+        @active_class_declaration_frames.any? { |frame| frame.owner_name == name }
+    end
+
+    # Declaration kind cannot be selected from @top_level_class_kinds: it
+    # includes future classes. A parser-created path wrapper may traverse an
+    # existing class; a real module declaration must preserve module kind.
+    private def source_declaration_class_like_namespace?(name : String) : Bool
+      if predefined = Adamas::Compiler::PredefinedSourceTypes.metadata(name)
+        return !predefined.is_module
+      end
+      @class_info.has_key?(name) || @generic_templates.has_key?(name) ||
+        @type_aliases[name]? == name ||
+        @active_class_declaration_frames.any? { |frame| frame.owner_name == name }
+    end
+
+    # Module declarations reopen the selected nominal target of a source
+    # alias. Keeping the alias spelling as a new owner would either overwrite
+    # a non-module alias or strand the body under an unrelated namespace.
+    private def source_module_declaration_name(name : String) : String
+      base = strip_generic_args(name)
+      target = @type_aliases[base]?
+      return name unless target && target != base
+      resolved = resolve_type_alias_chain_no_context(base, preserve_abstract_int: true)
+      resolved = source_declaration_namespace(resolved)
+      if generic = split_generic_base_and_args(name)
+        "#{resolved}(#{generic.args})"
+      else
+        resolved
+      end
+    end
+
+    private def publish_source_module_namespace(node : Adamas::Compiler::Frontend::ModuleNode, name : String) : Bool
+      base = strip_generic_args(name)
+      if @enum_info.try(&.has_key?(base))
+        raise LoweringError.new("can't declare module #{name} because it's already defined as an enum", node)
+      end
+      if source_declaration_class_like_namespace?(base)
+        unless node.namespace_wrapper
+          raise LoweringError.new("can't declare module #{name} because it's already defined as a class or struct", node)
+        end
+        return false
+      end
+      @published_source_module_names << base
+      true
     end
 
     private def qualified_nested_type_name(owner_name : String, nested_name : String) : String
@@ -13123,8 +13303,8 @@ module Adamas::HIR
     end
 
     # Register an enum type (pass 1)
-    def register_enum(node : Adamas::Compiler::Frontend::EnumNode)
-      enum_name = enum_name_from_node(node) || ""
+    def register_enum(node : Adamas::Compiler::Frontend::EnumNode, declaration_id : ExprId? = nil)
+      enum_name = qualified_source_declaration_name(@current_class, enum_name_from_node(node) || "")
       @enum_info ||= {} of String => Hash(String, Int64)
       debug_enum = debug_enum_arena_enabled_for?(enum_name)
       if debug_enum
@@ -13134,7 +13314,7 @@ module Adamas::HIR
       old_class = @current_class
       old_override = @current_namespace_override
       begin
-        register_enum_in_best_arena(node, enum_name, debug_enum)
+        register_enum_in_best_arena(node, enum_name, debug_enum, generated_source_for_expr(declaration_id, @arena))
         # Register Enum as parent class so deferred method lookup can find
         # inherited methods like includes?, none?, etc.
         register_hir_class_parent(enum_name, "Enum") unless enum_name.empty?
@@ -13507,15 +13687,30 @@ module Adamas::HIR
       nil
     end
 
-    # Register an enum type with explicit name (for nested enums)
-    def register_enum_with_name(node : Adamas::Compiler::Frontend::EnumNode, full_enum_name : String)
-      full_enum_name = resolve_class_name_for_definition(full_enum_name)
+    # Generated nodes can share an arena with primary nodes, but their spans
+    # belong to the buffer retained for that exact ExprId by MacroExpander.
+    private def generated_source_for_expr(expr_id : ExprId?, arena : Adamas::Compiler::Frontend::ArenaLike) : String?
+      return nil unless expr_id
+      if entry = @macro_generated_sources_by_arena[arena_map_key(arena)]?
+        return entry[1][expr_id.index]? if entry[0].same?(arena)
+      end
+      nil
+    end
+
+    # Register an enum type with explicit name (for nested enums).
+    def register_enum_with_name(
+      node : Adamas::Compiler::Frontend::EnumNode,
+      full_enum_name : String,
+      declaration_id : ExprId? = nil,
+    )
+      full_enum_name = strip_absolute_name_prefix(full_enum_name) if full_enum_name.starts_with?("::")
+      full_enum_name = normalize_missing_generic_parens(full_enum_name)
       @enum_info ||= {} of String => Hash(String, Int64)
       debug_enum = debug_enum_arena_enabled_for?(full_enum_name)
       old_class = @current_class
       old_override = @current_namespace_override
       begin
-        register_enum_in_best_arena(node, full_enum_name, debug_enum)
+        register_enum_in_best_arena(node, full_enum_name, debug_enum, generated_source_for_expr(declaration_id, @arena))
         register_hir_class_parent(full_enum_name, "Enum") unless full_enum_name.empty?
       ensure
         @current_class = old_class
@@ -13527,9 +13722,12 @@ module Adamas::HIR
       node : Adamas::Compiler::Frontend::EnumNode,
       full_enum_name : String,
       debug_enum : Bool,
+      generated_source : String? = nil,
     ) : Nil
-      if enum_body_ids_fit_current_arena?(node)
-        register_enum_with_name_in_current_arena(node, full_enum_name, debug_enum)
+      # Exact generated-node ownership outranks the legacy arena/span
+      # heuristic: generated spans may exceed this arena's primary source.
+      if generated_source || enum_body_ids_fit_current_arena?(node)
+        register_enum_with_name_in_current_arena(node, full_enum_name, debug_enum, generated_source)
         return
       end
 
@@ -13603,8 +13801,11 @@ module Adamas::HIR
       node : Adamas::Compiler::Frontend::EnumNode,
       full_enum_name : String,
       debug_enum : Bool,
+      generated_source : String? = nil,
     ) : Nil
-      full_enum_name = resolve_class_name_for_definition(full_enum_name)
+      full_enum_name = strip_absolute_name_prefix(full_enum_name) if full_enum_name.starts_with?("::")
+      full_enum_name = normalize_missing_generic_parens(full_enum_name)
+      validate_implicit_module_declaration_kind(full_enum_name, "enum")
       register_reopened_nested_type_name(full_enum_name)
       @enum_info ||= {} of String => Hash(String, Int64)
 
@@ -13621,7 +13822,7 @@ module Adamas::HIR
 
       members = {} of String => Int64
       current_value = 0_i64
-      enum_source = source_for_arena(@arena)
+      enum_source = generated_source || source_for_arena(@arena)
       enum_file_source = nil
       # @[Flags] changes implicit member numbering: 1, prev*2, ... (original
       # Crystal semantic/top_level_visitor.cr visit_enum_member). The parser
@@ -13819,10 +14020,10 @@ module Adamas::HIR
                 when Adamas::Compiler::Frontend::EnumNode
                   enum_name = (safe_slice_to_string(child.name) || "")
                   if enum_name == bare_name
-                    full_name = mod_name.empty? ? enum_name : "#{mod_name}::#{enum_name}"
+                    full_name = mod_name.empty? ? enum_name : qualified_source_declaration_name(mod_name, enum_name)
                     saved_arena = @arena
                     @arena = arena
-                    register_enum_with_name(child, full_name)
+                    register_enum_with_name(child, full_name, child_id)
                     @arena = saved_arena
                     return true if @enum_info.try(&.has_key?(qualified_name))
                   end
@@ -13848,10 +14049,10 @@ module Adamas::HIR
                 if child.is_a?(Adamas::Compiler::Frontend::EnumNode)
                   enum_name = (safe_slice_to_string(child.name) || "")
                   if enum_name == bare_name
-                    full_name = "#{cls_name}::#{enum_name}"
+                    full_name = qualified_source_declaration_name(cls_name, enum_name)
                     saved_arena = @arena
                     @arena = arena
-                    register_enum_with_name(child, full_name)
+                    register_enum_with_name(child, full_name, child_id)
                     @arena = saved_arena
                     return true if @enum_info.try(&.has_key?(qualified_name))
                   end
@@ -13865,7 +14066,7 @@ module Adamas::HIR
           if enum_name == bare_name && module_prefix.empty?
             saved_arena = @arena
             @arena = arena
-            register_enum_with_name(node, qualified_name)
+            register_enum_with_name(node, qualified_name, root_id)
             @arena = saved_arena
             return true if @enum_info.try(&.has_key?(qualified_name))
           end
@@ -13928,7 +14129,7 @@ module Adamas::HIR
       enum_name = enum_name_from_node(node) || ""
       return if enum_name.empty?
 
-      pre_register_enum_scoped_macros_with_name(node, resolve_class_name_for_definition(enum_name))
+      pre_register_enum_scoped_macros_with_name(node, qualified_source_declaration_name(@current_class, enum_name, publish_namespaces: false))
     end
 
     private def pre_register_class_scoped_macros_with_name(
@@ -14013,7 +14214,7 @@ module Adamas::HIR
           next if nested_name.empty?
           pre_register_enum_scoped_macros_with_name(
             member,
-            qualified_nested_type_name(owner_name, nested_name)
+            qualified_source_declaration_name(owner_name, nested_name, publish_namespaces: false)
           )
         end
       end
@@ -14218,11 +14419,11 @@ module Adamas::HIR
         register_module_with_name(member, full_name)
       when Adamas::Compiler::Frontend::EnumNode
         nested_name = (safe_slice_to_string(member.name) || "")
-        full_name = "#{class_name}::#{nested_name}"
+        full_name = qualified_source_declaration_name(class_name, nested_name)
         if env_get("DEBUG_MACRO_TYPE_REG")
           STDERR.puts "[DEBUG_MACRO_TYPE_REG] register enum #{full_name}"
         end
-        register_enum_with_name(member, full_name)
+        register_enum_with_name(member, full_name, expr_id)
       when Adamas::Compiler::Frontend::MacroIfNode
         result = try_evaluate_macro_condition(member.condition)
         if result == true
@@ -14740,7 +14941,7 @@ module Adamas::HIR
         register_class_with_name(member, "#{class_name}::#{nested_name}")
       when Adamas::Compiler::Frontend::EnumNode
         nested_name = (safe_slice_to_string(member.name) || "")
-        register_enum_with_name(member, "#{class_name}::#{nested_name}")
+        register_enum_with_name(member, qualified_source_declaration_name(class_name, nested_name), expr_id)
       when Adamas::Compiler::Frontend::ModuleNode
         nested_name = (safe_slice_to_string(member.name) || "")
         register_nested_module(member, "#{class_name}::#{nested_name}")
@@ -15073,9 +15274,9 @@ module Adamas::HIR
           register_class_with_name(member, full_nested_name)
         when Adamas::Compiler::Frontend::EnumNode
           nested_name = enum_name_from_node(member, source) || ""
-          full_nested_name = qualified_nested_type_name(owner_name, nested_name)
+          full_nested_name = qualified_source_declaration_name(owner_name, nested_name)
           next if self_nested_module_name?(owner_name, full_nested_name)
-          register_enum_with_name(member, full_nested_name)
+          register_enum_with_name(member, full_nested_name, expr_id)
         when Adamas::Compiler::Frontend::ModuleNode
           # Self-wrapper module nodes are reopen carriers. Do not route them
           # back through module registration; doing so can recurse into the
@@ -15091,8 +15292,8 @@ module Adamas::HIR
           @current_class = owner_name
           target_name = resolve_alias_target((safe_slice_to_string(member.value) || ""), owner_name)
           @current_class = old_class
-          full_alias_name = qualified_nested_type_name(owner_name, alias_name)
-          register_type_alias(full_alias_name, target_name)
+          full_alias_name = qualified_source_declaration_name(owner_name, alias_name)
+          register_source_type_alias(full_alias_name, target_name)
         end
       end
     end
@@ -15349,13 +15550,8 @@ module Adamas::HIR
       if env_has?("ADAMAS_TRACE_ALIAS_ROOT")
         STDERR.puts "[ALIAS_ROOT] phase=register_alias.start name_size=#{alias_name.bytesize} target_size=#{raw_target_name.bytesize}"
       end
-      full_alias_name = alias_full_name_from_span(node) || alias_name
+      full_alias_name = qualified_source_declaration_name(@current_class, alias_full_name_from_span(node) || alias_name)
       STDERR.puts "[ALIAS_ROOT] phase=register_alias.full_name size=#{full_alias_name.bytesize}" if env_has?("ADAMAS_TRACE_ALIAS_ROOT")
-      if !full_alias_name.includes?("::")
-        if current = @current_class
-          full_alias_name = "#{current}::#{full_alias_name}"
-        end
-      end
       context = if full_alias_name.includes?("::")
                   parts = full_alias_name.split("::")
                   parts.size > 1 ? parts[0...-1].join("::") : nil
@@ -15370,7 +15566,7 @@ module Adamas::HIR
       @current_class = old_class if context
       previous = @type_aliases[full_alias_name]?
       STDERR.puts "[ALIAS_ROOT] phase=register_alias.before_store existing=#{previous ? 1 : 0}" if env_has?("ADAMAS_TRACE_ALIAS_ROOT")
-      register_type_alias(full_alias_name, target_name)
+      register_source_type_alias(full_alias_name, target_name)
       STDERR.puts "[ALIAS_ROOT] phase=register_alias.after_store" if env_has?("ADAMAS_TRACE_ALIAS_ROOT")
       if env_has?("DEBUG_ALIAS") && @type_aliases[full_alias_name]? == target_name && previous != target_name
         STDERR.puts "[ALIAS] Registered (top): #{full_alias_name} => #{target_name}"
@@ -15406,6 +15602,11 @@ module Adamas::HIR
         suffix_entries << alias_name unless suffix_entries.includes?(alias_name)
         sep = alias_name.index("::", suffix_start)
       end
+    end
+
+    private def register_source_type_alias(alias_name : String, target_name : String) : Nil
+      validate_implicit_module_declaration_kind(alias_name, "alias")
+      register_type_alias(alias_name, target_name)
     end
 
     private def register_type_alias(alias_name : String, target_name : String)
@@ -15515,7 +15716,7 @@ module Adamas::HIR
               if debug_lib_member
                 STDERR.puts "[LIB_MEMBER] lib=#{lib_name} pass=types idx=#{i + 1}/#{body.size} kind=#{body_node.class.name.split("::").last} node_kind=#{Adamas::Compiler::Frontend.node_kind(body_node)} is_alias=#{body_node.is_a?(Adamas::Compiler::Frontend::AliasNode) ? 1 : 0} detail=#{debug_lib_member_label(body_node)}"
               end
-              register_lib_member(body_node, lib_name, :types)
+              register_lib_member(body_node, lib_name, :types, expr_id)
             end
           end
 
@@ -15526,7 +15727,7 @@ module Adamas::HIR
               if debug_lib_member
                 STDERR.puts "[LIB_MEMBER] lib=#{lib_name} pass=externs idx=#{i + 1}/#{body.size} kind=#{body_node.class.name.split("::").last} node_kind=#{Adamas::Compiler::Frontend.node_kind(body_node)} is_alias=#{body_node.is_a?(Adamas::Compiler::Frontend::AliasNode) ? 1 : 0} detail=#{debug_lib_member_label(body_node)}"
               end
-              register_lib_member(body_node, lib_name, :externs)
+              register_lib_member(body_node, lib_name, :externs, expr_id)
             end
           end
         end
@@ -15552,7 +15753,7 @@ module Adamas::HIR
       end
     end
 
-    private def register_lib_member(node : AstNode, lib_name : String, pass : Symbol)
+    private def register_lib_member(node : AstNode, lib_name : String, pass : Symbol, declaration_id : ExprId? = nil)
       pass_label = if pass == :types
                      "types"
                    elsif pass == :externs
@@ -15597,8 +15798,8 @@ module Adamas::HIR
         target_name = resolve_alias_target(raw_value, lib_name)
         @current_class = old_class
         STDERR.puts "[LIB_MEMBER_PHASE] lib=#{lib_name} pass=#{pass_label} phase=alias_after_resolve target=#{target_name}" if trace_lib_member
-        full_alias_name = "#{lib_name}::#{alias_name}"
-        register_type_alias(full_alias_name, target_name)
+        full_alias_name = qualified_source_declaration_name(lib_name, alias_name)
+        register_source_type_alias(full_alias_name, target_name)
         STDERR.puts "[LIB_MEMBER_PHASE] lib=#{lib_name} pass=#{pass_label} phase=alias_after_store full=#{full_alias_name}" if trace_lib_member
       when Adamas::Compiler::Frontend::ConstantNode
         return unless pass == :types
@@ -15608,12 +15809,16 @@ module Adamas::HIR
         return unless pass == :types
         safe_str_guard(node.name, "return")
         enum_name = (safe_slice_to_string(node.name) || "")
-        full_enum_name = resolve_class_name_for_definition("#{lib_name}::#{enum_name}")
+        full_enum_name = qualified_source_declaration_name(lib_name, enum_name)
         body_present = if body = node.body
                          !body.empty?
                        else
                          false
                        end
+        if generated_source_for_expr(declaration_id, @arena)
+          register_enum_with_name(node, full_enum_name, declaration_id)
+          return
+        end
         debug_enum = debug_enum_arena_enabled_for?(full_enum_name)
         input_arena_key = arena_map_key(@arena)
         input_path = source_path_for(@arena) || "?"
@@ -15627,7 +15832,7 @@ module Adamas::HIR
           if debug_enum
             STDERR.puts "[ENUM_ARENA] enum=#{full_enum_name} lib_reparse=0 body=#{body_present ? 1 : 0} input=#{input_arena_key} input_path=#{input_path}"
           end
-          register_enum_with_name(node, full_enum_name)
+          register_enum_with_name(node, full_enum_name, declaration_id)
         end
       when Adamas::Compiler::Frontend::ClassNode
         return unless pass == :types
@@ -16220,7 +16425,7 @@ module Adamas::HIR
               end
               with_arena(parsed_arena) do
                 body.each do |expr_id|
-                  register_lib_member(@arena[expr_id], lib_name, pass)
+                  register_lib_member(@arena[expr_id], lib_name, pass, expr_id)
                 end
               end
               return
@@ -16269,7 +16474,7 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::MacroForNode
         process_macro_for_in_lib(body_node, lib_name, pass)
       else
-        register_lib_member(body_node, lib_name, pass)
+        register_lib_member(body_node, lib_name, pass, body_id)
       end
     end
 
@@ -16310,7 +16515,7 @@ module Adamas::HIR
         parsed_arena, body = parsed
         with_arena(parsed_arena) do
           body.each do |expr_id|
-            register_lib_member(@arena[expr_id], lib_name, pass)
+            register_lib_member(@arena[expr_id], lib_name, pass, expr_id)
           end
         end
       end
@@ -16323,7 +16528,7 @@ module Adamas::HIR
           parsed_arena, body = parsed
           with_arena(parsed_arena) do
             body.each do |expr_id|
-              register_lib_member(@arena[expr_id], lib_name, pass)
+              register_lib_member(@arena[expr_id], lib_name, pass, expr_id)
             end
           end
           return
@@ -16338,7 +16543,7 @@ module Adamas::HIR
         parsed_arena, body = parsed
         with_arena(parsed_arena) do
           body.each do |expr_id|
-            register_lib_member(@arena[expr_id], lib_name, pass)
+            register_lib_member(@arena[expr_id], lib_name, pass, expr_id)
           end
         end
         return
@@ -16351,7 +16556,7 @@ module Adamas::HIR
           parsed_arena, body = parsed
           with_arena(parsed_arena) do
             body.each do |expr_id|
-              register_lib_member(@arena[expr_id], lib_name, pass)
+              register_lib_member(@arena[expr_id], lib_name, pass, expr_id)
             end
           end
         end
@@ -17266,8 +17471,8 @@ module Adamas::HIR
         nil_lit.id
       when Adamas::Compiler::Frontend::EnumNode
         name = (safe_slice_to_string(node.name) || "")
-        full_name = resolve_class_name_for_definition(name)
-        register_enum_with_name(node, full_name)
+        full_name = qualified_source_declaration_name(@current_class, name)
+        register_enum_with_name(node, full_name, expr_id)
         nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
         ctx.emit(nil_lit)
         nil_lit.id
@@ -31350,6 +31555,7 @@ module Adamas::HIR
       else
         module_name = resolve_class_name_for_definition(module_name)
       end
+      module_name = source_module_declaration_name(module_name)
       register_reopened_nested_type_name(module_name)
       if env_has?("ADAMAS_TRACE_MODULE_CHILD_ONLY")
         if body = node.body
@@ -31395,7 +31601,7 @@ module Adamas::HIR
       record_nested_type_names(module_name, node.body)
       registered_self_class = false
 
-      module_is_class_like = class_like_namespace?(module_name)
+      module_is_class_like = !publish_source_module_namespace(node, module_name)
 
       if module_is_class_like
         if @module_defs.delete(module_name)
@@ -31460,8 +31666,8 @@ module Adamas::HIR
               bootstrap_trace_puts "[CLASS_FRONTIER] module_after_nested_class_register #{module_name} -> #{full_nested_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
             when Adamas::Compiler::Frontend::EnumNode
               nested_name = enum_name_from_node(member, source) || ""
-              full_nested_name = qualified_nested_type_name(module_name, nested_name)
-              register_enum_with_name(member, full_nested_name)
+              full_nested_name = qualified_source_declaration_name(module_name, nested_name)
+              register_enum_with_name(member, full_nested_name, expr_id)
             when Adamas::Compiler::Frontend::AliasNode
               safe_str_guard(member.name, "next")
               safe_str_guard(member.value, "next")
@@ -31470,8 +31676,8 @@ module Adamas::HIR
               @current_class = module_name
               target_name = resolve_alias_target((safe_slice_to_string(member.value) || ""), module_name)
               @current_class = old_class
-              full_alias_name = "#{module_name}::#{alias_name}"
-              register_type_alias(full_alias_name, target_name)
+              full_alias_name = qualified_source_declaration_name(module_name, alias_name)
+              register_source_type_alias(full_alias_name, target_name)
             end
           end
         end
@@ -31526,8 +31732,8 @@ module Adamas::HIR
             bootstrap_trace_puts "[CLASS_FRONTIER] module_after_nested_class_register #{module_name} -> #{full_nested_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
           when Adamas::Compiler::Frontend::EnumNode
             nested_name = enum_name_from_node(member, source) || ""
-            full_nested_name = qualified_nested_type_name(module_name, nested_name)
-            register_enum_with_name(member, full_nested_name)
+            full_nested_name = qualified_source_declaration_name(module_name, nested_name)
+            register_enum_with_name(member, full_nested_name, expr_id)
           when Adamas::Compiler::Frontend::ModuleNode
             nested_name = module_name_from_node(member, source) || ""
             full_nested_name = qualified_nested_type_name(module_name, nested_name)
@@ -31544,8 +31750,8 @@ module Adamas::HIR
             @current_class = module_name
             target_name = resolve_alias_target((safe_slice_to_string(member.value) || ""), module_name)
             @current_class = old_class
-            full_alias_name = qualified_nested_type_name(module_name, alias_name)
-            register_type_alias(full_alias_name, target_name)
+            full_alias_name = qualified_source_declaration_name(module_name, alias_name)
+            register_source_type_alias(full_alias_name, target_name)
           when Adamas::Compiler::Frontend::MacroIfNode
             preregister_macro_if_aliases_in_module(member, module_name)
           when Adamas::Compiler::Frontend::LibNode
@@ -31651,7 +31857,7 @@ module Adamas::HIR
         @module_extend_self.add(module_name) if extend_self
         defined_class_method_full_names = collect_defined_class_method_full_names(module_name, body, @arena)
 
-        # PASS 1: Register aliases and nested modules first (so they're available for function type resolution)
+        # PASS 1: Publish aliases, enums and nested namespaces in source order before method signatures.
         body.each do |expr_id|
           next if expr_id.null_ptr? || expr_id.invalid?
           member = unwrap_visibility_member(@arena[expr_id])
@@ -31663,8 +31869,8 @@ module Adamas::HIR
             @current_class = module_name
             target_name = resolve_alias_target((safe_slice_to_string(member.value) || ""), module_name)
             @current_class = old_class
-            full_alias_name = qualified_nested_type_name(module_name, alias_name)
-            register_type_alias(full_alias_name, target_name)
+            full_alias_name = qualified_source_declaration_name(module_name, alias_name)
+            register_source_type_alias(full_alias_name, target_name)
             if env_has?("DEBUG_ALIAS")
               STDERR.puts "[ALIAS] Registered (module): #{full_alias_name} => #{target_name}"
             end
@@ -31677,6 +31883,10 @@ module Adamas::HIR
               next
             end
             register_module_with_name(member, full_nested_name)
+          elsif member.is_a?(Adamas::Compiler::Frontend::EnumNode)
+            enum_name = enum_name_from_node(member) || ""
+            full_enum_name = qualified_source_declaration_name(module_name, enum_name)
+            register_enum_with_name(member, full_enum_name, expr_id)
           elsif member.is_a?(Adamas::Compiler::Frontend::ClassNode)
             # Register class/struct type alias and any aliases inside the class
             class_name = class_name_from_node(member) || ""
@@ -31694,8 +31904,8 @@ module Adamas::HIR
           member = unwrap_visibility_member(@arena[expr_id])
           if member.is_a?(Adamas::Compiler::Frontend::EnumNode)
             enum_name = enum_name_from_node(member) || ""
-            full_enum_name = qualified_nested_type_name(module_name, enum_name)
-            register_enum_with_name(member, full_enum_name)
+            full_enum_name = qualified_source_declaration_name(module_name, enum_name)
+            register_enum_with_name(member, full_enum_name, expr_id)
           end
         end
         @current_class = old_class
@@ -33084,8 +33294,8 @@ module Adamas::HIR
         register_nested_module(member, full_nested_name)
       when Adamas::Compiler::Frontend::EnumNode
         enum_name = (safe_slice_to_string(member.name) || "")
-        full_enum_name = "#{module_name}::#{enum_name}"
-        register_enum_with_name(member, full_enum_name)
+        full_enum_name = qualified_source_declaration_name(module_name, enum_name)
+        register_enum_with_name(member, full_enum_name, expr_id)
       when Adamas::Compiler::Frontend::ExtendNode
         mark_module_extend_self(member, module_name)
       when Adamas::Compiler::Frontend::MacroDefNode
@@ -34887,8 +35097,8 @@ module Adamas::HIR
                     register_class_with_name(expr_node, full_nested_name)
                   when Adamas::Compiler::Frontend::EnumNode
                     nested_name = (safe_slice_to_string(expr_node.name) || "")
-                    full_nested_name = "#{class_name}::#{nested_name}"
-                    register_enum_with_name(expr_node, full_nested_name)
+                    full_nested_name = qualified_source_declaration_name(class_name, nested_name)
+                    register_enum_with_name(expr_node, full_nested_name, expr_id)
                   when Adamas::Compiler::Frontend::ModuleNode
                     nested_name = (safe_slice_to_string(expr_node.name) || "")
                     full_nested_name = "#{class_name}::#{nested_name}"
@@ -35133,8 +35343,8 @@ module Adamas::HIR
               register_class_with_name(expr_node, full_nested_name)
             when Adamas::Compiler::Frontend::EnumNode
               nested_name = (safe_slice_to_string(expr_node.name) || "")
-              full_nested_name = "#{class_name}::#{nested_name}"
-              register_enum_with_name(expr_node, full_nested_name)
+              full_nested_name = qualified_source_declaration_name(class_name, nested_name)
+              register_enum_with_name(expr_node, full_nested_name, expr_id)
             when Adamas::Compiler::Frontend::ModuleNode
               nested_name = (safe_slice_to_string(expr_node.name) || "")
               full_nested_name = "#{class_name}::#{nested_name}"
@@ -35203,8 +35413,8 @@ module Adamas::HIR
                 register_class_with_name(expr_node, full_nested_name)
               when Adamas::Compiler::Frontend::EnumNode
                 nested_name = (safe_slice_to_string(expr_node.name) || "")
-                full_nested_name = "#{class_name}::#{nested_name}"
-                register_enum_with_name(expr_node, full_nested_name)
+                full_nested_name = qualified_source_declaration_name(class_name, nested_name)
+                register_enum_with_name(expr_node, full_nested_name, expr_id)
               when Adamas::Compiler::Frontend::ModuleNode
                 nested_name = (safe_slice_to_string(expr_node.name) || "")
                 full_nested_name = "#{class_name}::#{nested_name}"
@@ -35397,8 +35607,8 @@ module Adamas::HIR
         register_class_with_name(expr_node, full_nested_name)
       when Adamas::Compiler::Frontend::EnumNode
         nested_name = (safe_slice_to_string(expr_node.name) || "")
-        full_nested_name = "#{class_name}::#{nested_name}"
-        register_enum_with_name(expr_node, full_nested_name)
+        full_nested_name = qualified_source_declaration_name(class_name, nested_name)
+        register_enum_with_name(expr_node, full_nested_name, expr_id)
       when Adamas::Compiler::Frontend::ModuleNode
         nested_name = (safe_slice_to_string(expr_node.name) || "")
         full_nested_name = "#{class_name}::#{nested_name}"
@@ -35571,8 +35781,8 @@ module Adamas::HIR
         register_class_with_name(expr_node, full_nested_name)
       when Adamas::Compiler::Frontend::EnumNode
         nested_name = (safe_slice_to_string(expr_node.name) || "")
-        full_nested_name = "#{class_name}::#{nested_name}"
-        register_enum_with_name(expr_node, full_nested_name)
+        full_nested_name = qualified_source_declaration_name(class_name, nested_name)
+        register_enum_with_name(expr_node, full_nested_name, expr_id)
       when Adamas::Compiler::Frontend::ModuleNode
         nested_name = (safe_slice_to_string(expr_node.name) || "")
         full_nested_name = "#{class_name}::#{nested_name}"
@@ -35731,8 +35941,8 @@ module Adamas::HIR
         when Adamas::Compiler::Frontend::EnumNode
           STDERR.puts "[BEGIN_MACRO_CLASS] class=#{class_name} phase=body_enum idx=#{begin_idx}" if trace_begin_macro
           nested_name = (safe_slice_to_string(expr_node.name) || "")
-          full_nested_name = "#{class_name}::#{nested_name}"
-          register_enum_with_name(expr_node, full_nested_name)
+          full_nested_name = qualified_source_declaration_name(class_name, nested_name)
+          register_enum_with_name(expr_node, full_nested_name, expr_id)
         when Adamas::Compiler::Frontend::ModuleNode
           STDERR.puts "[BEGIN_MACRO_CLASS] class=#{class_name} phase=body_module idx=#{begin_idx}" if trace_begin_macro
           nested_name = (safe_slice_to_string(expr_node.name) || "")
@@ -35867,8 +36077,8 @@ module Adamas::HIR
           register_class_with_name(expr_node, full_nested_name)
         when Adamas::Compiler::Frontend::EnumNode
           nested_name = (safe_slice_to_string(expr_node.name) || "")
-          full_nested_name = "#{class_name}::#{nested_name}"
-          register_enum_with_name(expr_node, full_nested_name)
+          full_nested_name = qualified_source_declaration_name(class_name, nested_name)
+          register_enum_with_name(expr_node, full_nested_name, expr_id)
         when Adamas::Compiler::Frontend::ModuleNode
           nested_name = (safe_slice_to_string(expr_node.name) || "")
           full_nested_name = "#{class_name}::#{nested_name}"
@@ -36084,6 +36294,19 @@ module Adamas::HIR
 
     private def register_nested_module_in_current_arena(node : Adamas::Compiler::Frontend::ModuleNode, full_name : String)
       trace_nested_child = env_has?("ADAMAS_TRACE_NESTED_CHILD")
+      full_name = source_module_declaration_name(full_name)
+      unless publish_source_module_namespace(node, full_name)
+        # Reuse the class-wrapper member walk without publishing a module or
+        # interpreting this already-qualified name in the caller's scope.
+        previous_class = @current_class
+        @current_class = nil
+        begin
+          register_module_with_name_in_current_arena(node, full_name)
+        ensure
+          @current_class = previous_class
+        end
+        return
+      end
       # Same parent registration as the top-level module path: a generic
       # nested module (`Impl(F, I)`) must be findable by its bare base name
       # from sibling scopes, even when the owner is a class-like namespace.
@@ -36133,7 +36356,7 @@ module Adamas::HIR
 
       if body = node.body
         return if body.to_unsafe.address == 0_u64
-        # PASS 1: Register aliases first (so they're available for function type resolution)
+        # PASS 1: Publish aliases and enums in source order before method signatures.
         body.each do |expr_id|
           next if expr_id.null_ptr? || expr_id.invalid?
           raw_member = @arena[expr_id]
@@ -36144,8 +36367,8 @@ module Adamas::HIR
             @current_class = full_name
             target_name = resolve_alias_target((safe_slice_to_string(member.value) || ""), full_name)
             @current_class = old_class
-            full_alias_name = "#{full_name}::#{alias_name}"
-            register_type_alias(full_alias_name, target_name)
+            full_alias_name = qualified_source_declaration_name(full_name, alias_name)
+            register_source_type_alias(full_alias_name, target_name)
             if env_has?("DEBUG_ALIAS")
               STDERR.puts "[ALIAS] Registered: #{full_alias_name} => #{target_name}"
             end
@@ -36158,6 +36381,10 @@ module Adamas::HIR
               next
             end
             register_nested_module(member, full_nested_name)
+          elsif member.is_a?(Adamas::Compiler::Frontend::EnumNode)
+            enum_name = enum_name_from_node(member) || ""
+            full_enum_name = qualified_source_declaration_name(full_name, enum_name)
+            register_enum_with_name(member, full_enum_name, expr_id)
           elsif member.is_a?(Adamas::Compiler::Frontend::ClassNode)
             # Register class/struct type alias and any aliases inside the class
             class_name = class_name_from_node(member) || ""
@@ -36573,8 +36800,8 @@ module Adamas::HIR
             when Adamas::Compiler::Frontend::NodeKind::Enum
               member = member.unsafe_as(Adamas::Compiler::Frontend::EnumNode)
               enum_name = (safe_slice_to_string(member.name) || "")
-              full_enum_name = qualified_nested_type_name(full_name, enum_name)
-              register_enum_with_name(member, full_enum_name)
+              full_enum_name = qualified_source_declaration_name(full_name, enum_name)
+              register_enum_with_name(member, full_enum_name, expr_id)
             when Adamas::Compiler::Frontend::NodeKind::MacroDef
               member = member.unsafe_as(Adamas::Compiler::Frontend::MacroDefNode)
               register_macro(member, full_name)
@@ -36649,7 +36876,7 @@ module Adamas::HIR
       end
     end
 
-    # Register aliases inside a class (for nested alias-first processing)
+    # Publish source aliases and enums together before nested class signatures.
     private def register_class_aliases(node : Adamas::Compiler::Frontend::ClassNode, class_name : String)
       if raw_body = node.body
         body = class_registration_body(raw_body, @arena)
@@ -36662,11 +36889,15 @@ module Adamas::HIR
             @current_class = class_name
             target_name = resolve_alias_target((safe_slice_to_string(member.value) || ""), class_name)
             @current_class = old_class
-            full_alias_name = "#{class_name}::#{alias_name}"
-            register_type_alias(full_alias_name, target_name)
+            full_alias_name = qualified_source_declaration_name(class_name, alias_name)
+            register_source_type_alias(full_alias_name, target_name)
             if env_has?("DEBUG_ALIAS")
               STDERR.puts "[ALIAS] Registered (class): #{full_alias_name} => #{target_name}"
             end
+          elsif member.is_a?(Adamas::Compiler::Frontend::EnumNode)
+            enum_name = enum_name_from_node(member) || ""
+            full_enum_name = qualified_source_declaration_name(class_name, enum_name)
+            register_enum_with_name(member, full_enum_name, expr_id)
           end
         end
       end
@@ -36971,8 +37202,8 @@ module Adamas::HIR
         lower_module_with_name(member, full_nested_name)
       when Adamas::Compiler::Frontend::EnumNode
         enum_name = (safe_slice_to_string(member.name) || "")
-        full_enum_name = "#{module_name}::#{enum_name}"
-        register_enum_with_name(member, full_enum_name)
+        full_enum_name = qualified_source_declaration_name(module_name, enum_name)
+        register_enum_with_name(member, full_enum_name, expr_id)
       when Adamas::Compiler::Frontend::MacroLiteralNode
         # Parse macro literal output and lower its contents (defs/classes/modules).
         if raw_text = macro_literal_raw_text(member)
@@ -37901,16 +38132,7 @@ module Adamas::HIR
     # Program#initialize before it reads source. Their kind and abstractness
     # remain authoritative when source later reopens the same type.
     private def predefined_class_metadata(name : String) : Tuple(Bool, Bool)?
-      case name
-      when "Object"
-        {false, true}
-      when "Reference", "String", "Regex", "Exception"
-        {false, false}
-      when "Value", "Struct", "Number", "Int", "Float", "Enum"
-        {true, true}
-      else
-        nil
-      end
+      Adamas::Compiler::PredefinedSourceTypes.non_generic_class_metadata(name)
     end
 
     # An existing name alone does not establish a legal superclass. Use the
@@ -38045,6 +38267,7 @@ module Adamas::HIR
         end
       end
       trace_class_exit = debug_env_filter_match?("DEBUG_CLASS_EXIT_PHASE", class_name, source_path_for(@arena) || "")
+      validate_implicit_module_declaration_kind(class_name, node.is_struct == true ? "struct" : "class")
       STDERR.puts "[CLASS_EXIT] class=#{class_name} phase=enter" if trace_class_exit
       register_reopened_nested_type_name(class_name)
       old_class = @current_class
@@ -38135,8 +38358,8 @@ module Adamas::HIR
                   next if source && !definition_header_text_from_source(member.span, source, ["enum "])
                   enum_name = enum_name_from_node(member, source) || ""
                   next if enum_name.empty?
-                  full_enum_name = qualified_nested_type_name(class_name, enum_name)
-                  register_enum_with_name(member, full_enum_name)
+                  full_enum_name = qualified_source_declaration_name(class_name, enum_name)
+                  register_enum_with_name(member, full_enum_name, expr_id)
                 when Adamas::Compiler::Frontend::ModuleNode
                   next if member.span.start_offset == node.span.start_offset && member.span.end_offset == node.span.end_offset
                   next if source && !definition_header_text_from_source(member.span, source, ["module "])
@@ -38600,12 +38823,18 @@ module Adamas::HIR
                 end
               end
             end
+          when Adamas::Compiler::Frontend::NodeKind::Alias
+            member = member.unsafe_as(Adamas::Compiler::Frontend::AliasNode)
+            alias_name = safe_slice_to_string(member.name) || ""
+            target_name = resolve_alias_target(safe_slice_to_string(member.value) || "", nested_prefix)
+            full_alias_name = qualified_source_declaration_name(nested_prefix, alias_name)
+            register_source_type_alias(full_alias_name, target_name)
           when Adamas::Compiler::Frontend::NodeKind::Enum
             member = member.unsafe_as(Adamas::Compiler::Frontend::EnumNode)
             enum_name = enum_name_from_node(member) || ""
-            full_enum_name = qualified_nested_type_name(nested_prefix, enum_name)
+            full_enum_name = qualified_source_declaration_name(nested_prefix, enum_name)
             trace_nested_registration LoweringBinaryTrace::Event::NestedRegisterStart, full_enum_name
-            register_enum_with_name(member, full_enum_name)
+            register_enum_with_name(member, full_enum_name, expr_id)
             trace_nested_registration LoweringBinaryTrace::Event::NestedRegisterDone, full_enum_name
           when Adamas::Compiler::Frontend::NodeKind::Module
             member = member.unsafe_as(Adamas::Compiler::Frontend::ModuleNode)
@@ -39659,8 +39888,8 @@ module Adamas::HIR
               safe_str_guard(member.value, "next")
               alias_name = (safe_slice_to_string(member.name) || "")
               target_name = resolve_alias_target((safe_slice_to_string(member.value) || ""), class_name)
-              full_alias_name = "#{class_name}::#{alias_name}"
-              register_type_alias(full_alias_name, target_name)
+              full_alias_name = qualified_source_declaration_name(class_name, alias_name)
+              register_source_type_alias(full_alias_name, target_name)
             end
             if mono_debug
               detail = case member
@@ -41703,8 +41932,8 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::EnumNode
         safe_str_guard(member.name, "return")
         nested_name = (safe_slice_to_string(member.name) || "")
-        full_name = "#{class_name}::#{nested_name}"
-        register_enum_with_name(member, full_name)
+        full_name = qualified_source_declaration_name(class_name, nested_name)
+        register_enum_with_name(member, full_name, expr_id)
       when Adamas::Compiler::Frontend::MacroDefNode
         register_macro(member, class_name)
       when Adamas::Compiler::Frontend::MacroLiteralNode
@@ -82423,13 +82652,13 @@ module Adamas::HIR
             @current_class = lib_name
             target_name = resolve_alias_target((safe_slice_to_string(body_node.value) || ""), lib_name)
             @current_class = old_class
-            full_alias_name = "#{lib_name}::#{alias_name}"
-            register_type_alias(full_alias_name, target_name)
+            full_alias_name = qualified_source_declaration_name(lib_name, alias_name)
+            register_source_type_alias(full_alias_name, target_name)
           when Adamas::Compiler::Frontend::EnumNode
             # Enums within lib - register with lib prefix
             enum_name = (safe_slice_to_string(body_node.name) || "")
-            full_enum_name = "#{lib_name}::#{enum_name}"
-            register_enum_with_name(body_node, full_enum_name)
+            full_enum_name = qualified_source_declaration_name(lib_name, enum_name)
+            register_enum_with_name(body_node, full_enum_name, expr_id)
           when Adamas::Compiler::Frontend::ClassNode
             # Struct/union within lib are parsed as ClassNode with flags.
             struct_name = (safe_slice_to_string(body_node.name) || "")

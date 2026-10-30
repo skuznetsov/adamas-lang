@@ -2382,28 +2382,9 @@ module Adamas
         bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_log_enums enums=#{enum_nodes.size}"; STDERR.flush
         enum_count = enum_nodes.size
         bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_enum_count count=#{enum_count}"; STDERR.flush
-        stage2_debug("[STAGE2_DEBUG] enum register start count=#{enum_count}", err_io)
-        i = 0
-        while i < enum_count
-          n, a = enum_nodes.unsafe_fetch(i)
-          bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_enum_loop_idx idx=#{i}"; STDERR.flush
-          if i < 3 || (i % 50 == 0) || i == enum_count - 1
-            stage2_debug("[STAGE2_DEBUG] enum register idx=#{i + 1}/#{enum_count} name=#{String.new(n.name)}", err_io)
-          end
-          hir_converter.arena = a
-          hir_converter.register_enum(n)
-          bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_enum_registered idx=#{i}"; STDERR.flush
-          i += 1
-        end
-        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_enum_loop"; STDERR.flush
-        stage2_debug("[STAGE2_DEBUG] enum register done", err_io)
-        stage2_debug("[STAGE2_DEBUG] enum resolve guard count=#{enum_count}", err_io)
-        if enum_count > 0
-          stage2_debug("[STAGE2_DEBUG] enum resolve call", err_io)
-          hir_converter.resolve_pending_enum_constants
-        else
-          stage2_debug("[STAGE2_DEBUG] enum resolve skipped", err_io)
-        end
+        # Enums share the source declaration stream below. Registering them
+        # here would visit qualified prefixes before their aliases or nested
+        # owner declarations have been published.
         lib_count = lib_nodes.size
         stage2_debug("[STAGE2_DEBUG] recompute_c_struct_sizes guard lib_count=#{lib_count}", err_io)
         if lib_count == 0
@@ -2417,7 +2398,7 @@ module Adamas
           timings["dbg_ms_hir_reg_enums"] = (Time.instant - hir_phase_start.not_nil!).total_milliseconds
           hir_phase_start = Time.instant
         end
-        # Keep aliases in the same declaration stream as classes and modules.
+        # Keep aliases and enums in the same declaration stream as classes and modules.
         # Pre-registering every alias here would authorize a superclass through
         # an alias whose source declaration has not been visited yet.
         log(options, out_io, "    Aliases: #{alias_nodes.size}")
@@ -2484,10 +2465,24 @@ module Adamas
         module_reg_ms = 0.0
         class_reg_ms = 0.0
         alias_reg_ms = 0.0
+        enum_reg_ms = 0.0
         type_i = 0
         while type_i < ordered_type_nodes.size
           kind, i = ordered_type_nodes.unsafe_fetch(type_i)
           case kind
+          when Frontend::NodeKind::Enum
+            n, a = enum_nodes.unsafe_fetch(i)
+            hir_converter.arena = a
+            reg_t0 = Time.instant if reg_type_profile || debug_profile
+            hir_converter.register_enum(n)
+            # Lib constants are already registered. Resolve a just-published
+            # member before the next declaration can use its numeric value.
+            hir_converter.resolve_pending_enum_constants
+            if reg_type_profile || debug_profile
+              ms = (Time.instant - reg_t0.not_nil!).total_milliseconds
+              enum_reg_ms += ms
+              bootstrap_trace_puts "[REG_TYPE] enum #{String.new(n.name)} #{ms.round(1)}ms" if reg_type_profile && ms > 5.0
+            end
           when Frontend::NodeKind::Alias
             n, a = alias_nodes.unsafe_fetch(i)
             if i < 3 || i == alias_count - 1
@@ -2552,7 +2547,11 @@ module Adamas
         bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_module_loop"; STDERR.flush
         bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_class_loop"; STDERR.flush
         stage2_debug("[STAGE2_DEBUG] source-ordered type register done", err_io)
+        # Nested enum registration can also defer references to lib constants.
+        hir_converter.resolve_pending_enum_constants
+        hir_converter.recompute_c_struct_sizes unless lib_nodes.empty?
         if debug_profile
+          timings["dbg_ms_hir_reg_enums"] = enum_reg_ms
           timings["dbg_ms_hir_reg_aliases"] = alias_reg_ms
           timings["dbg_ms_hir_reg_modules"] = module_reg_ms
           timings["dbg_ms_hir_reg_classes"] = class_reg_ms
@@ -5343,6 +5342,7 @@ module Adamas
         when Frontend::EnumNode
           top_level_type_names.add(String.new(node.name))
           enum_nodes << {node, arena}
+          ordered_type_nodes << {Frontend::NodeKind::Enum, enum_nodes.size - 1} if ordered_type_nodes
           pending_annotations.clear
         when Frontend::ConstantNode
           constant_exprs << {expr_id, arena}

@@ -22700,3 +22700,31 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   generic publication, allocator result inference or inheritance changes.
   Other string-based APIs may still conflate source syntax and canonical
   identity. Full integration, bootstrap and LavinMQ parity need fresh evidence.
+
+### Qualified declarations retain their path and generated source (2026-10-30)
+
+- [x] Preserve the complete enum/alias path and explicit root. Declaration-prefix
+  lookup follows Crystal's namespace creation and nominal-kind rules; alias RHS
+  retains ordinary lexical lookup. Carry the exact generated ExprId/arena through
+  enum member, base-type and Flags registration.
+- [x] Separate published source module kind from future module AST inventory.
+  Repeated visits retain future bodies without authorizing an earlier declaration
+  or losing implicit-module kind. Reject class/enum/alias replacement of modules.
+- [x] Mark parser-created namespace wrappers explicitly and preserve that fact in
+  AST cache version 9. A path wrapper can traverse a class; a real module cannot
+  reopen it. Resolve module aliases to the target owner without overwriting aliases.
+- [x] Share predefined source namespace metadata between HIR and symbol collection,
+  based on Crystal's Program initialization. Backend conveniences such as Set and
+  Iterator cannot authorize declaration prefixes; abstract Int retains its identity.
+- [x] Isolated 8a7c24a4 plus this slice passes 112 parser/HIR/semantic/cache examples.
+  Removing generated-source authority fails the Flags check (0,1,8,9 instead of
+  1,2,8,16). No stdlib or LavinMQ source changes are involved.
+- [x] Fresh isolated compiler matches Crystal 1.22.1 native output and all 36
+  ordinary semantic rejections in lazy/eager modes. Both hello and the default
+  execution-context virtual stack_pool probe pass with the unchanged prelude.
+  The alias-reopening macro attack matches stock output; its forward-definition
+  variant is rejected by both compilers. Bounded adversary verdict: ROBUST.
+- [ ] Full dirty-tree integration, bootstrap and LavinMQ parity remain separate
+  checks. Refresh source ownership before replaceable arenas are consumed by HIR;
+  current call sites retain append-only arenas. The neighboring
+  enum_carrier_branch_merge_spec failure is reproduced on the parent.

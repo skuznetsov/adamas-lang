@@ -22245,3 +22245,50 @@ Refresh after alias, composite grammar, cache publication, owner lookup,
 allocator result or generic ancestry changes. Roll back this slice and its
 tests together. Remaining string-based APIs are an audit risk; this certificate
 does not establish full dirty-tree integration, bootstrap or LavinMQ parity.
+
+## 2026-10-30 — Qualified declarations keep path, namespace kind and source owner
+
+Confirmed producer failures: enum/alias parsing consumed a qualified path but
+kept only its last token; fallback enum-header parsing could mistake `::` for
+the base-type colon. Generated enum registration discarded the exact ExprId
+and read the arena's unrelated primary source: a member became `d\nenum` instead
+of Active. An ablation that drops generated ownership also changes Flags values
+from 1,2,8,16 to 0,1,8,9.
+
+The parser retains the complete path and marks generated namespace wrappers.
+HIR and symbol collection apply declaration-prefix rules while alias RHS remains
+lexical. Wrapper provenance survives AST cache version 9: traversing an existing
+class to declare a child differs from a real module reopening that class.
+Module aliases select the canonical target scope while retaining the alias entry.
+One shared predefined-type catalog follows Crystal's Program initialization;
+backend generic conveniences do not prove source namespaces.
+
+Future module AST was refuted as kind authority: it authorized declarations
+before their source position, while an empty-entry heuristic lost kind after a
+reopening. A separate published-source module set now records actual traversal
+and implicit-prefix creation. Replays preserve both the fact and retained bodies.
+The distinction keeps negative cases strict instead of postponing validation.
+Every generated-enum walker also carries its exact retained ExprId/arena source
+through names, values, base types and Flags.
+
+Observed DoD: isolated 8a7c24a4 plus only this slice, fresh
+s1_qualified_declaration_isolated12, passes 112 focused parser/HIR/semantic/cache
+examples. Original-first lazy/eager native output matches Crystal 1.22.1; all 36
+negative fixtures produce ordinary semantic rejection, never a crash or timeout.
+Hello and a virtual stack_pool call through the default execution context match
+stock output with the unchanged prelude (four native runs). Logs in the oct29
+root-cause scratch: spec.qualified-declaration-isolated12.log,
+regression.qualified-declarations-isolated13.log, regression.prelude-qualified12.log,
+and spec.generated-authority-red.log. The adversary's same-body alias-module macro
+probe prints A with exit 0 in both; its later-definition variant is rejected with
+exit 1 by both (diagnostic wording differs). The scoped verdict is ROBUST; this
+is not a general macro source-order or diagnostics-parity certificate.
+The neighboring enum_carrier_branch_merge_spec has the same one failure on the
+parent (spec.enum-carrier-parent.log); this is not a full enum-suite closure.
+
+Current source retention assumes append-only arenas. Future VirtualArena
+replacement requires a generation or stable local id before reusing this evidence.
+Refresh after declaration parsing, AST cache format, namespace publication, alias
+owner lookup, predefined catalog or generated-source lifetime changes. Roll back
+this slice and its regressions together. Full dirty-tree integration, bootstrap
+and LavinMQ runtime/test parity remain separate obligations.

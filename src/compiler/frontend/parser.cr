@@ -6731,42 +6731,6 @@ module Adamas
           stmt
         end
 
-        # Parse a constant name with optional leading :: and namespace segments.
-        # Returns the last identifier token (for name slices) or nil on error.
-        private def parse_constant_name_token : Token?
-          token = current_token
-
-          if token.kind == Token::Kind::ColonColon
-            advance
-            skip_trivia
-            token = current_token
-          end
-
-          unless token.kind == Token::Kind::Identifier
-            emit_unexpected(token)
-            return nil
-          end
-
-          last_token = token
-          advance
-
-          while current_token.kind == Token::Kind::ColonColon
-            advance
-            skip_trivia
-
-            token = current_token
-            unless token.kind == Token::Kind::Identifier
-              emit_unexpected(token)
-              return nil
-            end
-
-            last_token = token
-            advance
-          end
-
-          last_token
-        end
-
         # Parse a constant name path and return a normalized slice (no whitespace).
         # For A::B::C returns "A::B::C", for ::A returns "::A".
         private def parse_constant_name_slice : Slice(UInt8)?
@@ -7069,7 +7033,8 @@ module Adamas
                 segment_name,
                 [result_id],
                 nil, # Namespace modules don't have type params
-                absolute_name && i == 0
+                absolute_name && i == 0,
+                true
               )
             )
           end
@@ -7517,8 +7482,8 @@ module Adamas
           skip_trivia
 
           # Parse enum name
-          name_token = parse_constant_name_token
-          return PREFIX_ERROR unless name_token
+          name_slice = parse_constant_name_slice
+          return PREFIX_ERROR unless name_slice
           skip_trivia
 
           # Parse optional base type: : Type (supports namespaces/generics)
@@ -7546,7 +7511,7 @@ module Adamas
           enum_trace_name = nil.as(String?)
           trace_enum_body = false
           if enum_trace_filter
-            enum_name = String.new(name_token.slice)
+            enum_name = String.new(name_slice)
             if enum_trace_filter == "1" || enum_name.includes?(enum_trace_filter)
               trace_enum_body = true
               enum_trace_name = enum_name
@@ -7741,7 +7706,7 @@ module Adamas
           @arena.add_typed(
             EnumNode.new(
               enum_span,
-              name_token.slice,
+              name_slice,
               base_type_slice,
               members,
               enum_body
@@ -7757,12 +7722,12 @@ module Adamas
           skip_trivia
 
           # Parse alias name
-          name_token = parse_constant_name_token
-          return PREFIX_ERROR unless name_token
+          name_slice = parse_constant_name_slice
+          return PREFIX_ERROR unless name_slice
           trace_alias_parse = false
           alias_trace_name = nil.as(String?)
           if filter = ENV["DEBUG_ALIAS_PARSE"]?
-            parsed_name = String.new(name_token.slice)
+            parsed_name = String.new(name_slice)
             if filter == "1" || parsed_name.includes?(filter)
               trace_alias_parse = true
               alias_trace_name = parsed_name
@@ -7811,7 +7776,7 @@ module Adamas
           alias_span = alias_token.span.cover(type_end_token.span)
           node = AliasNode.new(
             alias_span,
-            name_token.slice,
+            name_slice,
             type_slice
           )
           STDERR.puts "[ALIAS_PARSE] name=#{alias_trace_name} phase=new kind=#{node.class.name.split("::").last}" if trace_alias_parse
@@ -8218,7 +8183,8 @@ module Adamas
                 segment_name,
                 [result_id],
                 nil, # Outer modules don't have type params
-                absolute_name && i == 0
+                absolute_name && i == 0,
+                true
               )
             )
           end

@@ -121,7 +121,7 @@ module Adamas
         MAGIC   = "CV2A"
         # Bump this version whenever the parser, AST format, or cache header changes
         # to invalidate all cached ASTs
-        VERSION = 8_u32
+        VERSION = 9_u32
 
         getter arena : Frontend::AstArena
         getter roots : Array(Frontend::ExprId)
@@ -930,6 +930,7 @@ module Adamas
             write_optional_expr_id_array(io, mod_node.body)
             write_optional_string_array(io, mod_node.type_params.try { |tp| tp.map { |t| String.new(t) } }, string_table)
             io.write_byte(mod_node.absolute ? 1_u8 : 0_u8)
+            io.write_byte(mod_node.namespace_wrapper ? 1_u8 : 0_u8)
 
           when Frontend::NodeKind::Enum
             enum_node = node.as(Frontend::EnumNode)
@@ -1825,7 +1826,8 @@ module Adamas
             body = read_optional_expr_id_array(io)
             type_params = read_optional_string_array(io, strings, pool)
             absolute = io.read_byte.not_nil! == 1_u8
-            Frontend::ModuleNode.new(span, name, body, type_params, absolute)
+            namespace_wrapper = io.read_byte.not_nil! == 1_u8
+            Frontend::ModuleNode.new(span, name, body, type_params, absolute, namespace_wrapper)
 
           when .enum_node?
             span = read_span(io)

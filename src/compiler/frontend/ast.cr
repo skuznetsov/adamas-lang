@@ -1948,8 +1948,10 @@ module Adamas
         getter body : Array(ExprId)?
         getter type_params : Array(Slice(UInt8))?
         getter absolute : Bool
+        # A path scaffold for a qualified declaration, not a module declaration.
+        getter namespace_wrapper : Bool
 
-        def initialize(@span : Span, @name : Slice(UInt8), @body : Array(ExprId)?, @type_params : Array(Slice(UInt8))?, @absolute : Bool = false)
+        def initialize(@span : Span, @name : Slice(UInt8), @body : Array(ExprId)?, @type_params : Array(Slice(UInt8))?, @absolute : Bool = false, @namespace_wrapper : Bool = false)
         end
       end
 
