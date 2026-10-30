@@ -22485,3 +22485,29 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   this fix. The speculative local-assignment collector only projects literal
   Tuple RHS nodes; qualify a nonliteral Tuple-call falsifier next. No bootstrap
   fixed point, exception-runtime compatibility or LavinMQ parity is certified.
+
+
+### Tuple-call slots retain lexical and source ownership (2026-10-29)
+- [x] Reproduce cold local inference losing nonliteral Tuple-call slots before
+  ordinary lowering. Project exact descriptor slots only for unsplatted,
+  equal-arity targets with no unresolved Void slot; retain Nil and slot order.
+- [x] Preserve the enclosing-binding proof across intermediate blocks. A
+  same-named block parameter owns its assignments; captured outer writes still
+  contribute. Existing transitive yield-parameter discovery remains available
+  when there is no established enclosing binding.
+- [x] Enter the exact registered method-body arena for the whole inference
+  walk. Retain the body identity strongly, and key positive/nil caches and
+  recursion guards by arena identity as well. Small foreign arenas, overlapping
+  foreign indices, and an explicit same-body arena remap each expose a failure
+  before their corresponding ownership guard.
+- [x] Four focused HIR files pass 50 examples. Fresh S1 and installed original
+  Crystal agree on direct/one-yield/two-yield Tuple slots, nullable outcomes,
+  captured/shadowed locals and strict Nil-to-Int32 rejection. Cold producer
+  specs establish the original defect; ordinary lowering can independently
+  repair types, so native agreement alone is not its fail-first evidence.
+- [ ] This registry covers registered method-body Arrays, not all nested-body
+  ownership. The central definition-arena setter is the explicit remap authority.
+  Full-prelude Process.new still rejects System::Process.new(Nil) in four
+  seconds. Qualify exact selected class helpers with blocks next: the current
+  inference path excludes them before consuming their declared return contract.
+  Bootstrap, actual exception handling and unchanged LavinMQ parity remain open.

@@ -3078,6 +3078,9 @@ module Adamas::HIR
     # holds the def, so body inference can use the arena the def was parsed in
     # instead of guessing the smallest arena whose size happens to fit.
     @def_node_arenas : Hash(UInt64, {Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike}) = {} of UInt64 => {Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike}
+    # An exact registered method-body Array has one source arena at a time,
+    # also when recovered DefNodes share it. The central setter owns remaps.
+    @source_body_arenas : Hash(UInt64, {Array(ExprId), Adamas::Compiler::Frontend::ArenaLike}) = {} of UInt64 => {Array(ExprId), Adamas::Compiler::Frontend::ArenaLike}
     # Cache for resolve_arena_for_def keyed by
     # {DefNode object_id, fallback arena object_id, inline arenas object_id}.
     @arena_for_def_cache : Hash({UInt64, UInt64, UInt64}, Adamas::Compiler::Frontend::ArenaLike) = {} of {UInt64, UInt64, UInt64} => Adamas::Compiler::Frontend::ArenaLike
@@ -7405,9 +7408,9 @@ module Adamas::HIR
     # core. Keeping it out of the core signature avoids lowering the same body
     # once for String and again for String?, while preserving nil semantics.
     @infer_self_type_name : String?
-    @infer_local_type_cache : Hash({UInt64, String, String?, UInt64, Int32}, {Int32, TypeRef})
-    @infer_local_type_nil_cache : Set({UInt64, String, String?, UInt64, Int32})
-    @infer_local_type_stack : Set({UInt64, String, String?})
+    @infer_local_type_cache : Hash({UInt64, UInt64, String, String?, UInt64, Int32}, {Int32, TypeRef})
+    @infer_local_type_nil_cache : Set({UInt64, UInt64, String, String?, UInt64, Int32})
+    @infer_local_type_stack : Set({UInt64, UInt64, String, String?})
     # Locals proven non-nil by an earlier guard in the current local-type walk.
     @infer_local_guard_non_nil : Set(String)
     @infer_local_type_cache_scope : String?
@@ -8103,9 +8106,9 @@ module Adamas::HIR
       @infer_type_guarded = {} of {UInt64, UInt64, String?} => Int32
       @infer_type_cache_scope = nil
       @infer_self_type_name = nil
-      @infer_local_type_cache = {} of {UInt64, String, String?, UInt64, Int32} => {Int32, TypeRef}
-      @infer_local_type_nil_cache = Set({UInt64, String, String?, UInt64, Int32}).new
-      @infer_local_type_stack = Set({UInt64, String, String?}).new
+      @infer_local_type_cache = {} of {UInt64, UInt64, String, String?, UInt64, Int32} => {Int32, TypeRef}
+      @infer_local_type_nil_cache = Set({UInt64, UInt64, String, String?, UInt64, Int32}).new
+      @infer_local_type_stack = Set({UInt64, UInt64, String, String?}).new
       @infer_local_guard_non_nil = Set(String).new
       @infer_local_type_cache_scope = nil
       @debug_infer_guard_enabled = env_has?("DEBUG_INFER_GUARD")
@@ -20213,6 +20216,13 @@ module Adamas::HIR
     private def set_function_def_arena(name : String, arena : Adamas::Compiler::Frontend::ArenaLike) : Nil
       if def_node = @function_defs[name]?
         @def_node_arenas[def_node.object_id] = {def_node, arena}
+        if body = def_node.body
+          # Retain the body as well as its identity: an object ID alone could
+          # be reused after GC, and ExprId indices do not identify an arena.
+          # This central setter is the source-owner authority, including explicit
+          # remaps; local inference caches must also include that arena identity.
+          @source_body_arenas[body.object_id] = {body, arena}
+        end
       end
       existing = @function_def_arenas[name]?
       if existing && existing.object_id == arena.object_id
@@ -20258,6 +20268,12 @@ module Adamas::HIR
       return nil unless entry[0].same?(func_def)
       arena = entry[1]
       arena_fits_def?(arena, func_def) ? arena : nil
+    end
+
+    private def registered_arena_for_body(body : Array(ExprId)) : Adamas::Compiler::Frontend::ArenaLike?
+      entry = @source_body_arenas[body.object_id]?
+      return nil unless entry && entry[0].same?(body)
+      entry[1]
     end
 
     private def resolve_arena_for_def_uncached(
@@ -27283,8 +27299,8 @@ module Adamas::HIR
       # Prevent cached inference results from a different callsite
       # from polluting return type inference.
       @infer_type_cache = {} of {UInt64, UInt64, String?} => {Int32, TypeRef}
-      @infer_local_type_cache = {} of {UInt64, String, String?, UInt64, Int32} => {Int32, TypeRef}
-      @infer_local_type_nil_cache = Set({UInt64, String, String?, UInt64, Int32}).new
+      @infer_local_type_cache = {} of {UInt64, UInt64, String, String?, UInt64, Int32} => {Int32, TypeRef}
+      @infer_local_type_nil_cache = Set({UInt64, UInt64, String, String?, UInt64, Int32}).new
       @infer_type_cache_scope = nil
       @infer_local_type_cache_scope = nil
       bump_infer_type_cache_version
@@ -30363,7 +30379,12 @@ module Adamas::HIR
       self_type_name : String?,
       visited : Set(String)? = nil,
     ) : TypeRef?
-      inferred = infer_local_type_from_body_inner(body, name, self_type_name, visited)
+      # An inline callee can request its caller's speculative body while a
+      # different arena is active. Overlapping indices cannot prove ownership.
+      source_arena = registered_arena_for_body(body) || @arena
+      inferred = with_arena(source_arena) do
+        infer_local_type_from_body_inner(body, name, self_type_name, visited)
+      end
       note_return_inference_unproven_local_read if inferred
       inferred
     end
@@ -30389,6 +30410,7 @@ module Adamas::HIR
 
       cache_key = {
         body.object_id.to_u64,
+        @arena.object_id.to_u64,
         name,
         self_type_name,
         type_param_map_content_id,
@@ -30403,7 +30425,7 @@ module Adamas::HIR
       if @infer_local_type_nil_cache.includes?(cache_key)
         return nil
       end
-      active_key = {body.object_id.to_u64, name, self_type_name}
+      active_key = {body.object_id.to_u64, @arena.object_id.to_u64, name, self_type_name}
       return nil if @infer_local_type_stack.includes?(active_key)
 
       visited ||= Set(String).new
@@ -30421,7 +30443,9 @@ module Adamas::HIR
       @infer_local_guard_non_nil = saved_guard.empty? ? saved_guard : Set(String).new
       begin
         types = [] of TypeRef
-        collect_local_assignment_types_in_list(body, name, self_type_name, types, body, visited)
+        binding_is_enclosing = @current_typeof_locals.try(&.has_key?(name)) == true ||
+                               local_guard_assigned_vars(body).includes?(name)
+        collect_local_assignment_types_in_list(body, name, self_type_name, types, body, visited, binding_is_enclosing)
         inferred = merge_return_types(types)
       ensure
         @infer_local_guard_non_nil = saved_guard
@@ -30443,6 +30467,7 @@ module Adamas::HIR
       output : Array(TypeRef),
       body : Array(ExprId),
       visited : Set(String),
+      binding_is_enclosing : Bool,
     ) : Nil
       expr_node = node_for_expr(expr_id)
       return unless expr_node
@@ -30506,7 +30531,7 @@ module Adamas::HIR
             end
           end
         end
-        collect_local_assignment_types(expr_node.value, name, self_type_name, output, body, visited)
+        collect_local_assignment_types(expr_node.value, name, self_type_name, output, body, visited, binding_is_enclosing)
         if target.is_a?(Adamas::Compiler::Frontend::IdentifierNode) && !@infer_local_guard_non_nil.empty?
           @infer_local_guard_non_nil.delete(safe_slice_to_string(target.name) || "")
         end
@@ -30516,7 +30541,7 @@ module Adamas::HIR
           output << type_ref if type_ref != TypeRef::VOID
         end
         if value_id = expr_node.value
-          collect_local_assignment_types(value_id, name, self_type_name, output, body, visited)
+          collect_local_assignment_types(value_id, name, self_type_name, output, body, visited, binding_is_enclosing)
         end
       when Adamas::Compiler::Frontend::MultipleAssignNode
         value_node = node_for_expr(expr_node.value)
@@ -30532,8 +30557,26 @@ module Adamas::HIR
               end
             end
           end
+        elsif expr_node.targets.none? { |target_id| node_for_expr(target_id).is_a?(Adamas::Compiler::Frontend::SplatNode) } &&
+              expr_node.targets.any? { |target_id| (target = node_for_expr(target_id)).is_a?(Adamas::Compiler::Frontend::IdentifierNode) && slice_eq?(target.name, name) }
+          if rhs_type = infer_type_from_expr(expr_node.value, self_type_name)
+            if descriptor = @module.get_type_descriptor(rhs_type)
+              # The selected expression owns these positional types. Do not
+              # filter unresolved slots (which shifts indices), re-resolve
+              # them in the caller, or guess a splat/arity projection.
+              if descriptor.kind == TypeKind::Tuple && descriptor.type_params.size == expr_node.targets.size &&
+                 descriptor.type_params.none? { |slot| slot == TypeRef::VOID }
+                expr_node.targets.each_with_index do |target_id, index|
+                  target = node_for_expr(target_id)
+                  if target.is_a?(Adamas::Compiler::Frontend::IdentifierNode) && slice_eq?(target.name, name)
+                    output << descriptor.type_params[index]
+                  end
+                end
+              end
+            end
+          end
         end
-        collect_local_assignment_types(expr_node.value, name, self_type_name, output, body, visited)
+        collect_local_assignment_types(expr_node.value, name, self_type_name, output, body, visited, binding_is_enclosing)
         unless @infer_local_guard_non_nil.empty?
           expr_node.targets.each do |target_id|
             target_node = node_for_expr(target_id)
@@ -30561,7 +30604,8 @@ module Adamas::HIR
 
         if block_expr
           block_node = node_for_expr(block_expr)
-          if block_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
+          if block_node.is_a?(Adamas::Compiler::Frontend::BlockNode) &&
+             !local_assignment_block_shadows_binding?(block_node, name, binding_is_enclosing)
             if params = block_node.params
               param_index = nil
               each_param_with_index(params) do |param, idx|
@@ -30581,96 +30625,98 @@ module Adamas::HIR
                 end
               end
             end
-            if body = block_node.body
-              collect_local_assignment_types_in_list(body, name, self_type_name, output, body, visited, loop_body: true)
+            if block_body = block_node.body
+              collect_local_assignment_types_in_list(block_body, name, self_type_name, output, block_body, visited, binding_is_enclosing, loop_body: true)
             end
           end
         end
-        expr_node.args.each { |arg| collect_local_assignment_types(arg, name, self_type_name, output, body, visited) }
+        expr_node.args.each { |arg| collect_local_assignment_types(arg, name, self_type_name, output, body, visited, binding_is_enclosing) }
       when Adamas::Compiler::Frontend::DefNode
         if body = expr_node.body
           # A nested def has its own locals: outer guards never apply inside.
           saved_guard = @infer_local_guard_non_nil
           @infer_local_guard_non_nil = saved_guard.empty? ? saved_guard : Set(String).new
           begin
-            collect_local_assignment_types_in_list(body, name, self_type_name, output, body, visited)
+            collect_local_assignment_types_in_list(body, name, self_type_name, output, body, visited, binding_is_enclosing)
           ensure
             @infer_local_guard_non_nil = saved_guard
           end
         end
       when Adamas::Compiler::Frontend::BlockNode
-        if body = expr_node.body
-          collect_local_assignment_types_in_list(body, name, self_type_name, output, body, visited, loop_body: true)
+        unless local_assignment_block_shadows_binding?(expr_node, name, binding_is_enclosing)
+          if block_body = expr_node.body
+            collect_local_assignment_types_in_list(block_body, name, self_type_name, output, block_body, visited, binding_is_enclosing, loop_body: true)
+          end
         end
       when Adamas::Compiler::Frontend::IfNode
-        collect_local_assignment_types(expr_node.condition, name, self_type_name, output, body, visited)
+        collect_local_assignment_types(expr_node.condition, name, self_type_name, output, body, visited, binding_is_enclosing)
         with_local_branch_guard_targets(expr_node.condition, true) do
-          collect_local_assignment_types_in_list(expr_node.then_body, name, self_type_name, output, body, visited)
+          collect_local_assignment_types_in_list(expr_node.then_body, name, self_type_name, output, body, visited, binding_is_enclosing)
         end
         elsifs = expr_node.elsifs
         if elsifs && !elsifs.empty?
           elsifs.each do |branch|
-            collect_local_assignment_types(branch.condition, name, self_type_name, output, body, visited)
+            collect_local_assignment_types(branch.condition, name, self_type_name, output, body, visited, binding_is_enclosing)
             with_local_branch_guard_targets(branch.condition, true) do
-              collect_local_assignment_types_in_list(branch.body, name, self_type_name, output, body, visited)
+              collect_local_assignment_types_in_list(branch.body, name, self_type_name, output, body, visited, binding_is_enclosing)
             end
           end
           if else_body = expr_node.else_body
-            collect_local_assignment_types_in_list(else_body, name, self_type_name, output, body, visited)
+            collect_local_assignment_types_in_list(else_body, name, self_type_name, output, body, visited, binding_is_enclosing)
           end
         elsif else_body = expr_node.else_body
           with_local_branch_guard_targets(expr_node.condition, false) do
-            collect_local_assignment_types_in_list(else_body, name, self_type_name, output, body, visited)
+            collect_local_assignment_types_in_list(else_body, name, self_type_name, output, body, visited, binding_is_enclosing)
           end
         end
       when Adamas::Compiler::Frontend::UnlessNode
-        collect_local_assignment_types(expr_node.condition, name, self_type_name, output, body, visited)
+        collect_local_assignment_types(expr_node.condition, name, self_type_name, output, body, visited, binding_is_enclosing)
         with_local_branch_guard_targets(expr_node.condition, false) do
-          collect_local_assignment_types_in_list(expr_node.then_branch, name, self_type_name, output, body, visited)
+          collect_local_assignment_types_in_list(expr_node.then_branch, name, self_type_name, output, body, visited, binding_is_enclosing)
         end
         if else_branch = expr_node.else_branch
           with_local_branch_guard_targets(expr_node.condition, true) do
-            collect_local_assignment_types_in_list(else_branch, name, self_type_name, output, body, visited)
+            collect_local_assignment_types_in_list(else_branch, name, self_type_name, output, body, visited, binding_is_enclosing)
           end
         end
       when Adamas::Compiler::Frontend::CaseNode
         if value = expr_node.value
-          collect_local_assignment_types(value, name, self_type_name, output, body, visited)
+          collect_local_assignment_types(value, name, self_type_name, output, body, visited, binding_is_enclosing)
         end
         expr_node.when_branches.each do |branch|
-          branch.conditions.each { |cond| collect_local_assignment_types(cond, name, self_type_name, output, body, visited) }
-          collect_local_assignment_types_in_list(branch.body, name, self_type_name, output, body, visited)
+          branch.conditions.each { |cond| collect_local_assignment_types(cond, name, self_type_name, output, body, visited, binding_is_enclosing) }
+          collect_local_assignment_types_in_list(branch.body, name, self_type_name, output, body, visited, binding_is_enclosing)
         end
         if else_branch = expr_node.else_branch
-          collect_local_assignment_types_in_list(else_branch, name, self_type_name, output, body, visited)
+          collect_local_assignment_types_in_list(else_branch, name, self_type_name, output, body, visited, binding_is_enclosing)
         end
         if in_branches = expr_node.in_branches
           in_branches.each do |branch|
-            branch.conditions.each { |cond| collect_local_assignment_types(cond, name, self_type_name, output, body, visited) }
-            collect_local_assignment_types_in_list(branch.body, name, self_type_name, output, body, visited)
+            branch.conditions.each { |cond| collect_local_assignment_types(cond, name, self_type_name, output, body, visited, binding_is_enclosing) }
+            collect_local_assignment_types_in_list(branch.body, name, self_type_name, output, body, visited, binding_is_enclosing)
           end
         end
       when Adamas::Compiler::Frontend::BeginNode
-        collect_local_assignment_types_in_list(expr_node.body, name, self_type_name, output, body, visited)
+        collect_local_assignment_types_in_list(expr_node.body, name, self_type_name, output, body, visited, binding_is_enclosing)
         if clauses = expr_node.rescue_clauses
-          clauses.each { |clause| collect_local_assignment_types_in_list(clause.body, name, self_type_name, output, body, visited) }
+          clauses.each { |clause| collect_local_assignment_types_in_list(clause.body, name, self_type_name, output, body, visited, binding_is_enclosing) }
         end
         if else_body = expr_node.else_body
-          collect_local_assignment_types_in_list(else_body, name, self_type_name, output, body, visited)
+          collect_local_assignment_types_in_list(else_body, name, self_type_name, output, body, visited, binding_is_enclosing)
         end
         if ensure_body = expr_node.ensure_body
-          collect_local_assignment_types_in_list(ensure_body, name, self_type_name, output, body, visited)
+          collect_local_assignment_types_in_list(ensure_body, name, self_type_name, output, body, visited, binding_is_enclosing)
         end
       when Adamas::Compiler::Frontend::WhileNode
-        collect_local_assignment_types(expr_node.condition, name, self_type_name, output, body, visited)
-        collect_local_assignment_types_in_list(expr_node.body, name, self_type_name, output, body, visited, loop_body: true)
+        collect_local_assignment_types(expr_node.condition, name, self_type_name, output, body, visited, binding_is_enclosing)
+        collect_local_assignment_types_in_list(expr_node.body, name, self_type_name, output, body, visited, binding_is_enclosing, loop_body: true)
       when Adamas::Compiler::Frontend::UntilNode
-        collect_local_assignment_types(expr_node.condition, name, self_type_name, output, body, visited)
-        collect_local_assignment_types_in_list(expr_node.body, name, self_type_name, output, body, visited, loop_body: true)
+        collect_local_assignment_types(expr_node.condition, name, self_type_name, output, body, visited, binding_is_enclosing)
+        collect_local_assignment_types_in_list(expr_node.body, name, self_type_name, output, body, visited, binding_is_enclosing, loop_body: true)
       when Adamas::Compiler::Frontend::LoopNode
-        collect_local_assignment_types_in_list(expr_node.body, name, self_type_name, output, body, visited, loop_body: true)
+        collect_local_assignment_types_in_list(expr_node.body, name, self_type_name, output, body, visited, binding_is_enclosing, loop_body: true)
       when Adamas::Compiler::Frontend::ForNode
-        collect_local_assignment_types_in_list(expr_node.body, name, self_type_name, output, body, visited, loop_body: true)
+        collect_local_assignment_types_in_list(expr_node.body, name, self_type_name, output, body, visited, binding_is_enclosing, loop_body: true)
       when Adamas::Compiler::Frontend::BinaryNode
         # BinaryNodes are NOT assignments — they produce new values. Inferring an
         # operand's type from the OTHER operand is unsound for asymmetric ops:
@@ -30678,8 +30724,8 @@ module Adamas::HIR
         # Comparisons like `x == nil` are also not assignments to x.
         # Walk operands so nested AssignNodes inside are still discovered, but
         # do not synthesize a type from operand pairing.
-        collect_local_assignment_types(expr_node.left, name, self_type_name, output, body, visited)
-        collect_local_assignment_types(expr_node.right, name, self_type_name, output, body, visited)
+        collect_local_assignment_types(expr_node.left, name, self_type_name, output, body, visited, binding_is_enclosing)
+        collect_local_assignment_types(expr_node.right, name, self_type_name, output, body, visited, binding_is_enclosing)
       when Adamas::Compiler::Frontend::YieldNode
         # An inlined callee loop can carry locals owned and assigned by the
         # caller's yield block. `collect_assigned_vars` already discovers those
@@ -30712,6 +30758,7 @@ module Adamas::HIR
                   output,
                   inline_block.body,
                   visited,
+                  binding_is_enclosing,
                 )
               end
             ensure
@@ -30730,13 +30777,34 @@ module Adamas::HIR
         end
       when Adamas::Compiler::Frontend::ReturnNode
         if value = expr_node.value
-          collect_local_assignment_types(value, name, self_type_name, output, body, visited)
+          collect_local_assignment_types(value, name, self_type_name, output, body, visited, binding_is_enclosing)
         end
       when Adamas::Compiler::Frontend::GroupingNode
-        collect_local_assignment_types(expr_node.expression, name, self_type_name, output, body, visited)
+        collect_local_assignment_types(expr_node.expression, name, self_type_name, output, body, visited, binding_is_enclosing)
       when Adamas::Compiler::Frontend::MacroExpressionNode
-        collect_local_assignment_types(expr_node.expression, name, self_type_name, output, body, visited)
+        collect_local_assignment_types(expr_node.expression, name, self_type_name, output, body, visited, binding_is_enclosing)
       end
+    end
+
+    private def local_assignment_block_shadows_binding?(
+      block : Adamas::Compiler::Frontend::BlockNode,
+      name : String,
+      binding_is_enclosing : Bool,
+    ) : Bool
+      binds_name = block_unpack_leaf_names(block).includes?(name)
+      if params = block.params
+        each_param(params) do |param|
+          if param_name = param.name
+            binds_name = true if slice_eq?(param_name, name)
+          end
+        end
+      end
+      return false unless binds_name
+
+      # A known enclosing binding and a same-named block parameter are distinct
+      # locals. Keep parameter discovery for transitive yield inference when no
+      # enclosing binding exists, but never import its writes into that binding.
+      binding_is_enclosing
     end
 
     private def infer_block_param_types_for_call(
@@ -30784,6 +30852,7 @@ module Adamas::HIR
       output : Array(TypeRef),
       body : Array(ExprId),
       visited : Set(String),
+      binding_is_enclosing : Bool,
       loop_body : Bool = false,
     ) : Nil
       guarded = @infer_local_guard_non_nil
@@ -30794,7 +30863,7 @@ module Adamas::HIR
       added = nil.as(Array(String)?)
       begin
         stmts.each do |child|
-          collect_local_assignment_types(child, name, self_type_name, output, body, visited)
+          collect_local_assignment_types(child, name, self_type_name, output, body, visited, binding_is_enclosing)
           unless guarded.empty?
             # A reassignment ends the narrowing for the statements after it.
             local_guard_assigned_vars(child).each { |var| guarded.delete(var) }

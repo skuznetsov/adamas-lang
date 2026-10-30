@@ -21899,3 +21899,47 @@ representation changes; revert the producer, spec and native regression slice
 together. Full-prelude Process.new remains a four-second semantic failure at
 System::Process.new(Nil); nonliteral tuple-local inference is a separate next
 falsifier. Bootstrap, actual exception handling and LavinMQ parity remain open.
+
+
+## 2026-10-29 — Tuple projection requires binding and source ownership
+
+The speculative local-assignment collector handled literal Tuple RHS nodes
+only. Ordinary lowering could project a selected helper's Tuple result later,
+leaving early local/return inference unknown. Project the selected descriptor's
+exact TypeRefs for unsplatted equal-arity assignment targets only; reject
+partial Void slots instead of filtering them and shifting positional indices.
+Retain nullable arms and declaration-owned identities.
+
+Nested block writes require an enclosing-binding proof carried through the
+whole walk. Recomputing that proof at each intermediate block lets a deeper
+same-named block parameter widen an outer local. Skip that parameter's writes
+only when the outer binding is established; retain real captured writes and
+legacy yield-parameter discovery when no enclosing binding is known.
+
+The first ownership guard also exposed cross-arena inference. A smaller active
+foreign arena caused an IndexError; a larger one silently supplied unrelated
+nodes at overlapping ExprId indices. Index range and source-size heuristics
+cannot prove identity. Register each exact method-body Array with its source
+arena at the existing central definition-arena setter. Retain the Array strongly
+and verify same? on lookup. An exact body has one owner at a time, including
+recovered DefNodes sharing it; the setter is the explicit remap authority.
+Enter that arena for the entire local-inference walk. Cache and active-recursion
+keys include arena identity: the adversarial A-to-B remap otherwise retained
+Int32 instead of the new Int64. Preserve the separate name-based dependency
+cycle guard.
+
+Four focused HIR files pass 50 examples. Fresh S1 matches installed Crystal on
+direct and nested-yield native Tuple controls, nullable outcomes, lexical block
+controls and strict Nil rejection. Scoped adversary: ROBUST for exact registered
+method-body inference, the guarded projection and tested lexical cases. The
+registry does not own arbitrary nested block/loop Arrays; their lowering context
+must still supply the correct arena. Refresh after definition registration,
+source-body remaps, local cache identity or lexical assignment-walk changes;
+revert the producer, focused spec and native regression together.
+
+Full-prelude Process.new remains a four-second semantic failure at
+System::Process.new(Nil). Bare selected class calls with blocks still bypass
+exact declared-result inference, and unannotated yielding wrappers need an
+explicit callsite block-result contract. Do not remove their context guard or
+borrow a representative family cache to force a result. Bootstrap, exception
+runtime compatibility and unchanged LavinMQ parity remain open.
