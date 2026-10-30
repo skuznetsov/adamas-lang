@@ -22728,3 +22728,31 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   checks. Refresh source ownership before replaceable arenas are consumed by HIR;
   current call sites retain append-only arenas. The neighboring
   enum_carrier_branch_merge_spec failure is reproduced on the parent.
+
+### Inherited membership bodies retain both actual operands (2026-10-30)
+
+- [x] Remove the Object#in? exceptions that discard callsite argument facts,
+  redirect child demands to Object, and erase the requested materialization
+  symbol. A Char/Range(Char, Char) call must lower the selected source body with
+  its concrete self and collection rather than invent includes?(Object) fanout.
+- [x] Extend the existing concrete-reference Object-wrapper contract to the
+  direct source shape `argument.method(self)`, including exact collection
+  specialization. Retain the selected source Def/arena and lexical namespace.
+- [x] Isolated 9d4f1a09 plus this slice passes seven HIR examples; the parent
+  has three failures and one error in the five new examples. Forty-eight
+  repeated calls reuse two bodies. A renamed forwarding method proves the
+  reference rule does not depend on the spelling in?.
+- [x] Fresh isolated S1 matches stock Crystal 1.22.1 native output and strict
+  nested restriction rejection in lazy/eager modes. The unchanged prelude hello
+  and default-context stack_pool probes pass, as does String/Tuple/variadic
+  membership value equality. All compiler and native runs use run_safe.sh.
+- [ ] The reference-wrapper neighbor's lexical fixture fails identically on
+  the parent and candidate (CallerScope::Token selected inside an Object body).
+  Keep lexical source-expression inference separate from this slice. Explicit
+  return/grouped-self/multi-expression Object forwarders are unqualified shapes,
+  not a general wrapper-support certificate.
+- [ ] The full WIP independently stops on an ownerless appender call at the
+  nested-block use in String#fill_folded_bytes (string.cr:3223), after passing
+  the former Sigset fanout error. Inspect selected Def/arena and local binding
+  before assuming the Pointer receiver lost its type. Full integration,
+  bootstrap, and LavinMQ runtime/test parity remain open.

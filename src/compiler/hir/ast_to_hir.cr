@@ -3628,11 +3628,6 @@ module Adamas::HIR
         override_symbol = target_name
       end
 
-      if resolved_method == "in?" && target_name.starts_with?("Object#")
-        override_reason = "object_in_base"
-        override_symbol = nil
-      end
-
       MaterializationSymbolBinding.new(
         requested_name,
         target_name,
@@ -3729,10 +3724,51 @@ module Adamas::HIR
                                   source_arena,
                                 )
         end
-        same_method_delegate || case_equality_delegate || inequality_delegate
+        same_method_delegate || case_equality_delegate || inequality_delegate ||
+          object_wrapper_forwards_self_to_argument?(resolved_def, source_arena)
       ensure
         @arena = old_arena
       end
+    end
+
+    private def object_wrapper_forwards_self_to_argument?(
+      resolved_name : String,
+      resolved_def : Adamas::Compiler::Frontend::DefNode,
+    ) : Bool
+      source_arena = @function_def_arenas[resolved_name]? ||
+                     @function_def_arenas[strip_type_suffix(resolved_name)]? ||
+                     resolve_arena_for_def(resolved_def, @arena)
+      object_wrapper_forwards_self_to_argument?(resolved_def, source_arena)
+    end
+
+    # A transparent Object wrapper can use `self` as a value passed to its
+    # argument, as in `collection.includes?(self)`. The selected source Def
+    # still owns lexical lookup, but its executable body needs the concrete
+    # receiver type just as a wrapper which dispatches a method on self does.
+    private def object_wrapper_forwards_self_to_argument?(
+      resolved_def : Adamas::Compiler::Frontend::DefNode,
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Bool
+      params = resolved_def.params
+      body = resolved_def.body
+      return false unless params && params.size == 1 && body && body.size == 1
+      param = params.first
+      return false if param.is_splat || param.is_double_splat || param.is_block ||
+                      named_only_separator?(param) || param.default_value
+      param_name = parameter_name_string(param, source_arena, false)
+      expression = source_arena[body.first]
+      while expression.is_a?(Adamas::Compiler::Frontend::GroupingNode)
+        expression = source_arena[expression.expression]
+      end
+      return false unless expression.is_a?(Adamas::Compiler::Frontend::CallNode)
+      return false unless expression.args.size == 1 && expression.block.nil? &&
+                          (expression.named_args.nil? || expression.named_args.not_nil!.empty?)
+      callee = source_arena[expression.callee]
+      return false unless callee.is_a?(Adamas::Compiler::Frontend::MemberAccessNode)
+      receiver = source_arena[callee.object]
+      receiver.is_a?(Adamas::Compiler::Frontend::IdentifierNode) &&
+        identifier_name_text(receiver, source_arena) == param_name &&
+        source_arena[expression.args.first].is_a?(Adamas::Compiler::Frontend::SelfNode)
     end
 
     private def canonical_case_equality_wrapper_param_name(
@@ -100645,9 +100681,6 @@ module Adamas::HIR
       return if name.to_unsafe[0] == '$'.ord
       return if backend_owned_runtime_intrinsic_call?(name)
       base_key = base_callsite_key(name)
-      # Avoid per-receiver callsite tracking for Object#in? (defined only on Object),
-      # which otherwise causes massive monomorphization explosions.
-      return if base_key.ends_with?("#in?")
       canonical_names = canonical_named_arg_names(named_arg_names)
       selected_target = @raw_callback_source_bindings.has_key?(name) ? name : nil
       callsite = CallsiteArgs.new(
@@ -104256,11 +104289,6 @@ module Adamas::HIR
             if env_get("DEBUG_PARENT_FALLBACK") && name.includes?("FileDescriptor") && name.includes?("puts")
               STDERR.puts "[PARENT_FB] name=#{name} resolved=#{resolved_name} target=#{target_name} matched_parent=#{matched_parent}"
             end
-            # Prevent monomorphization explosion for Object#in? by forcing the
-            # parent method target name when a subclass doesn't override it.
-            if resolved_parts.method == "in?"
-              target_name = resolved_name
-            end
             debug_hook("function.lookup.parent_fallback", "name=#{name} parent=#{matched_parent}")
           end
         end
@@ -104371,8 +104399,6 @@ module Adamas::HIR
             owner = name_parts.owner
             method_part = name_parts.method
             if method_part && owner != "Object"
-              method_short = method_part
-              use_object_target = method_short == "in?"
               object_base = "Object##{method_part}"
               expected_arity = name_parts.suffix ? suffix_param_count(name_parts.suffix.not_nil!) : 0
               if candidate = @function_defs[object_base]?
@@ -104382,7 +104408,7 @@ module Adamas::HIR
                 if expected_arity == 0 || candidate_arity >= expected_arity
                   func_def = candidate
                   arena = @function_def_arenas[object_base]
-                  target_name = use_object_target ? object_base : (name.includes?('$') ? name : base_name)
+                  target_name = name.includes?('$') ? name : base_name
                   lookup_branch = "object_fallback"
                 end
               end
@@ -104391,7 +104417,7 @@ module Adamas::HIR
                 if candidate = @function_defs[object_mangled]?
                   func_def = candidate
                   arena = @function_def_arenas[object_mangled]
-                  target_name = use_object_target ? object_mangled : (name.includes?('$') ? name : base_name)
+                  target_name = name.includes?('$') ? name : base_name
                   lookup_branch = "object_fallback_mangled"
                 end
               end
@@ -104403,7 +104429,7 @@ module Adamas::HIR
                   next unless candidate = @function_defs[key]?
                   func_def = candidate
                   arena = @function_def_arenas[key]
-                  target_name = use_object_target ? key : (name.includes?('$') ? name : base_name)
+                  target_name = name.includes?('$') ? name : base_name
                   lookup_branch = "object_fallback_prefix"
                   break
                 end
@@ -109354,17 +109380,6 @@ module Adamas::HIR
               # specialized types reachable only through transient receiver types. Prefer monomorphization from
               # explicit annotations (see `ensure_monomorphized_type`) and constructor calls.
             end
-            # Prevent monomorphization explosion for Object#in? by forcing calls to the base
-            # method when no concrete override exists on the receiver.
-            if method_name == "in?"
-              if full_method_name.nil? || (!full_method_name.starts_with?("Object#") &&
-                 !@function_defs.has_key?(full_method_name) &&
-                 !has_function_base?(full_method_name))
-                if object_in = resolve_method_with_inheritance("Object", "in?")
-                  full_method_name = object_in
-                end
-              end
-            end
             if env_get("DEBUG_DECODE_CALL") && method_name == "decode"
               recv_id = receiver_id ? receiver_id.to_s : "nil"
               recv_type = receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "nil"
@@ -111939,7 +111954,12 @@ module Adamas::HIR
           if preserve_requested_runtime_reference_wrapper_owner?(reference_base, entry_name, entry_def)
             mangled_parts = parse_method_name(mangled_method_name)
             mangled_method_name = reference_base
-            if reference_suffix = mangled_parts.suffix
+            if object_wrapper_forwards_self_to_argument?(entry_name, entry_def) &&
+               !has_unknown_arg_types && !arg_types.empty?
+              # Forwarding self into the collection's selected method needs
+              # both call operands, rather than the source restriction Object.
+              mangled_method_name = mangle_function_name(reference_base, arg_types, has_block_call)
+            elsif reference_suffix = mangled_parts.suffix
               mangled_method_name = "#{reference_base}$#{reference_suffix}"
             end
             base_method_name = reference_base

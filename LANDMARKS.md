@@ -22292,3 +22292,48 @@ Refresh after declaration parsing, AST cache format, namespace publication, alia
 owner lookup, predefined catalog or generated-source lifetime changes. Roll back
 this slice and its regressions together. Full dirty-tree integration, bootstrap
 and LavinMQ runtime/test parity remain separate obligations.
+
+## 2026-10-30 — Membership specialization cannot erase source operands
+
+Confirmed root cause: four independent name-based Object#in? exceptions
+suppressed callsite facts, replaced child materialization demands with ancestor
+symbols, and discarded the requested specialization. The stock Object body
+`collection.includes?(self)` then received Object in place of a concrete Char
+and Range(Char, Char), admitting unrelated includes? descendants. A minimal
+ordinary-prelude range program failed strict LibC.sigismember argument checking
+on clean 9d4f1a09; it compiles and exits 0 after removing those exceptions.
+No FFI/type restriction is weakened and no stdlib/application source is changed.
+
+Reference receivers exposed a second handoff of the same operands: the existing
+Object convenience-wrapper gate preserved direct calls on self but not self
+passed into the collection. Recognize the source-owned direct one-parameter
+forwarder shape and preserve both the requested reference owner and actual
+argument specialization. The selected Object Def/arena retains lexical lookup.
+This is structural recognition, not an additional in? name whitelist.
+
+Observed DoD: isolated 9d4f1a09 plus only this production slice, fresh
+s1_object_in_isolated29, passes seven HIR examples including two neighboring
+virtual-module argument checks. The five new examples have three failures and
+one error on the exact parent source. Forty-eight repeated calls use two bodies;
+a renamed forwarder preserves the same operand types. The original-first
+object_membership_call_contract_repro.sh matches Crystal 1.22.1 output RABOU and
+semantic rejection of Char against String-only includes? in lazy and eager modes.
+The ordinary prelude hello/default-context stack_pool probes and String content
+membership regression pass. All compiler/native processes use run_safe.sh.
+Logs in the oct29 root-cause scratch: spec.object-in-isolated29-final.log,
+spec.object-in-parent29.log, regression.object-in-isolated29b.log,
+regression.prelude-object29.log, regression.string-membership-object29.log.
+Source ast_to_hir.cr SHA256:
+a5d51b9adbd7a47def1e71f5c4c81345a690e19eccb985a9b54f7274d347afd3.
+
+Scoped adversary: ROBUST for the stock direct-forwarder shape, concrete operand
+identity, overload separation, repeated-call reuse and strict opposite input.
+The review is same-lineage and correlated. Equivalent wrappers with explicit
+return, a grouped self argument or multiple body expressions need separate
+qualification. The existing reference-wrapper lexical case fails identically
+on parent and candidate; log reference-wrapper-parent29.log records that bound.
+The full dirty-tree compiler has a separate unresolved appender local use in
+String#fill_folded_bytes; isolated green checks do not close that integration.
+Refresh after callsite identity, inherited owner selection, source arena,
+reference wrapper recognition or materialization changes. Roll back this slice
+and its tests together. Fresh bootstrap and LavinMQ parity remain open.
