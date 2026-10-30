@@ -10898,18 +10898,15 @@ module Adamas::HIR
       @virtual_target_replay_cursors[cursor_key] = target_idx
     end
 
-    # An untyped Def is registered under its shared `$arityN` name. Lowered
-    # under that name it has no argument types, so its parameters take
-    # whatever the declaration-level inference finds: `IO#gets_peek(..., peek)`
-    # got the un-narrowed `Bytes?` of `peek = self.peek` and an orphan body
-    # with `Nil#index`. The recorded target carries the call's argument
-    # types; specialize for them as lower_call does.
+    # A virtual target carries the same argument types as a direct call.
+    # Neither an untyped `$arityN` body nor a module-restricted declaration
+    # can replace those types when the selected implementation needs a
+    # concrete specialization. Use the direct-call specialization rule.
     private def virtual_replay_specialized_name(
       resolved_name : String,
       arg_types : Array(TypeRef),
       has_block_call : Bool,
     ) : String
-      return resolved_name unless resolved_name.includes?("$arity")
       prefer_callsite_specialization(strip_type_suffix(resolved_name), resolved_name, arg_types, has_block_call) ||
         resolved_name
     end
@@ -11217,6 +11214,8 @@ module Adamas::HIR
     ) : Bool
       base_name = "#{owner}##{method_name}"
       candidate = mangle_function_name(base_name, arg_types, has_block_call)
+      remember_callsite_arg_types(base_name, arg_types, has_block: has_block_call, has_named_args: has_named_args, named_arg_names: named_arg_names)
+      remember_callsite_arg_types(candidate, arg_types, has_block: has_block_call, has_named_args: has_named_args, named_arg_names: named_arg_names)
       selected_name : String? = nil
       selected_def : Adamas::Compiler::Frontend::DefNode? = nil
       selected_arena : Adamas::Compiler::Frontend::ArenaLike? = nil
@@ -11243,9 +11242,9 @@ module Adamas::HIR
           # ancestor symbol (Number#hash) would lower with an abstract self.
           lower_demanded_virtual_target_function(candidate)
         else
-          lower_demanded_virtual_target_function(resolved_name)
-          resolved_base = strip_type_suffix(resolved_name)
-          lower_demanded_virtual_target_function(resolved_base) unless resolved_name == resolved_base
+          target_name = virtual_replay_specialized_name(resolved_name, arg_types, has_block_call)
+          remember_callsite_arg_types(target_name, arg_types, has_block: has_block_call, has_named_args: has_named_args, named_arg_names: named_arg_names)
+          lower_demanded_virtual_target_function(target_name)
         end
       else
         lower_demanded_virtual_target_function(candidate)

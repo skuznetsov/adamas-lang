@@ -22616,3 +22616,20 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   The initializer records its namespace name but does not bind lexical self as
   a class/module value. Keep this next producer fix separate from source callback
   closure. Process.new, bootstrap and LavinMQ test parity remain open.
+
+### Virtual implementation bodies retain concrete actuals (2026-10-30)
+
+- [x] Virtual module dispatch must demand the same concrete argument
+  specialization as a direct call. The declaration `read(io : Descriptor)` is
+  not a substitute for the selected `read(FD)` body when its implementation
+  calls `check_open(io : IO)` and FD includes Descriptor and inherits IO.
+- [x] Record actual types and named/block shape before materializing a target;
+  use direct-call specialization for typed declarations as well as `$arityN`.
+  Do not lower an unused module-restricted declaration body alongside it.
+- [x] An isolated a7895d14 plus this three-hunk correction passes 17 HIR examples,
+  two native prelude cases, and lazy/eager direct/inherited virtual calls with
+  two concrete argument classes against Crystal 1.22.1. A descriptor-only
+  argument still fails the implementation's narrower inner restriction.
+- [ ] This certificate covers concrete instance arguments. Virtual fanout still
+  carries Array(TypeRef), not per-slot source kinds; class-value collisions,
+  Process.new, bootstrap and LavinMQ parity need separate evidence.

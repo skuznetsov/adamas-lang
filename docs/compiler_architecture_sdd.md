@@ -5110,3 +5110,23 @@ Scoped adversary: ROBUST within the exercised selected callback contract.
 Refresh on changes to selection, binding, result SSA, names, Proc interning or
 coercion. Roll back this contract and its tests together. This certificate does
 not establish Process.new, bootstrap or LavinMQ test parity.
+
+### Concrete arguments own virtual implementation specialization (2026-10-30)
+
+Admitted: a virtual target demand retains the actual argument types and named/
+block shape. Typed module restrictions describe source admission; they do not
+replace a concrete argument when materializing the selected implementation.
+Use the direct-call specialization decision before queueing its body, including
+typed declarations, and retain the existing inherited-self ownership guard.
+
+Rejected: lowering the module-restricted declaration and its unsuffixed family
+alongside the actual specialization, or relaxing an inner IO restriction to
+accept a Descriptor module that lacks IO's superclass contract.
+
+Observed DoD on an isolated a7895d14 plus this correction: 17 HIR examples,
+two native prelude cases, direct/inherited virtual implementations with two
+concrete arguments in lazy/eager modes, and strict descriptor-only rejection
+agree with Crystal 1.22.1. Scoped adversary: ROBUST within this instance-argument
+contract. Refresh on virtual specialization, body demand or owner-reuse changes;
+roll back the producer and its tests together. Per-slot source kinds in virtual
+fanout, Process.new, bootstrap and LavinMQ parity remain separate obligations.

@@ -22088,3 +22088,33 @@ Process.new, bootstrap and LavinMQ runtime/test parity remain open. Requalify
 after source selection, default binding, SSA result edges, aggregate naming,
 Proc interning or coercion changes; roll back the producer, matcher and tests
 together. Source facts live only for their converter/context/descriptor owner.
+
+### Virtual module targets use the actual call specialization (2026-10-30)
+
+Confirmed: a module-typed receiver selected Polling#read, but its body was
+demanded under the declaration's `Crystal::System::FileDescriptor` argument.
+The call carried IO::FileDescriptor, whose IO superclass satisfies check_open;
+the declaration module does not. The target queue had discarded the actuals.
+A no-prelude Descriptor/IO/FD/Poller reproducer fails the same way on a7895d14
+and agrees with Crystal only after preserving the concrete target demand.
+
+Virtual materialization now records actual types and named/block shape and
+uses the direct-call specialization rule for typed declarations, not just
+untyped `$arityN` declarations. It demands that specialization without also
+lowering the unused abstract-argument body. Inherited receiver ownership keeps
+its existing guard; inner source restrictions remain strict.
+
+Observed DoD: isolated a7895d14 plus three production hunks, fresh S1,
+virtual_module_argument_specialization_repro.sh and
+prelude_virtual_layout_replay_repro.sh pass against Crystal 1.22.1. Direct and
+inherited implementations print AAAA with two distinct concrete arguments in
+lazy and eager modes; a descriptor-only argument is rejected at check_open.
+The new specialization spec and three layout replay specs pass 17 examples.
+All compiler and native processes use run_safe.sh and stock stdlib.
+Scoped adversary: ROBUST for these concrete instance-argument paths;
+same-lineage source review is correlated, not an independent audit.
+
+Refresh after changes to virtual fanout, specialization, callsite retention,
+pending demand or inherited owner reuse. Roll back these three hunks and their
+tests together. Source kind is not carried by Array(TypeRef) fanout; this does
+not certify class-value arguments, Process.new, bootstrap or LavinMQ parity.
