@@ -105371,7 +105371,11 @@ module Adamas::HIR
                                       effective_new_call_types.size >= required &&
                                       (effective_new_call_types.size <= param_count || has_splat || has_double_splat) &&
                                       named_args_compatible_with_def?(exact_def, call_named_arg_names_new) &&
-                                      params_compatible_with_args?(exact_def, effective_new_call_types, function_context_from_name(target_for_lower))
+                                      params_compatible_with_args?(
+                                        exact_def, effective_new_call_types,
+                                        function_context_from_name(target_for_lower),
+                                        packed_source_slots: call_has_named_new,
+                                      )
                       matched = {target_for_lower, exact_def} if exact_matches
                     end
                     unless matched
@@ -111839,6 +111843,11 @@ module Adamas::HIR
         end
         explicit_match = if prefer_allocator_new_call
                            nil
+                         elsif source_named_entry
+                           # This Def was admitted against the raw named call.
+                           # Rest arguments are now packed; resolving again
+                           # would compare an ABI Tuple with source formals.
+                           source_named_entry
                          elsif source_default_entry
                            source_entry = source_default_entry.not_nil!
                            {source_entry[0], source_entry[1]}
@@ -111859,7 +111868,7 @@ module Adamas::HIR
                            ) : nil
                            m3h_input ? resolve_call_input(m3h_input) : nil
                          end
-        if explicit_match && !prefer_allocator_new_call && allocator_call_shape_target
+        if explicit_match && !prefer_allocator_new_call && allocator_call_shape_target && !source_named_entry
           if class_name = method_owner(full_method_name)
             explicit_name, explicit_def = explicit_match.not_nil!
             if allocator_initializer_precedes_explicit_new?(
@@ -111881,7 +111890,7 @@ module Adamas::HIR
             STDERR.puts "[CALL_PARAM_INFO] phase=explicit_new lookup=#{full_method_name || base_method_name} entry=#{explicit_match[0]} base=#{base_method_name} method=#{method_name}"
           end
           matched_params = function_param_infos(explicit_match[0], matched_def)
-          if matched_params.any? { |p| p.is_splat && !p.is_double_splat }
+          if !source_named_rest_packed && matched_params.any? { |p| p.is_splat && !p.is_double_splat }
             # Explicit .new with splat — the body function was lowered with
             # packed Tuple arg types and a _splat suffix. Compute the correct
             # function name to call instead of the allocator.
@@ -120212,6 +120221,7 @@ module Adamas::HIR
       types = [] of TypeRef
       infos = [] of DefParamInfo
       positional_index = 0
+      declared_positional_index = 0
       named_only = false
 
       function_param_infos(def_node).each do |param|
@@ -120223,6 +120233,15 @@ module Adamas::HIR
         return nil if param.is_double_splat
 
         if param.is_splat
+          # Crystal rejects an element-restricted rest parameter when the raw
+          # positional list ends exactly at its declared index. Do this before
+          # expanding the virtual signature: zero rest elements would otherwise
+          # erase the restriction and admit a different overload.
+          if restriction = param.type_annotation
+            if raw_positional_count == declared_positional_index && !restriction.lstrip.starts_with?('*')
+              return nil
+            end
+          end
           # Do not reinterpret a named assignment to the splat local as a
           # sequence of rest elements. That call shape remains on the legacy
           # path until it has a dedicated source-level contract.
@@ -120238,6 +120257,8 @@ module Adamas::HIR
           named_only = true
           next
         end
+
+        declared_positional_index += 1 unless named_only
 
         if !named_only && positional_index < raw_positional_count
           types << source_arg_types[positional_index]
@@ -120810,25 +120831,57 @@ module Adamas::HIR
       right_splat = right_params.index(&.is_splat)
       left_double = left_params.find(&.is_double_splat)
       right_double = right_params.find(&.is_double_splat)
-      return false if left_double && !right_double
-      return true if right_double && !left_double
-      return false if left_splat && !right_splat
-      return true if right_splat && !left_splat
       left_pos = left_splat ? left_params[0, left_splat] : left_params.reject(&.is_double_splat)
       right_pos = right_splat ? right_params[0, right_splat] : right_params.reject(&.is_double_splat)
       left_min = left_pos.count { |param| param.default_value.nil? }
       right_min = right_pos.count { |param| param.default_value.nil? }
-      return true if left_min > right_pos.size && !right_splat
-      return false if right_min > left_pos.size && !left_splat
-      # Real rest segments need their own restriction comparison. The ordinary
-      # resolver still admits them; do not invent a strictness relation here.
-      return nil if left_params.any? { |p| p.is_splat && !named_only_separator?(p) } ||
-                    right_params.any? { |p| p.is_splat && !named_only_separator?(p) }
+      # A bare `*` ends the finite positional segment. Only a named rest
+      # parameter admits further positional values; conflating these shapes
+      # makes distinct constructor arities appear equivalent and drops a def.
+      left_rest = left_params.any? { |p| p.is_splat && !named_only_separator?(p) }
+      right_rest = right_params.any? { |p| p.is_splat && !named_only_separator?(p) }
+      # Match Crystal's legacy minimum for a real rest: required named slots
+      # participate here, but the rest slot itself is not a required argument.
+      if left_rest
+        default_index = left_params.index { |param| !param.default_value.nil? }
+        left_min = default_index || left_params.count { |param| !param.is_double_splat }
+        left_min -= 1 unless default_index.try { |index| index < left_splat.not_nil! }
+      end
+      if right_rest
+        default_index = right_params.index { |param| !param.default_value.nil? }
+        right_min = default_index || right_params.count { |param| !param.is_double_splat }
+        right_min -= 1 unless default_index.try { |index| index < right_splat.not_nil! }
+      end
+      return true if left_min > right_pos.size && !right_rest
+      return false if right_min > left_pos.size && !left_rest
+      return false if left_double && !right_double
+      return true if right_double && !left_double
+      return false if left_splat && !right_splat
+      return true if right_splat && !left_splat
       left_context = function_context_for_lookup_candidate(lookup_name, left_name)
       right_context = function_context_for_lookup_candidate(lookup_name, right_name)
-      Math.min(left_pos.size, right_pos.size).times do |index|
-        relation = source_constructor_param_restriction_of?(left_pos[index], left_context, right_pos[index], right_context)
+      common_count = left_splat && right_splat ? Math.min(left_min, right_min) : Math.min(left_pos.size, right_pos.size)
+      common_count.times do |index|
+        left_param = left_params[index]
+        right_param = right_params[index]
+        return false if index == left_splat && left_param.type_annotation && right_param.type_annotation
+        relation = source_constructor_param_restriction_of?(left_param, left_context, right_param, right_context)
         return relation unless relation
+      end
+      if left_splat && right_splat
+        # Different positional boundaries are different source signatures even
+        # when an optional slot makes their minimum arities equal.
+        return left_splat > right_splat if left_splat != right_splat
+        left_param = left_params[left_splat]
+        right_param = right_params[right_splat]
+        if left_param.type_annotation && right_param.type_annotation
+          relation = source_constructor_param_restriction_of?(left_param, left_context, right_param, right_context)
+          return relation unless relation
+        elsif left_param.type_annotation
+          return true
+        elsif right_param.type_annotation
+          return false
+        end
       end
       left_named = left_splat.try { |index| left_params[index + 1..].reject(&.is_double_splat).select { |p| p.default_value.nil? }.sort_by { |p| p.external_name || p.name || "" } }
       right_named = right_splat.try { |index| right_params[index + 1..].reject(&.is_double_splat).select { |p| p.default_value.nil? }.sort_by { |p| p.external_name || p.name || "" } }

@@ -22633,3 +22633,21 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] This certificate covers concrete instance arguments. Virtual fanout still
   carries Array(TypeRef), not per-slot source kinds; class-value collisions,
   Process.new, bootstrap and LavinMQ parity need separate evidence.
+
+### Named constructor order and packed rest retain source shape (2026-10-30)
+
+- [x] Distinguish the finite positional segment before a bare `*` from an
+  unbounded named rest when ordering synthesized and explicit constructors.
+  Follow Crystal's legacy minimum/default and rest-restriction comparisons;
+  preserve rejection of an empty element-restricted rest.
+- [x] Retain the source-selected factory after named binding. Do not resolve or
+  pack its rest again, and check its materialized signature as bound physical
+  slots, including each rest element and trailing named/default parameters.
+- [x] Isolated 7fefda34 plus this constructor slice: fresh S1 and Crystal 1.22.1
+  agree on all 15 cases in named_constructor_separator_arity_repro.sh in lazy
+  and eager modes, the neighboring constructor-family regression, and both
+  ordinary-prelude startup/virtual getter cases. A body using values.size
+  distinguishes the former Tuple() parameter from the passed two-element Tuple.
+- [ ] An explicit bound-slot bit on retained callsite records remains a future
+  provenance guard for fallback routes. This direct named-call certificate does
+  not close arbitrary delayed remapping, bootstrap or LavinMQ test parity.

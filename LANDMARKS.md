@@ -22118,3 +22118,41 @@ Refresh after changes to virtual fanout, specialization, callsite retention,
 pending demand or inherited owner reuse. Roll back these three hunks and their
 tests together. Source kind is not carried by Array(TypeRef) fanout; this does
 not certify class-value arguments, Process.new, bootstrap or LavinMQ parity.
+
+## 2026-10-30 — Named constructor selection survives physical rest binding
+
+Confirmed root causes: constructor ordering treated the separator `*` as an
+infinitely accepting rest and compared distinct finite arities as duplicate
+source declarations. After named binding, the explicit-new path also resolved
+and packed the call again. The delayed materializer then checked a physical
+Tuple plus named suffix as raw positional arguments, found no matching factory,
+and deferred to allocation. A later body replay without actuals assigned
+Tuple() to the rest local although the caller passed Tuple(Int32, Int32).
+A constant-return factory hid this defect; values.size exposed C versus A.
+
+The source family now follows Crystal's legacy arity/default/rest ordering and
+keeps the element-restricted empty-rest refusal. Named binding retains its
+selected Def and packed ABI. Exact materialization uses the existing strict
+bound-slot checker: ordinary slot count, every rest element, and trailing named
+slots still need their restrictions. No stdlib or application edits are involved.
+
+Observed DoD on isolated 7fefda34 plus only this production slice, fresh
+s1_constructor_arity_packed: named_constructor_separator_arity_repro.sh passes
+all 15 original-first cases in lazy/eager modes; named_constructor_family_binding_repro.sh
+and prelude_virtual_layout_replay_repro.sh pass. All compiler/native runs use
+scripts/run_safe.sh with installed Crystal 1.22.1 and its unmodified stdlib.
+Logs: regression.constructor-arity-packed-final.log,
+regression.constructor-family-packed-final.log and
+regression.prelude-constructor-packed-final.log in the oct29 root-cause scratch.
+
+Two static audit concerns were refuted by original-compiler probes: a later
+bare separator replaces an earlier untyped rest, and different optional named
+labels can likewise replace each other. Both proposed positive programs are
+rejected by Crystal; they do not authorize changing duplicate precedence.
+Scoped adversary: ROBUST for direct named-new binding and the exercised
+ordering cases; same-lineage review is correlated. A generic retained-callsite
+fallback still lacks an explicit bound-slot provenance bit; no raw-slot path
+through it was demonstrated here. Refresh on named binding, constructor
+precedence, pending-callsite selection or physical slot checking changes.
+Roll back this slice and its regression together. Bootstrap, Process.new
+and LavinMQ runtime/test parity remain open.

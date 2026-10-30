@@ -5130,3 +5130,26 @@ agree with Crystal 1.22.1. Scoped adversary: ROBUST within this instance-argumen
 contract. Refresh on virtual specialization, body demand or owner-reuse changes;
 roll back the producer and its tests together. Per-slot source kinds in virtual
 fanout, Process.new, bootstrap and LavinMQ parity remain separate obligations.
+
+### Named constructor source shape survives rest ABI binding (2026-10-30)
+
+Admitted: constructor-family precedence uses finite positional bounds for a
+bare named-only separator and Crystal's legacy minimum/default/restriction
+comparison for a real rest. The raw source call owns factory selection. Once
+named binding has packed rest and inserted defaults, the explicit-new path
+retains that selected Def and the materializer checks the normalized physical
+slots with the existing per-element restrictions.
+
+Rejected: treating bare `*` as unbounded, erasing an empty element-restricted
+rest from the source signature, resolving a packed Tuple as raw actuals, or
+repacking it with trailing named/default slots. Equal source precedence is not
+a reason to diverge from the original compiler's duplicate replacement rules.
+
+Observed DoD: isolated 7fefda34 plus this slice and fresh S1 pass all 15 named
+constructor arity/rest cases against Crystal 1.22.1 in lazy/eager modes, the
+constructor-family neighbor and both unmodified-prelude native cases. The rest
+body is checked through its actual Tuple size, not just a constant return.
+Scoped adversary: ROBUST within these direct named-constructor routes. Retained
+callsite fallback provenance, bootstrap and LavinMQ parity remain outside the
+certificate. Refresh after source ordering, argument binding, pending callsite
+or materializer compatibility changes; roll back this slice with its tests.
