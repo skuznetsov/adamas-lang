@@ -5045,3 +5045,29 @@ including out-of-range literals and runtime Int32-to-UInt8 rejection. This is
 not a bootstrap/LavinMQ or exception-local certificate. Refresh after source
 admission, selection, binding or memo changes; roll back this slice and tests
 together.
+
+
+### Virtual body demand outlives a materialized layout body (2026-10-30)
+
+Admitted: the existing virtual target producers retain their requested body
+symbols in a private per-converter demand set. Layout invalidation consumes
+that evidence when requeuing an existing removed body. Both pending and deferred
+RTA admission continue to require a live owner. This set does not own source
+selection, enumerate additional module owners or create DCE keepalive roots.
+
+Rejected: treating a previously completed fanout as proof of a still-valid HIR
+body, retaining unused generated getters, or admitting a non-live owner solely
+because its method was visited. A name is not an exact Def/arena replay recipe;
+later registration remaps remain a separate falsifier.
+
+Guards: virtual_target_layout_replay_spec.cr exercises class/module targets,
+unused getter invalidation and deferred-owner liveness. The native
+prelude_virtual_layout_replay_repro.sh compares normal startup and module-typed
+stack_pool access against installed Crystal using unchanged stdlib. Requalify
+on selection, registration, invalidation, RTA or DCE changes.
+
+DoD observed on isolated ca5357f2 plus this slice: `crystal spec` on the three
+virtual/pending/initializer replay files passes 15 examples; a fresh S1 passes
+both native cases in prelude_virtual_layout_replay_repro.sh. All compiler and
+test processes use scripts/run_safe.sh. Scoped adversary: ROBUST for this
+invalidation boundary. Bootstrap and LavinMQ remain outside the certificate.

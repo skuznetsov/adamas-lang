@@ -6261,6 +6261,7 @@ module Adamas::HIR
                            # Owner type is live — but only undefer if this method is actually called
                            # (match by method part for virtual dispatch across subtypes)
                            if mpart = extract_method_part_for_rta(name)
+                             @virtual_target_body_demands.includes?(name) ||
                              rta_method_part_matches_owner?(mpart, owner_base.not_nil!) ||
                              module_virtual_pending_target_matches_rta?(name, owner_base.not_nil!)
                            else
@@ -7866,6 +7867,9 @@ module Adamas::HIR
     # These blocks are synthetic and must not be treated as flowing branches.
     @control_flow_dead_blocks : Set({FunctionId, BlockId}) = Set({FunctionId, BlockId}).new
     @virtual_targets_lowered : Set({String, String, UInt64, UInt8}) = Set({String, String, UInt64, UInt8}).new
+    # Selected virtual bodies remain demanded after layout invalidation. This
+    # is not a DCE keepalive: module fanout can visit currently non-live owners.
+    @virtual_target_body_demands : Set(String) = Set(String).new
     @descendant_block_param_types_active : Bool = false
     # Track assigned local names for the current def (used to disambiguate
     # bare identifier receivers vs top-level function calls).
@@ -10909,6 +10913,11 @@ module Adamas::HIR
       end
       @rta_called_methods << name if exact_demand
       @module.mark_virtual_dispatch_target_function(name)
+      lower_demanded_virtual_target_function(name)
+    end
+
+    private def lower_demanded_virtual_target_function(name : String) : Nil
+      @virtual_target_body_demands << name
       lower_function_if_needed(name)
     end
 
@@ -11196,15 +11205,15 @@ module Adamas::HIR
           # Same rule as lower_virtual_target_owner: a value owner (Int32 in
           # `Nil | Int32`) materializes the inherited Def under itself. The
           # ancestor symbol (Number#hash) would lower with an abstract self.
-          lower_function_if_needed(candidate)
+          lower_demanded_virtual_target_function(candidate)
         else
-          lower_function_if_needed(resolved_name)
+          lower_demanded_virtual_target_function(resolved_name)
           resolved_base = strip_type_suffix(resolved_name)
-          lower_function_if_needed(resolved_base) unless resolved_name == resolved_base
+          lower_demanded_virtual_target_function(resolved_base) unless resolved_name == resolved_base
         end
       else
-        lower_function_if_needed(candidate)
-        lower_function_if_needed(base_name) unless candidate == base_name
+        lower_demanded_virtual_target_function(candidate)
+        lower_demanded_virtual_target_function(base_name) unless candidate == base_name
       end
 
       complete = @module.has_function_with_body?(candidate) ||
@@ -40615,14 +40624,18 @@ module Adamas::HIR
         # An allocator can materialize a concrete initializer before missing
         # demand discovery, so its exact target need not have an RTA entry.
         # Its selected source, unlike the discarded layout body, is durable.
-        requeue_exact_demand = @rta_called_methods.includes?(name) || @materialized_initializer_sources.has_key?(name)
+        # A virtual target is also required after its fanout has completed:
+        # invalidating the body must not erase the already-satisfied demand.
+        requeue_demand = @rta_called_methods.includes?(name) ||
+                         @materialized_initializer_sources.has_key?(name) ||
+                         @virtual_target_body_demands.includes?(name)
         next unless remove_hir_function(name)
         clear_function_state(name)
         # Do not delete from the live pending worklist.  The pending lowering
         # pass walks this Array by index, so deletion shifts later entries and
         # can silently skip unrelated demands.  Stale entries are safe: the
         # worklist already ignores functions whose body/state has settled.
-        if requeue_exact_demand
+        if requeue_demand
           set_function_state(name, FunctionLoweringState::Pending)
           enqueue_pending_function(name, "layout_invalidate")
         end
@@ -68405,7 +68418,7 @@ module Adamas::HIR
           clear_function_state(name)
         end
         @module.mark_virtual_dispatch_target_function(name) if name.includes?('#')
-        lower_function_if_needed(name)
+        lower_demanded_virtual_target_function(name)
         attempted += 1
         if module_virtual_fanout_pending_target_body_available?(target)
           targets.delete(name)
@@ -80885,7 +80898,8 @@ module Adamas::HIR
                             true
                           elsif rta_live_owner?(owner_base)
                             if mpart = extract_method_part_for_rta(name)
-                              if rta_method_part_matches_owner?(mpart, owner_base) ||
+                              if @virtual_target_body_demands.includes?(name) ||
+                                 rta_method_part_matches_owner?(mpart, owner_base) ||
                                  module_virtual_pending_target_matches_rta?(name, owner_base)
                                 rta_reason = "keep:live_owner_method_part"
                                 true

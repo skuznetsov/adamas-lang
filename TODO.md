@@ -22561,3 +22561,20 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [ ] Source callback output validation still needs supplied/default slot
   provenance and structural generic restrictions. Full bootstrap, Process.new
   and unchanged LavinMQ runtime/test parity remain open.
+
+
+### Virtual body demand survives owner-layout invalidation (2026-10-30)
+- [x] Trace the disappearing Parallel#stack_pool body to
+  invalidate_lowered_layout_functions during a later assignment. Virtual fanout
+  had already satisfied its demand, while replay retained only direct RTA calls
+  and selected initializer recipes. Module receivers bypass class-only repair.
+- [x] Record selected virtual body demands separately from DCE keepalive roots.
+  Requeue them after layout invalidation and admit replay through the existing
+  live-owner RTA guard. Do not create demands for unused generated getters.
+- [ ] Qualify any later same-symbol Def/arena remapping before replacing this
+  name-based record with a selected-source replay recipe. It is not observed
+  in the Parallel getter case. Process.new, bootstrap and LavinMQ remain open.
+- [x] Isolated ca5357f2 plus only this seven-hunk slice: three HIR files
+  pass 15 examples; a fresh S1 and Crystal 1.22.1 agree on both ordinary-prelude
+  native cases. The combined in-progress callback candidate also passes both.
+  The original callback candidate crashes before user stdout without this fix.

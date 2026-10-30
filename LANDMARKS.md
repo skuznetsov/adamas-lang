@@ -22006,3 +22006,32 @@ rejections. Scoped adversary: ROBUST for these selection contracts. Requalify
 after block normalization, overload selection, integer conversion or declared
 result ownership changes; revert the producer, specs and native regression
 together. Callback output/default provenance, bootstrap and LavinMQ remain open.
+
+
+## 2026-10-30 — A virtual target's body and its lowering demand have different lifetimes
+
+A trace of the ordinary-prelude crash identifies remove_hir_function ->
+invalidate_lowered_layout_functions -> lower_assign as the deletion of the
+already-lowered Fiber::ExecutionContext::Parallel#stack_pool getter. The later
+module dispatch omitted Parallel although the runtime constructed it. Fanout
+completion is not durable evidence that its selected body still exists.
+
+Keep virtual body demand in AstToHir independently of HIR body validity and
+DCE roots. Class, module and union target producers record only the symbols
+that they actually request. Layout invalidation requeues existing demanded
+bodies; lazy admission still requires a live owner. Unused getters and dead
+owners are explicit guards. The per-converter lifetime ends at compilation.
+
+The demand key remains a symbol. A later same-name Def/arena replacement is a
+conditional source-identity risk; no such replacement explains this getter.
+Refresh after target selection, registration remaps, layout invalidation, RTA
+admission or DCE changes. Roll back the producer/replay changes and regressions
+together. This does not certify Process.new, bootstrap or LavinMQ parity.
+
+Evidence: isolated ca5357f2 plus only the seven production hunks passes 15
+examples in virtual_target_layout_replay_spec.cr,
+pending_queue_layout_invalidation_spec.cr and initializer_layout_replay_spec.cr.
+Its fresh S1 passes both original-first native prelude cases. The combined
+callback candidate passes these too; without replay it crashed before stdout
+and its dispatch lacked the real Parallel getter. Scoped adversary: ROBUST for
+layout replay and unchanged owner/DCE boundaries, not a bootstrap certificate.
