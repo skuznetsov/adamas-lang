@@ -21840,3 +21840,31 @@ slice together. Process.spawn, exception-edge local state, bootstrap and
 unchanged LavinMQ parity are separate open obligations.
 Scoped adversary: ROBUST for the changed fallback and converted binding path;
 this is not a certificate for all numeric overload or allocator paths.
+
+## 2026-10-29 — Protected-body PHIs require the actual completed edge
+
+lower_begin already records body_value_block after lowering the protected
+body. An inner if can move that block away from body_block. Two local-merge
+sites nevertheless used the original entry as the normal PHI predecessor,
+so their edge coercions and values were associated with a non-predecessor.
+Use the recorded completed-body block at both guarded merges. Terminating
+bodies and else paths do not enter these guards; straight-line bodies retain
+the same predecessor. Revert the producer and focused tests together if
+this contract changes.
+
+The parent fails both structural predecessor checks and the native regression.
+The candidate passes three focused examples and a fresh S1 matches installed
+Crystal on four normal-flow branch results, with and without ensure. Scoped
+adversary: ROBUST for these two guarded CFG-edge changes. Refresh after
+lower_begin control-flow or merge_branch_locals coercion changes.
+
+This does not preserve mutable state on real exception edges. An empty rescue
+can inherit normal-only SSA values, while restoring only pre_locals would lose
+writes completed before a throw. Exception-visible state needs stable lexical
+binding identity, completed-write semantics (including escaping captures), and
+storage valid across setjmp. register_local also records PHIs and narrowing,
+so it is not a source-write authority. Separately, installed Crystal raises
+through _Unwind_RaiseException, but Adamas emits setjmp/longjmp handlers without
+native unwind landing pads. Actual exception tests must exercise that ABI;
+normal-flow tests with fail-fast support symbols do not certify it. Bootstrap,
+File.open runtime and unchanged LavinMQ test parity remain open.

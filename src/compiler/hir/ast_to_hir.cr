@@ -99493,7 +99493,10 @@ module Adamas::HIR
           if has_rescue && body_locals && rescue_locals && pre_locals && rescue_done_block
             merge_target = ensure_block.not_nil!
             if body_exit_block == merge_target && rescue_exit_block == merge_target
-              merge_branch_locals(ctx, pre_locals, body_locals, rescue_locals, body_block, rescue_done_block.not_nil!)
+              # Nested body control flow finishes in its own continuation.
+              # PHI operands and their coercions belong to that actual edge,
+              # rather than the protected body's initial block.
+              merge_branch_locals(ctx, pre_locals, body_locals, rescue_locals, body_value_block.not_nil!, rescue_done_block.not_nil!)
             end
           end
 
@@ -99522,7 +99525,7 @@ module Adamas::HIR
         if !has_ensure && has_rescue && body_locals && rescue_locals &&
            body_exit_block == exit_block && rescue_exit_block == exit_block &&
            pre_locals && rescue_done_block
-          merge_branch_locals(ctx, pre_locals, body_locals, rescue_locals, body_block, rescue_done_block.not_nil!)
+          merge_branch_locals(ctx, pre_locals, body_locals, rescue_locals, body_value_block.not_nil!, rescue_done_block.not_nil!)
         end
 
         # Create PHI to merge body value and rescue value when both paths

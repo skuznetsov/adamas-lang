@@ -22448,3 +22448,21 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   a runtime Int32 value whose complete domain does not fit UInt8.
 - [ ] This closes a selected-call inference mismatch, not the independent
   Process.spawn Nil result frontier, rescue-local state, bootstrap or LavinMQ.
+
+### Protected-body local merges use completed CFG edges (2026-10-29)
+- [x] Reproduce two begin/rescue local PHIs naming the protected body entry
+  instead of the continuation produced by an inner if. Both direct and ensure
+  merges must use the captured completed-body block, including edge coercions.
+- [x] The two structural falsifiers fail on the parent and pass after the
+  change; together with the neighboring loop-exit spec, three examples pass.
+  Fresh S1 matches installed original Crystal on all four normal-flow results
+  (both if arms with and without ensure). The native regression fails on the
+  parent. Scoped adversary: ROBUST for the two guarded predecessor changes.
+- [ ] Empty-rescue loop continuations can still inherit normal-only local
+  values, and actual exceptions expose a separate unwinder/runtime mismatch.
+  Do not seed rescue with a pre-body snapshot: writes completed before a throw
+  must survive, while a throwing RHS must not commit its destination. A future
+  lexical-binding storage contract must cover captured writes and setjmp
+  lifetime rules, rather than treating every register_local call as a write.
+- [ ] Fresh S2 at a55ef9af still rejects Process.new(Nil); no S2 binary,
+  bootstrap fixed point or unchanged LavinMQ parity is certified by this fix.
