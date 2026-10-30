@@ -49,11 +49,7 @@ module Adamas
       # Explicit provenance for Proc-shaped HIR values. TypeKind::Proc alone is
       # not a safe dispatch discriminator: raw yield callbacks and heap Proc
       # objects can both be typed as Proc in HIR.
-      private enum ProcCarrier : UInt8
-        Unknown
-        RawFnptrCallback
-        HeapProcObject
-      end
+      private alias ProcCarrier = HIR::ProcCarrier
 
       # Per-argument action used to bridge a yielded value to a known
       # callback formal. The indirect-call node only has a call-wide union flag,
@@ -10873,6 +10869,41 @@ module Adamas
         left == right
       end
 
+      # Check a declared target against producers whose ABI is known without
+      # memory-flow inference. Capture-box loads deliberately remain unknown
+      # here; their selected contract was transported by HIR, not rediscovered
+      # from a Proc-shaped type or the legacy inferred block slot.
+      private def exact_yield_target_carrier(value_id : HIR::ValueId) : ProcCarrier?
+        return nil unless function = @current_hir_func
+        defs = hir_function_defs(function)
+        visited = ::Set(HIR::ValueId).new
+        while visited.add?(value_id)
+          if param = function.params.find { |candidate| candidate.id == value_id }
+            return nil unless param.is_block
+            return function.heap_block_param ? ProcCarrier::HeapProcObject : ProcCarrier::RawFnptrCallback
+          end
+          case inst = defs[value_id]?
+          when HIR::FuncPointer
+            return ProcCarrier::RawFnptrCallback
+          when HIR::MakeProc
+            return ProcCarrier::HeapProcObject
+          when HIR::ExternCall
+            return hir_proc_type?(inst.type) ? ProcCarrier::RawFnptrCallback : nil
+          when HIR::Copy
+            value_id = inst.source
+          when HIR::Cast
+            value_id = inst.value
+          when HIR::UnionWrap
+            value_id = inst.value
+          when HIR::UnionUnwrap
+            value_id = inst.union_value
+          else
+            return nil
+          end
+        end
+        nil
+      end
+
       private def lower_yield(yld : HIR::Yield) : ValueId
         builder = @builder.not_nil!
         block_param_id = yld.target || @current_block_param_id
@@ -10888,6 +10919,17 @@ module Adamas
           return builder.const_nil
         end
         yield_carrier = @hir_value_carriers[block_param_id]? || ProcCarrier::Unknown
+        if contract = yld.target_contract
+          unless contract.value_id == block_param_id && @hir_value_types[block_param_id]? == contract.type
+            raise "MIR yield target contract lost its selected signature in #{@current_lowering_func_name}"
+          end
+          if exact_carrier = exact_yield_target_carrier(block_param_id)
+            unless exact_carrier == contract.carrier
+              raise "MIR yield target carrier contradicts its producer in #{@current_lowering_func_name}"
+            end
+          end
+          yield_carrier = contract.carrier
+        end
         if ENV.has_key?("ADAMAS_PROC_CARRIER_TRACE")
           STDERR.puts "[PROC_CARRIER] yield func=#{@current_lowering_func_name} target=#{block_param_id} carrier=#{yield_carrier}"
         end

@@ -22756,3 +22756,28 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   the former Sigset fanout error. Inspect selected Def/arena and local binding
   before assuming the Pointer receiver lost its type. Full integration,
   bootstrap, and LavinMQ runtime/test parity remain open.
+
+### Forwarded yield owns its lexical callback contract (2026-10-30)
+
+- [x] Replace caller-name harvesting with materialization of the selected lexical
+  callback in its own environment. Capture that callback rather than conflating
+  free variables from nested source blocks. Infer free-function block inputs from
+  the selected source definition, including calls inside an instance body.
+- [x] Carry the exact SSA target, Proc signature and heap/raw representation
+  together through capture binding and HIR Yield. MIR checks the transported
+  signature and any exact producer before generating an indirect call.
+- [x] Preserve terminal operand control flow in return/break/next; do not replace
+  a non-local return emitted while evaluating a forwarded yield. Scan break/next
+  operands when deciding whether a forwarding block requires inline control flow.
+- [x] Methods that use their named block as a value retain the runtime Proc
+  binding, including reassignment. Reject non-local return from captured blocks
+  before inlining, matching Crystal, rather than silently changing its owner.
+- [x] Isolated 0fb5d72f plus this slice: 41 MIR examples pass. Original-first native
+  regression matches Crystal 1.22.1 in lazy/eager modes for 14 lexical capture,
+  mutation, nested forwarding, receiver, exit and block-rebinding cases. Both
+  invalid callback input and captured non-local return remain compile errors.
+  Ordinary prelude hello and default-context stack_pool probes also pass.
+- [ ] Refresh after callback binding, capture storage, source-definition selection,
+  indirect-call ABI or inline exit changes. This is not general memory-flow
+  inference for arbitrary mutable Proc slots. Full WIP, bootstrap and LavinMQ
+  runtime/test parity remain separate checks.

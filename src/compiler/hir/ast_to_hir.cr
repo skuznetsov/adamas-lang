@@ -7738,7 +7738,13 @@ module Adamas::HIR
     @inline_yield_proc_depth : Int32 = 0
     # Standalone proc/block bodies may still contain `yield`, which must target the
     # enclosing method callback instead of guessing from the proc's own params.
-    @explicit_yield_target_stack : Array(ValueId) = [] of ValueId
+    private record CapturedYieldTarget, name : String, target : YieldTarget do
+      def capture : {String, ValueId, TypeRef}
+        {name, target.value_id, target.type}
+      end
+    end
+
+    @explicit_yield_target_stack : Array(YieldTarget) = [] of YieldTarget
     # Hint stack: when a block is materialized as a proc whose yields delegate to a
     # captured outer block, the captured target is stored as a generic POINTER and
     # its real Proc TypeDescriptor (and thus return type) is lost. The caller of
@@ -8464,7 +8470,7 @@ module Adamas::HIR
       @inline_yield_function_depth = 0
       @inline_yield_block_body_depth = 0
       @inline_yield_proc_depth = 0
-      @explicit_yield_target_stack = [] of ValueId
+      @explicit_yield_target_stack = [] of YieldTarget
       @expected_proc_return_type_hint_stack = [] of TypeRef
       @proc_function_counter = 0
       @inline_yield_return_stack = [] of InlineReturnContext
@@ -31255,14 +31261,24 @@ module Adamas::HIR
       elsif callee_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
         method_name = (safe_slice_to_string(callee_node.name) || "")
         owner_name = self_type_name || @current_class
-        return nil unless owner_name
-        base = resolve_method_with_inheritance(owner_name, method_name) || "#{owner_name}##{method_name}"
-        receiver_ref = type_ref_for_name(owner_name)
-        return nil if receiver_ref == TypeRef::VOID
-        return block_param_types_for_call(
-          base, base, receiver_ref, call_arg_types, false, expr_node, @arena,
-          resolve_proc_constructor_receiver(expr_node, @arena),
-        )
+        if owner_name && (base = resolve_method_with_inheritance(owner_name, method_name))
+          receiver_ref = type_ref_for_name(owner_name)
+          return nil if receiver_ref == TypeRef::VOID
+          return block_param_types_for_call(
+            base, base, receiver_ref, call_arg_types, false, expr_node, @arena,
+            resolve_proc_constructor_receiver(expr_node, @arena),
+          )
+        end
+        # A bare call can select a free function even inside an instance body.
+        # Infer its block inputs from that source definition rather than an
+        # invented Owner#method name or a generic POINTER callback signature.
+        if entry = lookup_function_def_for_call(method_name, expr_node.args.size, true, call_arg_types, false, false)
+          return block_param_types_for_call(
+            entry[0], method_name, nil, call_arg_types, false, expr_node, @arena,
+            resolve_proc_constructor_receiver(expr_node, @arena),
+          )
+        end
+        return nil
       end
       nil
     end
@@ -61845,7 +61861,9 @@ module Adamas::HIR
           idx += 1
         end
         false
-      when Adamas::Compiler::Frontend::ReturnNode
+      when Adamas::Compiler::Frontend::ReturnNode,
+           Adamas::Compiler::Frontend::BreakNode,
+           Adamas::Compiler::Frontend::NextNode
         node.value ? contains_yield_in_expr?(node.value.not_nil!, preferred_arena) : false
       when Adamas::Compiler::Frontend::MemberAccessNode
         contains_yield_in_expr?(node.object, preferred_arena)
@@ -62830,6 +62848,17 @@ module Adamas::HIR
     # path even when the callee would otherwise prefer the closure fallback.
     private def block_requires_inline_nonlocal_exit?(body : Array(ExprId)) : Bool
       contains_return?(body) || contains_block_local_break?(body)
+    end
+
+    # A wrapper that forwards yield owns the same control-flow obligation as
+    # its selected source block. All inline/fallback selectors consume this
+    # predicate, before a Proc boundary can erase a non-local exit.
+    private def block_requires_inline_nonlocal_exit?(
+      block : Adamas::Compiler::Frontend::BlockNode,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Bool
+      with_arena(arena) { block_requires_inline_nonlocal_exit?(block.body) } ||
+        forwarded_yield_requires_inline?(block, arena)
     end
 
     private def contains_block_local_break?(body : Array(ExprId)) : Bool
@@ -99365,6 +99394,12 @@ module Adamas::HIR
                    nil
                  end
 
+      # Evaluating the operand can already leave this method (for example,
+      # `return yield` when the source block returns non-locally). Preserve
+      # that terminator instead of replacing it with the enclosing return's
+      # inline-exit jump.
+      return value_id || nil_value(ctx) if should_stop_sequential_lowering?(ctx)
+
       # Returns inside a caller-provided block should return from the caller,
       # not from the inlined callee. When nested yield inlining is active,
       # route block-body returns to the next outer inline-return context.
@@ -99676,8 +99711,8 @@ module Adamas::HIR
       # The fallback below would return VOID, causing yield to emit `call void`
       # and discarding the result. Look up the captured Proc's TypeDescriptor
       # directly so the call gets the correct ABI.
-      if @inline_yield_proc_depth > 0 && (yield_target_id = @explicit_yield_target_stack.last?)
-        yield_target_type = ctx.type_of(yield_target_id)
+      if @inline_yield_proc_depth > 0 && (yield_target = @explicit_yield_target_stack.last?)
+        yield_target_type = yield_target.type
         if type_desc = @module.get_type_descriptor(yield_target_type)
           if type_desc.kind == TypeKind::Proc && type_desc.type_params.size > 1
             proc_ret = type_desc.type_params.last
@@ -99813,13 +99848,24 @@ module Adamas::HIR
       if env_get("DEBUG_L13") && ctx.function.name.includes?("map")
         STDERR.puts "[L13_YIELD] func=#{ctx.function.name} ret=#{get_type_name_from_ref(return_type)} args=#{args.size}"
       end
-      yield_target = @explicit_yield_target_stack.last? || function_block_param_id(ctx.function)
+      target_contract = @explicit_yield_target_stack.last?
+      yield_target = target_contract.try(&.value_id) || function_block_param_id(ctx.function)
+      if contract = target_contract
+        if descriptor = @module.get_type_descriptor(contract.type)
+          if descriptor.kind == TypeKind::Proc && !descriptor.type_params.empty?
+            return_type = descriptor.type_params.last
+          end
+        end
+      end
       if target = yield_target
-        if ctx.function.heap_block_param && ctx.function.params.any? { |param| param.id == target && param.is_block }
+        stored_source_block = ctx.function.heap_block_param &&
+                              ctx.function.params.any? { |param| param.id == target && param.is_block }
+        selected_descriptor = @module.get_type_descriptor(ctx.type_of(target))
+        if stored_source_block || (target_contract && selected_descriptor.try(&.kind) == TypeKind::Proc)
           # A stored source block is the same Proc whether invoked by `yield`
-          # or `.call`. Admit its inputs before introducing representation
+          # or `.call`, including after capture. Admit its inputs before ABI
           # coercions; a pointer-shaped String must not become an Int32 input.
-          descriptor = @module.get_type_descriptor(ctx.type_of(target))
+          descriptor = selected_descriptor
           unless descriptor && descriptor.kind == TypeKind::Proc
             raise LoweringError.new("cannot yield to a stored block without a concrete Proc signature", node)
           end
@@ -99835,7 +99881,7 @@ module Adamas::HIR
       # returning `TypeRef | Pointer` while the sanitized block return is
       # `TypeRef`), the call must use the proc's real return repr and the value
       # is coerced (union unwrap) to the declared yield type afterwards.
-      if return_type != TypeRef::VOID
+      if target_contract.nil? && return_type != TypeRef::VOID
         if abi_name = function_type_param_map_value?(ctx.function.name, "__yield_call_abi__")
           abi_ref = type_ref_for_name(abi_name)
           if abi_ref != TypeRef::VOID && abi_ref != return_type
@@ -99846,7 +99892,7 @@ module Adamas::HIR
           end
         end
       end
-      y = Yield.new(ctx.next_id, return_type, args, yield_target)
+      y = Yield.new(ctx.next_id, return_type, args, yield_target, target_contract)
       ctx.emit(y)
       y.id
     end
@@ -99950,6 +99996,7 @@ module Adamas::HIR
       break_val_id : ValueId? = nil
       if val_expr = node.value
         break_val_id = lower_expr(ctx, val_expr)
+        return break_val_id if should_stop_sequential_lowering?(ctx)
       end
 
       tuple_break_target = tuple_each_inline_break_target(ctx)
@@ -100071,6 +100118,8 @@ module Adamas::HIR
                        end
                      end
 
+        return next_value if should_stop_sequential_lowering?(ctx)
+
         expected_type = next_ctx.expected_type
         if expected_type != TypeRef::VOID && expected_type != TypeRef::NIL
           next_value_type = ctx.type_of(next_value)
@@ -100149,6 +100198,8 @@ module Adamas::HIR
                        ctx.emit(nil_for_next)
                        nil_for_next.id
                      end
+
+        return next_value if should_stop_sequential_lowering?(ctx)
 
         ret_type = ctx.function.return_type
         if ret_type != TypeRef::VOID && ret_type != TypeRef::NIL
@@ -112542,7 +112593,10 @@ module Adamas::HIR
             selected_call_entry_name || mangled_method_name,
             selected_proc_def, selected_call_entry_arena,
           )
-          if proc_constructor_block_contract_for_target(selected_proc_target, node, call_arena, proc_constructor_receiver)
+          source_captures_block = def_requires_heap_block?(
+            selected_proc_def, registered_arena_for_def(selected_proc_def) || selected_call_entry_arena || @arena,
+          )
+          if source_captures_block || proc_constructor_block_contract_for_target(selected_proc_target, node, call_arena, proc_constructor_receiver)
             if captured_block = node_for_call_expr(call_arena, block_expr).as?(Adamas::Compiler::Frontend::BlockNode)
               captured_arena = @block_node_arenas[captured_block.object_id]? ||
                                resolve_arena_for_block(captured_block, call_arena) || call_arena
@@ -112605,8 +112659,18 @@ module Adamas::HIR
         block_param_types_inline = [type_ref_for_resolved_name(static_class_name)]
       end
 
-      disable_inline_yield = env_has?("ADAMAS_DISABLE_INLINE_YIELD")
-      disabled_tuple_each_inline = concrete_tuple_each_inline?(ctx, strip_type_suffix(base_method_name), receiver_id)
+      # A source method that uses its block as a first-class value owns the
+      # runtime callback binding. Substituting the original literal for yield
+      # would discard assignments to &block; the normal heap-Proc call path
+      # preserves that binding. Reuse the selected declaration's ABI decision.
+      source_owns_block_value = if selected_def = selected_call_entry_def
+                                  def_requires_heap_block?(selected_def, registered_arena_for_def(selected_def) || selected_call_entry_arena || @arena)
+                                else
+                                  false
+                                end
+      disable_inline_yield = env_has?("ADAMAS_DISABLE_INLINE_YIELD") || source_owns_block_value
+      disabled_tuple_each_inline = !source_owns_block_value &&
+                                   concrete_tuple_each_inline?(ctx, strip_type_suffix(base_method_name), receiver_id)
       inline_named_shape_admitted = true
       if m3e_input && has_named_args && m3e_input.named_names
         inline_named_shape_known = false
@@ -112717,7 +112781,7 @@ module Adamas::HIR
                 block_for_inline,
                 selected_block_arena,
               )
-              selected_block_has_return = with_arena(selected_block_arena) { block_requires_inline_nonlocal_exit?(block_for_inline.body) }
+              selected_block_has_return = block_requires_inline_nonlocal_exit?(block_for_inline, selected_block_arena)
               unless selected_callee_requires_fallback && !selected_block_has_return && def_contains_yield?(selected_def, selected_arena)
                 debug_hook("call.inline.yield", "callee=#{selected_name} source=selected_binding")
                 return inline_yield_function(
@@ -112760,7 +112824,7 @@ module Adamas::HIR
                   block_for_inline,
                   block_arena,
                 )
-                block_has_return = with_arena(block_arena) { block_requires_inline_nonlocal_exit?(block_for_inline.body) }
+                block_has_return = block_requires_inline_nonlocal_exit?(block_for_inline, block_arena)
                 if def_contains_yield?(def_node, def_arena) && callee_requires_fallback && !block_has_return
                   skip_inline = true
                   debug_hook("call.inline.skip", "callee=#{mangled_method_name} reason=callee_yield_with_return")
@@ -113196,7 +113260,7 @@ module Adamas::HIR
             block_arena = @block_node_arenas[block_for_inline.object_id]? ||
                           resolve_arena_for_block(block_for_inline, @arena) ||
                           @arena
-            force_inline_non_local = with_arena(block_arena) { contains_return?(block_for_inline.body) }
+            force_inline_non_local = block_requires_inline_nonlocal_exit?(block_for_inline, block_arena)
             # Mirror `skip_inline` for callee_yield_with_return (early block): late inline must not
             # bypass normal Call emission when yield+return in the callee makes inline-yield unsafe.
             skip_late_inline = false
@@ -113208,8 +113272,7 @@ module Adamas::HIR
                 block_for_inline,
                 block_arena,
               )
-              if callee_requires_fallback_late &&
-                 !with_arena(block_arena) { contains_block_local_break?(block_for_inline.body) }
+              if callee_requires_fallback_late && !force_inline_non_local
                 skip_late_inline = true
                 debug_hook("call.inline.skip", "callee=#{yield_name} reason=callee_yield_with_return_late")
               end
@@ -128990,6 +129053,28 @@ module Adamas::HIR
       result.id
     end
 
+    # A forwarded yield still carries the source target's non-local control
+    # flow. It cannot cross a Proc boundary merely because the wrapper's own
+    # block contains no ReturnNode or BreakNode.
+    private def forwarded_yield_requires_inline?(
+      block : Adamas::Compiler::Frontend::BlockNode,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Bool
+      return false unless contains_yield_deep?(block.body, arena)
+      index = @inline_yield_block_stack.size - 1
+      while index >= 0
+        target = @inline_yield_block_stack[index]
+        target_arena = @inline_yield_block_arena_stack[index]?
+        return true unless target_arena
+        if with_arena(target_arena) { block_requires_inline_nonlocal_exit?(target.body) }
+          return true
+        end
+        break unless contains_yield_deep?(target.body, target_arena)
+        index -= 1
+      end
+      false
+    end
+
     # Inline a yield-function call with block
     # Transforms: func(args) { |params| block_body }
     # Into: inline func body, replacing yield with block_body
@@ -129036,7 +129121,7 @@ module Adamas::HIR
       # `break` inside a proc-materialized block lowers to Unreachable, so a
       # block that breaks out of this call must be inlined like one that returns.
       block_contains_break = with_arena(block_arena) { contains_block_local_break?(block.body) }
-      fallback_allowed = !block_contains_return && !block_contains_break
+      fallback_allowed = !block_requires_inline_nonlocal_exit?(block, block_arena)
       force_inline_with_next = inline_key.includes?("with_brace_newlines_skipped") || inline_key.includes?("with_brace_newlines_as_separators")
       debug_with_brace = env_get("DEBUG_WITH_BRACE_CALL") && force_inline_with_next
       base_inline_name = strip_type_suffix(inline_key)
@@ -137885,20 +137970,16 @@ module Adamas::HIR
     private def find_enclosing_yield_target(
       ctx : LoweringContext,
       parent_locals : Hash(String, ValueId),
-    ) : {String, ValueId, TypeRef}?
-      if local_id = parent_locals["_"]?
-        local_type = ctx.type_of(local_id)
-        return {"_", local_id, local_type} if yield_callback_type?(local_type)
-      end
-
+    ) : CapturedYieldTarget?
       params = ctx.function.params
       idx = params.size - 1
       while idx >= 0
         param = params.unsafe_fetch(idx)
         param_name = param.name
-        if param_name != "self" && yield_callback_type?(param.type)
+        if param.is_block && yield_callback_type?(param.type)
           value_id = parent_locals[param_name]? || param.id
-          return {param_name, value_id, param.type}
+          carrier = ctx.function.heap_block_param ? ProcCarrier::HeapProcObject : ProcCarrier::RawFnptrCallback
+          return CapturedYieldTarget.new(param_name, YieldTarget.new(value_id, param.type, carrier))
         end
         idx -= 1
       end
@@ -137906,34 +137987,46 @@ module Adamas::HIR
       nil
     end
 
+    private def rebind_captured_yield_target(
+      ctx : LoweringContext,
+      capture : CapturedYieldTarget,
+      value_id : ValueId,
+    ) : YieldTarget
+      unless ctx.type_of(value_id) == capture.target.type
+        raise "captured yield target lost its selected callback signature"
+      end
+      YieldTarget.new(value_id, capture.target.type, capture.target.carrier)
+    end
+
     private def bind_captured_yield_target(
       proc_ctx : LoweringContext,
-      capture : {String, ValueId, TypeRef}?,
-    ) : ValueId?
+      capture : CapturedYieldTarget?,
+    ) : YieldTarget?
       return nil unless capture
-      cap_name, _, cap_type = capture
-      return nil unless ref_cell = @closure_ref_cells[cap_name]?
+      return nil unless ref_cell = @closure_ref_cells[capture.name]?
       cell_class, cell_name, cell_type = ref_cell
-      effective_type = cell_type == TypeRef::VOID ? cap_type : cell_type
+      effective_type = cell_type == TypeRef::VOID ? capture.target.type : cell_type
       get = ClassVarGet.new(proc_ctx.next_id, effective_type, cell_class, cell_name)
       proc_ctx.emit(get)
       proc_ctx.register_type(get.id, effective_type)
-      get.id
+      rebind_captured_yield_target(proc_ctx, capture, get.id)
     end
 
     private def bind_env_captured_yield_target(
       proc_ctx : LoweringContext,
-      capture : {String, ValueId, TypeRef}?,
-    ) : ValueId?
+      capture : CapturedYieldTarget?,
+    ) : YieldTarget?
       return nil unless capture
-      cap_name, _, cap_type = capture
-      if box_info = proc_ctx.lookup_boxed_local(cap_name)
+      if box_info = proc_ctx.lookup_boxed_local(capture.name)
         load = PointerLoad.new(proc_ctx.next_id, box_info.payload_type, box_info.box_ptr)
         proc_ctx.emit(load)
         proc_ctx.register_type(load.id, box_info.payload_type)
-        return load.id
+        return rebind_captured_yield_target(proc_ctx, capture, load.id)
       end
-      proc_ctx.lookup_local(cap_name)
+      if value_id = proc_ctx.lookup_local(capture.name)
+        return rebind_captured_yield_target(proc_ctx, capture, value_id)
+      end
+      nil
     end
 
     private def capture_name_set(captures : Array({String, ValueId, TypeRef})) : Set(String)
@@ -138564,15 +138657,15 @@ module Adamas::HIR
         end
       end
 
-      explicit_yield_target = nil.as({String, ValueId, TypeRef}?)
+      explicit_yield_target = nil.as(CapturedYieldTarget?)
       if contains_yield?(node.body, @arena)
         if candidate = find_enclosing_yield_target(ctx, parent_locals)
           explicit_yield_target = candidate
           if env_get("DEBUG_EXPLICIT_YIELD_TARGET")
-            STDERR.puts "[EXPLICIT_YIELD_TARGET] proc_literal parent=#{ctx.function.name} capture=#{candidate[0]} vid=#{candidate[1]} type=#{get_type_name_from_ref(candidate[2])}"
+            STDERR.puts "[EXPLICIT_YIELD_TARGET] proc_literal parent=#{ctx.function.name} capture=#{candidate.name} vid=#{candidate.target.value_id} type=#{get_type_name_from_ref(candidate.target.type)}"
           end
-          unless captures.any? { |name, _, _| name == candidate[0] }
-            captures << candidate
+          unless captures.any? { |name, _, _| name == candidate.name }
+            captures << candidate.capture
           end
         end
       end
@@ -138682,13 +138775,13 @@ module Adamas::HIR
       @loop_break_value_stack = [] of {BlockId, Array({BlockId, ValueId})}
 
       @inline_yield_proc_depth += 1
-      explicit_yield_target_id = bind_env_captured_yield_target(proc_ctx, explicit_yield_target)
+      explicit_yield_target_binding = bind_env_captured_yield_target(proc_ctx, explicit_yield_target)
       pushed_explicit_yield_target = false
-      if explicit_yield_target_id
+      if explicit_yield_target_binding
         if env_get("DEBUG_EXPLICIT_YIELD_TARGET")
-          STDERR.puts "[EXPLICIT_YIELD_TARGET] proc_literal bind=#{proc_func.name} target=%#{explicit_yield_target_id} type=#{get_type_name_from_ref(proc_ctx.type_of(explicit_yield_target_id))}"
+          STDERR.puts "[EXPLICIT_YIELD_TARGET] proc_literal bind=#{proc_func.name} target=%#{explicit_yield_target_binding.value_id} type=#{get_type_name_from_ref(explicit_yield_target_binding.type)}"
         end
-        @explicit_yield_target_stack << explicit_yield_target_id
+        @explicit_yield_target_stack << explicit_yield_target_binding
         pushed_explicit_yield_target = true
       end
       # Lowering may prune a constant branch, but a Proc's public result
@@ -139644,6 +139737,49 @@ module Adamas::HIR
       end
     end
 
+    # A fallback thunk that forwards `yield` owns a callback, not the free
+    # variables of every active caller block. Materialize the selected lexical
+    # block in its own environment before crossing the function boundary.
+    private def materialize_inline_yield_target(
+      ctx : LoweringContext,
+    ) : YieldTarget?
+      target = @inline_yield_block_stack.last?
+      return nil unless target
+      frame = @block_owner_caller_frame_index[target.object_id]?
+      owner_function = @block_owner_function_ids[target.object_id]?
+      return nil unless frame && frame >= 0 &&
+                        owner_function == ctx.function.id &&
+                        @inline_caller_function_id_stack[frame]? == ctx.function.id
+      locals = snapshot_active_inline_caller_locals(ctx, frame)
+      return nil unless locals
+      target_arena = @inline_yield_block_arena_stack.last?
+      return nil unless target_arena
+      target_params = @inline_yield_block_param_types_stack.last?
+      saved_locals = ctx.save_locals
+      saved_blocks = @inline_yield_block_stack
+      saved_arenas = @inline_yield_block_arena_stack
+      saved_params = @inline_yield_block_param_types_stack
+      saved_names = @inline_yield_name_stack
+      saved_returns = @inline_yield_block_return_stack
+      begin
+        ctx.restore_locals(locals)
+        @inline_yield_block_stack = saved_blocks[0, saved_blocks.size - 1]
+        @inline_yield_block_arena_stack = saved_arenas[0, saved_arenas.size - 1]
+        @inline_yield_block_param_types_stack = saved_params[0, saved_params.size - 1]
+        @inline_yield_name_stack = saved_names[0, Math.max(0, saved_names.size - 1)]
+        @inline_yield_block_return_stack = saved_returns[0, Math.max(0, saved_returns.size - 1)]
+        value_id = lower_block_to_proc(ctx, target, target_params, target_arena, heap_proc: true)
+        YieldTarget.new(value_id, ctx.type_of(value_id), ProcCarrier::HeapProcObject)
+      ensure
+        ctx.restore_locals(saved_locals)
+        @inline_yield_block_stack = saved_blocks
+        @inline_yield_block_arena_stack = saved_arenas
+        @inline_yield_block_param_types_stack = saved_params
+        @inline_yield_name_stack = saved_names
+        @inline_yield_block_return_stack = saved_returns
+      end
+    end
+
     # Convert a BlockNode into a Proc (FuncPointer). This is used when a method
     # takes `&block : T ->` and the block must be stored/captured rather than
     # yielded inline.
@@ -139785,29 +139921,6 @@ module Adamas::HIR
         end
       end
       referenced_names = collect_proc_body_identifiers(block_node.body)
-      # When the block body contains `yield`, V2 will inline the yield target's
-      # block body into this proc during lowering (via inline_block_body).
-      # The inlined block body may reference variables from the parent scope
-      # (e.g. `io`, `separator` in Enumerable#join's each_with_index block).
-      # We must scan those block bodies NOW to capture all referenced names,
-      # otherwise the variables won't be captured and will be unresolved at runtime.
-      if contains_yield_deep?(block_node.body, block_arena)
-        yield_block_stack_idx = @inline_yield_block_stack.size - 1
-        while yield_block_stack_idx >= 0
-          yield_blk = @inline_yield_block_stack[yield_block_stack_idx]
-          yield_blk_arena = @inline_yield_block_arena_stack[yield_block_stack_idx]?
-          if yield_blk_arena
-            old_arena = @arena
-            @arena = yield_blk_arena
-            yield_block_refs = collect_proc_body_identifiers(yield_blk.body)
-            @arena = old_arena
-            yield_block_refs.each { |name| referenced_names.add(name) }
-          end
-          # If the yield target block ALSO contains yield, scan the next level
-          break unless contains_yield_deep?(yield_blk.body, yield_blk_arena || block_arena)
-          yield_block_stack_idx -= 1
-        end
-      end
       @arena = saved_arena
 
       parent_locals = ctx.save_locals.locals
@@ -139870,26 +139983,28 @@ module Adamas::HIR
         end
       end
 
-      explicit_yield_target = nil.as({String, ValueId, TypeRef}?)
-      saved_yield_arena = @arena
-      @arena = block_arena
-      # Use deep yield scan that also checks CaseNode values and when-conditions.
-      # The regular contains_yield? intentionally doesn't scan case values to avoid
-      # affecting method registration semantics, but for block-to-proc yield target
-      # capture we need to find yields in ALL expression positions.
+      explicit_yield_target = nil.as(CapturedYieldTarget?)
       has_yield = contains_yield_deep?(block_node.body, block_arena)
       if has_yield
-        if candidate = find_enclosing_yield_target(ctx, parent_locals)
-          explicit_yield_target = candidate
-          if env_get("DEBUG_EXPLICIT_YIELD_TARGET")
-            STDERR.puts "[EXPLICIT_YIELD_TARGET] block_proc parent=#{ctx.function.name} capture=#{candidate[0]} vid=#{candidate[1]} type=#{get_type_name_from_ref(candidate[2])}"
+        if !@inline_yield_block_stack.empty?
+          parent_enum_ledger = @enum_value_types
+          @enum_value_types = saved_enum_value_types
+          begin
+            if target = materialize_inline_yield_target(ctx)
+              explicit_yield_target = CapturedYieldTarget.new("__inline_yield_target_#{proc_func_name}", target)
+            end
+          ensure
+            saved_enum_value_types = @enum_value_types
+            @enum_value_types = parent_enum_ledger
           end
-          unless captures.any? { |name, _, _| name == candidate[0] }
-            captures << candidate
+        end
+        explicit_yield_target ||= find_enclosing_yield_target(ctx, parent_locals)
+        if candidate = explicit_yield_target
+          unless captures.any? { |name, _, _| name == candidate.name }
+            captures << candidate.capture
           end
         end
       end
-      @arena = saved_yield_arena
 
       # Blocks keep lexical `self` even when it isn't referenced explicitly as an
       # identifier. Without capturing it, implicit receiver calls inside block procs
@@ -139937,7 +140052,7 @@ module Adamas::HIR
         address_taken_captures = detect_address_taken_captures(block_node.body, capture_names, block_arena)
         # Caller blocks a `yield` in this body inlines are part of the thunk's
         # code too; closures nested in them can write the same cells.
-        if contains_yield_deep?(block_node.body, block_arena)
+        if explicit_yield_target.nil? && contains_yield_deep?(block_node.body, block_arena)
           yield_block_stack_idx = @inline_yield_block_stack.size - 1
           while yield_block_stack_idx >= 0
             yield_blk = @inline_yield_block_stack[yield_block_stack_idx]
@@ -140049,13 +140164,13 @@ module Adamas::HIR
         end
       end
 
-      explicit_yield_target_id = if heap_proc
-                                   bind_env_captured_yield_target(proc_ctx, explicit_yield_target)
-                                 else
-                                   bind_captured_yield_target(proc_ctx, explicit_yield_target)
-                                 end
-      if explicit_yield_target_id && env_get("DEBUG_EXPLICIT_YIELD_TARGET")
-        STDERR.puts "[EXPLICIT_YIELD_TARGET] block_proc bind=#{proc_func.name} target=%#{explicit_yield_target_id} type=#{get_type_name_from_ref(proc_ctx.type_of(explicit_yield_target_id))}"
+      explicit_yield_target_binding = if heap_proc
+                                        bind_env_captured_yield_target(proc_ctx, explicit_yield_target)
+                                      else
+                                        bind_captured_yield_target(proc_ctx, explicit_yield_target)
+                                      end
+      if explicit_yield_target_binding && env_get("DEBUG_EXPLICIT_YIELD_TARGET")
+        STDERR.puts "[EXPLICIT_YIELD_TARGET] block_proc bind=#{proc_func.name} target=%#{explicit_yield_target_binding.value_id} type=#{get_type_name_from_ref(explicit_yield_target_binding.type)}"
       end
 
       # Add parameters to the standalone function
@@ -140226,7 +140341,7 @@ module Adamas::HIR
       # lowered as a proc). Hiding that stack turns the yield into a target-less
       # nil. The block's referenced names were already captured above, so keep the
       # caller block stacks visible in that case.
-      keep_outer_yield_blocks = explicit_yield_target_id.nil? &&
+      keep_outer_yield_blocks = explicit_yield_target_binding.nil? &&
                                 !@inline_yield_block_stack.empty? &&
                                 contains_yield_deep?(block_node.body, block_arena)
       unless keep_outer_yield_blocks
@@ -140263,8 +140378,8 @@ module Adamas::HIR
       @arena = block_arena
       @inline_yield_proc_depth += 1
       pushed_explicit_yield_target = false
-      if explicit_yield_target_id
-        @explicit_yield_target_stack << explicit_yield_target_id
+      if explicit_yield_target_binding
+        @explicit_yield_target_stack << explicit_yield_target_binding
         pushed_explicit_yield_target = true
       end
       pushed_return_type_hint = false

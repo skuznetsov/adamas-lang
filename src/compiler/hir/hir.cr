@@ -1165,19 +1165,46 @@ module Adamas::HIR
     end
   end
 
+  # Source Proc signatures do not distinguish a bare callback address from
+  # a Proc object containing a code pointer and an environment.
+  enum ProcCarrier : UInt8
+    Unknown
+    RawFnptrCallback
+    HeapProcObject
+  end
+
+  # A captured yield target keeps its selected signature and representation
+  # together when its SSA binding changes at a closure boundary.
+  record YieldTarget, value_id : ValueId, type : TypeRef, carrier : ProcCarrier
+
   # Yield to block
   class Yield < Value
     getter args : Array(ValueId)
     getter target : ValueId?
+    getter target_contract : YieldTarget?
 
-    def initialize(id : ValueId, type : TypeRef, @args : Array(ValueId) = [] of ValueId, @target : ValueId? = nil)
+    def initialize(
+      id : ValueId,
+      type : TypeRef,
+      @args : Array(ValueId) = [] of ValueId,
+      @target : ValueId? = nil,
+      @target_contract : YieldTarget? = nil,
+    )
       super(id, type)
+      if contract = @target_contract
+        unless @target == contract.value_id && contract.carrier != ProcCarrier::Unknown
+          raise ArgumentError.new("yield target contract requires its exact binding and a known carrier")
+        end
+      end
     end
 
     def to_s(io : IO) : Nil
       io << "%" << @id << " = yield"
       if target = @target
         io << " via %" << target
+        if contract = @target_contract
+          io << " [" << contract.carrier << ", type=" << contract.type.id << "]"
+        end
       end
       unless @args.empty?
         io << " "

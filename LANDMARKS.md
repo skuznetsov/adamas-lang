@@ -22337,3 +22337,48 @@ String#fill_folded_bytes; isolated green checks do not close that integration.
 Refresh after callsite identity, inherited owner selection, source arena,
 reference wrapper recognition or materialization changes. Roll back this slice
 and its tests together. Fresh bootstrap and LavinMQ parity remain open.
+
+## 2026-10-30 — Forwarded yield transports a selected callback, not caller names
+
+Confirmed root cause: lower_block_to_proc collected free identifiers from every
+active caller block and resolved them in the fallback callee environment. A
+forwarded yield could consequently lose a caller local, confuse equal names in
+different lexical scopes, or lose a heap Proc environment after a capture-box
+load. Source Proc type alone cannot distinguish a raw callback address from an
+object containing code and environment pointers.
+
+Materialize the selected inline callback in its owning caller locals/arena and
+capture it explicitly. HIR YieldTarget retains exact SSA binding, selected Proc
+signature and representation; rebinding changes only the SSA binding. MIR checks
+the signature and known direct producers before consuming this contract. A box
+load does not license heuristic rediscovery of its representation. Free-function
+block input inference uses its selected source definition inside or outside an
+instance body, rather than inventing an Owner#method candidate.
+
+Adversary probes separated two neighboring control-flow causes. In `return yield`
+and `break yield`, operand evaluation could emit the original caller's Return;
+the outer lowerer then overwrote it with its own exit jump. Preserve existing
+terminal flow for return/break/next operands. Forwarded yield's non-local exit
+obligation must also survive all inline/fallback selectors, including yield
+inside break/next operands and multiple forwarding layers. Ordinary reassignment
+to a named &block must retain its runtime Proc binding; a typed declaration of a
+same-named local is distinct in Crystal. Captured-block non-local return is
+rejected before inline substitution, matching the original compiler.
+
+Observed DoD on isolated 0fb5d72f plus this slice: fresh s1_yield_target30i builds
+with stock Crystal 1.22.1; 41 MIR examples pass. The original-first
+forwarded_yield_environment_repro.sh passes all 14 positive cases and both strict
+negative groups in lazy/eager modes. prelude_virtual_layout_replay_repro.sh
+passes original/candidate hello and default-context stack_pool, all native exits
+0 with equal output. Logs in the oct29 root-cause scratch:
+regression.forwarded-yield30i.log, spec.yield-target-contract30i.log,
+regression.prelude-yield30i.log and build.yield-target30i.log.
+Source ast_to_hir.cr SHA256: c84c34ff2993c024d992fbbafab538b604f89fe8a84b208c19c35247bce44b91.
+
+Scoped adversary verdict: ROBUST for lexical collisions/mutations, nested
+forwarding, original caller exits, strict input rejection, runtime block
+replacement and raw/heap carrier contradictions. This does not establish a
+general carrier analysis for mutable memory or bootstrap fixed point. Refresh
+after capture ownership/storage, callback selection, HIR/MIR ABI or inline
+control-flow changes. Roll back this slice and its regressions together.
+Preexisting WIP is retained separately; LavinMQ runtime/test parity remains open.
