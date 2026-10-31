@@ -22898,3 +22898,8 @@ Evidence: /opt/mldata_ssd/adamas_codex_oct29_rootcause/
 `generic-allocator-replay31/generic-harness.log`, and
 `prelude.exact-allocator-replay31.log`.
 Shared-slice integration, fresh S2/fixed point and LavinMQ parity remain open.
+
+## Pointer value store qualification
+
+- Added source-compatible pointee checks and contextual numeric-literal conversion to `Pointer(T)#value=` assignment lowering; verified nullable/numeric stores and wrong-type/range rejection in stock, lazy, and eager modes.
+- Fresh bootstrap and stdlib-wide compatibility remain separate qualification gates.

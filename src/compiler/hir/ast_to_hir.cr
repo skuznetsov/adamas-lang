@@ -49699,6 +49699,137 @@ module Adamas::HIR
       TypeRef::VOID
     end
 
+    # Pointer(T)#value= stores through a raw PointerStore, so assignment syntax
+    # must perform the same source-type check and contextual literal conversion
+    # that the declared setter parameter `value : T` would receive.
+    private def pointer_value_store_value(
+      ctx : LoweringContext,
+      pointer_type : TypeRef,
+      value_id : ValueId,
+      source_node : Adamas::Compiler::Frontend::Node? = nil,
+      error_node : Adamas::Compiler::Frontend::Node? = nil,
+    ) : ValueId
+      return value_id if pointer_type == TypeRef::POINTER
+
+      pointer_desc = @module.get_type_descriptor(pointer_type)
+      if pointer_desc && pointer_desc.kind == TypeKind::Pointer
+        element_type = pointer_desc.type_params.first? || pointer_element_type(pointer_desc.name)
+      else
+        element_type = pointer_element_type(get_type_name_from_ref(pointer_type))
+      end
+      # Pointer(Void) is the deliberately untyped/raw pointer contract. It has
+      # no source-level pointee restriction to enforce here.
+      return value_id if element_type == TypeRef::VOID
+
+      value_type = ctx.type_of(value_id)
+      return value_id if value_type == TypeRef::VOID || value_type == element_type
+
+      if needs_union_coercion?(value_type, element_type) ||
+         (!numeric_primitive?(value_type) && !numeric_primitive?(element_type) &&
+          declared_type_match_score(value_type, get_type_name_from_ref(element_type)) != nil)
+        return coerce_value_to_type(ctx, value_id, element_type)
+      end
+
+      if literal_target = pointer_numeric_literal_target(source_node, value_type, element_type)
+        converted = coerce_value_to_type(ctx, value_id, literal_target)
+        return coerce_value_to_type(ctx, converted, element_type)
+      end
+
+      expected_name = get_type_name_from_ref(element_type)
+      actual_name = get_type_name_from_ref(value_type)
+      raise LoweringError.new(
+        "expected Pointer(#{expected_name})#value= value to be #{expected_name}, not #{actual_name}",
+        error_node || source_node,
+      )
+    end
+
+    private def pointer_numeric_literal_target(
+      source_node : Adamas::Compiler::Frontend::Node?,
+      source_type : TypeRef,
+      target_type : TypeRef,
+    ) : TypeRef?
+      return nil unless numeric_primitive?(source_type)
+      parts = pointer_numeric_literal_parts(source_node)
+      return nil unless parts
+      number = parts[0]
+      negative = parts[1]
+
+      if target_desc = @module.get_type_descriptor(target_type)
+        if target_desc.kind == TypeKind::Union
+          matches = [] of TypeRef
+          split_union_type_name(target_desc.name).each do |variant_name|
+            variant_type = type_ref_for_name(variant_name.strip)
+            if variant_type != TypeRef::VOID && numeric_primitive?(variant_type) &&
+               pointer_numeric_literal_fits?(number, negative, variant_type)
+              matches << variant_type
+            end
+          end
+          return matches.first if matches.size == 1
+          return nil
+        end
+      end
+
+      numeric_primitive?(target_type) && pointer_numeric_literal_fits?(number, negative, target_type) ? target_type : nil
+    end
+
+    private def pointer_numeric_literal_parts(
+      source_node : Adamas::Compiler::Frontend::Node?,
+    ) : {Adamas::Compiler::Frontend::NumberNode, Bool}?
+      case source_node
+      when Adamas::Compiler::Frontend::NumberNode
+        {source_node, false}
+      when Adamas::Compiler::Frontend::UnaryNode
+        operator = String.new(source_node.operator)
+        operand = @arena[source_node.operand]
+        if operand.is_a?(Adamas::Compiler::Frontend::NumberNode)
+          case operator
+          when "-"
+            {operand, true}
+          when "+"
+            {operand, false}
+          else
+            nil
+          end
+        end
+      else
+        nil
+      end
+    end
+
+    private def pointer_numeric_literal_fits?(
+      node : Adamas::Compiler::Frontend::NumberNode,
+      negative : Bool,
+      target_type : TypeRef,
+    ) : Bool
+      if target_type == TypeRef::FLOAT32 || target_type == TypeRef::FLOAT64
+        return true
+      end
+
+      return false if node.kind.f32? || node.kind.f64? || node.kind.i128? || node.kind.u128?
+      return false unless signed_integer_primitive?(target_type) || unsigned_integer_type?(target_type)
+      bits = integer_bit_width(target_type)
+      return false unless bits && bits <= 64
+      source_unsigned = node.kind.u8? || node.kind.u16? || node.kind.u32? || node.kind.u64?
+      return false if negative && source_unsigned
+      target_unsigned = target_type == TypeRef::UINT8 || target_type == TypeRef::UINT16 ||
+                        target_type == TypeRef::UINT32 || target_type == TypeRef::UINT64
+      if target_unsigned
+        return false if negative || (!source_unsigned && node.parsed_int < 0)
+        value = source_unsigned ? node.parsed_uint : node.parsed_int.to_u64
+        maximum = bits == 64 ? UInt64::MAX : (1_u64 << bits) - 1_u64
+        value <= maximum
+      elsif source_unsigned
+        maximum = bits == 64 ? Int64::MAX.to_u64 : (1_u64 << (bits - 1)) - 1_u64
+        node.parsed_uint <= maximum
+      else
+        return false if negative && node.parsed_int == Int64::MIN
+        literal_value = negative ? -node.parsed_int : node.parsed_int
+        minimum = bits == 64 ? Int64::MIN : -(1_i64 << (bits - 1))
+        maximum = bits == 64 ? Int64::MAX : (1_i64 << (bits - 1)) - 1_i64
+        minimum <= literal_value && literal_value <= maximum
+      end
+    end
+
     private def pointer_union_variant_name?(name : String) : Bool
       name == "Pointer" || name.starts_with?("Pointer(") || name.starts_with?("Pointer$L")
     end
@@ -135675,7 +135806,8 @@ module Adamas::HIR
           is_pointer_type = object_type == TypeRef::POINTER ||
                             (type_desc && type_desc.kind == TypeKind::Pointer)
           if is_pointer_type
-            store_node = PointerStore.new(ctx.next_id, TypeRef::VOID, object_id, value_id, nil)
+            stored_value = pointer_value_store_value(ctx, object_type, value_id, @arena[node.value], target_node)
+            store_node = PointerStore.new(ctx.next_id, TypeRef::VOID, object_id, stored_value, nil)
             ctx.emit(store_node)
             return store_node.id
           end
@@ -136793,7 +136925,8 @@ module Adamas::HIR
           is_pointer_type = object_type == TypeRef::POINTER ||
                             (type_desc && type_desc.kind == TypeKind::Pointer)
           if is_pointer_type
-            store_node = PointerStore.new(ctx.next_id, TypeRef::VOID, object_id, value_id, nil)
+            stored_value = pointer_value_store_value(ctx, object_type, value_id, nil, target_node)
+            store_node = PointerStore.new(ctx.next_id, TypeRef::VOID, object_id, stored_value, nil)
             ctx.emit(store_node)
             return store_node.id
           end
