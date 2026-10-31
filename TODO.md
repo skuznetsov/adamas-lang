@@ -22961,3 +22961,11 @@ Evidence: /opt/mldata_ssd/adamas_codex_oct29_rootcause/
 Refresh after instance-source selection, alias registration, or super lookup
 changes. This does not close general binary argument admission, stock-prelude
 integration, fresh bootstrap, or LavinMQ parity.
+
+
+## 2026-10-30 — Keep method lookup within the requested receiver kind
+
+- Root cause: the method index could offer a single local instance candidate for a class call; the separator filter only ran for multiple candidates. It selected the wrong source body before inherited class-method lookup.
+- Filter every candidate by the requested `.`/`#` separator before scoring. Registered `extend self` class aliases remain valid.
+- Verification: isolated base `8a1a94f3` plus this slice built S1 with stock Crystal 1.22.1. The focused HIR spec passed (1 example); `class_instance_method_lookup_repro.sh` passed stock, lazy, and `ADAMAS_EAGER_MONO=1`, including rejection in both opposite-separator directions. Evidence: `/opt/mldata_ssd/adamas_codex_oct29_rootcause/class-instance-method-lookup-isolated8a1a94f3.harness.log` and patch SHA256 `03f240b8d29d2d2d7306e8703ba1d34f2e1c17dfbdbaa5b0f1c3f6de642ec1ea`.
+- Scope: receiver-kind lookup only. The current stock-prelude and LavinMQ frontiers remain open; these results do not certify them. Refresh this evidence after changes to lookup, source binding, or alias registration.

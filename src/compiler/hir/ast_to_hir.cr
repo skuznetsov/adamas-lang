@@ -122598,17 +122598,16 @@ module Adamas::HIR
       if !func_name.includes?("$$block") && !overload_keys.empty?
         overload_keys = overload_keys.reject { |name| name.includes?("$$block") }
       end
-      # A class-method request (Owner.m) must not lose to a same-name instance
-      # method (Owner#m): Iterator.stop resolved to Iterator(T)#stop and the
-      # instance body got lowered under the class-method symbol (self-recursion).
-      # Keep cross-separator candidates only when no same-separator candidate
-      # exists (extend-self style laxity).
-      if overload_keys.size > 1
-        if requested_sep = parse_method_name(func_name).separator
-          same_sep_keys = overload_keys.select { |name| parse_method_name(name).separator == requested_sep }
-          if !same_sep_keys.empty? && same_sep_keys.size != overload_keys.size
-            overload_keys = same_sep_keys
-          end
+      # The method index can return a same-name candidate from the other
+      # separator when the requested owner has no local registration. Do not
+      # let that candidate become the selected source body: inherited lookup
+      # below must get a chance to find the method with the requested receiver
+      # kind. `extend self` methods are registered under their class-form name
+      # at declaration time, so they do not need a cross-separator fallback.
+      if requested_sep = parse_method_name(func_name).separator
+        same_sep_keys = overload_keys.select { |name| parse_method_name(name).separator == requested_sep }
+        if same_sep_keys.size != overload_keys.size
+          overload_keys = same_sep_keys
         end
       end
       source_constructor_family = input.source_named_types && base_name.ends_with?(".new")
