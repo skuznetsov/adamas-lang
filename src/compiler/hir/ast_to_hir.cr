@@ -25784,6 +25784,26 @@ module Adamas::HIR
       end
     end
 
+    # The owner frame and a method's forall frame have separate authorities.
+    # Resolve only the selected call's forall bindings over the receiver map;
+    # annotation_type_ref otherwise replaces the active map with owner formals.
+    private def method_forall_annotation_type_ref(
+      type_name : String,
+      owner_name : String?,
+      definition : Adamas::Compiler::Frontend::DefNode,
+      call_bindings : Hash(String, String),
+    ) : TypeRef
+      substituted = substitute_forall_bindings(type_name, definition, call_bindings)
+      return annotation_type_ref(type_name, owner_name) if substituted == type_name
+
+      # Bound names are canonical identities, while the remaining fragments
+      # still resolve in the declaration namespace. Do not put this override
+      # into annotation_type_ref's owner-only cache.
+      bindings = annotation_type_bindings(owner_name).merge(call_bindings)
+      bound_annotation_type_ref(type_name, owner_name, bindings) ||
+        annotation_type_ref(substituted, owner_name)
+    end
+
     # Signature collection needs the nominal TypeRef for overload identity, but
     # it must not materialize a generic class before any call or layout demands it.
     private def signature_annotation_type_ref(
@@ -37811,8 +37831,9 @@ module Adamas::HIR
 
       # Bind `forall` variables before resolving parameter annotations; see
       # the same step in `lower_def`.
+      method_forall_bindings = method_forall_call_bindings(node, call_types)
       if params = node.params
-        with_type_param_map(method_forall_call_bindings(node, call_types)) do
+        with_type_param_map(method_forall_bindings) do
           each_param(params) do |param|
             next if named_only_separator?(param)
             param_name = if nm = param.name
@@ -37828,10 +37849,14 @@ module Adamas::HIR
             raw_type_ann_str : String? = nil
             param_type = if (ta = param.type_annotation) && (raw_type_ann_str = safe_slice_to_string(ta))
                            type_ann_str = raw_type_ann_str
-                           if contextual_alias = resolve_contextual_type_alias_name(type_ann_str)
-                             type_ann_str = contextual_alias
+                           # A bound method formal shadows a lexical alias of
+                           # the same name before annotation resolution starts.
+                           if substitute_forall_bindings(type_ann_str, node, method_forall_bindings) == type_ann_str
+                             if contextual_alias = resolve_contextual_type_alias_name(type_ann_str)
+                               type_ann_str = contextual_alias
+                             end
                            end
-                           annotation_type_ref(type_ann_str, module_name)
+                           method_forall_annotation_type_ref(type_ann_str, module_name, node, method_forall_bindings)
                          elsif param.is_double_splat
                            double_splat_layout_type_from_name(full_name_override) ||
                              type_ref_for_name("NamedTuple")
@@ -38119,14 +38144,21 @@ module Adamas::HIR
       if rt = node.return_type
         rt_text = (safe_slice_to_string(rt) || "")
         resolve_module_return = -> do
-          module_return_name = rt_text
-          if contextual_alias = resolve_contextual_type_alias_name(module_return_name)
-            module_return_name = contextual_alias
+          # A method-forall binding shadows a same-spelled lexical type alias
+          # in the return annotation, just as it does for parameter annotations.
+          # Resolve through the shared binding-aware helper before alias fallback.
+          if substitute_forall_bindings(rt_text, node, extra_type_params) != rt_text
+            method_forall_annotation_type_ref(rt_text, module_name, node, extra_type_params)
+          else
+            module_return_name = rt_text
+            if contextual_alias = resolve_contextual_type_alias_name(module_return_name)
+              module_return_name = contextual_alias
+            end
+            inferred = if !is_class_method && module_like_type_name?(module_return_name)
+                         infer_concrete_return_type_from_body(node, module_name)
+                       end
+            inferred || annotation_type_ref(module_return_name, module_name)
           end
-          inferred = if !is_class_method && module_like_type_name?(module_return_name)
-                       infer_concrete_return_type_from_body(node, module_name)
-                     end
-          inferred || annotation_type_ref(module_return_name, module_name)
         end
         if extra_type_params.empty?
           return_type = resolve_module_return.call
@@ -38161,11 +38193,15 @@ module Adamas::HIR
         rt_text = (safe_slice_to_string(rt) || "")
         resolved_return = TypeRef::VOID
         with_type_param_map(extra_type_params) do
-          module_merged_return_name = resolve_contextual_type_alias_name_or_original(rt_text)
-          inferred = if !is_class_method && module_like_type_name?(module_merged_return_name)
-                       infer_concrete_return_type_from_body(node, module_name)
-                     end
-          resolved_return = inferred || annotation_type_ref(module_merged_return_name, module_name)
+          if substitute_forall_bindings(rt_text, node, extra_type_params) != rt_text
+            resolved_return = method_forall_annotation_type_ref(rt_text, module_name, node, extra_type_params)
+          else
+            module_merged_return_name = resolve_contextual_type_alias_name_or_original(rt_text)
+            inferred = if !is_class_method && module_like_type_name?(module_merged_return_name)
+                         infer_concrete_return_type_from_body(node, module_name)
+                       end
+            resolved_return = inferred || annotation_type_ref(module_merged_return_name, module_name)
+          end
         end
         if resolved_return != TypeRef::VOID || return_type == TypeRef::VOID
           return_type = resolved_return
@@ -46596,8 +46632,9 @@ module Adamas::HIR
 
       # Bind `forall` variables before resolving parameter annotations; see
       # the same step in `lower_def`.
+      method_forall_bindings = method_forall_call_bindings(node, call_types)
       if params = node.params
-        with_type_param_map(method_forall_call_bindings(node, call_types)) do
+        with_type_param_map(method_forall_bindings) do
           registered_param_index = 0
           each_param(params) do |param|
             registered_param_info = if registered_param_index < registered_param_infos.size
@@ -46622,22 +46659,26 @@ module Adamas::HIR
             if ta = param.type_annotation
               if type_ann_value = safe_slice_to_string(ta)
                 raw_type_ann_str = type_ann_value
-                if contextual_alias = resolve_contextual_type_alias_name(type_ann_value)
-                  type_ann_value = contextual_alias
+                if substitute_forall_bindings(type_ann_value, node, method_forall_bindings) == type_ann_value
+                  if contextual_alias = resolve_contextual_type_alias_name(type_ann_value)
+                    type_ann_value = contextual_alias
+                  end
                 end
                 type_ann_str = type_ann_value
-                param_type = annotation_type_ref(type_ann_value, signature_owner)
+                param_type = method_forall_annotation_type_ref(type_ann_value, signature_owner, node, method_forall_bindings)
               end
             end
             if type_ann_str.nil?
               if registered_type_annotation = registered_param_info.try(&.type_annotation)
                 raw_type_ann_str = registered_type_annotation
                 type_ann_value = registered_type_annotation
-                if contextual_alias = resolve_contextual_type_alias_name(type_ann_value)
-                  type_ann_value = contextual_alias
+                if substitute_forall_bindings(type_ann_value, node, method_forall_bindings) == type_ann_value
+                  if contextual_alias = resolve_contextual_type_alias_name(type_ann_value)
+                    type_ann_value = contextual_alias
+                  end
                 end
                 type_ann_str = type_ann_value
-                param_type = annotation_type_ref(type_ann_value, signature_owner)
+                param_type = method_forall_annotation_type_ref(type_ann_value, signature_owner, node, method_forall_bindings)
               end
             end
             if type_ann_str.nil? && param.is_double_splat
@@ -78186,8 +78227,9 @@ module Adamas::HIR
       # to a `Pointer(UC)` already registered for another generic type whose
       # own parameter is also named `UC` (`record FromCharsResultT(UC)`), and
       # that phantom type wins over the call's `Pointer(UInt8)`.
+      method_forall_bindings = method_forall_call_bindings(node, call_types)
       param_annotation_map = registered_param_map.try(&.dup) || {} of String => String
-      param_annotation_map.merge!(method_forall_call_bindings(node, call_types))
+      param_annotation_map.merge!(method_forall_bindings)
       if params = node.params
         with_type_param_map(param_annotation_map) do
           param_idx = 0
@@ -78208,17 +78250,17 @@ module Adamas::HIR
             if source_ann = parameter_type_annotation_string(param, @arena, false)
               type_ann_str = source_ann
               has_type_ann_str = true
-              param_type = annotation_type_ref(type_ann_str, @current_class)
+              param_type = method_forall_annotation_type_ref(type_ann_str, @current_class, node, method_forall_bindings)
             elsif ta = param.type_annotation
               if ann = safe_slice_to_string(ta)
                 type_ann_str = ann
                 has_type_ann_str = true
-                param_type = annotation_type_ref(type_ann_str, @current_class)
+                param_type = method_forall_annotation_type_ref(type_ann_str, @current_class, node, method_forall_bindings)
               end
             elsif param_info && param_info.not_nil!.type_annotation
               type_ann_str = param_info.not_nil!.type_annotation.not_nil!
               has_type_ann_str = true
-              param_type = annotation_type_ref(type_ann_str, @current_class)
+              param_type = method_forall_annotation_type_ref(type_ann_str, @current_class, node, method_forall_bindings)
             elsif param.is_double_splat
               param_type = double_splat_layout_type_from_name(full_name_override) ||
                            type_ref_for_name("NamedTuple")
@@ -104101,8 +104143,24 @@ module Adamas::HIR
                  defer_base_name.starts_with?(current_base_instance_prefix) ||
                  defer_base_name.starts_with?(current_base_class_prefix) ||
                  defer_base_name.starts_with?(current_base_namespace_prefix)
-                record_pending_type_param_map(name, @type_param_map)
-                record_pending_type_param_map(defer_base_name, @type_param_map)
+                # This snapshot transports owner context, not a method's
+                # declaration-local forall bindings. Keep the exact call's
+                # existing argument-derived bindings when deferring it again.
+                # A family lookup could choose a sibling, so only an exact
+                # registered source definition may exclude names here.
+                deferred_type_params = @type_param_map
+                if deferred_def = @function_defs[name]?
+                  if registered_arena_for_def(deferred_def)
+                    deferred_forall_names = forall_type_param_names(deferred_def)
+                    unless deferred_forall_names.empty?
+                      deferred_type_params = @type_param_map.reject do |key, _|
+                        deferred_forall_names.includes?(key)
+                      end
+                    end
+                  end
+                end
+                record_pending_type_param_map(name, deferred_type_params)
+                record_pending_type_param_map(defer_base_name, deferred_type_params)
               end
             end
           end
