@@ -22474,3 +22474,22 @@ validator; that validator is not part of this slice. Full-WIP argument kinds,
 fresh bootstrap and LavinMQ runtime/test parity remain open. Refresh after
 break-target ownership, exit merging, terminal-flow or inline callback changes;
 roll back the three hunks and these tests together.
+
+### A depth refusal invalidates guessed return evidence (2026-10-30)
+A bounded force-lowering refusal can leave an unannotated caller with a non-Void
+registration guess. Physical body presence alone therefore does not certify a
+settled result. Retain the exact selected callee dependency, discharge child
+requests on an iterative worklist, then rebuild the caller once with its exact
+function/base return cache invalidated. Do not replace otherwise settled bodies
+or widen demand roots.
+
+Parent ff1b2b62 plus this isolated HIR delta (SHA256
+35c32b98dd203017c69f393f3e44f615638d2adc7528ebcd7f16b38593b677f1) passes six
+stock/lazy/ADAMAS_EAGER_MONO native oracles, depth-32 mutable-capture/sibling
+adversaries, and two stock-prelude native startup/context programs. Parent
+fails the captured-provisional witness. Logs are indexed in TODO.md. Scoped
+adversary ROBUST for acyclic depth-cut replay; recursive factory SCC inference
+is explicitly still red on parent and candidate. This is not a bootstrap or
+LavinMQ parity certificate. Refresh after call-target identity, dependency
+tracking, return-cache ownership or closure replay changes. Rollback the replay
+source and its dedicated regression together.

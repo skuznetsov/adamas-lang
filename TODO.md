@@ -22829,3 +22829,27 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   kind failures; this isolated check does not establish bootstrap or LavinMQ
   runtime/test parity. Invalid declared loop returns belong to the shared
   method-result contract regression.
+
+### Exact return replay after a bounded force-lowering refusal (2026-10-30)
+- [x] Preserve exact unannotated caller -> callee dependencies when the depth
+  guard cuts off return discovery. A non-Void registration guess is provisional
+  until those callees settle. Drain child work before replaying the caller once;
+  invalidate its exact return cache together with the removed physical body.
+- [x] Isolated parent ff1b2b62 + replay-only HIR passes
+  `force_depth_return_dependency_repro.sh`: six stock/lazy/actual-eager native
+  cases, including Pointer, nilable payload, sibling specializations, and a
+  replayed mutable capture. Depth-32 capture/sibling adversaries also pass.
+  The parent fails the captured-provisional case; isolated prelude hello and
+  execution-context programs both compile and run with the stock stdlib.
+- [ ] Recursive source factories remain open: an eight-owner call cycle with a
+  Payload base branch must infer Payload, but both parent and candidate reject
+  the Payload-only sink (candidate infers Factory8 | Payload). The retained
+  `source_factory_return_contract_repro.sh` recursive_cycle witness is red;
+  it belongs to SCC result inference, not the verified acyclic replay scope.
+  Skipping an annotation-free resolve_return_type_from_def call was tested and
+  refuted as a repair: that helper already returns no annotation for this case.
+Evidence: /opt/mldata_ssd/adamas_codex_oct29_rootcause/
+`regression.depth-isolated31-final.log`, `regression.depth32-isolated31.log`,
+`regression.depth-captured-baseline31.log`,
+`regression.prelude-depth-isolated30.log`, and `regression.factory-cycle31.log`.
+Fresh S2/fixed point and LavinMQ runtime/upstream-test parity remain open.
