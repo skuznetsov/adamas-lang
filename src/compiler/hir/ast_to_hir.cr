@@ -8032,8 +8032,12 @@ module Adamas::HIR
       getter method_name : String?
       getter is_class : Bool
       getter namespace_override : String?
+      # An active nil context denotes the physical function. Absence means
+      # that this producer has not recorded a lexical return target.
+      getter return_target : InlineReturnOverride?
 
-      def initialize(@class_name : String?, @method_name : String?, @is_class : Bool, @namespace_override : String? = nil)
+      def initialize(@class_name : String?, @method_name : String?, @is_class : Bool, @namespace_override : String? = nil,
+                     @return_target : InlineReturnOverride? = nil)
       end
     end
 
@@ -100366,6 +100370,18 @@ module Adamas::HIR
       class_inherits_from?(actual_name, target_name)
     end
 
+    private def current_inline_return_context(ctx : LoweringContext) : InlineReturnContext?
+      return nil unless @inline_yield_proc_depth == 0
+      context = if override = @inline_yield_return_override_stack.last?
+                  override.active ? override.context : @inline_yield_return_stack.last?
+                else
+                  @inline_yield_return_stack.last?
+                end
+      # Demanding another method body can temporarily leave the caller's
+      # inline stack installed. That stack cannot own this physical function.
+      context if context && context.function_id == ctx.function.id
+    end
+
     private def lower_return(ctx : LoweringContext, node : Adamas::Compiler::Frontend::ReturnNode) : ValueId
       if @captured_block_return_owner
         raise LoweringError.new("can't return from captured block, use next", node)
@@ -100386,18 +100402,7 @@ module Adamas::HIR
       # Returns inside a caller-provided block should return from the caller,
       # not from the inlined callee. When nested yield inlining is active,
       # route block-body returns to the next outer inline-return context.
-      inline_return = nil
-      if @inline_yield_proc_depth == 0
-        if override = @inline_yield_return_override_stack.last?
-          if override.active
-            inline_return = override.context
-          else
-            inline_return = @inline_yield_return_stack.last?
-          end
-        else
-          inline_return = @inline_yield_return_stack.last?
-        end
-      end
+      inline_return = current_inline_return_context(ctx)
       if env_get("DEBUG_INLINE_RETURN")
         filter = env_get("DEBUG_INLINE_RETURN_FILTER")
         if filter.nil? || ctx.function.name.includes?(filter)
@@ -100412,6 +100417,11 @@ module Adamas::HIR
         if inline_return.function_id != ctx.function.id
           debug_hook("inline.return.skip", "func=#{ctx.function.name} inline=#{inline_return.function_id}")
         else
+          # A block can be inspected under a temporary inference stack without
+          # returning. Certify the captured target when an exit consumes it.
+          unless @inline_yield_return_stack.any? { |active| active.same?(inline_return) }
+            raise LoweringError.new("inline block return owner is no longer active in #{ctx.function.name}")
+          end
           if ctx.current_block >= ctx.function.blocks.size
             debug_hook("inline.return.block_oob", "func=#{ctx.function.name} block=#{ctx.current_block} size=#{ctx.function.blocks.size}")
           else
@@ -130370,6 +130380,12 @@ module Adamas::HIR
       pushed_override = false
       pushed_block_owner_frame_index = false
       prev_block_owner_frame_index : Int32? = nil
+      previous_block_owner = @block_owner[block.object_id]?
+      previous_block_owner_function_id = @block_owner_function_ids[block.object_id]?
+      previous_block_owner_self_id = @block_owner_self_ids[block.object_id]?
+      # Capture the caller's logical method before the callee pushes its own
+      # inline return context. Several logical methods share one HIR function.
+      caller_return_target = InlineReturnOverride.new(true, current_inline_return_context(ctx))
 
       @inline_yield_name_stack << inline_key
       pushed_name = true
@@ -130409,7 +130425,7 @@ module Adamas::HIR
       # making `block_owned_by_current_fn` false for subsequent instantiations, which
       # broke non-local returns (return inside block jumped to inline exit instead of
       # doing a real method return).
-      @block_owner[block.object_id] = BlockOwner.new(old_current_class, old_current_method, old_current_method_is_class || false, @current_namespace_override)
+      @block_owner[block.object_id] = BlockOwner.new(old_current_class, old_current_method, old_current_method_is_class || false, @current_namespace_override, caller_return_target)
       @block_owner_function_ids[block.object_id] = ctx.function.id
       prev_block_owner_frame_index = @block_owner_caller_frame_index[block.object_id]?
       @block_owner_caller_frame_index[block.object_id] = @inline_caller_locals_stack.size - 1
@@ -130851,6 +130867,21 @@ module Adamas::HIR
           else
             @block_owner_caller_frame_index.delete(block.object_id)
           end
+          if previous_block_owner
+            @block_owner[block.object_id] = previous_block_owner
+          else
+            @block_owner.delete(block.object_id)
+          end
+          if previous_block_owner_function_id
+            @block_owner_function_ids[block.object_id] = previous_block_owner_function_id
+          else
+            @block_owner_function_ids.delete(block.object_id)
+          end
+          if previous_block_owner_self_id
+            @block_owner_self_ids[block.object_id] = previous_block_owner_self_id
+          else
+            @block_owner_self_ids.delete(block.object_id)
+          end
         end
         restored_caller_locals = @inline_caller_locals_stack.pop?
         restored_caller_local_declaration_scopes = @inline_caller_local_declaration_scopes_stack.pop?
@@ -131117,7 +131148,12 @@ module Adamas::HIR
                                       owner_is_class == (@current_method_is_class || false)
         end
         base_override = nil
-        if block_owned_by_current_fn
+        if recorded_return_target = owner.try(&.return_target)
+          if owner_fn_id != ctx.function.id
+            raise LoweringError.new("inline block return owner belongs to another HIR function")
+          end
+          base_override = recorded_return_target.context
+        elsif block_owned_by_current_fn
           # Block is from the same logical method — `return` inside it should exit
           # the method entirely (real Return). Keep base_override = nil so that
           # lower_return falls through to ctx.terminate(Return.new(value_id)).
