@@ -22812,3 +22812,20 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   the correct owner, while unbound Box(T) remains unmaterialized.
 - [ ] Refresh after generic argument canonicalization or unresolved-carrier
   changes. This metadata check does not establish runtime ABI or bootstrap.
+
+
+### Infinite loop results use the semantic exit set (2026-10-30)
+
+- [x] Stop fabricating a reachable Nil result for LoopNode. Collect its own
+  break values and share the conditional-loop exit owner: valued breaks retain
+  their type, valueless breaks add Nil, and a loop with no exits publishes
+  NoReturn and makes its continuation dead.
+- [x] Isolated 0e298dc1 plus three HIR hunks: five HIR examples pass; the parent
+  fails four examples. Six original-first native cases match Crystal 1.22.1
+  in ordinary and ADAMAS_EAGER_MONO modes. Unchanged-prelude hello and the
+  default-context stack_pool probe also pass natively.
+- [ ] Refresh after break ownership, loop exit merging, dead-block propagation
+  or inline callback control flow changes. The full WIP has separate argument
+  kind failures; this isolated check does not establish bootstrap or LavinMQ
+  runtime/test parity. Invalid declared loop returns belong to the shared
+  method-result contract regression.

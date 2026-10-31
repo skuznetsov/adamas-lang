@@ -22443,3 +22443,34 @@ root-cause scratch. Scoped adversary verdict: ROBUST for canonical owner
 identity and the unresolved guard. This is not a runtime layout/ABI or bootstrap
 certificate. Refresh after canonical generic names, lexical lookup or
 unresolved-carrier semantics change; roll back the three hunks and test together.
+
+
+## 2026-10-30 — Infinite loops publish their actual exit result
+
+LoopNode lowering unconditionally emitted Nil after its exit block. That
+fabricated a flowing Nil result even when every path returned from the method,
+which the stricter method-result contract exposed in the unchanged prelude's
+Polling#evented_write. It also discarded valued breaks and lowered code after
+an infinite loop with no exit. Register the loop's own break-value collector
+and reuse the existing conditional-loop exit-result owner with no normal exit.
+Do not add a synthetic Nil edge: only a real valueless break contributes Nil.
+Nested loop breaks retain distinct owners.
+
+Observed DoD on isolated 0e298dc1 plus exactly three HIR hunks: fresh
+s1_loop_only30 builds; infinite_loop_result_spec.cr passes five examples.
+The unchanged parent fails four examples (wrong Nil result/union and a falsely
+reachable continuation). infinite_loop_result_contract_repro.sh matches stock
+Crystal 1.22.1 in ordinary and actual ADAMAS_EAGER_MONO modes for six native
+cases: method return, valued break, nested breaks, valueless break, mixed exits
+and an infinite tail. The unchanged-prelude hello and default-context stack_pool
+native probes also pass. Every compilation and execution uses run_safe.sh.
+Evidence in the oct29 root-cause scratch: spec.loop-isolated30.log,
+spec.loop-baseline30.log, regression.loop-isolated30.log,
+regression.prelude-loop-isolated30.log and build.loop-only30.log.
+
+Scoped adversary verdict: ROBUST for the tested loop exit ownership and result
+boundary. The negative declared-result checks stay with the general result
+validator; that validator is not part of this slice. Full-WIP argument kinds,
+fresh bootstrap and LavinMQ runtime/test parity remain open. Refresh after
+break-target ownership, exit merging, terminal-flow or inline callback changes;
+roll back the three hunks and these tests together.

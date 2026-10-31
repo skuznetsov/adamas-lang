@@ -96797,6 +96797,7 @@ module Adamas::HIR
       @loop_inline_next_depth_stack << @inline_next_stack.size
       @loop_phi_stack << phi_nodes
       @loop_break_info_stack << [] of {BlockId, Hash(String, ValueId)}
+      @loop_break_value_stack << {exit_block, [] of {BlockId, ValueId}}
       pushed_inline = false
       if !inline_vars.empty?
         @inline_loop_vars_stack << inline_vars
@@ -96813,6 +96814,7 @@ module Adamas::HIR
         @loop_phi_stack.pop?
       end
       break_info_loop = @loop_break_info_stack.pop
+      break_values = @loop_break_value_stack.pop[1]
       body_exit_block = ctx.current_block
       updated_loop_values = snapshot_loop_updated_values(ctx, assigned_vars, inline_vars)
       ctx.pop_scope
@@ -96902,9 +96904,10 @@ module Adamas::HIR
         end
       end
 
-      nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
-      ctx.emit(nil_lit)
-      nil_lit.id
+      # An infinite loop has no normal Nil exit. Share the conditional-loop
+      # result owner so valued breaks retain their types, and no-break loops
+      # publish bottom instead of fabricating a reachable fall-through value.
+      lower_conditional_loop_exit_result(ctx, nil, break_values, break_info_loop)
     end
 
     # Collect variable names that are assigned in a list of expressions
