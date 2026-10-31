@@ -23089,3 +23089,22 @@ integration, fresh bootstrap, or LavinMQ parity.
   mismatch. Separate eager layout contamination in the held WIP, native prelude,
   bootstrap and LavinMQ parity remain open. Refresh after constructor type
   extraction, generic registration or ivar layout changes.
+
+
+### 2026-10-31: Restore the caller owner after eager generic materialization
+
+- Root cause: the eager block in monomorphize_generic_class reused old_class,
+  overwriting the saved outer caller owner. Crystal if blocks share local
+  bindings. On a cold nested specialization, later caller assignments therefore
+  published Holder fields into Box, after registration had built correct layouts.
+  Give the eager block its own saved owner; keep the outer restoration intact.
+- Verified on clean c3ea9bdd plus only this two-line fix: the parent fails three
+  of six focused HIR cases; the candidate passes all 34 field/owner cases. A fresh
+  S1 and the composed S1 match Crystal 1.22.1 in lazy/eager native regressions,
+  including repeated nested construction, qualified fields, missing names and
+  wrong generic arities. Evidence under the oct29 rootcause artifact root:
+  eager-owner32fd.result.json and eager-owner-extra32fg.result.json.
+- Adversary scope: cold and warm materialization, lazy control, instance and
+  class-method caller flags, disjoint layouts and native values. Exception-path
+  context restoration, native prelude, bootstrap and LavinMQ parity remain open.
+  Refresh after generic materialization or ambient lowering-context changes.

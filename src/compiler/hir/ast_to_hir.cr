@@ -42072,7 +42072,7 @@ module Adamas::HIR
       if @eager_monomorphization
         if class_info = @class_info[specialized_name]?
           # Set current class for ivar lookup
-          old_class = @current_class
+          eager_old_class = @current_class
           @current_class = specialized_name
 
           generate_allocator(specialized_name, class_info)
@@ -42115,7 +42115,7 @@ module Adamas::HIR
             end
           end
 
-          @current_class = old_class
+          @current_class = eager_old_class
         end
       end
 
