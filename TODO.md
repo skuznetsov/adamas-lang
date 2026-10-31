@@ -23150,3 +23150,24 @@ integration, fresh bootstrap, or LavinMQ parity.
   frames and caller-frame-free callback ownership remain a separate audit; this
   change certifies physical method entry. Native prelude, bootstrap and LavinMQ
   parity remain open. Refresh after source recovery, super entry or replay changes.
+
+
+### 2026-10-31: Narrow primitive is_a? targets on the false edge
+
+- Root cause: else-edge narrowing required the checked type to have a user
+  TypeDescriptor. Canonical builtin scalars have none, so Bool | Char remained
+  unnarrowed after excluding Bool and produced a spurious Bool#==(Char) call.
+  Resolve the excluded member through its canonical TypeRef name; retain the
+  source-union descriptor and the existing single-remainder guard.
+- Verified on clean 39c1fdc0 plus only this slice: 42 HIR cases pass, including
+  primitive, nilable, nominal/primitive and conservative multi-remainder cases.
+  A fresh S1 passes primitive_else_narrowing_repro.sh against Crystal 1.22.1
+  in lazy and eager modes, printing AB. Evidence: primitive_else_atomic32hb.result.json
+  under the oct29 rootcause artifact root. The composed candidate additionally
+  passes 58 HIR checks and 21 scalar-result native checks, including Bool/Char
+  and equal union result ABIs (scalar_primitive_else32gy.result.json).
+- Adversary: ROBUST for this exact false-edge exclusion corridor. Abstract
+  target subtraction and multi-member remainder construction are not widened.
+  Stock prelude still stops at an independently traced selected-method/result
+  ownership error for Slice#[]; bootstrap and LavinMQ parity remain open.
+  Refresh after union naming, narrowing or canonical type identity changes.

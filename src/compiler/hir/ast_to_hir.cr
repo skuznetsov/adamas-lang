@@ -94251,9 +94251,8 @@ module Adamas::HIR
             local_type = ctx.type_of(local_id)
             if local_type != target_type && is_union_type?(local_type)
               type_desc = @module.get_type_descriptor(local_type)
-              target_desc = @module.get_type_descriptor(target_type)
-              if type_desc && target_desc
-                target_name = target_desc.name
+              if type_desc
+                target_name = get_type_name_from_ref(target_type)
 
                 variants = split_union_type_name(type_desc.name)
                 remaining = variants.reject { |variant_name| variant_name == target_name }
