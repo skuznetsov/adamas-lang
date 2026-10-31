@@ -22531,3 +22531,26 @@ owner formals. Evidence is indexed in TODO.md; fresh bootstrap and LavinMQ parit
 remain open. Refresh after generic registration, exact source selection,
 allocator ABI shape or layout invalidation changes. Roll back publication,
 recipe replay and the dedicated specs/regression together.
+
+
+## 2026-10-31 — Prefer exact source arena ownership to structural fallback
+
+- Root cause: recovered Def views retain the exact source body Array, but arena
+  resolution accepted an in-bounds caller before consulting that body's owner.
+  A fitting foreign arena can interpret the same ExprIds as a different literal.
+  Cached canonical fallbacks could also survive later exact owner registration.
+- Consult registered Def/body ownership before fallback and structural caches in
+  all three Def arena-resolution entries. Reject a recovered body's contradictory
+  registered owner instead of guessing another fitting arena. Preserve existing
+  handling of directly registered Defs.
+- Verification: clean b688fd3e plus only this patch and its three focused HIR
+  cases passed the combined arena/layout-replay gate (7 examples, zero failures;
+  isolated AST ad7404ea7b21df63b3db9952cecdff995d85d6a34b8700c155084d704f03ce2a).
+  The original behavioral test fails before the patch. The composed source also
+  passed 73 owner, constructor, suspension and layout checks. Evidence under
+  /opt/mldata_ssd/adamas_codex_oct29_rootcause: spec.arena-owner-red31ca.log,
+  spec.arena-owner-isolated31cb.log and spec.live-owner-candidate31ca.log.
+- Adversary: ROBUST within recovered shared-body ownership, a warmed foreign
+  fallback cache and contradictory-span rejection. This does not certify
+  recovered initializer identity transport, native prelude, bootstrap or LavinMQ.
+  Refresh after Def recovery, source-body registration or arena-cache changes.

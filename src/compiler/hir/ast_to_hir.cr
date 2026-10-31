@@ -20784,6 +20784,13 @@ module Adamas::HIR
       func_def : Adamas::Compiler::Frontend::DefNode,
       fallback : Adamas::Compiler::Frontend::ArenaLike,
     ) : Adamas::Compiler::Frontend::ArenaLike
+      # A fitting caller arena proves only that the indices are in bounds. An
+      # exact Def/body owner is stronger evidence and must win before fallback
+      # checks or cached structural resolutions.
+      if registered = registered_source_arena_for_def(func_def)
+        @arena_stats_resolve_calls += 1 if @debug_arena_stats
+        return registered
+      end
       if arena_fits_def?(fallback, func_def)
         @arena_stats_resolve_calls += 1 if @debug_arena_stats
         return fallback
@@ -20810,6 +20817,11 @@ module Adamas::HIR
       func_def : Adamas::Compiler::Frontend::DefNode,
       fallback : Adamas::Compiler::Frontend::ArenaLike,
     ) : Adamas::Compiler::Frontend::ArenaLike
+      # Source ownership may become available after an earlier structural
+      # lookup; consult it before a cached fallback as well.
+      if registered = registered_source_arena_for_def(func_def)
+        return registered
+      end
       inline_arenas_id = @inline_arenas ? @inline_arenas.not_nil!.object_id : 0_u64
       cache_key = {func_def.object_id, fallback.object_id, inline_arenas_id}
       if cached = @canonical_arena_for_def_cache[cache_key]?
@@ -20911,11 +20923,38 @@ module Adamas::HIR
       entry[1]
     end
 
+    private def registered_source_arena_for_def(
+      func_def : Adamas::Compiler::Frontend::DefNode,
+    ) : Adamas::Compiler::Frontend::ArenaLike?
+      if arena = registered_arena_for_def(func_def)
+        return arena
+      end
+
+      # Preserve the existing fallback behavior for a directly registered Def
+      # whose own arena is rejected by the current structural check. The
+      # stronger body-owner rule below applies to a recovered DefNode view.
+      if entry = @def_node_arenas[func_def.object_id]?
+        return nil if entry[0].same?(func_def)
+      end
+
+      # A recovered DefNode can have a different object identity while sharing
+      # the exact source body. That body owner is authoritative only when it
+      # also contains the recovered header/span. A known owner that fails this
+      # check is contradictory evidence, not permission to try a fitting caller
+      # arena that may interpret the shared ExprIds as unrelated nodes.
+      body = func_def.body || return nil
+      arena = registered_arena_for_body(body) || return nil
+      unless arena_fits_def?(arena, func_def)
+        raise LoweringError.new("registered source body owner does not fit definition", func_def)
+      end
+      arena
+    end
+
     private def resolve_arena_for_def_uncached(
       func_def : Adamas::Compiler::Frontend::DefNode,
       fallback : Adamas::Compiler::Frontend::ArenaLike,
     ) : Adamas::Compiler::Frontend::ArenaLike
-      if registered = registered_arena_for_def(func_def)
+      if registered = registered_source_arena_for_def(func_def)
         return registered
       end
       max_index = body_max_index_for_def(func_def)

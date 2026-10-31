@@ -23024,3 +23024,26 @@ integration, fresh bootstrap, or LavinMQ parity.
 - Root cause: the runtime-expression classifier omitted ProcLiteralNode, leaving a constant without its MakeProc and function-pointer initializer. Add the literal to the existing deferred-initialization path; preserve the concrete Proc parameter/result contract.
 - Verification: clean 5e3b088a plus only this two-line producer change built S1 with Crystal 1.22.1 (isolated AST SHA256 3747ba84627764ab4cd6c47797b5d9ee0a9f888878d53e3bf9b32bef706141d1). deferred_proc_literal_constant_spec.cr passed 2 examples in lazy/eager initialization modes. deferred_proc_literal_constant_repro.sh passed stock/lazy/ADAMAS_EAGER_MONO native output ACBDE and all three strict wrong-argument rejections. The baseline S1 rejects the positive fixture with unresolved result R; no initializer is queued. Evidence: /opt/mldata_ssd/adamas_codex_oct29_rootcause/spec.source31ba-proc-isolated-v2.log and regression.proc-literal31ba-{baseline,isolated-v2}.log.
 - Adversary: ROBUST for direct Proc literal constants in top-level, class and sibling module owners, concrete argument/result signatures and invalid argument rejection. The separate deferred lexical-owner lifetime patch, stock prelude, bootstrap and LavinMQ parity remain open. Refresh after runtime-constant classification, Proc contract interning or deferred initializer scheduling changes.
+
+
+## 2026-10-31 — Prefer exact source arena ownership to structural fallback
+
+- Root cause: recovered Def views retain the exact source body Array, but arena
+  resolution accepted an in-bounds caller before consulting that body's owner.
+  A fitting foreign arena can interpret the same ExprIds as a different literal.
+  Cached canonical fallbacks could also survive later exact owner registration.
+- Consult registered Def/body ownership before fallback and structural caches in
+  all three Def arena-resolution entries. Reject a recovered body's contradictory
+  registered owner instead of guessing another fitting arena. Preserve existing
+  handling of directly registered Defs.
+- Verification: clean b688fd3e plus only this patch and its three focused HIR
+  cases passed the combined arena/layout-replay gate (7 examples, zero failures;
+  isolated AST ad7404ea7b21df63b3db9952cecdff995d85d6a34b8700c155084d704f03ce2a).
+  The original behavioral test fails before the patch. The composed source also
+  passed 73 owner, constructor, suspension and layout checks. Evidence under
+  /opt/mldata_ssd/adamas_codex_oct29_rootcause: spec.arena-owner-red31ca.log,
+  spec.arena-owner-isolated31cb.log and spec.live-owner-candidate31ca.log.
+- Adversary: ROBUST within recovered shared-body ownership, a warmed foreign
+  fallback cache and contradictory-span rejection. This does not certify
+  recovered initializer identity transport, native prelude, bootstrap or LavinMQ.
+  Refresh after Def recovery, source-body registration or arena-cache changes.
