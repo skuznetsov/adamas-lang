@@ -22382,3 +22382,42 @@ general carrier analysis for mutable memory or bootstrap fixed point. Refresh
 after capture ownership/storage, callback selection, HIR/MIR ABI or inline
 control-flow changes. Roll back this slice and its regressions together.
 Preexisting WIP is retained separately; LavinMQ runtime/test parity remains open.
+
+
+## 2026-10-30 — Reflective macro filters retain source ownership
+
+The parser places a parenthesized shorthand block in CallNode.args. The macro
+interpreter treated that node as an ordinary argument, so select/reject ignored
+its predicate. Normalize that syntax at the macro call boundary and reuse the
+explicit-block evaluator, including chained calls.
+
+A second boundary discarded source ownership: AnnotationInfo retained argument
+ExprIds without their arena, while HIR macro reflection rebuilt an ivar view
+from layout types alone. Carry arena and annotation-node identity with each
+fact; replay deduplicates one source node but preserves distinct annotations.
+Reconstruct annotations from contributing declarations. A class declaration
+shadows a same-named mixin field regardless of include order. An expression
+receiver such as @type.instance_vars.first is evaluated before annotation lookup.
+
+Observed DoD on isolated 25e3d1cc plus this slice: fresh s1_macro_only30 builds;
+macro_shorthand_filter_repro.sh matches stock Crystal 1.22.1 for all eight
+original/ordinary/eager cases, including cross-file annotation arguments and
+both include orders. ADAMAS_EAGER_MONO selects the actual eager path. The parent
+prints C instead of B for shorthand_select in both modes. The isolated compiler
+also passes unchanged-prelude hello and default-context stack_pool, exit 0 and
+equal native output. All programs run through scripts/run_safe.sh. Logs:
+regression.macro-isolated30.log, regression.macro-baseline30.log,
+regression.prelude-macro-isolated30.log, build.macro-only30.log in the oct29
+root-cause scratch. Scoped adversary verdict: ROBUST for these block/ownership
+boundaries; bootstrap and LavinMQ runtime/test parity remain open.
+
+Verification correction: ADAMAS_EAGER_HIR has no compiler reader in this source
+state. Older checks using that name prove ordinary behavior only, even when the
+harness labels the second invocation eager. In particular, the prior forwarded
+yield native evidence above must be narrowed to ordinary mode until refreshed.
+Keep its MIR/spec and native observations; do not promote them to eager evidence.
+
+Refresh after macro block representation, annotation arena lifetime, declaration
+publication or ivar ownership changes. Roll back this slice and its tests
+together. The full WIP has separate open source result/argument-kind checks;
+isolated prelude success does not establish full-WIP startup or test parity.

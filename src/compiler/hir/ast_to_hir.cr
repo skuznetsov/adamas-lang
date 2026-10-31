@@ -2990,6 +2990,14 @@ module Adamas::HIR
     # Class type information
     getter class_info : Hash(String, ClassInfo)
     @class_info_by_type_id : Hash(TypeId, ClassInfo)
+    # Source-owned annotations attached to instance variables. Keep the
+    # annotation's defining arena in each fact because macro reflection can be
+    # requested while lowering a different file or macro body arena.
+    @ivar_annotation_facts : Hash({String, String}, Array(Adamas::Compiler::Semantic::AnnotationInfo))
+    # Source owner -> ivar names declared directly by that owner. This keeps
+    # included-module metadata attached to its declaring owner and lets macro
+    # reflection distinguish a class-owned field from a same-named mixin field.
+    @ivar_source_declarations : Hash(String, Set(String))
     # Stack-scoped declaration evidence; unlike nested-name inventory it preserves source order and kind.
     @active_class_declaration_frames : Array(ActiveClassDeclarationFrame)
     # Ivars with an explicit source type annotation (property x : T, @x : T,
@@ -8183,6 +8191,8 @@ module Adamas::HIR
       @function_return_type_literal_defs = Set({String, UInt64, UInt64}).new
       @class_info = Hash(String, ClassInfo).new(initial_capacity: 2048)
       @class_info_by_type_id = {} of TypeId => ClassInfo
+      @ivar_annotation_facts = {} of {String, String} => Array(Adamas::Compiler::Semantic::AnnotationInfo)
+      @ivar_source_declarations = {} of String => Set(String)
       @active_class_declaration_frames = [] of ActiveClassDeclarationFrame
       @declared_typed_ivars = {} of String => Set(String)
       @declared_ivar_type_names = {} of String => Hash(String, String)
@@ -14700,6 +14710,143 @@ module Adamas::HIR
       @arena.add_typed(accessor)
     end
 
+    private def annotation_full_name_in_arena(
+      name_expr_id : ExprId,
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : String
+      node = source_arena[name_expr_id]
+      case node
+      when Adamas::Compiler::Frontend::IdentifierNode
+        safe_slice_to_string(node.name) || ""
+      when Adamas::Compiler::Frontend::PathNode
+        right = annotation_full_name_in_arena(node.right, source_arena)
+        if left_id = node.left
+          left = annotation_full_name_in_arena(left_id, source_arena)
+          left.empty? ? right : "#{left}::#{right}"
+        else
+          right
+        end
+      else
+        Adamas::Compiler::Frontend.node_literal_string(node) || ""
+      end
+    end
+
+    private def annotation_info_from_source(
+      node : Adamas::Compiler::Frontend::AnnotationNode,
+      source_id : ExprId,
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Adamas::Compiler::Semantic::AnnotationInfo?
+      full_name = annotation_full_name_in_arena(node.name, source_arena)
+      return nil if full_name.empty?
+
+      args = node.args || [] of ExprId
+      named_args = {} of String => ExprId
+      if source_named_args = node.named_args
+        source_named_args.each do |named_arg|
+          key = safe_slice_to_string(named_arg.name) || ""
+          named_args[key] = named_arg.value unless key.empty?
+        end
+      end
+
+      Adamas::Compiler::Semantic::AnnotationInfo.new(
+        full_name,
+        args,
+        named_args,
+        source_arena,
+        source_id,
+      )
+    end
+
+    private def register_ivar_annotation_fact(
+      source_owner : String,
+      ivar_name : String,
+      annotation_info : Adamas::Compiler::Semantic::AnnotationInfo,
+    ) : Nil
+      return if ivar_name.empty?
+      key = {source_owner, ivar_name}
+      annotations = @ivar_annotation_facts[key]?
+      unless annotations
+        annotations = [] of Adamas::Compiler::Semantic::AnnotationInfo
+        @ivar_annotation_facts[key] = annotations
+      end
+      annotations << annotation_info unless annotations.includes?(annotation_info)
+    end
+
+    private def register_ivar_source_declaration(source_owner : String, ivar_name : String) : Nil
+      normalized_name = ivar_name
+      normalized_name = normalized_name[1..] if normalized_name.starts_with?('@')
+      return if normalized_name.empty?
+      names = @ivar_source_declarations[source_owner]?
+      unless names
+        names = Set(String).new
+        @ivar_source_declarations[source_owner] = names
+      end
+      names.add(normalized_name)
+    end
+
+    private def ivar_source_declares?(source_owner : String, ivar_name : String) : Bool
+      normalized_name = ivar_name
+      normalized_name = normalized_name[1..] if normalized_name.starts_with?('@')
+      return false if normalized_name.empty?
+      return true if @ivar_source_declarations[source_owner]?.try(&.includes?(normalized_name))
+      if split = split_generic_base_and_args(source_owner)
+        return true if @ivar_source_declarations[split.base]?.try(&.includes?(normalized_name))
+      end
+      false
+    end
+
+    private def record_ivar_annotation_member(
+      class_name : String,
+      member : Adamas::Compiler::Frontend::Node,
+      expr_id : ExprId,
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
+      pending : Array(Adamas::Compiler::Semantic::AnnotationInfo),
+    ) : Nil
+      case member
+      when Adamas::Compiler::Frontend::AnnotationNode
+        if annotation_info = annotation_info_from_source(member, expr_id, source_arena)
+          pending << annotation_info unless pending.includes?(annotation_info)
+        end
+      when Adamas::Compiler::Frontend::InstanceVarDeclNode
+        ivar_name = safe_slice_to_string(member.name) || ""
+        ivar_name = ivar_name[1..] if ivar_name.starts_with?('@')
+        register_ivar_source_declaration(class_name, ivar_name)
+        pending.each do |annotation_info|
+          register_ivar_annotation_fact(class_name, ivar_name, annotation_info)
+        end
+        pending.clear
+      when Adamas::Compiler::Frontend::GetterNode,
+           Adamas::Compiler::Frontend::SetterNode,
+           Adamas::Compiler::Frontend::PropertyNode
+        unless member.is_class?
+          with_arena(source_arena) do
+            member.specs.each do |spec|
+              ivar_name = accessor_storage_name(spec)
+              register_ivar_source_declaration(class_name, ivar_name)
+              pending.each do |annotation_info|
+                register_ivar_annotation_fact(class_name, ivar_name, annotation_info)
+              end
+            end
+          end
+        end
+        pending.clear
+      else
+        pending.clear
+      end
+    end
+
+    private def record_ivar_annotations_from_body(
+      class_name : String,
+      body : Array(ExprId),
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Nil
+      pending = [] of Adamas::Compiler::Semantic::AnnotationInfo
+      body.each do |expr_id|
+        member = unwrap_visibility_member_in_arena(source_arena[expr_id], source_arena)
+        record_ivar_annotation_member(class_name, member, expr_id, source_arena, pending)
+      end
+    end
+
     private def register_class_members_from_expansion(
       class_name : String,
       expr_id : ExprId,
@@ -14707,10 +14854,12 @@ module Adamas::HIR
       visited_extends : Set(String),
       ivars : Array(IVarInfo)? = nil,
       offset_ref : Pointer(Int32)? = nil,
+      pending_ivar_annotations : Array(Adamas::Compiler::Semantic::AnnotationInfo)? = nil,
     ) : Nil
       return if expr_id.invalid?
+      pending = pending_ivar_annotations || [] of Adamas::Compiler::Semantic::AnnotationInfo
       with_source_declaration_origin(@arena[expr_id], @arena) do
-        register_class_members_from_expansion_in_source_order(class_name, expr_id, defined_class_method_full_names, visited_extends, ivars, offset_ref)
+        register_class_members_from_expansion_in_source_order(class_name, expr_id, defined_class_method_full_names, visited_extends, ivars, offset_ref, pending)
       end
     end
 
@@ -14721,9 +14870,12 @@ module Adamas::HIR
       visited_extends : Set(String),
       ivars : Array(IVarInfo)? = nil,
       offset_ref : Pointer(Int32)? = nil,
+      pending_ivar_annotations : Array(Adamas::Compiler::Semantic::AnnotationInfo)? = nil,
     ) : Nil
       return if expr_id.invalid?
+      pending = pending_ivar_annotations || [] of Adamas::Compiler::Semantic::AnnotationInfo
       member = unwrap_visibility_member(@arena[expr_id])
+      record_ivar_annotation_member(class_name, member, expr_id, @arena, pending)
       if filter = env_get("DEBUG_CLASS_EXPANSION_TRACE")
         if filter == "1" || class_name.includes?(filter)
           snippet = source_text_for_expr_in_current_arena(expr_id)
@@ -14772,7 +14924,8 @@ module Adamas::HIR
             defined_class_method_full_names,
             visited_extends,
             ivars,
-            offset_ref
+            offset_ref,
+            pending
           )
           i += 1
         end
@@ -14796,7 +14949,8 @@ module Adamas::HIR
                 defined_class_method_full_names,
                 visited_extends,
                 ivars,
-                offset_ref
+                offset_ref,
+                pending
               )
               i += 1
             end
@@ -14821,7 +14975,8 @@ module Adamas::HIR
               defined_class_method_full_names,
               visited_extends,
               ivars,
-              offset_ref
+              offset_ref,
+              pending
             )
             i += 1
           end
@@ -14845,7 +15000,8 @@ module Adamas::HIR
               defined_class_method_full_names,
               visited_extends,
               ivars,
-              offset_ref
+              offset_ref,
+              pending
             )
             i += 1
           end
@@ -14899,7 +15055,8 @@ module Adamas::HIR
             defined_class_method_full_names,
             visited_extends,
             ivars,
-            offset_ref
+            offset_ref,
+            pending
           )
           i += 1
         end
@@ -14998,7 +15155,8 @@ module Adamas::HIR
             defined_class_method_full_names,
             visited_extends,
             ivars,
-            offset_ref
+            offset_ref,
+            pending
           )
         elsif result == false
           if else_body = member.else_body
@@ -15010,7 +15168,8 @@ module Adamas::HIR
                 defined_class_method_full_names,
                 visited_extends,
                 ivars,
-                offset_ref
+                offset_ref,
+                pending
               )
             else
               register_class_members_from_expansion(
@@ -15019,7 +15178,8 @@ module Adamas::HIR
                 defined_class_method_full_names,
                 visited_extends,
                 ivars,
-                offset_ref
+                offset_ref,
+                pending
               )
             end
           end
@@ -15030,7 +15190,8 @@ module Adamas::HIR
             defined_class_method_full_names,
             visited_extends,
             ivars,
-            offset_ref
+            offset_ref,
+            pending
           )
           if else_body = member.else_body
             register_class_members_from_expansion(
@@ -15039,7 +15200,8 @@ module Adamas::HIR
               defined_class_method_full_names,
               visited_extends,
               ivars,
-              offset_ref
+              offset_ref,
+              pending
             )
           end
         end
@@ -15058,7 +15220,8 @@ module Adamas::HIR
                   defined_class_method_full_names,
                   visited_extends,
                   ivars,
-                  offset_ref
+                  offset_ref,
+                  pending
                 )
               end
             end
@@ -15074,7 +15237,8 @@ module Adamas::HIR
                   defined_class_method_full_names,
                   visited_extends,
                   ivars,
-                  offset_ref
+                  offset_ref,
+                  pending
                 )
               end
             end
@@ -15194,7 +15358,8 @@ module Adamas::HIR
                   defined_class_method_full_names,
                   visited_extends,
                   ivars,
-                  offset_ref
+                  offset_ref,
+                  pending
                 )
               ensure
                 @arena = old_arena
@@ -17394,6 +17559,51 @@ module Adamas::HIR
       source.byte_slice(start, length)
     end
 
+    private def append_macro_annotation_source_owner(owners : Array(String), owner_name : String?) : Nil
+      return unless owner_name
+      return if owner_name.empty?
+      owners << owner_name unless owners.includes?(owner_name)
+      if split = split_generic_base_and_args(owner_name)
+        owners << split.base unless split.base.empty? || owners.includes?(split.base)
+      end
+    end
+
+    private def macro_annotation_source_owners(
+      class_name : String,
+      method_owner_name : String,
+      info : ClassInfo?,
+      ivar_name : String,
+    ) : Array(String)
+      owners = [] of String
+      append_macro_annotation_source_owner(owners, class_name)
+      append_macro_annotation_source_owner(owners, method_owner_name)
+
+      seen = Set(String).new
+      current = info.try(&.parent_name)
+      while parent_name = current
+        break if parent_name.empty? || seen.includes?(parent_name)
+        seen << parent_name
+        append_macro_annotation_source_owner(owners, parent_name)
+        current = parent_name_for_hierarchy_lookup(parent_name)
+      end
+
+      # Annotation facts from a mixin stay keyed by the module that declared
+      # the field. Add only included modules that actually declare this ivar;
+      # a same-named class declaration owns the effective field and shadows
+      # mixin annotations regardless of where `include` appears in the body.
+      unless owners.any? { |owner| ivar_source_declares?(owner, ivar_name) }
+        class_owners = owners.dup
+        class_owners.each do |owner|
+          next unless included_modules = @class_included_modules[owner]?
+          included_modules.each do |module_owner|
+            next unless ivar_source_declares?(module_owner, ivar_name)
+            append_macro_annotation_source_owner(owners, module_owner)
+          end
+        end
+      end
+      owners
+    end
+
     private def macro_owner_type_for(class_name : String) : Adamas::Compiler::Semantic::ClassSymbol?
       info = @class_info[class_name]?
       template : GenericClassTemplate? = nil
@@ -17448,6 +17658,21 @@ module Adamas::HIR
           ivar_name = ivar.name
           ivar_name = ivar_name[1..-1] if ivar_name.starts_with?('@')
           symbol.add_instance_var(ivar_name, type_name, nil, false)
+        end
+      end
+
+      # HIR's class layout carries ivar types but not annotation metadata.
+      # Rebuild the macro owner's annotation view from declarations that
+      # contributed fields to this ordinary owner, preserving each annotation's
+      # source arena for delayed expression evaluation.
+      symbol.instance_var_infos.each_key do |ivar_name|
+        annotation_source_owners = macro_annotation_source_owners(class_name, method_owner_name, info, ivar_name)
+        annotation_source_owners.each do |annotation_owner|
+          if annotations = @ivar_annotation_facts[{annotation_owner, ivar_name}]?
+            annotations.each do |annotation_info|
+              symbol.add_ivar_annotation(ivar_name, annotation_info)
+            end
+          end
         end
       end
 
@@ -25772,6 +25997,7 @@ module Adamas::HIR
             end
             if body = mod_node.body
               body_ids = body.not_nil!
+              record_ivar_annotations_from_body(module_full_name, body_ids, mod_arena)
               STDERR.puts "[REG_INCLUDE_PHASE] class=#{class_name} phase=body_enter module=#{module_full_name} idx=#{i} body=#{body_ids.size}" if trace_include_phase
               with_namespace_override(module_full_name) do
                 # Two-pass approach: register direct definitions (DefNode, accessors,
@@ -38300,6 +38526,7 @@ module Adamas::HIR
       class_name = resolve_class_name_for_definition(class_name)
       registration_body = node.body.try { |body| class_registration_body(body, @arena) }
       if body = registration_body
+        record_ivar_annotations_from_body(class_name, body, @arena)
         body.each do |member_id|
           member = unwrap_visibility_member_in_arena(@arena[member_id], @arena)
           next unless member.is_a?(Adamas::Compiler::Frontend::IncludeNode)

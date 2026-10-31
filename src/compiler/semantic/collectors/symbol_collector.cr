@@ -1944,7 +1944,7 @@ module Adamas
             node = arena[ann_id]
             next unless node.is_a?(Frontend::AnnotationNode)
 
-            if info = build_annotation_info(node)
+            if info = build_annotation_info(node, ann_id)
               class_symbol.add_annotation(info)
             end
           end
@@ -1955,7 +1955,7 @@ module Adamas
             node = arena[ann_id]
             next unless node.is_a?(Frontend::AnnotationNode)
 
-            if info = build_annotation_info(node)
+            if info = build_annotation_info(node, ann_id)
               enum_symbol.add_annotation(info)
             end
           end
@@ -1973,7 +1973,7 @@ module Adamas
             ann_node = arena[ann_id]
             next unless ann_node.is_a?(Frontend::AnnotationNode)
 
-            if info = build_annotation_info(ann_node)
+            if info = build_annotation_info(ann_node, ann_id)
               class_symbol.add_ivar_annotation(ivar_name, info)
             end
           end
@@ -1990,7 +1990,7 @@ module Adamas
           infos = annotation_ids.compact_map do |ann_id|
             ann_node = arena[ann_id]
             next unless ann_node.is_a?(Frontend::AnnotationNode)
-            build_annotation_info(ann_node)
+            build_annotation_info(ann_node, ann_id)
           end
 
           return if infos.empty?
@@ -2005,7 +2005,7 @@ module Adamas
 
         # Convert an AnnotationNode into AnnotationInfo, extracting the
         # fully-qualified name and argument expressions.
-        private def build_annotation_info(node : Frontend::AnnotationNode) : AnnotationInfo?
+        private def build_annotation_info(node : Frontend::AnnotationNode, source_id : Frontend::ExprId? = nil) : AnnotationInfo?
           full_name = annotation_full_name(node.name)
           return nil if full_name.empty?
 
@@ -2019,7 +2019,7 @@ module Adamas
             end
           end
 
-          AnnotationInfo.new(full_name, args, named_args_hash)
+          AnnotationInfo.new(full_name, args, named_args_hash, arena, source_id)
         end
 
         # Build a fully-qualified annotation name from its name expression.

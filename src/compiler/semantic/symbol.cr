@@ -154,7 +154,7 @@ module Adamas
             list = [] of AnnotationInfo
             @ivar_annotations[name] = list
           end
-          list << annotation_info
+          list << annotation_info unless list.includes?(annotation_info)
         end
 
         def merge_semantic_metadata_from(other : ClassSymbol) : Nil
@@ -330,8 +330,22 @@ module Adamas
         getter full_name : String
         getter args : Array(ExprId)
         getter named_args : Hash(String, ExprId)
+        # Arguments are ExprIds into the arena that produced this annotation.
+        # Keep that source arena with the metadata so delayed HIR macro
+        # reflection does not interpret those ids in the macro body arena.
+        getter arena : Frontend::ArenaLike?
+        # The annotation node identity distinguishes repeated identical
+        # annotations while allowing registration replay to deduplicate the
+        # same source fact.
+        getter source_id : ExprId?
 
-        def initialize(@full_name : String, @args : Array(ExprId), @named_args : Hash(String, ExprId))
+        def initialize(
+          @full_name : String,
+          @args : Array(ExprId),
+          @named_args : Hash(String, ExprId),
+          @arena : Frontend::ArenaLike? = nil,
+          @source_id : ExprId? = nil,
+        )
         end
       end
 

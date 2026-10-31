@@ -1335,6 +1335,23 @@ module Adamas
           left.call_method(op, [right], nil)
         end
 
+        # A parenthesized block shorthand (`select(&.foo)`) is represented by
+        # the parser as a BlockNode in CallNode.args rather than CallNode.block.
+        # Keep that syntax-level block out of regular macro arguments and route
+        # it through the same evaluator as an explicit trailing block.
+        private def extract_macro_call_block_argument(
+          args : Array(ExprId),
+          explicit_block_id : ExprId?
+        ) : Tuple(Array(ExprId), ExprId?)
+          return {args, explicit_block_id} if explicit_block_id
+          return {args, nil} if args.empty?
+
+          last_id = args.last
+          return {args[0...-1], last_id} if @arena[last_id].is_a?(Frontend::BlockNode)
+
+          {args, nil}
+        end
+
         # Evaluate call expression and return MacroValue
         # Supports annotation() calls returning MacroAnnotationValue
         private def evaluate_call_to_macro_value(node : Frontend::CallNode, context : Context) : MacroValue
@@ -1382,13 +1399,14 @@ module Adamas
 
             # Handle annotation/annotations returning MacroAnnotationValue
             if member == "annotation" || member == "annotations"
-              return evaluate_annotation_to_macro_value(obj_node, node, member, context)
+              return evaluate_annotation_to_macro_value(callee.object, obj_node, node, member, context)
             end
 
             # General MacroValue method calls (properties.map, kwargs.empty?, etc.)
             receiver = macro_type_value_for_path_receiver(obj_node, context) || evaluate_to_macro_value(obj, context)
             if !receiver.is_a?(MacroNilValue)
-              args = node.args.map { |arg| evaluate_to_macro_value(arg, context) }
+              arg_ids, block_id = extract_macro_call_block_argument(node.args, node.block)
+              args = arg_ids.map { |arg| evaluate_to_macro_value(arg, context) }
               named_arg_values = node.named_args.try do |named|
                 values = {} of String => MacroValue
                 named.each do |named_arg|
@@ -1397,7 +1415,7 @@ module Adamas
                 values
               end
 
-              if blk_id = node.block
+              if blk_id = block_id
                 blk_node = @arena[blk_id].as(Frontend::BlockNode)
                 return evaluate_blocked_macro_call(receiver, member, args, named_arg_values, blk_node, context)
               end
@@ -1697,7 +1715,8 @@ module Adamas
 
           receiver = evaluate_to_macro_value(node.callee, context)
           member = intern_name(inner_callee.member)
-          args = inner_node.args.map { |arg| evaluate_to_macro_value(arg, context) }
+          arg_ids, block_id = extract_macro_call_block_argument(inner_node.args, inner_node.block)
+          args = arg_ids.map { |arg| evaluate_to_macro_value(arg, context) }
           named_arg_values = inner_node.named_args.try do |named|
             values = {} of String => MacroValue
             named.each do |named_arg|
@@ -1705,7 +1724,7 @@ module Adamas
             end
             values
           end
-          block_node = inner_node.block.try { |blk| @arena[blk].as(Frontend::BlockNode) }
+          block_node = block_id.try { |blk| @arena[blk].as(Frontend::BlockNode) }
 
           {receiver, member, args, named_arg_values, block_node}
         end
@@ -1923,6 +1942,7 @@ module Adamas
 
         # Evaluate annotation() call and return MacroAnnotationValue or MacroArrayValue
         private def evaluate_annotation_to_macro_value(
+          obj_id : ExprId,
           obj,
           node : Frontend::CallNode,
           member : String,
@@ -1948,14 +1968,14 @@ module Adamas
               if member == "annotation"
                 if ann = matching.first?
                   ann_val = MacroAnnotationValue.new(ann)
-                  ann_val.arena = @arena
+                  ann_val.arena ||= @arena
                   return ann_val
                 end
                 return macro_nil_value
               else # annotations
                 arr = matching.map do |ann|
                   ann_val = MacroAnnotationValue.new(ann)
-                  ann_val.arena = @arena
+                  ann_val.arena ||= @arena
                   ann_val.as(MacroValue)
                 end
                 return MacroArrayValue.new(arr)
@@ -2000,19 +2020,38 @@ module Adamas
               if member == "annotation"
                 if ann = matching.first?
                   ann_val = MacroAnnotationValue.new(ann)
-                  ann_val.arena = @arena
+                  ann_val.arena ||= @arena
                   return ann_val
                 end
                 return macro_nil_value
               else # annotations
                 arr = matching.map do |ann|
                   ann_val = MacroAnnotationValue.new(ann)
-                  ann_val.arena = @arena
+                  ann_val.arena ||= @arena
                   ann_val.as(MacroValue)
                 end
                 return MacroArrayValue.new(arr)
               end
             end
+          end
+
+          # The receiver can be an expression such as
+          # `@type.instance_vars.first`, not only a direct `@type` or a macro
+          # variable identifier. Evaluate that expression so its MacroMetaVarValue
+          # keeps the actual declaring owner (and AnnotationInfo keeps its source
+          # arena) through annotation lookup.
+          receiver = evaluate_to_macro_value(obj_id, context)
+          if receiver.is_a?(MacroMetaVarValue) || receiver.is_a?(MacroTypeValue)
+            filter_name = nil
+            if arg0_id = node.args[0]?
+              filter_name = annotation_type_full_name(arg0_id)
+            end
+            args = if filter_name
+                     [MacroIdValue.new(filter_name).as(MacroValue)]
+                   else
+                     [] of MacroValue
+                   end
+            return receiver.call_method(member, args, nil)
           end
 
           macro_nil_value

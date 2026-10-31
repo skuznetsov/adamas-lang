@@ -22781,3 +22781,22 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   indirect-call ABI or inline exit changes. This is not general memory-flow
   inference for arbitrary mutable Proc slots. Full WIP, bootstrap and LavinMQ
   runtime/test parity remain separate checks.
+
+### Reflective macro filters retain source blocks and annotation ownership (2026-10-30)
+
+- [x] Normalize a parenthesized shorthand block in macro calls before evaluating
+  ordinary arguments; use the explicit-block evaluator for select/reject and
+  chained calls.
+- [x] Carry annotation argument ExprIds with their defining arena and source-node
+  identity. Reconstruct HIR reflection from the actual ivar declaration owner,
+  including mixins, while a class declaration shadows a same-named mixin field.
+- [x] Isolated HEAD 25e3d1cc plus this slice builds with Crystal 1.22.1. Eight
+  original-first native cases pass in ordinary and ADAMAS_EAGER_MONO modes;
+  the unpatched parent prints C instead of B for shorthand_select in both modes.
+  Unchanged-prelude hello and default-context stack_pool both pass natively.
+- [ ] Refresh these checks after macro block syntax, source arenas, annotation
+  registration or ivar ownership changes. Bootstrap and LavinMQ parity are open.
+- [ ] Verification correction: ADAMAS_EAGER_HIR has no compiler reader here.
+  Earlier runs using that variable establish ordinary-mode evidence only;
+  requalify affected older eager claims with ADAMAS_EAGER_MONO. The new macro
+  matrix uses the actual mode switch and explicitly unsets the obsolete name.

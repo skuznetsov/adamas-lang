@@ -2401,7 +2401,8 @@ module Adamas
         # Arena reference for evaluating arg expressions
         property arena : Frontend::ArenaLike?
 
-        def initialize(@info : AnnotationInfo, @arena : Frontend::ArenaLike? = nil)
+        def initialize(@info : AnnotationInfo, arena : Frontend::ArenaLike? = nil)
+          @arena = arena || @info.arena
         end
 
         def to_macro_output : String
