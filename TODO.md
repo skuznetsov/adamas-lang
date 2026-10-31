@@ -23067,3 +23067,25 @@ integration, fresh bootstrap, or LavinMQ parity.
   carry exact declaration ownership through those phases. Native prelude,
   bootstrap and LavinMQ parity are separate open gates.
 - Refresh this evidence after Def/arena registration or method lowering changes.
+
+
+### 2026-10-31: Qualified generic constructor field inference
+
+- Root cause: constructor receiver extraction accepted rooted generic PathNodes
+  only when their left side was empty. Namespace-qualified generic constructors
+  therefore lost their ivar types during layout registration, before lowering
+  the initializer. Resolve qualified paths through the existing contextual type
+  extractor; retain its uppercase-name and generic-arity checks.
+- Verification on clean 396a09a9 plus only this change: 28 HIR cases pass; the
+  focused field-birth case fails on the parent. A fresh S1 and Crystal 1.22.1
+  pass the portable regression in stock, lazy and eager modes: local, relative
+  and rooted fields print AAA, and unknown qualified types and wrong generic
+  arities are rejected. Evidence under the oct29 rootcause artifact root:
+  qualified-ivar32ef.result.json, qualified-ivar-atomic32ek.result.json and
+  qualified-ivar-regression32em.result.json.
+- Adversary: ROBUST within registered qualified generic field birth, lowercase
+  runtime-call exclusion, namespace/root resolution and strict negative cases.
+  The composed prelude advances beyond Channel to a Time::TZ loop-result type
+  mismatch. Separate eager layout contamination in the held WIP, native prelude,
+  bootstrap and LavinMQ parity remain open. Refresh after constructor type
+  extraction, generic registration or ivar layout changes.

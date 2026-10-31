@@ -76616,13 +76616,12 @@ module Adamas::HIR
           member_name
         end
       when Adamas::Compiler::Frontend::CallNode
-        # A rooted generic type expression such as `::Array(UInt32)` is parsed
-        # as a call whose callee is a root PathNode. Accept that narrow shape
-        # when it is consumed as a constructor receiver; lowercase runtime
-        # calls must not become fabricated type names.
+        # A qualified or rooted generic type expression such as
+        # `Outer::Array(UInt32)` is parsed as a call whose callee is a
+        # PathNode. Lowercase runtime calls must not become fabricated type
+        # names.
         callee_node = node_for_expr(node.callee, @arena)
         return nil unless callee_node.is_a?(Adamas::Compiler::Frontend::PathNode)
-        return nil unless callee_node.left.nil?
         base_name = extract_type_name_from_node(callee_node)
         return nil unless base_name
         terminal_name = base_name.split("::").last
