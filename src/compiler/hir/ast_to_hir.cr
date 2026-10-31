@@ -11091,7 +11091,9 @@ module Adamas::HIR
       replay_parent_base = strip_generic_args(replay_parent)
       get_ancestor_chain(owner).each do |ancestor|
         ancestor_base = "#{ancestor}##{method_name}"
-        remember_callsite_arg_types(ancestor_base, arg_types, has_block: has_block_call)
+        # This is a source selection query, including failed ancestor probes.
+        # Its explicit argument/block shape must not overwrite the pending
+        # input of a different body whose physical name is this bare key.
         if resolved = lookup_function_def_for_call(
              ancestor_base,
              arg_types.size,
@@ -11182,7 +11184,7 @@ module Adamas::HIR
       # Polling#write). If we collapse directly to an ancestor-owned resolved
       # name here, we can strand the concrete child symbol and later MIR
       # vdispatch falls back to the abstract owner.
-      remember_callsite_arg_types(base_name, arg_types, has_block: has_block_call)
+      remember_callsite_family_arg_types(base_name, arg_types, has_block: has_block_call)
       remember_callsite_arg_types(candidate, arg_types, has_block: has_block_call)
 
       primary_lookup_started_at = Time.instant if @debug_virtual_target_replay_stats
@@ -11221,6 +11223,7 @@ module Adamas::HIR
         elsif !resolved_owner.empty? && strip_generic_args(resolved_owner) != strip_generic_args(owner) &&
               !inherited_wrapper_reusable
           resolved_name = virtual_replay_specialized_name(resolved_name, arg_types, has_block_call)
+          remember_callsite_arg_types(resolved_name, arg_types, has_block: has_block_call)
           lower_required_virtual_target_function(resolved_name, exact_demand: true, replay_source: replay_trace_source)
           # Nested replay queues the inherited target instead of materializing
           # it synchronously. Do not mistake that temporary missing body for a
@@ -11237,13 +11240,11 @@ module Adamas::HIR
                    has_splat,
                  )
             lower_required_virtual_target_function(candidate, replay_source: replay_trace_source)
-            lower_required_virtual_target_function(base_name, replay_source: replay_trace_source) unless candidate == base_name
           end
         else
-          lower_required_virtual_target_function(
-            virtual_replay_specialized_name(resolved_name, arg_types, has_block_call),
-            replay_source: replay_trace_source,
-          )
+          selected_target = virtual_replay_specialized_name(resolved_name, arg_types, has_block_call)
+          remember_callsite_arg_types(selected_target, arg_types, has_block: has_block_call)
+          lower_required_virtual_target_function(selected_target, replay_source: replay_trace_source)
         end
       else
         # A broad-root call remains inherited when the concrete child only has
@@ -11265,7 +11266,10 @@ module Adamas::HIR
             @vtr_stats_broad_fallback_lookup_time_ns &+= (Time.instant - broad_lookup_started_at.not_nil!).total_nanoseconds.to_i64
           end
           if replay_resolved
-            replay_name = replay_resolved[0]
+            replay_name = virtual_replay_specialized_name(replay_resolved[0], arg_types, has_block_call)
+            # Only an executable selected target owns materialization inputs.
+            # Ancestor probes above have no authority to replace sibling input.
+            remember_callsite_arg_types(replay_name, arg_types, has_block: has_block_call)
             lower_required_virtual_target_function(replay_name, replay_source: replay_trace_source)
           end
           # No compatible implementation is safer than materializing a known
@@ -11273,7 +11277,6 @@ module Adamas::HIR
           return
         end
         lower_required_virtual_target_function(candidate, replay_source: replay_trace_source)
-        lower_required_virtual_target_function(base_name, replay_source: replay_trace_source) unless candidate == base_name
       end
     end
 
@@ -11300,7 +11303,7 @@ module Adamas::HIR
                               mangle_function_name("#{parent}##{method_name}", arg_types, has_block_call)
                             end
 
-      remember_callsite_arg_types(base_name, arg_types, has_block: has_block_call)
+      remember_callsite_family_arg_types(base_name, arg_types, has_block: has_block_call)
       remember_callsite_arg_types(candidate, arg_types, has_block: has_block_call)
 
       if resolved = lookup_function_def_for_call(base_name, arg_types.size, has_block_call, arg_types, has_splat)
@@ -11311,7 +11314,9 @@ module Adamas::HIR
         if preserve_requested_owner
           lower_required_virtual_target_function(candidate, replay_source: replay_trace_source)
         else
-          lower_required_virtual_target_function(resolved_name, replay_source: replay_trace_source)
+          selected_target = virtual_replay_specialized_name(resolved_name, arg_types, has_block_call)
+          remember_callsite_arg_types(selected_target, arg_types, has_block: has_block_call)
+          lower_required_virtual_target_function(selected_target, replay_source: replay_trace_source)
         end
       else
         lower_virtual_target_owner(
@@ -11340,7 +11345,7 @@ module Adamas::HIR
     ) : Bool
       base_name = "#{owner}##{method_name}"
       candidate = mangle_function_name(base_name, arg_types, has_block_call)
-      remember_callsite_arg_types(base_name, arg_types, has_block: has_block_call, has_named_args: has_named_args, named_arg_names: named_arg_names)
+      remember_callsite_family_arg_types(base_name, arg_types, has_block: has_block_call, has_named_args: has_named_args, named_arg_names: named_arg_names)
       remember_callsite_arg_types(candidate, arg_types, has_block: has_block_call, has_named_args: has_named_args, named_arg_names: named_arg_names)
       selected_name : String? = nil
       selected_def : Adamas::Compiler::Frontend::DefNode? = nil
@@ -11373,8 +11378,9 @@ module Adamas::HIR
           lower_demanded_virtual_target_function(target_name)
         end
       else
+        # An incompatible overload family has no selected bare body. Only the
+        # exact requested shape may be queued for a later source resolution.
         lower_demanded_virtual_target_function(candidate)
-        lower_demanded_virtual_target_function(base_name) unless candidate == base_name
       end
 
       complete = @module.has_function_with_body?(candidate) ||
@@ -79945,9 +79951,11 @@ module Adamas::HIR
 
       resolved_name = resolved[0]
       resolved_base = strip_type_suffix(resolved_name)
-      resolved_has_body = @module.has_function_with_body?(resolved_name)
-      resolved_has_body ||= resolved_base != resolved_name && @module.has_function_with_body?(resolved_base)
-      return false unless resolved_has_body
+      # Materialization chooses this concrete target from the declaration and
+      # call inputs. Readiness must consume that same identity; a declaration
+      # or bare sibling body cannot certify another specialization's result.
+      selected_target = virtual_replay_specialized_name(resolved_name, arg_types, has_block)
+      return false unless @module.has_function_with_body?(selected_target)
 
       resolved_owner = method_owner(resolved_base)
       return false if generic_source_owner_requires_specialization?(owner, resolved_owner, resolved_name)
@@ -101733,6 +101741,21 @@ module Adamas::HIR
       h
     end
 
+    private def remember_callsite_family_arg_types(
+      name : String,
+      arg_types : Array(TypeRef),
+      arg_literals : Array(Bool)? = nil,
+      enum_names : Array(String?)? = nil,
+      has_block : Bool = false,
+      has_named_args : Bool = false,
+      named_arg_names : Array(String)? = nil,
+    ) : Nil
+      remember_callsite_arg_types(
+        name, arg_types, arg_literals, enum_names, has_block, has_named_args, named_arg_names,
+        record_exact_target: false,
+      )
+    end
+
     private def remember_callsite_arg_types(
       name : String,
       arg_types : Array(TypeRef),
@@ -101741,6 +101764,8 @@ module Adamas::HIR
       has_block : Bool = false,
       has_named_args : Bool = false,
       named_arg_names : Array(String)? = nil,
+      *,
+      record_exact_target : Bool = true,
     ) : Nil
       return if name.empty?
       return if name.to_unsafe[0] == '$'.ord
@@ -101757,7 +101782,9 @@ module Adamas::HIR
         canonical_names ? canonical_names.dup : nil,
         selected_target,
       )
-      @pending_arg_types[name] = callsite
+      # Family discovery must not replace a physical body's exact inputs.
+      # Keep exact publication before family dedup for a repeated demand.
+      @pending_arg_types[name] = callsite if record_exact_target
       return if base_key.empty?
       callsite_key = callsite_args_fingerprint(arg_types, arg_literals, has_block, has_named_args, canonical_names, selected_target)
       seen_by_arity = @pending_arg_types_seen_by_arity[base_key]? || begin

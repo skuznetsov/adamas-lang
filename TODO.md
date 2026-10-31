@@ -23108,3 +23108,23 @@ integration, fresh bootstrap, or LavinMQ parity.
   class-method caller flags, disjoint layouts and native values. Exception-path
   context restoration, native prelude, bootstrap and LavinMQ parity remain open.
   Refresh after generic materialization or ambient lowering-context changes.
+
+
+### 2026-10-31: Keep replay family queries separate from exact body inputs
+
+- Root cause: ancestor source lookup published a block-call shape under a bare
+  physical target key. This replaced the nilary Parallel scheduler body input
+  with an unrelated yielding ancestor probe, so concrete dispatch lost its
+  Parallel branch. Family history and a selected executable target have distinct
+  ownership: only exact target publication can replace pending body inputs.
+- Verification on clean bbb99ee2 plus only this slice: 32 HIR cases pass; the
+  original focused parent suite has eight failures. A fresh S1 and Crystal
+  1.22.1 pass exact_replay_callshape_owner_repro.sh in original/lazy/eager modes,
+  printing ACABCB with both scheduler branches before and after a block call.
+  Evidence under the oct29 rootcause artifact root: callshape-current32fp.result.json,
+  spec.callshape-atomic-green32dx.command.json, and source32fp_callshape_current_head.
+- Adversary: ROBUST for source-query purity, repeated exact publication after
+  family deduplication, named/block shape isolation, selected specialization
+  readiness, and both native scheduler branches. Native stock prelude, bootstrap
+  and LavinMQ parity remain open. Refresh after replay selection, pending-input
+  publication, physical naming or readiness changes.
