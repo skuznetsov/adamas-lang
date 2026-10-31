@@ -170,6 +170,35 @@ class Adamas::HIR::AstToHir
       return source_block_result_composite(kind, base_name, children, owner, source_labels: labels)
     end
 
+    # A formal can be bound to an alias whose target is a structural type.
+    # Parse that target with the same rules as an explicit source restriction;
+    # treating NamedTuple(...), for example, as a nominal leaf loses its fields
+    # and rejects an otherwise resolved applied owner's callback result.
+    expanded = normalize_declared_type_name(source, owner, specialize_bare_generics: false)
+    expanded = resolve_type_alias_chain(expanded, preserve_abstract_int: true)
+    if materializable_unknown_named_type?(expanded) && !proc_literal_source_type_identity?(expanded)
+      if separator = expanded.rindex("::")
+        namespace = expanded.byte_slice(0, separator)
+        leaf = expanded.byte_slice(separator + 2, expanded.bytesize - separator - 2)
+        # A fully qualified receiver path still inherits nested types. Resolve
+        # only through that owner's parents; unrelated suffixes cannot supply
+        # a missing leaf, and an own type above has already won lookup.
+        if inherited = nested_type_full_name_in_parents(namespace, leaf, 0)
+          expanded = resolve_type_alias_chain_no_context(inherited, preserve_abstract_int: true)
+        end
+      end
+    end
+    expanded = strip_fully_grouped_type_name(normalize_tuple_literal_type_name(expanded.strip))
+    if expanded != source && source_block_result_structural_source?(expanded)
+      alias_key = "alias:#{source}"
+      return invalid_source_block_result_pattern(source) if active_bindings.includes?(alias_key)
+      next_active = active_bindings.dup
+      next_active << alias_key
+      return source_block_result_pattern_for(
+        expanded, owner, formals, bindings, next_active, allow_value_literal: allow_value_literal,
+      )
+    end
+
     return invalid_source_block_result_pattern(source) unless source_block_result_concrete_source_exists?(source, owner)
 
     contract = annotation_type_contract_fragment(source, owner)
@@ -192,6 +221,13 @@ class Adamas::HIR::AstToHir
     )
   rescue
     invalid_source_block_result_pattern(raw_name)
+  end
+
+  private def source_block_result_structural_source?(source : String) : Bool
+    !proc_type_argument_names(source).nil? ||
+      source.ends_with?('?') || source.ends_with?('*') ||
+      has_top_level_union_separator?(source) ||
+      !split_generic_base_and_args(source).nil?
   end
 
   private def source_block_result_composite(
@@ -270,10 +306,12 @@ class Adamas::HIR::AstToHir
     resolved = normalize_declared_type_name(name, owner, specialize_bare_generics: false)
     resolved = resolve_type_alias_chain(resolved)
     return nil if resolved.empty?
-    # Generic module declarations are indexed as Marker(T), while structural
-    # patterns keep the bare Marker head. The declaration index proves that
-    # this head is a type identity rather than an unbound source parameter.
-    return nil if type_param_like?(resolved) && !module_defs_stripped_lookup(resolved)
+    # Generic declarations can have no bare runtime ClassInfo. The source
+    # template or module index still proves that this bare structural head is
+    # a declared type identity rather than an unbound source parameter.
+    return nil if type_param_like?(resolved) &&
+                  !@generic_templates.has_key?(resolved) &&
+                  !module_defs_stripped_lookup(resolved)
     resolved
   end
 

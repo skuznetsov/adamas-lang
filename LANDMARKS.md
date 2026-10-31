@@ -22493,3 +22493,20 @@ is explicitly still red on parent and candidate. This is not a bootstrap or
 LavinMQ parity certificate. Refresh after call-target identity, dependency
 tracking, return-cache ownership or closure replay changes. Rollback the replay
 source and its dedicated regression together.
+
+### Structural callback result aliases use the source restriction parser (2026-10-30)
+A bound result formal can name an inherited alias whose target is structural.
+Resolve that alias in its declaration namespace and parse the target again;
+nominal leaf identity cannot preserve NamedTuple keys or nested restrictions.
+Resolve inherited leaves only through the exact owner's parents, after its own
+source identity wins. A generic source template proves a known bare class head
+when no runtime ClassInfo exists; it never proves an unbound formal.
+
+Isolated parent ff1b2b62 plus the pattern-only patch passes 31 HIR examples and
+ten stock/lazy/actual-eager oracle cases (seven outputs and three rejections).
+Scoped adversary ROBUST: wrong keys/types, unknown heads/leaves, unrelated
+owners, own-type shadowing, and recursive aliases remain rejected. Evidence is
+indexed in TODO.md. This does not establish shared method-contract, bootstrap,
+or LavinMQ parity. Refresh after alias lookup, declaration namespaces, generic
+head indexing, or source result pattern matching changes. Roll back parser,
+spec and dedicated regression together.

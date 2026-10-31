@@ -42,6 +42,9 @@ private def source_block_result_pattern_fixture
     class Path
     end
 
+    class RootResultPayload(T)
+    end
+
     module Marker(T)
     end
 
@@ -61,6 +64,23 @@ private def source_block_result_pattern_fixture
       class Owner
       end
 
+      alias PermissionFields = NamedTuple(config: Int32, read: Int32, write: Int32)
+      alias PermissionFieldsAgain = PermissionFields
+      alias RecursiveFields = NamedTuple(next: RecursiveFields)
+      alias MissingFields = NamedTuple(item: MissingSourceType)
+
+      class BaseUser
+        alias Permissions = PermissionFields
+      end
+
+      class User < BaseUser
+      end
+
+      class ShadowUser < BaseUser
+        class Permissions
+        end
+      end
+
       class GenericOwner(T)
       end
 
@@ -78,7 +98,7 @@ private def source_block_result_pattern_fixture
   program = parser.parse_program
   parser.diagnostics.should be_empty
   converter = Adamas::HIR::AstToHir.new(program.arena)
-  converter.seed_top_level_type_names(["Path", "Marker", "Scope"])
+  converter.seed_top_level_type_names(["Path", "RootResultPayload", "Marker", "Scope"])
   program.roots.each do |expression|
     case node = program.arena[expression]
     when Adamas::Compiler::Frontend::ClassNode
@@ -91,6 +111,85 @@ private def source_block_result_pattern_fixture
 end
 
 describe "source block result patterns" do
+  it "recognizes an unqualified generic class declaration as a result head" do
+    converter = source_block_result_pattern_fixture
+    ["RootResultPayload(Int32)", "V?"].each do |output|
+      _, concrete_type, matches = converter.__test_source_block_result_pattern(
+        output, "RootResultPayload(Int32)", "Scope::Owner", ["V"], {"V" => "RootResultPayload(Int32)"},
+      )
+      concrete_type.should_not be_nil
+      matches.should be_true
+    end
+  end
+
+  it "keeps undeclared and unbound formal generic heads invalid" do
+    converter = source_block_result_pattern_fixture
+    ["MissingResultHead(Int32)", "T(Int32)"].each do |output|
+      _, concrete_type, matches = converter.__test_source_block_result_pattern(
+        output, "RootResultPayload(Int32)", "Scope::Owner", ["T"], {} of String => String,
+      )
+      concrete_type.should be_nil
+      matches.should be_false
+    end
+  end
+
+  it "reparses a bound qualified alias as a named tuple restriction" do
+    converter = source_block_result_pattern_fixture
+    ["Scope::PermissionFields", "Scope::PermissionFieldsAgain", "Scope::User::Permissions"].each do |bound|
+      restriction, concrete_type, matches = converter.__test_source_block_result_pattern(
+        "V", "NamedTuple(config: Int32, read: Int32, write: Int32)", "Scope::Owner", ["V"], {"V" => bound},
+      )
+      restriction.should eq("NamedTuple(config: Int32, read: Int32, write: Int32)")
+      concrete_type.should_not be_nil
+      matches.should be_true
+    end
+  end
+
+  it "keeps structural alias field and key restrictions strict" do
+    converter = source_block_result_pattern_fixture
+    [
+      "NamedTuple(config: Int64, read: Int32, write: Int32)",
+      "NamedTuple(config: Int32, read: Int32, other: Int32)",
+    ].each do |actual|
+      _, _, matches = converter.__test_source_block_result_pattern(
+        "V", actual, "Scope::Owner", ["V"], {"V" => "Scope::PermissionFields"},
+      )
+      matches.should be_false
+    end
+  end
+
+  it "keeps an own nested type ahead of an inherited structural alias" do
+    converter = source_block_result_pattern_fixture
+    _, _, accepts_own = converter.__test_source_block_result_pattern(
+      "V", "Scope::ShadowUser::Permissions", "Scope::Owner", ["V"], {"V" => "Scope::ShadowUser::Permissions"},
+    )
+    _, _, rejects_parent_alias = converter.__test_source_block_result_pattern(
+      "V", "NamedTuple(config: Int32, read: Int32, write: Int32)", "Scope::Owner", ["V"], {"V" => "Scope::ShadowUser::Permissions"},
+    )
+    accepts_own.should be_true
+    rejects_parent_alias.should be_false
+  end
+
+  it "does not borrow a structural alias from an unrelated owner" do
+    converter = source_block_result_pattern_fixture
+    _, concrete_type, matches = converter.__test_source_block_result_pattern(
+      "Scope::Owner::Permissions", "NamedTuple(config: Int32, read: Int32, write: Int32)", "Scope::Owner",
+    )
+    concrete_type.should be_nil
+    matches.should be_false
+  end
+
+  it "fails closed for recursive and unresolved structural alias leaves" do
+    converter = source_block_result_pattern_fixture
+    ["Scope::RecursiveFields", "Scope::MissingFields"].each do |restriction|
+      _, concrete_type, matches = converter.__test_source_block_result_pattern(
+        restriction, "NamedTuple(item: Int32)", "Scope::Owner",
+      )
+      concrete_type.should be_nil
+      matches.should be_false
+    end
+  end
+
   it "recognizes a declared generic module head without admitting unknown heads" do
     converter = source_block_result_pattern_fixture
     converter.__test_source_block_result_pattern_shape("Marker(Int32)").should eq({"Generic", true, "Marker"})

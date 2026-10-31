@@ -22853,3 +22853,24 @@ Evidence: /opt/mldata_ssd/adamas_codex_oct29_rootcause/
 `regression.depth-captured-baseline31.log`,
 `regression.prelude-depth-isolated30.log`, and `regression.factory-cycle31.log`.
 Fresh S2/fixed point and LavinMQ runtime/upstream-test parity remain open.
+
+### Canonical structural result restrictions retain source identity (2026-10-30)
+- [x] Reparse a resolved own, inherited, or chained type alias through the same
+  structural result pattern parser as an explicit restriction. Preserve field
+  names, exact leaf restrictions, declaration namespaces, and alias-cycle
+  rejection instead of treating NamedTuple targets as nominal leaves.
+- [x] Admit a generic class head only when its exact source template is known;
+  a bare runtime ClassInfo is not required. Unknown heads and unbound formals
+  remain rejected. This closes the V? restriction loss for a bound generic
+  class without changing its required argument types.
+- [x] Isolated parent ff1b2b62 plus the pattern-only delta passes 31 HIR examples
+  and ten Crystal 1.22.1/lazy/ADAMAS_EAGER_MONO oracle cases: seven native output
+  matches and three source-level rejections in each mode. Own-type shadowing,
+  unrelated alias owners, unresolved leaves, and recursive aliases stay strict.
+Evidence: /opt/mldata_ssd/adamas_codex_oct29_rootcause/
+`source-block-canonical-only-head30.patch`,
+`spec.source-block-canonical-only-head30t1.log`,
+`build.source-block-canonical-only30t1.log`, and
+`regression.source-block-canonical-only30t1.log`.
+This scoped parser check does not certify the shared method-result validator,
+full prelude, bootstrap, or LavinMQ runtime/upstream-test parity.
