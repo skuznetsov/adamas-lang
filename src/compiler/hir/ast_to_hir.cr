@@ -145351,7 +145351,10 @@ module Adamas::HIR
               # The normalized key is only a recursion guard. Removing root
               # anchors must not change the semantic input being resolved.
               ref = type_ref_for_name(resolved_param)
-              if ref == TypeRef::VOID
+              # ::Void is a resolved type, despite sharing the unresolved
+              # carrier. Re-resolving it as relative Void would bind a nested
+              # shadow and collapse two distinct generic specializations.
+              if ref == TypeRef::VOID && resolved_param != "::Void"
                 stripped = stripped_param
                 allow_materialize = materializable_unknown_named_type?(stripped)
                 if !stripped.empty? && stripped != "_" && !short_type_param_name?(stripped)
@@ -146082,8 +146085,12 @@ module Adamas::HIR
       idx = 0
       while idx < type_params.size
         param = type_params.unsafe_fetch(idx)
-        return nil if param == TypeRef::VOID
         source = source_params.unsafe_fetch(idx).strip
+        # Void is a real generic argument (notably Pointer(Void)). Its carrier
+        # is also used for unresolved arguments, so retain that guard unless
+        # the resolved source spelling proves the actual Void type. Otherwise
+        # the descriptor is Pointer(Void) but its methods get Pointer(::Void).
+        return nil if param == TypeRef::VOID && source != "Void" && source != "::Void"
         return nil if !source.empty? && source.each_char.all?(&.ascii_number?)
         names << generic_param_type_name_from_ref(param)
         idx += 1
@@ -146132,7 +146139,8 @@ module Adamas::HIR
           next
         end
         type = type_params[index]
-        return nil if type == TypeRef::VOID
+        resolved_source = source.strip
+        return nil if type == TypeRef::VOID && resolved_source != "Void" && resolved_source != "::Void"
         names << with_canonical_type_scope do
           source_generic_parameter_name(type, root_anchored_canonical_type_name(source))
         end

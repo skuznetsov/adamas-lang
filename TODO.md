@@ -22800,3 +22800,15 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   Earlier runs using that variable establish ordinary-mode evidence only;
   requalify affected older eager claims with ADAMAS_EAGER_MONO. The new macro
   matrix uses the actual mode switch and explicitly unsets the obsolete name.
+
+
+### Canonical resolved Void generic arguments (2026-10-30)
+
+- [x] Distinguish an explicitly resolved Void generic argument from the same
+  carrier used for an unresolved argument. Canonicalize Pointer/Box owner names
+  consistently and retain a root anchor through nested namespace resolution.
+- [x] Isolated a9124ca7 plus the three-hunk fix passes all four HIR examples;
+  the parent fails three. Both request orders and a nested Void shadow retain
+  the correct owner, while unbound Box(T) remains unmaterialized.
+- [ ] Refresh after generic argument canonicalization or unresolved-carrier
+  changes. This metadata check does not establish runtime ABI or bootstrap.

@@ -22421,3 +22421,25 @@ Refresh after macro block representation, annotation arena lifetime, declaration
 publication or ivar ownership changes. Roll back this slice and its tests
 together. The full WIP has separate open source result/argument-kind checks;
 isolated prelude success does not establish full-WIP startup or test parity.
+
+
+## 2026-10-30 — Resolved Void is distinct from an unresolved generic argument
+
+TypeRef::VOID carries both the actual Void type and unresolved type evidence.
+Generic owner canonicalization rejected both alike, yielding distinct
+Pointer(Void)/Pointer(::Void) method families. A later fallback stripped the
+root anchor and resolved ::Void in the caller namespace, potentially binding a
+nested Void. Preserve the already resolved identity; allow the Void carrier
+only when the source spelling proves Void/::Void, and never re-resolve ::Void
+as a relative name. Unknown Box(T) remains unknown.
+
+Observed DoD: isolated a9124ca7 plus exactly three HIR hunks passes
+void_generic_owner_identity_spec.cr, four examples. The unchanged parent fails
+three examples. Probes cover Pointer and ordinary Box, both request orders,
+root versus nested Void and an unresolved formal. Both spec compilations and
+executions use run_safe.sh with stock Crystal 1.22.1 and --single-module.
+Logs: spec.void-isolated30.log and spec.void-baseline30.log in the oct29
+root-cause scratch. Scoped adversary verdict: ROBUST for canonical owner
+identity and the unresolved guard. This is not a runtime layout/ABI or bootstrap
+certificate. Refresh after canonical generic names, lexical lookup or
+unresolved-carrier semantics change; roll back the three hunks and test together.
