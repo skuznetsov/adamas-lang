@@ -22903,3 +22903,27 @@ Shared-slice integration, fresh S2/fixed point and LavinMQ parity remain open.
 
 - Added source-compatible pointee checks and contextual numeric-literal conversion to `Pointer(T)#value=` assignment lowering; verified nullable/numeric stores and wrong-type/range rejection in stock, lazy, and eager modes.
 - Fresh bootstrap and stdlib-wide compatibility remain separate qualification gates.
+
+### Structural result settledness uses registered source children (2026-10-30)
+- [x] Read Tuple, NamedTuple, Pointer, Proc, and Union children by TypeRef instead
+  of reparsing their display names in the current source namespace. A concrete
+  nullable Tuple needs no source declaration for the structural Tuple head.
+- [x] Snapshot original union children in the same append-only registration as
+  their layout. ABI self-variant repair must not turn provisional source types
+  into settled pointer types; a newest entry without source witnesses fails
+  closed. Bound active-path recursion and preserve slot-specific Void checks.
+- [x] Isolated parent 81c470ea plus this slice passes 33 HIR/MIR examples and
+  stock/lazy/ADAMAS_EAGER_MONO native Tuple/NamedTuple method-result checks.
+  Adversaries cover Unknown versus declared Unknown, missing descriptors,
+  repeated structural children, recursion bounds, Void slots, repaired unions,
+  input-array mutation, and missing newest-generation source witnesses.
+- [ ] Source-defined .new result transport is a separate integration gate: the
+  isolated slice still fails the .new variant before the typed consumer. The
+  shared candidate's depth/sibling/wrong-return regression passes in all three
+  modes, but its stock prelude remains blocked by Enum#value returning Void.
+Evidence: /opt/mldata_ssd/adamas_codex_oct29_rootcause/
+`spec.result-type-resolution31b.red.log`, `spec.structural-result-isolated31.log`,
+`build.structural-result-isolated31.log`,
+`regression.structural-result-isolated31b.log`, and
+`regression.pending-source30x6.log`. Refresh after structural/union registration
+or result-materialization changes. Fresh S2 and LavinMQ parity remain open.

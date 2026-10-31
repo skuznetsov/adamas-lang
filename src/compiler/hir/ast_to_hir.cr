@@ -32,7 +32,8 @@ require "./source_block_result_pattern"
 module Adamas::HIR
   record UnionDescriptorRegistration,
     type_ref : Adamas::MIR::TypeRef,
-    descriptor : Adamas::MIR::UnionDescriptor
+    descriptor : Adamas::MIR::UnionDescriptor,
+    source_variant_types : Array(TypeRef)? = nil
 
   # Error raised during AST to HIR conversion
   class LoweringError < Exception
@@ -50990,9 +50991,27 @@ module Adamas::HIR
     end
 
     private def unresolved_generic_return_type?(type_ref : TypeRef) : Bool
+      unresolved_generic_return_type?(type_ref, [] of TypeRef)
+    end
+
+    private def unresolved_generic_return_type?(type_ref : TypeRef, active : Array(TypeRef)) : Bool
       return false if type_ref == TypeRef::VOID || type_ref == TypeRef::NIL
+      return true if active.size >= 64 || active.includes?(type_ref)
       if desc = @module.get_type_descriptor(type_ref)
+        # Structural children already carry resolved identities. Looking their
+        # names up again can require a nonexistent source Tuple declaration or
+        # bind a concrete child in the current caller's lexical namespace.
+        case desc.kind
+        when TypeKind::Union, TypeKind::Tuple, TypeKind::NamedTuple, TypeKind::Pointer, TypeKind::Proc
+          active << type_ref
+          begin
+            return unresolved_structural_result_type?(type_ref, desc, active)
+          ensure
+            active.pop
+          end
+        end
         name = desc.name
+        return true if name == "Unknown" && !known_type_name?(name)
         if filter = env_get("DEBUG_UNRESOLVED_GENERIC")
           if name.includes?(filter)
             STDERR.puts "[UNRESOLVED_GENERIC] name=#{name} kind=#{desc.kind} params=#{desc.type_params.size} generic=#{@generic_templates.has_key?(name)}"
@@ -51015,6 +51034,48 @@ module Adamas::HIR
           return args.any? { |arg| unresolved_generic_type_arg?(arg) }
         end
         return @generic_templates.has_key?(name)
+      end
+      type_ref.id >= TypeRef::FIRST_USER_TYPE
+    end
+
+    private def unresolved_structural_result_type?(
+      type_ref : TypeRef,
+      descriptor : TypeDescriptor,
+      active : Array(TypeRef),
+    ) : Bool
+      if descriptor.kind == TypeKind::Union
+        registration = union_registration_from_sidecar(type_ref)
+        return true unless registration
+        union = registration.descriptor
+        children = registration.source_variant_types
+        return true unless children && children.size == union.variants.size
+        expected_names = split_union_type_name(descriptor.name)
+        return true if union.variants.empty? || expected_names.size != union.variants.size
+        return true unless expected_names.all? { |name| union.variants.any? { |variant| variant.full_name == name.strip } }
+        return children.each_with_index.any? do |child, index|
+          # The layout producer can replace a provisional self-variant by a
+          # raw pointer. Only its original source child can settle inference.
+          provisional_void = child == TypeRef::VOID && union.variants[index].full_name != "Void"
+          provisional_void || unresolved_generic_return_type?(child, active)
+        end
+      end
+
+      params = descriptor.type_params
+      return true if descriptor.kind == TypeKind::Pointer && params.size != 1
+      return true if descriptor.kind == TypeKind::Proc && params.empty?
+      params.each_with_index do |child, index|
+        if child == TypeRef::VOID
+          # Void is a real Proc result and an explicitly named pointer pointee;
+          # in aggregate/input slots it is the unresolved inference sentinel.
+          next if descriptor.kind == TypeKind::Proc && index == params.size - 1
+          if descriptor.kind == TypeKind::Pointer
+            if info = split_generic_base_and_args(descriptor.name)
+              next if info.base == "Pointer" && (info.args.strip == "Void" || info.args.strip == "::Void")
+            end
+          end
+          return true
+        end
+        return true if unresolved_generic_return_type?(child, active)
       end
       false
     end
@@ -76556,6 +76617,10 @@ module Adamas::HIR
     # key lookup succeeded.  Variant selection must therefore never read the
     # Hash directly.
     private def union_descriptor_from_sidecar(union_type : TypeRef) : MIR::UnionDescriptor?
+      union_registration_from_sidecar(union_type).try(&.descriptor)
+    end
+
+    private def union_registration_from_sidecar(union_type : TypeRef) : UnionDescriptorRegistration?
       mir_union_ref = hir_to_mir_type_ref(union_type)
       entries = @union_descriptor_entries
       # Refreshes append a corrected descriptor while retaining the original
@@ -76565,7 +76630,7 @@ module Adamas::HIR
       while idx > 0
         idx -= 1
         entry = entries.unsafe_fetch(idx)
-        return entry.descriptor if entry.type_ref == mir_union_ref
+        return entry if entry.type_ref == mir_union_ref
       end
       nil
     end
@@ -146700,7 +146765,7 @@ module Adamas::HIR
 
       # Store descriptor for LLVM backend
       @union_descriptors[mir_union_type_ref] = descriptor
-      @union_descriptor_entries << UnionDescriptorRegistration.new(mir_union_type_ref, descriptor)
+      @union_descriptor_entries << UnionDescriptorRegistration.new(mir_union_type_ref, descriptor, variant_refs.dup)
 
       # M4h0 diagnostic-only (env-gated, no behavior change): immediately read the
       # just-stored value back out of the short-TypeRef Hash(MIR::TypeRef,
