@@ -107719,6 +107719,22 @@ module Adamas::HIR
       true
     end
 
+    # A syntactically inferred scalar is only a registration hint until the
+    # selected source body has been lowered. Early returns can add Nil (or a
+    # different result) even when the final expression looks concrete. Demand
+    # that exact Def before its caller uses the hint for narrowing or dispatch.
+    private def selected_source_result_pending?(
+      name : String,
+      selected_def : Adamas::Compiler::Frontend::DefNode?,
+    ) : Bool
+      return false unless selected_def
+      return false unless selected_def.return_type.nil? && selected_def.body
+      return false unless @function_defs[name]?.try(&.same?(selected_def))
+      return false unless @function_def_arenas.has_key?(name)
+      return false if @module.has_function_with_body?(name)
+
+      function_state(name).pending?
+    end
 
     private def exact_type_literal_return_materialization_candidate?(
       exact_target_admitted : Bool,
@@ -115176,9 +115192,6 @@ module Adamas::HIR
           unless explicit_query_return
             if inferred = infer_unannotated_query_return_type(method_name, recv_type_for_infer)
               return_type = inferred
-            else
-              fallback = fallback_query_return_type(method_name)
-              return_type = fallback unless fallback == TypeRef::VOID
             end
           end
         end
@@ -117073,6 +117086,7 @@ module Adamas::HIR
           !@module.has_function_with_body?(target)
       end
       force_return_type_needed = !!dependent_callback_return_pending ||
+                                 selected_source_result_pending?(mangled_method_name, selected_return_def) ||
                                  (allocator_explicit_new_call && !has_block_call) ||
                                  return_type == TypeRef::VOID ||
                                  is_union_type?(return_type) ||
