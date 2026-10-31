@@ -20813,6 +20813,26 @@ module Adamas::HIR
       resolved
     end
 
+    private def source_method_declaration_arena(
+      definition : Adamas::Compiler::Frontend::DefNode,
+      fallback : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Adamas::Compiler::Frontend::ArenaLike
+      # A retained exact Def registration owns its ExprIds even when a macro
+      # expansion's span is outside the arena's primary source buffer. Do not
+      # replace that owner with a structurally fitting bare-name alias.
+      if entry = @def_node_arenas[definition.object_id]?
+        if entry[0].same?(definition)
+          arena = entry[1]
+          if body_max_index_for_def(definition) >= arena.size
+            raise LoweringError.new("registered method source body exceeds its arena", definition)
+          end
+          return arena
+        end
+      end
+
+      resolve_arena_for_def(definition, fallback)
+    end
+
     private def canonical_arena_for_def(
       func_def : Adamas::Compiler::Frontend::DefNode,
       fallback : Adamas::Compiler::Frontend::ArenaLike,
@@ -47038,7 +47058,10 @@ module Adamas::HIR
           end
         end
       end
-      def_arena = initializer_replay_source.try(&.source_arena) || @function_def_arenas[base_name]? || resolve_arena_for_def(node, @arena)
+      # The selected Def owns one arena for its context, result/body witness,
+      # and emitted body. A bare method alias may refer to another overload or
+      # an inherited initializer; its arena cannot authorize this source Def.
+      def_arena = initializer_replay_source.try(&.source_arena) || source_method_declaration_arena(node, @arena)
       if !has_block
         has_block = def_contains_yield?(node, def_arena)
         # A bare-`yield` def has no source `&block` slot, but when a call is
@@ -47330,7 +47353,7 @@ module Adamas::HIR
         STDERR.puts "[LOWER_METHOD] 2. After create_function"
         STDERR.flush
       end
-      ctx = LoweringContext.new(func, @module, @arena)
+      ctx = LoweringContext.new(func, @module, def_arena)
       source_return_name = readable_explicit_return_type_name || explicit_return_type_for_registration(node, @arena)
       if source_return_name == "self"
         # `self` in an enum method names the enum, while the function's
@@ -47548,96 +47571,12 @@ module Adamas::HIR
                 body_debug_index += 1
               end
             end
-            # Use the stored arena for this function to avoid cross-file contamination.
-            # When lowering methods from monomorphized generic classes, @arena may be
-            # from a different file than where the method is actually defined.
-            # IMPORTANT: For super calls (when an override is provided), don't use
-            # base_name fallback because base_name is derived from node.name (e.g., "reverse!")
-            # but we want the arena for the super method. The base_name might incorrectly
-            # point to the child class's method arena instead of the parent's.
-            arena_from_stored = false
-            method_arena = begin
-              # For super calls (override set), prefer full_name only
-              # to avoid child class base_name shadowing parent arena.
-              # But still fall back to base_name if full_name not found.
-              stored = initializer_replay_source.try(&.source_arena) || @function_def_arenas[full_name]?
-              if stored.nil? && effective_full_name_override.empty?
-                stored = @function_def_arenas[base_name]?
-              end
-              # For typed variants (e.g., $Int32), also try base_name
-              # since the arena is registered under the base method name.
-              # Skip for super calls — base_name is "Class#method" which stores
-              # the child class's overload arena. The correct arena comes from
-              # @arena (set by caller via with_arena).
-              if stored.nil? && full_name != base_name && effective_full_name_override.empty?
-                stored = @function_def_arenas[base_name]?
-              end
-              # Verify the stored arena actually contains valid body nodes for
-              # this specific DefNode. When multiple overloads share a base_name
-              # (e.g., Indexable#join vs Enumerable#join), the stored arena may
-              # be from a different overload where body ExprIds resolve to wrong
-              # node types. Check that body node spans fall within the DefNode's
-              # own span — a node from a different overload will have a disjoint span.
-              if stored && !body.nil? && !body.not_nil!.empty?
-                def_span = node.span
-                def_start = def_span.start_offset
-                def_end = def_span.end_offset
-                if def_start >= 0 && def_end > def_start
-                  first_body_id = body.not_nil![0]
-                  if !first_body_id.null_ptr? && !first_body_id.invalid? &&
-                     first_body_id.index >= 0 && first_body_id.index < stored.size
-                    body_node = stored[first_body_id]
-                    body_span = body_node.span
-                    # Body node's span must be within the DefNode's span
-                    unless body_span.start_offset >= def_start && body_span.end_offset <= def_end
-                      stored = nil
-                    end
-                  end
-                end
-              end
-              if stored
-                arena_from_stored = true
-                stored
-              else
-                @arena
-              end
-            end
-            # Repair stale arena mappings for lazily-specialized names.
-            # If a typed call-site name was previously mapped to the caller arena,
-            # expression IDs in the Def body become out-of-bounds and lower_expr
-            # can silently degenerate into invalid calls (e.g. dropped args).
-            # Only repair when the body max_index exceeds arena size (hard failure).
-            # Don't repair on span_fits_source? failure alone when the arena was
-            # explicitly stored — macro-containing defs can have spans that exceed
-            # the source bytesize but still use correct ExprId indices.
-            if !body.empty?
-              max_index = body_max_index_for_def(node)
-              needs_repair = max_index >= method_arena.size
-              if !needs_repair && !arena_from_stored
-                needs_repair = !span_fits_source?(method_arena, node.span)
-              end
-              if needs_repair
-                # When the stored arena is too small, try @arena (current file context)
-                # before expensive resolve_arena_for_def. The current @arena is often
-                # correct — e.g., when lowering Fiber#initialize(Void*, Thread) while
-                # processing fiber.cr, the base_name may have been registered with a
-                # small macro-expansion arena from a different overload.
-                if arena_from_stored && max_index < @arena.size && arena_fits_def?(@arena, node)
-                  repaired_arena = @arena
-                else
-                  repaired_arena = resolve_arena_for_def(node, method_arena)
-                end
-                if repaired_arena != method_arena
-                  method_arena = repaired_arena
-                  arena_from_stored = true
-                  set_function_def_arena(full_name, repaired_arena)
-                  if debug_env_filter_match?("DEBUG_METHOD_ARENA_USE", class_name, method_name, full_name)
-                    path = source_path_for(repaired_arena) || "(unknown)"
-                    STDERR.puts "[METHOD_ARENA_USE] repaired full=#{full_name} method=#{path}:#{repaired_arena.size}"
-                  end
-                end
-              end
-            end
+            # Body decoding must consume the same source arena that authorized
+            # this method contract. Re-selecting by symbol can reinterpret
+            # same-span ExprIds from another file and invalidate a witness
+            # after nested lowering.
+            method_arena = def_arena
+            arena_from_stored = @function_def_arenas[full_name]?.try(&.object_id) == method_arena.object_id
             if debug_env_filter_match?("DEBUG_METHOD_ARENA_USE", class_name, method_name, full_name)
               stored_full = @function_def_arenas[full_name]?
               stored_base = @function_def_arenas[base_name]?

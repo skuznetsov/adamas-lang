@@ -23047,3 +23047,23 @@ integration, fresh bootstrap, or LavinMQ parity.
   fallback cache and contradictory-span rejection. This does not certify
   recovered initializer identity transport, native prelude, bootstrap or LavinMQ.
   Refresh after Def recovery, source-body registration or arena-cache changes.
+
+
+### 2026-10-31: Exact method body arena ownership
+
+- Use the retained selected Def's declaration arena for the method lowering
+  context, body witness, and body decoding. A bare or specialized name hint
+  cannot substitute a sibling overload's ExprIds. Retained generated sources
+  may exceed the primary text span; an arena missing body ExprIds is rejected.
+- Verified on clean HEAD 1574d524 plus this slice: the four focused HIR tests
+  fail before the fix (three foreign literals and one missing rejection) and
+  pass after it. The composed arena suite passes 15 examples. A fresh S1 and
+  the original Crystal 1.22.1/lazy/eager portable regression print identical A.
+  Evidence: method-arena-atomic32db.result.json,
+  method-arena-atomic32dc.result.json under the oct29 rootcause artifact root.
+- Remaining: default argument inference/literal extraction, explicit return
+  recovery, and heap-block scans still contain ambient-arena reads before or
+  outside this body contract. Add same-index foreign-default falsifiers and
+  carry exact declaration ownership through those phases. Native prelude,
+  bootstrap and LavinMQ parity are separate open gates.
+- Refresh this evidence after Def/arena registration or method lowering changes.
