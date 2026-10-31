@@ -22927,3 +22927,19 @@ Evidence: /opt/mldata_ssd/adamas_codex_oct29_rootcause/
 `regression.structural-result-isolated31b.log`, and
 `regression.pending-source30x6.log`. Refresh after structural/union registration
 or result-materialization changes. Fresh S2 and LavinMQ parity remain open.
+
+### Integer literal views preserve the same payload bits (2026-10-30)
+- [x] Keep signed and unsigned HIR literal caches as two views of the same
+  64-bit payload. High-bit UInt64 enum metadata must not become zero when
+  transported through Int64 before the consumer assigns its numeric type.
+- [x] An isolated f002df5a tree fails both regression examples before the
+  change and passes both afterwards, including printed HIR values and the
+  opposite signed view. The integrated candidate also matches Crystal for
+  high-bit UInt64 enum extraction in lazy and eager native execution.
+Evidence: /opt/mldata_ssd/adamas_codex_oct29_rootcause/
+`spec.literal-bits-isolated31.red.log`,
+`spec.literal-bits-isolated31.green.log`, and
+`regression.enum-extraction31f.log`. The native enum result includes other
+source-lowering changes; it is supplementary evidence, not isolated proof
+for those changes. Refresh after literal payload or MIR constant conversion
+changes. Fresh bootstrap and LavinMQ parity remain open.

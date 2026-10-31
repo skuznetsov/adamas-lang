@@ -301,10 +301,12 @@ module Adamas::HIR
       case v = @value
       when Int64
         @int_value = v
-        @uint_value = v >= 0 ? v.to_u64 : 0_u64
+        # Both caches describe the same integer bits. Enum metadata can carry
+        # UInt64's high bit through Int64 before the literal receives its type.
+        @uint_value = v.to_u64!
       when UInt64
         @uint_value = v
-        @int_value = v <= Int64::MAX.to_u64 ? v.to_i64 : 0_i64
+        @int_value = v.to_i64!
       when Float64
         @float_value = v
       when Bool
