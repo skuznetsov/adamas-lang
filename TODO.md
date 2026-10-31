@@ -22943,3 +22943,21 @@ Evidence: /opt/mldata_ssd/adamas_codex_oct29_rootcause/
 source-lowering changes; it is supplementary evidence, not isolated proof
 for those changes. Refresh after literal payload or MIR constant conversion
 changes. Fresh bootstrap and LavinMQ parity remain open.
+
+### Inherited value bodies preserve runtime self and lexical super (2026-10-30)
+- [x] Materialize inherited binary methods for the requested concrete value
+  owner. Do not emit the abstract ancestor as a second executable target.
+- [x] Record the selected source Def's lexical class owner per emitted instance
+  body. Resolve super above that owner while preserving the concrete receiver.
+  Generated aliases cannot substitute an unrelated owner, even with the same
+  Def and arena; rematerialization first retires the old owner witness.
+- [x] Isolated f002df5a plus this slice passes six HIR examples and the native
+  stock/lazy/ADAMAS_EAGER_MONO differential regression (ABABABAB). Tests cover
+  inherited value helpers, lexical super, reference inheritance, overrides,
+  virtual reference dispatch, and forged same-Def/same-arena owner aliases.
+Evidence: /opt/mldata_ssd/adamas_codex_oct29_rootcause/
+`binary-owner-combined31.patch`, `spec.binary-owner-super31-hardening.log`,
+`build.binary-owner-super31h.log`, and `regression.binary-owner-super31h.log`.
+Refresh after instance-source selection, alias registration, or super lookup
+changes. This does not close general binary argument admission, stock-prelude
+integration, fresh bootstrap, or LavinMQ parity.

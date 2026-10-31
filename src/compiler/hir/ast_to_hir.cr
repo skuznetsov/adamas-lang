@@ -7517,6 +7517,10 @@ module Adamas::HIR
     # `K.m_super_from_P` body name => ancestor `P` whose class method it lowers,
     # so a `super` inside that body continues above `P` instead of re-entering it.
     @class_method_super_owners = Hash(String, String).new
+    # Emitted instance-method body => the concrete class ancestor that owns its
+    # selected source Def. Inherited bodies keep a concrete runtime receiver,
+    # but `super` lookup starts above the lexical source owner.
+    @instance_method_super_owners = Hash(String, String).new
     # Current def node (used for parameter type inference in bodies).
     @current_def_node : Adamas::Compiler::Frontend::DefNode?
 
@@ -46979,6 +46983,15 @@ module Adamas::HIR
         full_name = candidate_full_name unless candidate_full_name.empty?
       end
       full_name = effective_full_name_override unless effective_full_name_override.empty?
+      if !is_class_method
+        # Function symbols can be rematerialized after source registration
+        # changes. Do not retain a lexical owner from an older body if this
+        # lowering cannot prove a replacement owner.
+        @instance_method_super_owners.delete(full_name)
+        if source_owner = concrete_instance_super_owner(class_name, signature_base_name, node)
+          @instance_method_super_owners[full_name] = source_owner
+        end
+      end
       stop_after_pending_target_lower_method_phase(
         "lower_method_name_ready",
         "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_NAME_READY",
@@ -90567,6 +90580,37 @@ module Adamas::HIR
       )
     end
 
+    # Resolve the lexical class owner of an emitted instance body from the
+    # source signature owner and its exact registered Def. A specialized
+    # inherited body keeps `class_name` as its runtime receiver, so source
+    # ownership must not be reconstructed from that receiver or a generated
+    # runtime alias.
+    private def concrete_instance_super_owner(
+      runtime_owner : String,
+      signature_base_name : String,
+      source_def : Adamas::Compiler::Frontend::DefNode,
+    ) : String?
+      return nil unless method_separator(signature_base_name) == '#'
+      lexical_owner = method_owner(signature_base_name)
+      return nil if lexical_owner.empty?
+      return nil unless name = registered_name_for_logical_def(signature_base_name, source_def)
+      return nil unless method_separator(name) == '#'
+      return nil unless registered_def = @function_defs[name]?
+      return nil unless same_def_node?(registered_def, source_def)
+      return nil unless registered_arena = registered_arena_for_def(registered_def)
+      return nil unless named_arena = @function_def_arenas[name]?
+      return nil unless arena_map_key(registered_arena) == arena_map_key(named_arena)
+
+      source_owner = method_owner(name)
+      return nil if source_owner.empty?
+      return nil unless strip_generic_args(source_owner) == strip_generic_args(lexical_owner)
+
+      get_ancestor_chain(runtime_owner).each do |ancestor|
+        return ancestor if strip_generic_args(ancestor) == strip_generic_args(source_owner)
+      end
+      nil
+    end
+
     private def with_invocation_super_source(source_module : String?, &)
       old_super_source = @current_super_source_module
       @current_super_source_module = source_module
@@ -91027,9 +91071,20 @@ module Adamas::HIR
         class_base = strip_generic_args(class_name)
         class_info = @class_info[class_base]?
       end
-      parent_name = class_info.try(&.parent_name)
+      # `class_name` is the runtime receiver owner. A virtual/inherited body
+      # can be materialized for that receiver while its source Def belongs to
+      # an ancestor. Preserve runtime `self`, but continue `super` above the
+      # exact source owner recorded for this emitted body.
+      super_start_owner = if invocation_context.super_source_module.nil?
+                            @instance_method_super_owners[invocation_context.function_name]? || class_name
+                          else
+                            class_name
+                          end
+      super_start_info = @class_info[super_start_owner]? ||
+                         @class_info[strip_generic_args(super_start_owner)]?
+      parent_name = super_start_info.try(&.parent_name)
       # Also check @module.class_parents for types without ClassInfo (e.g. enums)
-      parent_name ||= @module.class_parents[class_name]?
+      parent_name ||= @module.class_parents[super_start_owner]?
       if debug_argerr_super
         STDERR.puts "[ARGERR_SUPER] phase=parent parent=#{parent_name || "nil"}"
       end
@@ -91051,7 +91106,7 @@ module Adamas::HIR
 
       # Get argument types for mangling
       arg_types = args.map { |arg| ctx.type_of(arg) }
-      previous_base = "#{class_name}##{method_name}_previous"
+      previous_base = "#{super_start_owner}##{method_name}_previous"
       if entry = lookup_function_def_for_call(previous_base, args.size, false, arg_types)
         actual_prev_name, actual_prev_def = entry
         if params = actual_prev_def.params
@@ -91089,9 +91144,9 @@ module Adamas::HIR
         return call.id
       end
 
-      if class_info
-        class_lookup = class_name
-        class_base = strip_generic_args(class_name)
+      if super_start_info && class_info
+        class_lookup = super_start_owner
+        class_base = strip_generic_args(super_start_owner)
         included = @class_included_modules[class_lookup]? || @class_included_modules[class_base]?
         if included
           included.to_a.sort.each do |module_name|
@@ -95025,10 +95080,17 @@ module Adamas::HIR
         left_type,
         right_type,
       )
-      if method_name != primary_mangled_name && !use_primary_object_wrapper
+      # The selected ancestor Def supplies the body for a concrete value owner;
+      # its symbol is not an additional executable target. As in virtual-target
+      # replay, preserve that owner for both materialization and the call.
+      preserve_requested_owner = preserve_requested_value_owner_specialization?(
+        primary_mangled_name,
+        method_name,
+      )
+      if method_name != primary_mangled_name && !use_primary_object_wrapper && !preserve_requested_owner
         lower_function_if_needed(method_name)
       end
-      call_target_name = if use_primary_object_wrapper
+      call_target_name = if use_primary_object_wrapper || preserve_requested_owner
                            primary_mangled_name
                          else
                            prefer_primary_call_target(method_name, primary_mangled_name, [right_type])
