@@ -7523,6 +7523,10 @@ module Adamas::HIR
     @pending_inline_class_receiver : Tuple(String, String)? = nil
     # Track which module provided the current _super body (to avoid infinite recursion)
     @current_super_source_module : String?
+    # A module-super wrapper can be replayed after its original lowering scope
+    # has ended. Its physical name is only an index: the exact Def and arena
+    # must still authorize the retained lexical provider.
+    @method_body_super_sources = {} of String => {Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike, String}
     # `K.m_super_from_P` body name => ancestor `P` whose class method it lowers,
     # so a `super` inside that body continues above `P` instead of re-entering it.
     @class_method_super_owners = Hash(String, String).new
@@ -46110,7 +46114,12 @@ module Adamas::HIR
       forced_method_name : String = "",
       included_forall_virtual_body_demand : IncludedForallVirtualBodyDemand? = nil,
       initializer_replay_source : MaterializedInitializerSource? = nil,
+      super_source_module : String? = nil,
     )
+      previous_super_source_module = @current_super_source_module
+      # Every physical body owns this context, including ordinary bodies whose
+      # lexical provider is nil. Nested lowering must not inherit its caller's.
+      @current_super_source_module = super_source_module || included_forall_virtual_body_demand.try(&.source_module_owner)
       if recovered = source_recovered_def_for(node, @arena)
         return lower_method(
           class_name,
@@ -46125,11 +46134,16 @@ module Adamas::HIR
           forced_method_name,
           included_forall_virtual_body_demand,
           initializer_replay_source,
+          super_source_module,
         )
       end
       included_forall_body_method_arena = nil.as(Adamas::Compiler::Frontend::ArenaLike?)
       method_name = forced_method_name.empty? ? (safe_slice_to_string(node.name) || "") : forced_method_name
       effective_full_name_override = forced_full_name.empty? ? (full_name_override || "") : forced_full_name
+      if @current_super_source_module.nil? && @method_body_super_sources.has_key?(effective_full_name_override)
+        declaration_arena = initializer_replay_source.try(&.source_arena) || source_method_declaration_arena(node, @arena)
+        @current_super_source_module = retained_method_super_source(effective_full_name_override, node, declaration_arena)
+      end
       if source = initializer_replay_source
         unless source.function.name == effective_full_name_override && source.owner == class_name &&
                source.owner_type == class_info.type_ref && source.source_def.same?(node)
@@ -47173,6 +47187,16 @@ module Adamas::HIR
         full_name = candidate_full_name unless candidate_full_name.empty?
       end
       full_name = effective_full_name_override unless effective_full_name_override.empty?
+      if module_owner = @current_super_source_module
+        if retained = @method_body_super_sources[full_name]?
+          if retained[0].same?(node) && retained[1].same?(def_arena) && retained[2] != module_owner
+            raise LoweringError.new("module super provider changed for #{full_name}", node)
+          end
+        end
+        @method_body_super_sources[full_name] = {node, def_arena, module_owner}
+      else
+        @method_body_super_sources.delete(full_name)
+      end
       if !is_class_method
         # Function symbols can be rematerialized after source registration
         # changes. Do not retain a lexical owner from an older body if this
@@ -47879,6 +47903,18 @@ module Adamas::HIR
       @current_class = old_class
       @current_method = old_method
       @current_method_is_class = old_method_is_class || false
+    ensure
+      @current_super_source_module = previous_super_source_module
+    end
+
+    private def retained_method_super_source(
+      name : String,
+      definition : Adamas::Compiler::Frontend::DefNode,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : String?
+      source = @method_body_super_sources[name]?
+      return nil unless source && source[0].same?(definition) && source[1].same?(arena)
+      source[2]
     end
 
     # Get primitive TypeRef for self if class_name is a primitive type
@@ -91317,12 +91353,11 @@ module Adamas::HIR
                 # own body expressions may live in a different arena (same file,
                 # different parse pass). resolve_arena_for_def searches all known
                 # arenas to find one where body ExprIds actually resolve correctly.
-                with_invocation_super_source(actual_module_base) do
-                  resolved_def_arena = resolve_arena_for_def(actual_func_def, def_arena)
-                  with_arena(resolved_def_arena) do
-                    with_type_param_map(receiver_map) do
-                      lower_method(class_name, class_info, actual_func_def, arg_types, nil, nil, super_name, force_class_method: invocation_context.method_is_class)
-                    end
+                resolved_def_arena = resolve_arena_for_def(actual_func_def, def_arena)
+                with_arena(resolved_def_arena) do
+                  with_type_param_map(receiver_map) do
+                    lower_method(class_name, class_info, actual_func_def, arg_types, nil, nil, super_name,
+                      force_class_method: invocation_context.method_is_class, super_source_module: actual_module_base)
                   end
                 end
               end
@@ -91380,12 +91415,11 @@ module Adamas::HIR
           unless @module.has_function?(super_name)
             register_deferred_module_type_params(class_name, module_owner, super_name, super_base)
             receiver_map = type_param_map_for_receiver_name("#{class_name}##{method_name}")
-            with_invocation_super_source(module_owner) do
-              resolved_def_arena = resolve_arena_for_def(actual_func_def, def_arena)
-              with_arena(resolved_def_arena) do
-                with_type_param_map(receiver_map) do
-                  lower_method(class_name, class_info_for_super, actual_func_def, arg_types, nil, nil, super_name, force_class_method: invocation_context.method_is_class)
-                end
+            resolved_def_arena = resolve_arena_for_def(actual_func_def, def_arena)
+            with_arena(resolved_def_arena) do
+              with_type_param_map(receiver_map) do
+                lower_method(class_name, class_info_for_super, actual_func_def, arg_types, nil, nil, super_name,
+                  force_class_method: invocation_context.method_is_class, super_source_module: module_owner)
               end
             end
           end

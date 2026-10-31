@@ -23128,3 +23128,25 @@ integration, fresh bootstrap, or LavinMQ parity.
   readiness, and both native scheduler branches. Native stock prelude, bootstrap
   and LavinMQ parity remain open. Refresh after replay selection, pending-input
   publication, physical naming or readiness changes.
+
+
+### 2026-10-31: Own module-super context in every physical method
+
+- Root cause: lower_method inherited an ambient module-super provider. A nested
+  ordinary Slice#swap consequently skipped Indexable::Mutable and targeted
+  Struct#swap with a Void result. Each physical body now establishes its own
+  provider (including nil), passes explicit providers at module-wrapper entries,
+  and restores the caller in ensure. Exact Def and declaration arena qualify a
+  retained provider during forced rematerialization; another definition under
+  the same symbol cannot borrow it.
+- Verified on clean a60d6960 plus this slice: all 38 replay/arena/super HIR cases
+  pass. A fresh S1 passes method_super_source_owner_repro.sh against Crystal
+  1.22.1 in lazy and eager modes, printing AB. The composed candidate also passes
+  six focused tests and advances stock prelude beyond Slice#swap to heterogeneous
+  UInt32/UInt64 union-dispatch results. Evidence: method_super_atomic32gi.result.json,
+  method-super-contract32gf.result.json and method-super-native32ga/result.json.
+- Adversary: ROBUST for ordinary nested bodies, explicit module bodies, forced
+  replay, foreign Def/arena replacement and restored caller state. Inline-yield
+  frames and caller-frame-free callback ownership remain a separate audit; this
+  change certifies physical method entry. Native prelude, bootstrap and LavinMQ
+  parity remain open. Refresh after source recovery, super entry or replay changes.
