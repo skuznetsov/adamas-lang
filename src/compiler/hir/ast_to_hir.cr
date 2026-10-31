@@ -1617,6 +1617,12 @@ module Adamas::HIR
       end
     end
 
+    private record ClassIncludeTarget,
+      target : ExprId,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+      bindings : Hash(String, String),
+      namespace_override : String?
+
     private class IncludedForallVirtualBodyProvenance
       getter function : Adamas::HIR::Function
       getter function_name : String
@@ -7451,6 +7457,9 @@ module Adamas::HIR
     # Direct source includes retain their declaration arena even for builtin
     # generic owners whose stdlib reopening has no explicit type parameters.
     @source_class_include_targets : Hash(String, Array(Tuple(ExprId, Adamas::Compiler::Frontend::ArenaLike)))
+    # Selected macro includes join the same physical registration pass as
+    # direct includes. Each target keeps its own parsed declaration arena.
+    @active_class_include_targets = {} of String => Array(ClassIncludeTarget)
 
     # Already monomorphized generic classes (specialized name -> true)
     @monomorphized : Set(String)
@@ -15118,6 +15127,8 @@ module Adamas::HIR
         end
       when Adamas::Compiler::Frontend::ExtendNode
         register_module_class_methods_for(class_name, member.target, defined_class_method_full_names, visited_extends)
+      when Adamas::Compiler::Frontend::IncludeNode
+        record_class_include_target(class_name, member.target, @arena)
       when Adamas::Compiler::Frontend::DefNode
         mark_macro_generated_parameter_def(member)
         register_type_method_from_def(member, class_name)
@@ -25946,11 +25957,28 @@ module Adamas::HIR
       end
       module_full_name = resolve_module_alias_for_include(module_full_name)
       record_module_inclusion(module_full_name, class_name, already_resolved: true)
-      return offset if visited.includes?(module_full_name)
-      visited << module_full_name
-
       defs = @module_defs[module_full_name]?
       return offset unless defs
+      # The declaration name identifies a generic template, not one include
+      # application. Including Outer(Int32) must not suppress Outer(Bool),
+      # including any Leaf(T) emitted by each application's included macro.
+      include_param_map_cache = {} of String => Hash(String, String)
+      visit_bindings = {} of String => String
+      defs.each do |mod_node, _|
+        signature = module_type_params_signature(mod_node)
+        unless include_param_map_cache.has_key?(signature)
+          computed = include_type_param_map(mod_node, include_target, include_target_arena, class_name)
+          include_param_map_cache[signature] = computed
+          visit_bindings.merge!(computed)
+        end
+      end
+      visit_key = module_full_name
+      unless visit_bindings.empty?
+        bindings_key = visit_bindings.keys.sort.map { |name| "#{name}=#{visit_bindings[name]}" }.join(",")
+        visit_key = "#{module_full_name}|#{bindings_key}"
+      end
+      return offset if visited.includes?(visit_key)
+      visited << visit_key
       if trace_include_phase
         STDERR.puts "[REG_INCLUDE_PHASE] class=#{class_name} phase=defs_ready module=#{module_full_name} defs=#{defs.size}"
       end
@@ -25960,7 +25988,6 @@ module Adamas::HIR
       if trace_include_phase
         STDERR.puts "[REG_INCLUDE_PHASE] class=#{class_name} phase=macro_lookup module=#{module_full_name} found=#{included_macro_lookup ? 1 : 0}"
       end
-      include_param_map_cache = {} of String => Hash(String, String)
       i = 0
       while i < defs.size
         mod_entry = defs.unsafe_fetch(i)
@@ -35450,6 +35477,7 @@ module Adamas::HIR
                   # `private C = 1` arrives wrapped in a visibility modifier; the general
                   # expansion registration unwraps it and keeps the inner expression id.
                   when Adamas::Compiler::Frontend::CallNode,
+                       Adamas::Compiler::Frontend::IncludeNode,
                        Adamas::Compiler::Frontend::VisibilityModifierNode,
                        Adamas::Compiler::Frontend::InstanceVarDeclNode,
                        Adamas::Compiler::Frontend::TypeDeclarationNode
@@ -35530,6 +35558,7 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::AssignNode
         register_class_assign_from_expansion(body_id, body_node, class_name)
       when Adamas::Compiler::Frontend::CallNode,
+           Adamas::Compiler::Frontend::IncludeNode,
            Adamas::Compiler::Frontend::VisibilityModifierNode,
            Adamas::Compiler::Frontend::InstanceVarDeclNode,
            Adamas::Compiler::Frontend::TypeDeclarationNode
@@ -35629,6 +35658,7 @@ module Adamas::HIR
               when Adamas::Compiler::Frontend::AssignNode
                 register_class_assign_from_expansion(expr_id, expr_node, class_name)
               when Adamas::Compiler::Frontend::CallNode,
+                   Adamas::Compiler::Frontend::IncludeNode,
                    Adamas::Compiler::Frontend::VisibilityModifierNode,
                    Adamas::Compiler::Frontend::InstanceVarDeclNode,
                    Adamas::Compiler::Frontend::TypeDeclarationNode
@@ -35694,6 +35724,7 @@ module Adamas::HIR
             when Adamas::Compiler::Frontend::AssignNode
               register_class_assign_from_expansion(expr_id, expr_node, class_name)
             when Adamas::Compiler::Frontend::CallNode,
+                 Adamas::Compiler::Frontend::IncludeNode,
                  Adamas::Compiler::Frontend::VisibilityModifierNode,
                  Adamas::Compiler::Frontend::InstanceVarDeclNode,
                  Adamas::Compiler::Frontend::TypeDeclarationNode
@@ -35760,6 +35791,7 @@ module Adamas::HIR
               when Adamas::Compiler::Frontend::PropertyNode
                 register_accessors_in_class(expr_node, class_name, ivars, offset_ref)
               when Adamas::Compiler::Frontend::CallNode,
+                   Adamas::Compiler::Frontend::IncludeNode,
                    Adamas::Compiler::Frontend::VisibilityModifierNode,
                    Adamas::Compiler::Frontend::InstanceVarDeclNode,
                    Adamas::Compiler::Frontend::TypeDeclarationNode
@@ -35958,6 +35990,7 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::AssignNode
         register_class_assign_from_expansion(expr_id, expr_node, class_name)
       when Adamas::Compiler::Frontend::CallNode,
+           Adamas::Compiler::Frontend::IncludeNode,
            Adamas::Compiler::Frontend::VisibilityModifierNode,
            Adamas::Compiler::Frontend::InstanceVarDeclNode,
            Adamas::Compiler::Frontend::TypeDeclarationNode
@@ -36301,6 +36334,7 @@ module Adamas::HIR
             record_constant_definition(class_name, (safe_slice_to_string(target.name) || ""), expr_node.value, @arena)
           end
         when Adamas::Compiler::Frontend::CallNode,
+             Adamas::Compiler::Frontend::IncludeNode,
              Adamas::Compiler::Frontend::VisibilityModifierNode,
              Adamas::Compiler::Frontend::InstanceVarDeclNode,
              Adamas::Compiler::Frontend::TypeDeclarationNode
@@ -36431,6 +36465,7 @@ module Adamas::HIR
             record_constant_definition(class_name, (safe_slice_to_string(target.name) || ""), expr_node.value, @arena)
           end
         when Adamas::Compiler::Frontend::CallNode,
+             Adamas::Compiler::Frontend::IncludeNode,
              Adamas::Compiler::Frontend::VisibilityModifierNode,
              Adamas::Compiler::Frontend::InstanceVarDeclNode,
              Adamas::Compiler::Frontend::TypeDeclarationNode
@@ -39028,8 +39063,48 @@ module Adamas::HIR
       @class_info.has_key?(concrete_parent_name) ? concrete_parent_name : parent_name
     end
 
-    # Register a concrete (non-generic or specialized) class
+    private def record_class_include_target(
+      class_name : String,
+      target : ExprId,
+      target_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Nil
+      entry = {target, target_arena}
+      source_targets = @source_class_include_targets[class_name] ||= [] of Tuple(ExprId, Adamas::Compiler::Frontend::ArenaLike)
+      source_targets << entry unless source_targets.includes?(entry)
+      if active_targets = @active_class_include_targets[class_name]?
+        # A macro included by Outer(T) may emit `include Leaf(T)`. Its arena
+        # identifies the syntax, while this frame binds T at the include site;
+        # neither the class's later map nor a sibling specialization owns it.
+        active_entry = ClassIncludeTarget.new(target, target_arena, @type_param_map.dup, @current_namespace_override)
+        active_targets << active_entry unless active_targets.includes?(active_entry)
+      end
+      if module_name = resolve_path_like_name_in_arena(target, target_arena)
+        record_module_inclusion(module_name, class_name)
+      end
+    end
+
+    # Register a concrete (non-generic or specialized) class. Macro expansion
+    # may register another class, including a reopening of this owner, so the
+    # active include queue is scoped and restored independently of layout.
     private def register_concrete_class(
+      node : Adamas::Compiler::Frontend::ClassNode,
+      class_name : String,
+      is_struct : Bool,
+    )
+      previous_targets = @active_class_include_targets[class_name]?
+      @active_class_include_targets[class_name] = [] of ClassIncludeTarget
+      begin
+        register_concrete_class_with_includes(node, class_name, is_struct)
+      ensure
+        if previous_targets
+          @active_class_include_targets[class_name] = previous_targets
+        else
+          @active_class_include_targets.delete(class_name)
+        end
+      end
+    end
+
+    private def register_concrete_class_with_includes(
       node : Adamas::Compiler::Frontend::ClassNode,
       class_name : String,
       is_struct : Bool,
@@ -39323,20 +39398,16 @@ module Adamas::HIR
         # so type lookups resolve in the correct namespace
         old_class = @current_class
         @current_class = class_name
-        include_target_arena = @arena
-        include_nodes = [] of ExprId
+        include_nodes = @active_class_include_targets[class_name]
         extend_nodes = [] of Adamas::Compiler::Frontend::ExtendNode
         class_body.each do |expr_id|
           member = unwrap_visibility_member_in_arena(@arena[expr_id], @arena)
           case member
           when Adamas::Compiler::Frontend::IncludeNode
-            include_nodes << member.target
+            record_class_include_target(class_name, member.target, @arena)
             if debug_class_repair_enabled_for?(class_name)
               target_index = member.target.index
               STDERR.puts "[CLASS_REPAIR] phase=include_scan class=#{class_name} expr=#{expr_id.index} target=#{target_index} target_in_range=#{(target_index >= 0 && target_index < @arena.size) ? 1 : 0} arena=#{@arena.class.name.split("::").last}@#{@arena.object_id}:size=#{@arena.size}"
-            end
-            if module_name = resolve_path_like_name_in_arena(member.target, @arena)
-              record_module_inclusion(module_name, class_name)
             end
           when Adamas::Compiler::Frontend::ExtendNode
             extend_nodes << member
@@ -40380,7 +40451,9 @@ module Adamas::HIR
           unless env_has?("ADAMAS_SKIP_CLASS_INCLUDE_EXPANSION")
             include_idx = 0
             while include_idx < include_nodes.size
-              include_target = include_nodes.unsafe_fetch(include_idx)
+              include_entry = include_nodes.unsafe_fetch(include_idx)
+              include_target = include_entry.target
+              include_target_arena = include_entry.arena
               STDERR.puts "[REG_CONCRETE_PHASE] class=#{class_name} phase=include_loop idx=#{include_idx} target=#{include_target.index}" if trace_concrete_phase
               if trace_concrete_phase
                 offset = debug_probe_include_call_boundary(
@@ -40412,19 +40485,23 @@ module Adamas::HIR
                 )
                 STDERR.puts "[REG_CONCRETE_PHASE] class=#{class_name} phase=include_probe2_passed idx=#{include_idx}"
               end
-              offset = register_module_instance_methods_for(
-                class_name,
-                include_target,
-                include_target_arena.as(Adamas::Compiler::Frontend::ArenaLike),
-                defined_instance_method_full_names.as(Set(String)),
-                defined_class_method_full_names.as(Set(String)),
-                visited_modules.as(Set(String)),
-                visited_extends.as(Set(String)),
-                ivars,
-                offset,
-                is_struct,
-                init_capture
-              )
+              offset = with_isolated_type_param_map(include_entry.bindings) do
+                with_namespace_override_or_clear(include_entry.namespace_override) do
+                  register_module_instance_methods_for(
+                    class_name,
+                    include_target,
+                    include_target_arena.as(Adamas::Compiler::Frontend::ArenaLike),
+                    defined_instance_method_full_names.as(Set(String)),
+                    defined_class_method_full_names.as(Set(String)),
+                    visited_modules.as(Set(String)),
+                    visited_extends.as(Set(String)),
+                    ivars,
+                    offset,
+                    is_struct,
+                    init_capture
+                  )
+                end
+              end
               include_idx += 1
             end
           end
