@@ -66087,6 +66087,8 @@ module Adamas::HIR
           end
         end
         needs_deferred = false
+        # Proc literals need their closure/function value initialized before use.
+        needs_deferred = true if val_node.is_a?(Adamas::Compiler::Frontend::ProcLiteralNode)
         # String literals need runtime allocation
         needs_deferred = true if val_node.is_a?(Adamas::Compiler::Frontend::StringNode)
         # Char literals have no macro literal value, so cli.cr emits no static
