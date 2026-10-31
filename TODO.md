@@ -23171,3 +23171,25 @@ integration, fresh bootstrap, or LavinMQ parity.
   Stock prelude still stops at an independently traced selected-method/result
   ownership error for Slice#[]; bootstrap and LavinMQ parity remain open.
   Refresh after union naming, narrowing or canonical type identity changes.
+
+### 2026-10-31: Retain the selected source across generic union result queries
+
+- The generic-union argument ABI check selected a compatible included-module
+  method, then discarded that selection. A later family/arity return query
+  could choose an incompatible same-arity sibling (integer index versus Range
+  or Bool index) and publish the sibling's result.
+- Register the included source under its concrete typed target, preserving its
+  exact Def, arena, lexical namespace, and module/receiver type bindings. Pass
+  that selected target to the parent result query and prohibit bare-family
+  result fallback for that exact query. Other legacy class queries keep their
+  existing behavior.
+- Clean f96bba5a plus the six focused cases fails four cases. The isolated fix
+  passes all 48 focused HIR cases and a fresh S1 build
+  (`included_result_atomic32hn.result.json`). The composed prelude probe now
+  derives UInt32/UInt64 for Slice(UInt32)/Slice(UInt64) integer indexing
+  (`selected-source-prelude32hj`); this is not native prelude completion.
+- The separate bracket-syntax union path can still emit a Range sibling call;
+  fixing that call/result ABI path is the next frontier. Zero-argument, named,
+  block and splat generic-union queries are outside this selection bridge.
+  Refresh these results after source identity, call shape, generic bindings,
+  target registration, or return inference changes.

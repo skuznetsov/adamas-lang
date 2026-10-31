@@ -11557,18 +11557,27 @@ module Adamas::HIR
       has_block_call : Bool,
       has_splat : Bool,
       include_nil : Bool = false,
+      selected_parent_target : Tuple(String, Adamas::Compiler::Frontend::DefNode)? = nil,
     ) : TypeRef
       owners = [parent_name] + collect_subclasses_cached(parent_name)
       candidates = [] of TypeRef
 
       owners.each do |owner|
         owner_base = "#{owner}##{method_name}"
-        resolved = lookup_function_def_for_call(owner_base, arg_types.size, has_block_call, arg_types, has_splat)
+        # The argument ABI proof and result query must consume the same
+        # selected source. A family/arity lookup can pick a sibling overload
+        # after a compatible included-module method has already been selected.
+        resolved = if owner == parent_name && selected_parent_target
+                     selected_parent_target
+                   else
+                     lookup_function_def_for_call(owner_base, arg_types.size, has_block_call, arg_types, has_splat)
+                   end
         resolved_name = resolved ? resolved[0] : mangle_function_name(owner_base, arg_types, has_block_call)
         selected_def = resolved.try { |entry| entry[1] }
 
         candidate = get_function_return_type(resolved_name, arg_types.size, selected_def)
-        if candidate == TypeRef::VOID && resolved_name != owner_base
+        if candidate == TypeRef::VOID && resolved_name != owner_base &&
+           !(owner == parent_name && selected_parent_target)
           candidate = get_function_return_type(owner_base, arg_types.size)
         end
 
@@ -11796,6 +11805,7 @@ module Adamas::HIR
         )
       end
 
+      selected_targets = {} of String => Tuple(String, Adamas::Compiler::Frontend::DefNode)
       if admitted && !arg_types.empty?
         shared_param_abi : Array(TypeRef)? = nil
         incompatible_explicit_args = false
@@ -11822,7 +11832,9 @@ module Adamas::HIR
                  arg_types,
                  has_block_call,
                )
-              target = {owner_base, found[0]}
+              target = register_included_module_call_target(
+                resolved_variant, method_name, arg_types, has_block_call, found,
+              )
               included_module_param_map = included_module_type_param_map(resolved_variant, found[2]) ||
                                           {} of String => String
               included_module_param_names = declared_module_type_param_names(found[2])
@@ -11851,6 +11863,7 @@ module Adamas::HIR
             break
           end
 
+          selected_targets[resolved_variant] = target
           if expected_abi = shared_param_abi
             if param_abi != expected_abi
               incompatible_explicit_args = true
@@ -11878,6 +11891,7 @@ module Adamas::HIR
           has_block_call,
           has_splat,
           include_nil: true,
+          selected_parent_target: selected_targets[resolved_variant]?,
         )
         if candidate == TypeRef::VOID
           unresolved_variants << resolved_variant
