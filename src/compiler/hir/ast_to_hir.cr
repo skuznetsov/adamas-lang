@@ -1348,6 +1348,39 @@ module Adamas::HIR
       end
     end
 
+    # Retain the exact source binding and ABI shape of a private synthesized
+    # allocator so a later layout invalidation can recreate the same target.
+    private class GeneratedAllocatorLayoutRecipe
+      getter target_name : String
+      getter class_name : String
+      getter call_arg_types : Array(TypeRef)
+      getter call_has_named_args : Bool
+      getter call_has_block : Bool
+      getter call_named_arg_names : Array(String)?
+      getter call_block_node : Adamas::Compiler::Frontend::BlockNode?
+      getter call_block_param_types : Array(TypeRef)?
+      getter call_block_return_name : String?
+      getter selected_initializer : Bool
+      getter selected_init_target : SelectedCallTarget?
+      getter call_arena : Adamas::Compiler::Frontend::ArenaLike
+
+      def initialize(
+        @target_name : String,
+        @class_name : String,
+        @call_arg_types : Array(TypeRef),
+        @call_has_named_args : Bool,
+        @call_has_block : Bool,
+        @call_named_arg_names : Array(String)?,
+        @call_block_node : Adamas::Compiler::Frontend::BlockNode?,
+        @call_block_param_types : Array(TypeRef)?,
+        @call_block_return_name : String?,
+        @selected_initializer : Bool,
+        @selected_init_target : SelectedCallTarget?,
+        @call_arena : Adamas::Compiler::Frontend::ArenaLike,
+      )
+      end
+    end
+
     # HIR-local source receiver fact. The concrete signature is resolved once
     # while its source scope is active; downstream owner serialization does not
     # turn the canonical dispatch name back into a source lookup request.
@@ -7413,12 +7446,16 @@ module Adamas::HIR
     @generic_templates : Hash(String, GenericClassTemplate)
     # Additional generic class reopenings (base name -> templates)
     @generic_reopenings : Hash(String, Array(GenericClassTemplate))
+    @generic_declarations_in_source_order = {} of String => Array(GenericClassTemplate)
     # Direct source includes retain their declaration arena even for builtin
     # generic owners whose stdlib reopening has no explicit type parameters.
     @source_class_include_targets : Hash(String, Array(Tuple(ExprId, Adamas::Compiler::Frontend::ArenaLike)))
 
     # Already monomorphized generic classes (specialized name -> true)
     @monomorphized : Set(String)
+    @monomorphizing_generic_classes = Set(String).new
+    @generic_instance_declarations = {} of String => Set(Tuple(UInt64, UInt64))
+    @pending_generic_instance_declarations = {} of String => Array(GenericClassTemplate)
 
     # Debug counters
     @template_reg_counter : Int32?
@@ -7611,6 +7648,9 @@ module Adamas::HIR
 
     # Track which allocators have been generated (to avoid duplicates for reopened classes)
     @generated_allocators : Set(String)
+    @generated_allocator_layout_bodies = {} of String => Tuple(Adamas::HIR::Function, UInt64, String)
+    @generated_allocator_layout_recipes = {} of String => GeneratedAllocatorLayoutRecipe
+    @deferred_allocator_overload_targets = Set(String).new
     # A generated wrapper has no source Def of its own. Retain the initializer
     # chosen for this exact body so a later guard need not reselect a mutable alias.
     @generated_allocator_sources : Hash(String, Tuple(Adamas::HIR::Function, UInt64, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike, String, Array(TypeRef)))
@@ -8371,6 +8411,8 @@ module Adamas::HIR
       @resolved_type_alias_cache = Hash(String, String).new(initial_capacity: 4096)
       @type_alias_keys_by_suffix = {} of String => Array(String)
       @generated_allocators = Set(String).new
+      @generated_allocator_layout_recipes = {} of String => GeneratedAllocatorLayoutRecipe
+      @deferred_allocator_overload_targets = Set(String).new
       @generated_allocator_sources = {} of String => Tuple(Adamas::HIR::Function, UInt64, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike, String, Array(TypeRef))
       @stale_empty_allocators = Set(String).new
       @allocator_layout_prelower_in_progress = Set(String).new
@@ -38608,6 +38650,7 @@ module Adamas::HIR
             param_names = type_params.map { |p| safe_slice_to_string(p) || "" }
             bootstrap_trace_puts "[CLASS_FRONTIER] generic_after_params #{class_name} count=#{param_names.size}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
             new_template = GenericClassTemplate.new(class_name, param_names, node, @arena, is_struct)
+            (@generic_declarations_in_source_order[class_name] ||= [] of GenericClassTemplate) << new_template
             bootstrap_trace_puts "[CLASS_FRONTIER] generic_after_template #{class_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
 
             if existing = @generic_templates[class_name]?
@@ -38667,6 +38710,7 @@ module Adamas::HIR
             end
             bootstrap_trace_puts "[CLASS_FRONTIER] generic_before_return #{class_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
             @module.register_generic_dispatch_template(class_name) unless is_struct
+            publish_generic_reopening_to_materialized_instances(new_template)
             generic_template_registered = true
           end
         end
@@ -38706,6 +38750,126 @@ module Adamas::HIR
         end
       end
       false
+    end
+
+    # A concrete family can be demanded while only an earlier declaration of
+    # its template is registered (Pointer in primitives.cr is one example).
+    # Completion of that earlier snapshot does not authorize dropping later
+    # source declarations. Publish just the new declaration, in source order,
+    # through ordinary concrete registration, including its layout invalidation.
+    private def publish_generic_reopening_to_materialized_instances(template : GenericClassTemplate) : Nil
+      instances = @monomorphized.to_a.select do |name|
+        split_generic_base_and_args(name).try(&.base) == template.name
+      end
+      return if instances.empty?
+
+      old_arena = @arena
+      old_class = @current_class
+      old_namespace = @current_namespace_override
+      old_defer_body = @defer_body_return_inference
+      old_defer_mono = @defer_monomorphization
+      old_lazy = @lazy_module_methods
+      begin
+        @arena = template.arena
+        @current_namespace_override = nil
+        @defer_body_return_inference = true
+        @defer_monomorphization = true
+        @lazy_module_methods = true
+        instances.each do |name|
+          if @monomorphizing_generic_classes.includes?(name)
+            pending = @pending_generic_instance_declarations[name] ||= [] of GenericClassTemplate
+            pending << template
+            next
+          end
+          info = split_generic_base_and_args(name)
+          next unless info
+          args = split_generic_type_args(info.args)
+          next unless args.size == template.type_params.size
+          bindings = {} of String => String
+          template.type_params.each_with_index do |param, index|
+            bindings[param] = root_anchored_canonical_type_name(args[index])
+          end
+          @current_class = name
+          with_isolated_type_param_map(bindings) do
+            register_generic_instance_declaration(template, name)
+          end
+        end
+      ensure
+        @arena = old_arena
+        @current_class = old_class
+        @current_namespace_override = old_namespace
+        @defer_body_return_inference = old_defer_body
+        @defer_monomorphization = old_defer_mono
+        @lazy_module_methods = old_lazy
+      end
+    end
+
+    private def register_generic_instance_declaration(template : GenericClassTemplate, name : String) : Nil
+      identity = {template.node.object_id.to_u64, template.arena.object_id.to_u64}
+      declarations = @generic_instance_declarations[name] ||= Set(Tuple(UInt64, UInt64)).new
+      return unless declarations.add?(identity)
+      previous_layout = @class_info[name]?
+      previous_sources = {} of String => Adamas::Compiler::Frontend::DefNode
+      @module.functions.each do |function|
+        next unless @module.has_function_with_body?(function.name)
+        if source = @function_defs[function.name]?
+          previous_sources[function.name] = source
+        end
+      end
+      begin
+        @arena = template.arena
+        register_concrete_class(template.node, name, template.is_struct)
+        # Publishing a new source declaration also revokes results derived
+        # from its predecessor. An updated Def table alone cannot replace an
+        # already completed body under the same physical symbol.
+        previous_sources.each do |function_name, previous_source|
+          next if @function_defs[function_name]?.try(&.same?(previous_source))
+          next if function_state(function_name).in_progress?
+          next unless remove_hir_function(function_name)
+          clear_function_state(function_name)
+          set_function_state(function_name, FunctionLoweringState::Pending)
+          enqueue_pending_function(function_name, "generic_declaration_replace")
+          delete_yield_function(function_name)
+          @yield_return_functions.delete(function_name)
+          @yield_return_checked.delete(function_name)
+        end
+        if previous_layout && (current_layout = @class_info[name]?)
+          if previous_layout.ivars != current_layout.ivars || previous_layout.size != current_layout.size
+            refresh_generic_instance_layout_dependents(name)
+          end
+        end
+      rescue error
+        declarations.delete(identity)
+        raise error
+      end
+    end
+
+    private def refresh_generic_instance_layout_dependents(name : String) : Nil
+      invalidate_lowered_layout_functions(name, exact_owner_only: true)
+      pending = [name]
+      fixed = Set(String).new
+      fixed << name
+      index = 0
+      while index < pending.size
+        parent = pending[index]
+        index += 1
+        # Registration may have published descendants before this reopening.
+        # Refresh them in parent order without touching sibling families.
+        @class_info.keys.each do |child|
+          previous = @class_info[child]?
+          next unless previous && previous.parent_name == parent
+          next if fixed.includes?(child)
+          fixup_class_inherited_ivars(child, fixed)
+          align_class_ivars(child)
+          current = @class_info[child]?
+          next unless current
+          if previous.ivars != current.ivars || previous.size != current.size
+            bump_class_info_version
+            invalidate_lowered_layout_functions(child, exact_owner_only: true)
+            pending << child
+          end
+        end
+      end
     end
 
     private def register_instance_var_decl_in_class(
@@ -41016,7 +41180,7 @@ module Adamas::HIR
     # when the allocator was first requested. Now that all classes are registered,
     # we can generate them with the correct ivar info.
     def flush_deferred_allocators : Nil
-      return if @deferred_allocators.empty?
+      return if @deferred_allocators.empty? && @deferred_allocator_overload_targets.empty?
       has_ast = @deferred_allocators.any? { |n| n.includes?("AstToHir") }
       bootstrap_trace_puts "[ALLOC_FLUSH] deferred=#{@deferred_allocators.size} has_AstToHir=#{has_ast}" if has_ast
       count = 0
@@ -41035,7 +41199,44 @@ module Adamas::HIR
         generate_allocator(class_name, class_info, force: true)
         count += 1
       end
+      flush_deferred_allocator_overloads
       bootstrap_trace_puts "[ALLOC_FLUSH] Generated #{count} deferred allocators" if count > 0
+    end
+
+    private def flush_deferred_allocator_overloads : Nil
+      @deferred_allocator_overload_targets.to_a.each do |target_name|
+        recipe = @generated_allocator_layout_recipes[target_name]?
+        unless recipe
+          @deferred_allocator_overload_targets.delete(target_name)
+          next
+        end
+        if @module.has_function_with_body?(target_name)
+          @deferred_allocator_overload_targets.delete(target_name)
+          next
+        end
+        class_info = @class_info[recipe.class_name]?
+        next unless class_info
+
+        @deferred_allocator_overload_targets.delete(target_name)
+        with_arena(recipe.call_arena) do
+          generate_allocator_overload(
+            recipe.class_name,
+            class_info,
+            recipe.call_arg_types,
+            recipe.call_has_named_args,
+            recipe.call_has_block,
+            recipe.call_named_arg_names,
+            recipe.call_block_node,
+            recipe.call_block_param_types,
+            recipe.call_block_return_name,
+            recipe.selected_initializer,
+            recipe.selected_init_target,
+          )
+        end
+        unless @module.has_function_with_body?(target_name)
+          raise LoweringError.new("layout replay did not recreate allocator target #{target_name}")
+        end
+      end
     end
 
     # Recompute ivar offsets with proper alignment to match LLVM struct layout.
@@ -41212,7 +41413,7 @@ module Adamas::HIR
       aligned
     end
 
-    private def invalidate_lowered_layout_functions(class_name : String) : Nil
+    private def invalidate_lowered_layout_functions(class_name : String, exact_owner_only : Bool = false) : Nil
       owner_base = strip_generic_args(class_name)
       invalidated = 0
       @module.functions.dup.each do |func|
@@ -41223,7 +41424,8 @@ module Adamas::HIR
         owner = method_owner_from_name(name)
         next if owner.empty?
         owner_stripped = strip_generic_args(owner)
-        next unless owner == class_name || owner == owner_base || owner_stripped == class_name || owner_stripped == owner_base
+        next unless owner == class_name ||
+                    (!exact_owner_only && (owner == owner_base || owner_stripped == class_name || owner_stripped == owner_base))
 
         # Class methods don't access ivars and their compiled body does not
         # depend on instance layout. Re-lowering them after invalidation can
@@ -41260,7 +41462,7 @@ module Adamas::HIR
         invalidated += 1
       end
 
-      invalidate_generated_allocator_state(class_name, owner_base)
+      invalidate_generated_allocator_state(class_name, owner_base, exact_owner_only)
 
       if invalidated > 0 && env_has?("DEBUG_IVAR_REG")
         STDERR.puts "[LAYOUT_INVALIDATE] class=#{class_name} funcs=#{invalidated}"
@@ -41333,29 +41535,53 @@ module Adamas::HIR
       true
     end
 
-    private def invalidate_generated_allocator_state(class_name : String, owner_base : String) : Nil
+    private def invalidate_generated_allocator_state(class_name : String, owner_base : String, exact_owner_only : Bool = false) : Nil
       owners = Set(String).new
       owners << class_name unless class_name.empty?
-      owners << owner_base unless owner_base.empty?
+      owners << owner_base unless owner_base.empty? || exact_owner_only
       # invalidate_lowered_layout_functions removes bodies for concrete generic
       # specializations when their stripped owner matches the changed generic
       # template (e.g. Channel(Int32) for Channel). Keep allocator bookkeeping in
       # sync with that broader body invalidation.
       @generated_allocators.each do |owner|
         stripped = strip_generic_args(owner)
-        if owner == class_name || owner == owner_base || stripped == class_name || stripped == owner_base
+        if owner == class_name || (!exact_owner_only && (owner == owner_base || stripped == class_name || stripped == owner_base))
           owners << owner
         end
       end
       @deferred_allocators.each do |owner|
         stripped = strip_generic_args(owner)
-        if owner == class_name || owner == owner_base || stripped == class_name || stripped == owner_base
+        if owner == class_name || (!exact_owner_only && (owner == owner_base || stripped == class_name || stripped == owner_base))
+          owners << owner
+        end
+      end
+      # A source-bound private target can be the only generated allocator body
+      # for its owner, bypassing the base allocator's owner bookkeeping.
+      @generated_allocator_layout_bodies.each_value do |proof|
+        owner = proof[2]
+        stripped = strip_generic_args(owner)
+        if owner == class_name || (!exact_owner_only && (owner == owner_base || stripped == class_name || stripped == owner_base))
           owners << owner
         end
       end
 
       owners.each do |owner|
         next if owner.empty?
+        # Class methods are excluded from instance-body invalidation. Remove
+        # their synthesized allocators only with the generating body witness:
+        # clearing the owner flag while retaining a completed .new body makes
+        # regeneration silently reuse its old field initialization.
+        @generated_allocator_layout_bodies.to_a.each do |function_name, proof|
+          next unless proof[2] == owner
+          function = @module.function_by_name(function_name)
+          if function && function.same?(proof[0]) && function.body_revision == proof[1] &&
+             !function_state(function_name).in_progress?
+            remove_hir_function(function_name)
+            clear_function_state(function_name)
+            @deferred_allocator_overload_targets << function_name if @generated_allocator_layout_recipes.has_key?(function_name)
+          end
+          @generated_allocator_layout_bodies.delete(function_name)
+        end
         was_generated = @generated_allocators.delete(owner)
         was_deferred = @deferred_allocators.includes?(owner)
         # If the allocator was generated or was already deferred for regeneration,
@@ -41485,6 +41711,7 @@ module Adamas::HIR
     )
       monomorphize_stats_index, monomorphize_stats_start = begin_lower_method_monomorphize_stats
       monomorphize_created_base : String? = nil
+      monomorphizing_name : String? = nil
       begin
         base_name = resolve_generic_template_base(base_name)
         template = @generic_templates[base_name]?
@@ -41527,6 +41754,8 @@ module Adamas::HIR
       # Mark as monomorphized BEFORE processing to prevent infinite recursion
       # (e.g., Array(String) method calls something that creates Array(String) again)
       @monomorphized.add(specialized_name)
+      @monomorphizing_generic_classes.add(specialized_name)
+      monomorphizing_name = specialized_name
       monomorphize_created_base = base_name
       record_lower_method_monomorphize_new(monomorphize_stats_index, base_name)
       debug_hook("mono.start", "base=#{base_name} name=#{specialized_name} args=#{type_args}")
@@ -41607,12 +41836,21 @@ module Adamas::HIR
 
       # Register the specialized class using the template's AST node
       # The type_ref_for_name calls will now substitute T => Int32
-      register_concrete_class(template.node, specialized_name, template.is_struct)
+      # Template size chooses an inventory representative, never source
+      # precedence. Warm and cold families must apply declarations in the same
+      # order, so a newer, larger reopening cannot be overwritten by an older
+      # declaration retained in @generic_reopenings.
+      declarations = @generic_declarations_in_source_order[base_name]? || [template]
+      declarations.each do |declaration|
+        register_generic_instance_declaration(declaration, specialized_name)
+      end
 
-      if reopenings = @generic_reopenings[base_name]?
-        reopenings.each do |reopen|
-          @arena = reopen.arena
-          register_concrete_class(reopen.node, specialized_name, reopen.is_struct)
+      # A nested registration may discover another reopening while this
+      # family is still partial. Apply it only after the current pass, once,
+      # without clearing the recursion/completion guard or replaying old inits.
+      while pending = @pending_generic_instance_declarations.delete(specialized_name)
+        pending.each do |declaration|
+          register_generic_instance_declaration(declaration, specialized_name)
         end
       end
 
@@ -41675,7 +41913,7 @@ module Adamas::HIR
                 end
                 case member
                 when Adamas::Compiler::Frontend::DefNode
-                  lower_method(specialized_name, class_info, member)
+                  lower_selected_generic_instance_def(specialized_name, class_info, member)
                 when Adamas::Compiler::Frontend::GetterNode
                   # Generate synthetic getter methods
                   member.specs.each do |spec|
@@ -41709,6 +41947,7 @@ module Adamas::HIR
       @current_class = old_class
       @monomorphized.add(specialized_name)
       ensure
+        @monomorphizing_generic_classes.delete(monomorphizing_name) if monomorphizing_name
         finish_lower_method_monomorphize_stats(
           monomorphize_stats_index,
           monomorphize_stats_start,
@@ -42295,6 +42534,39 @@ module Adamas::HIR
     # the current registration-time owner and lower that canonical node in its
     # saved arena.  The exact mangled key also prevents create_function from
     # committing a replay-derived signature before the authoritative one.
+    private def lower_selected_generic_instance_def(
+      class_name : String,
+      class_info : ClassInfo,
+      member : Adamas::Compiler::Frontend::DefNode,
+    ) : Nil
+      method_name = def_method_name_from_node(member, @arena) || ""
+      return if method_name.empty?
+
+      separator = def_receiver_is_self_from_node(member, @arena) ? "." : "#"
+      base_name = "#{class_name}#{separator}#{method_name}"
+      registered_name = registered_name_for_logical_def(base_name, member)
+      return unless registered_name
+
+      registered_def = @function_defs[registered_name]?
+      # Eager specialization walks every retained declaration, including an
+      # earlier body whose exact signature was replaced during registration.
+      # Only the final registration owner may publish this concrete body.
+      return unless registered_def.try(&.same?(member))
+
+      registered_arena = @function_def_arenas[registered_name]?
+      return unless registered_arena
+      return unless arena_map_key(registered_arena) == arena_map_key(@arena)
+
+      with_arena(registered_arena) do
+        lower_method(
+          class_name,
+          class_info,
+          registered_def.not_nil!,
+          full_name_override: registered_name,
+        )
+      end
+    end
+
     private def lower_registered_class_body_def(
       class_name : String,
       class_info : ClassInfo,
@@ -43789,6 +44061,7 @@ module Adamas::HIR
 
       # Return allocated object
       ctx.terminate(Return.new(alloc.id))
+      @generated_allocator_layout_bodies[func_name] = {func, func.body_revision, class_name}
 
       # Generate instance #new wrapper for cases where type literals are lowered as receivers.
       instance_name = allocator_instance_new_name_for(class_name)
@@ -44735,6 +45008,30 @@ module Adamas::HIR
       end
 
       ctx.terminate(Return.new(alloc.id))
+      @generated_allocator_layout_bodies[overload_name] = {func, func.body_revision, class_name}
+      selected_layout_target = selected_init_target.try do |selected|
+        source_arena = selected.source_arena || resolve_arena_for_def(selected.def_node, @arena)
+        SelectedCallTarget.new(selected.symbol_name, selected.def_node, source_arena)
+      end
+      allocator_call_arena = if block_node = call_block_node
+                               @block_node_arenas[block_node.object_id]? || resolve_arena_for_block(block_node, @arena) || @arena
+                             else
+                               @arena
+                             end
+      @generated_allocator_layout_recipes[overload_name] = GeneratedAllocatorLayoutRecipe.new(
+        overload_name,
+        class_name,
+        call_arg_types.dup,
+        call_has_named_args,
+        call_has_block,
+        allocator_named_arg_names.try(&.dup),
+        call_block_node,
+        call_block_param_types.try(&.dup),
+        call_block_return_name,
+        selected_initializer,
+        selected_layout_target,
+        allocator_call_arena,
+      )
       if !call_has_named_args && !initializer_has_block &&
          forwarded_initializer_block_index.nil? &&
          (source_def = matched_init_def) && (source_arena = matched_init_arena) &&
@@ -71935,6 +72232,180 @@ module Adamas::HIR
       names
     end
 
+    # Return the first owner formal that the selected source Def actually
+    # requires while its generic class owner is still bare. Method-level
+    # forall names shadow same-named owner formals in both the signature and
+    # body. Looking only at annotations misses bodies such as `def self.value;
+    # T; end`, while scanning source text would incorrectly count comments,
+    # strings, and macro templates.
+    private def unbound_generic_owner_formal_in_def(
+      template : GenericClassTemplate,
+      def_node : Adamas::Compiler::Frontend::DefNode,
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : String?
+      forall_names = forall_type_param_names(def_node)
+      formals = template.type_params.reject { |name| forall_names.includes?(name) }
+      return nil if formals.empty?
+
+      if params = def_node.params
+        params.each do |param|
+          if source_annotation = param.type_annotation
+            if formal = first_unqualified_owner_formal_in_type_text(String.new(source_annotation), formals)
+              return formal
+            end
+          end
+          if default_value = param.default_value
+            if formal = source_expr_reads_generic_owner_formal?(
+                 default_value, source_arena, formals, Set(Int32).new,
+               )
+              return formal
+            end
+          end
+        end
+      end
+
+      if return_type = def_node.return_type
+        if formal = first_unqualified_owner_formal_in_type_text(String.new(return_type), formals)
+          return formal
+        end
+      end
+
+      if body = def_node.body
+        seen = Set(Int32).new
+        body.each do |expr_id|
+          if formal = source_expr_reads_generic_owner_formal?(expr_id, source_arena, formals, seen)
+            return formal
+          end
+        end
+      end
+
+      nil
+    end
+
+    private def unbound_generic_owner_formal_for_bare_class_method(
+      owner_name : String,
+      selected_name : String,
+      selected_def : Adamas::Compiler::Frontend::DefNode,
+      selected_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Tuple(String, String)?
+      selected_parts = parse_method_name(selected_name)
+      return nil unless selected_parts.is_class && selected_parts.owner == owner_name
+      return nil if selected_parts.owner.includes?('(')
+
+      template = @generic_templates[selected_parts.owner]?
+      return nil unless template
+      formal = unbound_generic_owner_formal_in_def(template, selected_def, selected_arena)
+      return nil unless formal
+
+      owner_type = "#{selected_parts.owner}(#{template.type_params.join(", ")})"
+      {formal, owner_type}
+    end
+
+    private def first_unqualified_owner_formal_in_type_text(
+      type_text : String,
+      formals : Array(String),
+    ) : String?
+      formals.each do |formal|
+        from = 0
+        while idx = type_text.index(formal, from)
+          right_idx = idx + formal.bytesize
+          left_ok = idx == 0 || !type_param_token_char?(type_text.byte_at(idx - 1))
+          right_ok = right_idx >= type_text.bytesize || !type_param_token_char?(type_text.byte_at(right_idx))
+          # A segment following :: names a qualified type (including ::T),
+          # not the unqualified generic formal in this lexical scope.
+          qualified_segment = idx >= 2 && type_text.byte_at(idx - 1) == ':'.ord && type_text.byte_at(idx - 2) == ':'.ord
+          return formal if left_ok && right_ok && !qualified_segment
+          from = right_idx
+        end
+      end
+      nil
+    end
+
+    private def source_expr_reads_generic_owner_formal?(
+      expr_id : Adamas::Compiler::Frontend::ExprId,
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
+      formals : Array(String),
+      seen : Set(Int32),
+    ) : String?
+      return nil if expr_id.invalid? || expr_id.index < 0 || expr_id.index >= source_arena.size
+      return nil if seen.includes?(expr_id.index)
+      seen.add(expr_id.index)
+
+      node = source_arena[expr_id]
+      case node
+      when Adamas::Compiler::Frontend::IdentifierNode
+        name = safe_slice_to_string(node.name) || ""
+        return name if formals.includes?(name)
+      when Adamas::Compiler::Frontend::PathNode
+        if formal = generic_formal_at_path_root(node, source_arena, formals)
+          return formal
+        end
+        # Path segments after the root are names, not independent reads of a
+        # same-spelled owner formal. Only generic arguments on the left can
+        # contain a separate type expression worth visiting.
+        if left = node.left
+          if left_node = source_arena[left].as?(Adamas::Compiler::Frontend::GenericNode)
+            left_node.type_args.each do |type_arg|
+              if formal = source_expr_reads_generic_owner_formal?(type_arg, source_arena, formals, seen)
+                return formal
+              end
+            end
+          end
+        end
+        return nil
+      when Adamas::Compiler::Frontend::TypeDeclarationNode
+        return first_unqualified_owner_formal_in_type_text(String.new(node.declared_type), formals)
+      when Adamas::Compiler::Frontend::InstanceVarDeclNode
+        return first_unqualified_owner_formal_in_type_text(String.new(node.type), formals)
+      when Adamas::Compiler::Frontend::ClassVarDeclNode
+        return first_unqualified_owner_formal_in_type_text(String.new(node.type), formals)
+      when Adamas::Compiler::Frontend::AsNode,
+           Adamas::Compiler::Frontend::AsQuestionNode,
+           Adamas::Compiler::Frontend::IsANode
+        return first_unqualified_owner_formal_in_type_text(String.new(node.target_type), formals)
+      when Adamas::Compiler::Frontend::DefNode,
+           Adamas::Compiler::Frontend::ClassNode,
+           Adamas::Compiler::Frontend::ModuleNode,
+           Adamas::Compiler::Frontend::EnumNode,
+           Adamas::Compiler::Frontend::LibNode,
+           Adamas::Compiler::Frontend::MacroDefNode,
+           Adamas::Compiler::Frontend::MacroLiteralNode,
+           Adamas::Compiler::Frontend::MacroExpressionNode,
+           Adamas::Compiler::Frontend::MacroIfNode,
+           Adamas::Compiler::Frontend::MacroForNode
+        # Nested declarations have their own lexical owners, and macro bodies
+        # are templates rather than expressions executed by this method.
+        return nil
+      end
+
+      Adamas::Compiler::Frontend::NodeDispatch.get_child_exprs(source_arena, expr_id).each do |child_id|
+        if formal = source_expr_reads_generic_owner_formal?(child_id, source_arena, formals, seen)
+          return formal
+        end
+      end
+      nil
+    end
+
+    private def generic_formal_at_path_root(
+      path : Adamas::Compiler::Frontend::PathNode,
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
+      formals : Array(String),
+    ) : String?
+      current_id = path.left || return nil # Absolute paths do not bind owner formals.
+      loop do
+        case root = source_arena[current_id]
+        when Adamas::Compiler::Frontend::IdentifierNode
+          name = safe_slice_to_string(root.name) || ""
+          return name if formals.includes?(name)
+          return nil
+        when Adamas::Compiler::Frontend::PathNode
+          current_id = root.left || return nil
+        else
+          return nil
+        end
+      end
+    end
+
     # A bare generic receiver can infer its owner's parameters from a callback
     # even when the method declares no forall (Pointer.malloc is one example).
     # Enumerate declarations, not uppercase identifiers or ambient bindings.
@@ -78775,7 +79246,7 @@ module Adamas::HIR
       # those allocators before handing the HIR module to MIR/LLVM, otherwise
       # calls such as Channel(T).new can point at a removed allocator body.
       deferred_allocator_passes = 0
-      while !@deferred_allocators.empty? && deferred_allocator_passes < 3
+      while (!@deferred_allocators.empty? || !@deferred_allocator_overload_targets.empty?) && deferred_allocator_passes < 3
         flush_deferred_allocators
         with_pending_process_context("deferred_allocators", deferred_allocator_passes, @pending_function_queue.size) do
           process_pending_lower_functions
@@ -103809,30 +104280,9 @@ module Adamas::HIR
           end
         end
       end
-      if func_def
-        if sep = name_parts.separator
-          owner = name_parts.owner
-          method_part = name_parts.method
-          if method_part && !owner.includes?('(') && (template = @generic_templates[owner]?)
-            if found = find_method_in_generic_template(template, method_part, lookup_expected_param_count, lookup_expect_block)
-              func_def = found[0]
-              arena = found[1]
-              target_name = mangled_template_target_name(name, base_name, found[0], found[1], lookup_expected_param_count)
-              lookup_branch = "generic_template_prefer"
-            elsif reopenings = @generic_reopenings[owner]?
-              reopenings.each do |reopen_template|
-                found_in_reopen = find_method_in_generic_template(reopen_template, method_part, lookup_expected_param_count, lookup_expect_block)
-                next unless found_in_reopen
-                func_def = found_in_reopen[0]
-                arena = found_in_reopen[1]
-                target_name = mangled_template_target_name(name, base_name, found_in_reopen[0], found_in_reopen[1], lookup_expected_param_count)
-                lookup_branch = "generic_reopen_prefer"
-                break
-              end
-            end
-          end
-        end
-      end
+      # A selected source definition owns its body. Generic templates above
+      # supply missing definitions only: an older template snapshot must not
+      # replace the exact definition published by a later reopening.
       if !func_def
         if maybe_generate_class_accessor_for_name(name)
           debug_hook("function.lookup.generated", "name=#{name} kind=class_accessor")
@@ -112044,6 +112494,24 @@ module Adamas::HIR
         entry_name = selected_target.symbol_name
         entry_def = selected_target.def_node
         selected_call_entry_arena = selected_target.source_arena
+        # A bare generic class owner cannot supply its type arguments at a
+        # class-method call. Reject only when this exact selected source Def
+        # reads an owner formal; independent methods and method-level forall
+        # shadows remain usable without specializing the owner.
+        bare_call_owner = class_name_str || static_class_name
+        if receiver_id.nil? && entry_def && bare_call_owner
+          selected_def_arena = selected_call_entry_arena ||
+                               registered_arena_for_def(entry_def) ||
+                               resolve_arena_for_def(entry_def, @arena)
+          if unbound = unbound_generic_owner_formal_for_bare_class_method(
+               bare_call_owner, entry_name, entry_def, selected_def_arena,
+             )
+            raise LoweringError.new(
+              "can't infer the type parameter #{unbound[0]} for the generic class #{unbound[1]}",
+              node,
+            )
+          end
+        end
         if has_block_call
           block_proc_expected_return_type = expected_nil_block_return_type_for_def(entry_name, entry_def)
         end
@@ -135374,6 +135842,21 @@ module Adamas::HIR
                          else
                            resolve_class_method_with_inheritance(class_name_str, member_name) || "#{class_name_str}.#{member_name}"
                          end
+      if !lookup_class_name.includes?('(') && @generic_templates.has_key?(lookup_class_name)
+        if selected = lookup_function_def_for_call(
+             full_method_name, 0, false, [] of TypeRef, false, false,
+           )
+          selected_name, selected_def = selected
+          selected_arena = @function_def_arenas[selected_name]? || resolve_arena_for_def(selected_def, @arena)
+          if unbound = unbound_generic_owner_formal_for_bare_class_method(
+               lookup_class_name, selected_name, selected_def, selected_arena,
+             )
+            raise LoweringError.new(
+              "can't infer the type parameter #{unbound[0]} for the generic class #{unbound[1]}",
+            )
+          end
+        end
+      end
       generated_allocator_target : String? = nil
       source_new_entry : Tuple(String, Adamas::Compiler::Frontend::DefNode)? = nil
       if member_name == "new"

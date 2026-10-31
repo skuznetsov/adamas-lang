@@ -22510,3 +22510,24 @@ indexed in TODO.md. This does not establish shared method-contract, bootstrap,
 or LavinMQ parity. Refresh after alias lookup, declaration namespaces, generic
 head indexing, or source result pattern matching changes. Roll back parser,
 spec and dedicated regression together.
+
+### Generic publication and synthesized-body replay have separate owners (2026-10-30)
+A completed concrete generic is a snapshot of declarations seen so far, not a
+license to omit later reopenings. Keep a source-ordered declaration ledger and
+per-instance applied source identities. Revoke replaced Def bodies and changed
+layout dependents through their ordinary owners without resetting siblings.
+
+A source-bound private allocator can bypass base-owner completion bookkeeping.
+Invalidating its physical body therefore requires a retained exact initializer,
+arena and call-shape recipe, not merely an owner flag. Recreate and verify the
+same target name after invalidation. This is the synthesized-body counterpart
+to preserving semantic virtual demand when a layout body is discarded.
+
+Isolated ff1b2b62 plus this slice passes 16 HIR examples, ten stock/lazy/actual-
+eager oracle cases, and both native stock-prelude startup/context programs.
+The prior generic-only Thread allocator failure is superseded. Scoped adversary
+ROBUST for selected-target regeneration, source order, siblings and unbound
+owner formals. Evidence is indexed in TODO.md; fresh bootstrap and LavinMQ parity
+remain open. Refresh after generic registration, exact source selection,
+allocator ABI shape or layout invalidation changes. Roll back publication,
+recipe replay and the dedicated specs/regression together.

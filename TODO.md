@@ -22874,3 +22874,27 @@ Evidence: /opt/mldata_ssd/adamas_codex_oct29_rootcause/
 `regression.source-block-canonical-only30t1.log`.
 This scoped parser check does not certify the shared method-result validator,
 full prelude, bootstrap, or LavinMQ runtime/upstream-test parity.
+
+### Source-ordered generic reopening and exact allocator replay (2026-10-30)
+- [x] Publish new generic declarations once to already materialized exact
+  instances in source order, including eager instances. An earlier completion
+  flag or largest inventory template must not suppress a later Def. Refresh
+  descendant layouts and replace stale completed bodies only when their exact
+  source binding changed; leave sibling instances intact.
+- [x] Retain physical allocator body provenance and the exact selected source
+  initializer/call shape as a regeneration recipe. Layout invalidation must
+  recreate the same private target, even when source-bound generation bypassed
+  the base allocator owner flag. Owner-only regeneration lost Thread's target.
+- [x] Keep bare generic owner formals rejected when the exact selected source
+  body reads an unbound formal; qualified names and method forall shadowing
+  do not invent such a dependency.
+- [x] Isolated ff1b2b62 plus this slice passes 16 HIR examples and ten
+  stock/lazy/ADAMAS_EAGER_MONO native/rejection cases (30 oracle checks),
+  including changed-layout source-bound allocator output ABC. Stock and
+  candidate prelude hello/context both compile and run, superseding the older
+  generic-only Thread.__adamas_allocator_new failure.
+Evidence: /opt/mldata_ssd/adamas_codex_oct29_rootcause/
+`generic-allocator-replay31.patch`, `spec.generic-allocator-replay31.log`,
+`generic-allocator-replay31/generic-harness.log`, and
+`prelude.exact-allocator-replay31.log`.
+Shared-slice integration, fresh S2/fixed point and LavinMQ parity remain open.
