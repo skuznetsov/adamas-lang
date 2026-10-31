@@ -53896,39 +53896,91 @@ module Adamas::HIR
     # call sites that carry arguments.
     private def register_included_module_body_type_params(
       receiver_name : String,
-      module_owner : String,
+      source_owner : String,
       full_name : String,
       base_name : String,
     ) : Nil
-      module_param_names = declared_module_type_param_names(module_owner)
-      return if module_param_names.empty?
-      return unless module_param_map = included_module_type_param_map(receiver_name, strip_generic_args(module_owner))
-      store_function_type_param_map(
-        full_name,
-        base_name,
-        module_param_map,
-        module_param_names,
-        authoritative_keys: module_param_names,
-      )
-      store_function_namespace_override(full_name, base_name, module_owner)
+      module_param_names = declared_module_type_param_names(source_owner)
+      module_base = strip_generic_args(source_owner)
+      unless module_param_names.empty?
+        module_param_map = included_module_type_param_map(receiver_name, module_base) ||
+                           source_included_module_type_param_map(
+                             receiver_name,
+                             module_base,
+                             module_param_names,
+                           )
+        if module_param_map
+          store_function_type_param_map(
+            full_name,
+            base_name,
+            module_param_map,
+            module_param_names,
+            authoritative_keys: module_param_names,
+          )
+        end
+      end
+      store_function_namespace_override(full_name, base_name, source_owner)
+    end
+
+    private def source_included_module_type_param_map(
+      receiver_name : String,
+      module_base : String,
+      module_param_names : Array(String),
+    ) : Hash(String, String)?
+      return nil if receiver_name.empty? || module_base.empty? || module_param_names.empty?
+
+      candidates = [] of Hash(String, String)
+      source_generic_ancestor_projections(receiver_name).each do |application|
+        info = split_generic_base_and_args(application)
+        next unless info && info.base == module_base
+
+        args = split_generic_type_args(info.args).map do |arg|
+          normalize_tuple_literal_type_name(arg.strip)
+        end
+        next unless args.size == module_param_names.size
+
+        mapping = {} of String => String
+        module_param_names.each_with_index do |param_name, index|
+          mapping[param_name] = args.unsafe_fetch(index)
+        end
+        candidates << mapping
+      end
+
+      return nil if candidates.empty?
+      selected = candidates.first
+      # A source owner can be reached through more than one include path. Do
+      # not choose an arbitrary substitution if those paths bind it differently.
+      candidates.each do |candidate|
+        return nil unless candidate == selected
+      end
+      selected
     end
 
     private def declared_module_type_param_names(module_owner : String) : Array(String)
       ensure_module_defs_stripped_lookup
-      lookup_name = module_owner
-      unless @module_defs.has_key?(lookup_name)
-        lookup_name = module_defs_stripped_lookup(module_owner) || module_owner
-      end
+      # A generic module can also have bare reopenings in other source files
+      # (`module Enumerable` beside `module Enumerable(T)`). The bare key is
+      # not the declaration of the module's type parameters, so prefer the
+      # indexed generic declaration even when the stripped key exists.
+      lookup_name = strip_generic_args(module_owner)
+      lookup_name = module_defs_stripped_lookup(lookup_name) || module_owner
       definitions = @module_defs[lookup_name]?
       return [] of String unless definitions
 
-      names = [] of String
-      definitions.each do |module_node, _|
-        module_type_param_names(module_node).each do |name|
-          names << name unless names.includes?(name)
+      names : Array(String)? = nil
+      definitions.each do |module_node, module_arena|
+        candidate = with_arena(module_arena) { module_type_param_names(module_node) }
+        next if candidate.empty?
+
+        if current = names
+          # Reopenings under one generic owner must agree on the formal shape;
+          # otherwise an include-site map cannot be assigned unambiguously.
+          return [] of String unless current == candidate
+        else
+          names = candidate
         end
       end
-      names
+      names || [] of String
     end
 
     private def resolve_nilable_function_type_overload(
