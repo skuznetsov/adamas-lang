@@ -59492,38 +59492,15 @@ module Adamas::HIR
     # In Crystal, unions where ALL non-Nil variants are reference types (classes)
     # are stored as a single pointer (8 bytes on x86_64). The type discriminator
     # lives in the object header, not alongside the pointer. Nil is represented
-    # as a null pointer. Only unions containing value types (primitives, structs,
-    # enums) need the full tagged layout (type_id + payload).
+    # as a null pointer for these references. Raw Pointer values are different:
+    # a null Pointer is valid and distinct from Nil, so Pointer | Nil needs the
+    # full tagged layout.
     private def union_ivar_storage_size(descriptor : MIR::UnionDescriptor) : Int32
-      if union_all_reference_types?(descriptor) || union_raw_nullable_pointer?(descriptor)
+      if union_all_reference_types?(descriptor)
         pointer_word_bytes_i32
       else
         descriptor.total_size
       end
-    end
-
-    # Match MIR::union_storage_kind's RawNullablePointer case at the HIR sizing
-    # boundary: exactly Nil plus one raw Pointer arm needs no tag. A runtime-
-    # header reference mixed with a raw pointer, or multiple raw pointer arms,
-    # remains tagged because a single pointer value cannot discriminate them.
-    private def union_raw_nullable_pointer?(descriptor : MIR::UnionDescriptor) : Bool
-      saw_nil = false
-      raw_pointer_count = 0
-      descriptor.variants.each do |variant|
-        name = variant.full_name
-        if variant.type_ref == MIR::TypeRef::NIL || name == "Nil"
-          saw_nil = true
-          next
-        end
-        next if variant.type_ref == MIR::TypeRef::VOID || name == "Void"
-
-        if name == "Pointer" || name.starts_with?("Pointer(")
-          raw_pointer_count += 1
-          next
-        end
-        return false
-      end
-      saw_nil && raw_pointer_count == 1
     end
 
     # Check if every variant in a union is a reference type (class) or Nil.
@@ -59599,13 +59576,6 @@ module Adamas::HIR
       @hir_union_storage_in_progress << normalized_name
       begin
         variants = split_union_type_name(normalized_name).map(&.strip)
-        # Keep the HIR-only path in lock-step with MIR's RawNullablePointer
-        # classification. During early class layout the MIR descriptor may not
-        # exist yet, but a canonical `Nil | Pointer(T)` union is still exactly
-        # one nullable raw pointer word. Any header-backed reference or a second
-        # pointer arm makes the payload ambiguous and must stay tagged.
-        return pointer_word_bytes_i32 if hir_union_raw_nullable_pointer?(variants)
-
         all_ref = variants.all? do |vname|
           next true if vname == "Nil" || vname == "Void"
           # Primitives are value types — need tagged union
@@ -59687,30 +59657,6 @@ module Adamas::HIR
       ensure
         @hir_union_storage_in_progress.delete(normalized_name)
       end
-    end
-
-    private def hir_union_raw_nullable_pointer?(variants : Array(String)) : Bool
-      saw_nil = false
-      raw_pointer_count = 0
-      variants.each do |raw_name|
-        vname = raw_name.strip
-        if vname == "Nil"
-          saw_nil = true
-          next
-        end
-        next if vname == "Void"
-
-        if pointer_union_variant_name?(vname)
-          raw_pointer_count += 1
-          next
-        end
-
-        # This includes runtime-header references (for example String) and
-        # every value/struct arm.  Neither can share RawNullablePointer
-        # storage with a raw pointer.
-        return false
-      end
-      saw_nil && raw_pointer_count == 1
     end
 
     # Compute byte size of StaticArray(T, N) from its type name
@@ -94828,6 +94774,16 @@ module Adamas::HIR
         return lit.id
       end
 
+      # Union truthiness needs to preserve distinctions which nil? does not:
+      # Nil and a null raw Pointer have different tags, but both are falsy.
+      # Lower through the typed unary-not path so MIR/LLVM can inspect the
+      # active union variant and its payload.  Keep nil? itself tag-only.
+      if is_union_or_nilable_type?(value_type)
+        if union_truthy = lower_bool_union_truthy_check(ctx, value_id, value_type)
+          return union_truthy
+        end
+      end
+
       if value_type == TypeRef::POINTER || value_type == TypeRef::STRING
         nil_val = Literal.new(ctx.next_id, TypeRef::POINTER, 0_i64)
         ctx.emit(nil_val)
@@ -94862,23 +94818,6 @@ module Adamas::HIR
           ctx.emit(ne_check)
           return ne_check.id
         end
-      end
-
-      if is_union_or_nilable_type?(value_type)
-        STDERR.puts "[NILABLE_BRANCH] truthy union before bool-union" if env_has?("ADAMAS_TRACE_NILABLE_BRANCH_REPRO")
-        if bool_truthy = lower_bool_union_truthy_check(ctx, value_id, value_type)
-          STDERR.puts "[NILABLE_BRANCH] truthy bool-union result=#{bool_truthy}" if env_has?("ADAMAS_TRACE_NILABLE_BRANCH_REPRO")
-          return bool_truthy
-        end
-
-        STDERR.puts "[NILABLE_BRANCH] truthy before nil-check" if env_has?("ADAMAS_TRACE_NILABLE_BRANCH_REPRO")
-        is_nil = lower_nil_check_intrinsic(ctx, value_id, value_type)
-        STDERR.puts "[NILABLE_BRANCH] truthy after nil-check is_nil=#{is_nil}" if env_has?("ADAMAS_TRACE_NILABLE_BRANCH_REPRO")
-        not_nil = UnaryOperation.new(ctx.next_id, TypeRef::BOOL, UnaryOp::Not, is_nil)
-        ctx.emit(not_nil)
-        ctx.register_type(not_nil.id, TypeRef::BOOL)
-        STDERR.puts "[NILABLE_BRANCH] truthy not_nil=#{not_nil.id}" if env_has?("ADAMAS_TRACE_NILABLE_BRANCH_REPRO")
-        return not_nil.id
       end
 
       # as?() results are typed as the target class but can be null at runtime.
@@ -94917,72 +94856,19 @@ module Adamas::HIR
     end
 
     private def lower_bool_union_truthy_check(ctx : LoweringContext, value_id : ValueId, value_type : TypeRef) : ValueId?
-      bool_variant = get_union_variant_id(value_type, TypeRef::BOOL)
-      return nil if bool_variant < 0
+      return nil unless is_union_or_nilable_type?(value_type)
 
-      nil_variant = get_union_variant_id(value_type, TypeRef::NIL)
-      nil_variant = get_union_variant_id(value_type, TypeRef::VOID) if nil_variant < 0
+      # The first Not consumes the original union using the backend's canonical
+      # Nil/Bool/raw-Pointer truthiness.  The second Not converts that falsy
+      # result back to the Bool expected by HIR condition consumers.
+      falsy = UnaryOperation.new(ctx.next_id, TypeRef::BOOL, UnaryOp::Not, value_id)
+      ctx.emit(falsy)
+      ctx.register_type(falsy.id, TypeRef::BOOL)
 
-      is_bool = UnionIs.new(ctx.next_id, value_id, bool_variant, value_type)
-      ctx.emit(is_bool)
-      ctx.register_type(is_bool.id, TypeRef::BOOL)
-
-      bool_block = ctx.create_block
-      other_block = ctx.create_block
-      merge_block = ctx.create_block
-      ctx.terminate(Branch.new(is_bool.id, bool_block, other_block))
-
-      ctx.current_block = bool_block
-      bool_value = UnionUnwrap.new(ctx.next_id, TypeRef::BOOL, value_id, bool_variant, false)
-      ctx.emit(bool_value)
-      ctx.register_type(bool_value.id, TypeRef::BOOL)
-      bool_exit = ctx.current_block
-      ctx.terminate(Jump.new(merge_block))
-
-      ctx.current_block = other_block
-      other_result = if nil_variant >= 0
-                       is_nil = UnionIs.new(ctx.next_id, value_id, nil_variant, value_type)
-                       ctx.emit(is_nil)
-                       ctx.register_type(is_nil.id, TypeRef::BOOL)
-
-                       nil_block = ctx.create_block
-                       truthy_block = ctx.create_block
-                       ctx.terminate(Branch.new(is_nil.id, nil_block, truthy_block))
-
-                       ctx.current_block = nil_block
-                       false_lit = Literal.new(ctx.next_id, TypeRef::BOOL, false)
-                       ctx.emit(false_lit)
-                       ctx.register_type(false_lit.id, TypeRef::BOOL)
-                       nil_exit = ctx.current_block
-                       ctx.terminate(Jump.new(merge_block))
-
-                       ctx.current_block = truthy_block
-                       true_lit = Literal.new(ctx.next_id, TypeRef::BOOL, true)
-                       ctx.emit(true_lit)
-                       ctx.register_type(true_lit.id, TypeRef::BOOL)
-                       truthy_exit = ctx.current_block
-                       ctx.terminate(Jump.new(merge_block))
-
-                       {nil_exit, false_lit.id, truthy_exit, true_lit.id}
-                     else
-                       true_lit = Literal.new(ctx.next_id, TypeRef::BOOL, true)
-                       ctx.emit(true_lit)
-                       ctx.register_type(true_lit.id, TypeRef::BOOL)
-                       other_exit = ctx.current_block
-                       ctx.terminate(Jump.new(merge_block))
-                       {other_exit, true_lit.id, other_exit, true_lit.id}
-                     end
-
-      ctx.current_block = merge_block
-      phi = Phi.new(ctx.next_id, TypeRef::BOOL)
-      phi.add_incoming(bool_exit, bool_value.id)
-      phi.add_incoming(other_result[0], other_result[1])
-      if other_result[2] != other_result[0]
-        phi.add_incoming(other_result[2], other_result[3])
-      end
-      ctx.emit(phi)
-      ctx.register_type(phi.id, TypeRef::BOOL)
-      phi.id
+      truthy = UnaryOperation.new(ctx.next_id, TypeRef::BOOL, UnaryOp::Not, falsy.id)
+      ctx.emit(truthy)
+      ctx.register_type(truthy.id, TypeRef::BOOL)
+      truthy.id
     end
 
     private def emit_binary_call(ctx : LoweringContext, left : ValueId, op : String, right : ValueId) : ValueId

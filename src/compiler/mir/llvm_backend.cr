@@ -192,9 +192,9 @@ module Adamas::MIR
       union_storage_kind(type_ref).runtime_header?
     end
 
-    # Pointer | Nil is a raw nullable pointer, but unlike class-only unions its
-    # non-nil value has no runtime type-id header. Keep that distinction explicit
-    # so union type-id/is checks never read arbitrary pointer payload as a header.
+    # Legacy descriptor support for the former raw nullable-pointer ABI. New
+    # Pointer | Nil unions are tagged because a null Pointer is distinct from
+    # Nil; class-only nullable unions still use the object-header representation.
     def is_raw_nullable_pointer_union?(type_ref : TypeRef) : Bool
       union_storage_kind(type_ref) == UnionStorageKind::RawNullablePointer
     end
@@ -15516,8 +15516,10 @@ module Adamas::MIR
               next if def_llvm.includes?(".union")
             end
 
-            # Determine if this value should be wrapped into union
-            is_nil_like = (val_type == TypeRef::NIL) || (val_llvm_type == "void") || (const_val == "null")
+            # A null constant alone does not identify Nil: a raw Pointer
+            # constant may also carry a null payload and remains a Pointer arm.
+            is_nil_like = (val_type == TypeRef::NIL) || (val_llvm_type == "void") ||
+                          (const_val == "null" && source_nil_literal?(val_id))
 
             variant = nil
             if is_nil_like
@@ -17330,12 +17332,14 @@ module Adamas::MIR
         # Use globally unique type_ref.id as discriminator
         phi_global_vid = variant_global_id(union_type_ref, variant_type_id)
 
-        # For ptr values in unions with a Nil variant: at runtime the ptr may be
-        # null (representing nil), so select the correct discriminator dynamically.
+        # For class-reference ptr values in unions with a Nil variant: at runtime
+        # a null ptr represents Nil. A raw Pointer arm is different: null is a
+        # valid Pointer value and must retain its Pointer discriminator.
         # Without this, a null ptr gets tagged as String (etc.) and downstream
         # truthiness checks (type_id == 0) incorrectly treat nil as truthy.
         nil_aware_ptr = false
-        if val_llvm_type == "ptr" && phi_global_vid != 0
+        selected_raw_pointer = union_variant_is_raw_pointer?(union_type_ref, variant_type_id)
+        if val_llvm_type == "ptr" && phi_global_vid != 0 && !selected_raw_pointer
           if union_desc = @module.get_union_descriptor(union_type_ref)
             nil_aware_ptr = union_desc.variants.any? { |v| v.type_ref == TypeRef::NIL }
           end
@@ -17364,7 +17368,7 @@ module Adamas::MIR
           # void → no payload to store (zeroinitializer already zeroed)
         else
           val_ref = "null" if val_llvm_type == "ptr" && val_ref == "0"
-          if val_ref == "null"
+          if val_ref == "null" && !selected_raw_pointer
             # Nil: skip payload store — zeroinitializer already zeroed everything.
             # Storing ptr null (8 bytes) is unnecessary here.
           else
@@ -21093,23 +21097,13 @@ module Adamas::MIR
             emit "%#{base_name}.bool = fcmp one #{operand_llvm_type} #{operand}, 0.0"
             emit "#{name} = xor i1 %#{base_name}.bool, 1"
           elsif operand_llvm_type.includes?(".union")
-            # For unions, Nil and Bool(false) are falsy; every other variant
-            # is truthy. Keep this in sync with Branch lowering.
+            # Match Branch lowering, including null raw-Pointer variants.
             emit "%#{base_name}.union_ptr = alloca #{operand_llvm_type}, align 8"
             emit "store #{operand_llvm_type} #{normalize_union_value(operand, operand_llvm_type)}, ptr %#{base_name}.union_ptr"
             emit "%#{base_name}.type_id_ptr = getelementptr #{operand_llvm_type}, ptr %#{base_name}.union_ptr, i32 0, i32 0"
             emit "%#{base_name}.type_id = load i32, ptr %#{base_name}.type_id_ptr"
-            nil_vid = nil_variant_id_for_union_type(operand_llvm_type) || 0
-            emit "%#{base_name}.non_nil = icmp ne i32 %#{base_name}.type_id, #{nil_vid}"
-            if bool_vid = bool_variant_id_for_union_type(operand_llvm_type)
-              emit "%#{base_name}.is_bool = icmp eq i32 %#{base_name}.type_id, #{bool_vid}"
-              emit "%#{base_name}.payload_ptr = getelementptr #{operand_llvm_type}, ptr %#{base_name}.union_ptr, i32 0, i32 1"
-              emit "%#{base_name}.bool_value = load i1, ptr %#{base_name}.payload_ptr, align 4"
-              emit "%#{base_name}.bool = select i1 %#{base_name}.is_bool, i1 %#{base_name}.bool_value, i1 %#{base_name}.non_nil"
-            else
-              emit "%#{base_name}.bool = add i1 %#{base_name}.non_nil, 0"
-            end
-            emit "#{name} = xor i1 %#{base_name}.bool, 1"
+            truthy = emit_union_truthiness(base_name, operand_llvm_type, "%#{base_name}.union_ptr", "%#{base_name}.type_id")
+            emit "#{name} = xor i1 #{truthy}, 1"
           else
             emit "%#{base_name}.bool = icmp ne #{operand_llvm_type} #{operand}, 0"
             emit "#{name} = xor i1 %#{base_name}.bool, 1"
@@ -23926,11 +23920,15 @@ module Adamas::MIR
                    "#{expected_llvm_type} %scalar_to_union.#{c}.val"
                  elsif is_union_llvm_type?(expected_llvm_type) && actual_llvm_type == "ptr"
                    # Ptr to union conversion - wrap ptr in union with correct variant type_id
-                   val = value_ref(a)
+                   nil_literal = source_nil_literal?(a)
+                   val = nil_literal ? "null" : value_ref(a)
                    c = @cond_counter
                    @cond_counter += 1
+                   raw_pointer_variant_id = nil_literal ? nil : raw_pointer_variant_global_id_for_source_type(param_type, actual_type)
                    # Look up correct variant type_id from union descriptor
-                   variant_type_id = if val == "null"
+                   variant_type_id = if raw_pointer_variant_id
+                     raw_pointer_variant_id.to_s
+                   elsif val == "null"
                      "0"  # Nil always uses discriminator 0
                    else
                      if desc = @module.get_union_descriptor(param_type)
@@ -23950,7 +23948,7 @@ module Adamas::MIR
                        "1"
                      end
                    end
-                   if val == "null"
+                   if val == "null" && !raw_pointer_variant_id
                      emit "%ptr_to_union.#{c}.ptr = alloca #{expected_llvm_type}, align 8"
                      emit "%ptr_to_union.#{c}.type_id_ptr = getelementptr #{expected_llvm_type}, ptr %ptr_to_union.#{c}.ptr, i32 0, i32 0"
                      emit "store i32 #{variant_type_id}, ptr %ptr_to_union.#{c}.type_id_ptr"
@@ -23958,6 +23956,7 @@ module Adamas::MIR
                      "#{expected_llvm_type} %ptr_to_union.#{c}.val"
                    else
                      emit "%ptr_to_union.#{c}.ptr = alloca #{expected_llvm_type}, align 8"
+                     emit "store #{expected_llvm_type} zeroinitializer, ptr %ptr_to_union.#{c}.ptr"
                      emit "%ptr_to_union.#{c}.type_id_ptr = getelementptr #{expected_llvm_type}, ptr %ptr_to_union.#{c}.ptr, i32 0, i32 0"
                      emit "store i32 #{variant_type_id}, ptr %ptr_to_union.#{c}.type_id_ptr"
                      emit "%ptr_to_union.#{c}.payload_ptr = getelementptr #{expected_llvm_type}, ptr %ptr_to_union.#{c}.ptr, i32 0, i32 1"
@@ -24114,7 +24113,8 @@ module Adamas::MIR
         @void_values << inst.id
       elsif needs_ptr_to_union_wrap
         # ABI fix: callee returns ptr but caller expects union struct.
-        # For nilable reference types, the callee uses ptr (null = nil, non-null = value)
+        # For nilable reference types, the callee uses ptr (null = nil, non-null = value).
+        # A raw Pointer return is distinct: null remains the Pointer arm.
         # but downstream code expects a union struct {i32 type_id, [N x i32] payload}.
         # Emit call with ptr return, then wrap into union.
         @value_names[inst.id] ||= "r#{inst.id}"
@@ -24123,16 +24123,24 @@ module Adamas::MIR
         call_reg = "%ptr2union.#{c}.raw"
         emit "#{call_reg} = call #{return_type} @#{callee_name}(#{args})"
         record_emitted_type(call_reg, return_type)
-        emit "%ptr2union.#{c}.alloca = alloca #{ptr_to_union_target_type}, align 8"
-        emit "store #{ptr_to_union_target_type} zeroinitializer, ptr %ptr2union.#{c}.alloca"
-        # Determine type_id: 0 = nil (ptr is null), 1 = non-nil
-        emit "%ptr2union.#{c}.is_nil = icmp eq ptr #{call_reg}, null"
-        emit "%ptr2union.#{c}.tid = select i1 %ptr2union.#{c}.is_nil, i32 0, i32 1"
-        emit "%ptr2union.#{c}.tid_ptr = getelementptr #{ptr_to_union_target_type}, ptr %ptr2union.#{c}.alloca, i32 0, i32 0"
-        emit "store i32 %ptr2union.#{c}.tid, ptr %ptr2union.#{c}.tid_ptr"
-        emit "%ptr2union.#{c}.pay_ptr = getelementptr #{ptr_to_union_target_type}, ptr %ptr2union.#{c}.alloca, i32 0, i32 1"
-        emit "store ptr #{call_reg}, ptr %ptr2union.#{c}.pay_ptr, align 4"
-        emit "#{name} = load #{ptr_to_union_target_type}, ptr %ptr2union.#{c}.alloca"
+        target_union_ref = find_union_type_ref_for_llvm_string(ptr_to_union_target_type)
+        raw_pointer_variant_id = if target_union_ref && callee_func
+                                   raw_pointer_variant_global_id_for_source_type(target_union_ref, callee_func.return_type)
+                                 end
+        if raw_pointer_variant_id
+          emit_raw_pointer_union_wrap("ptr2union.#{c}", ptr_to_union_target_type, call_reg, raw_pointer_variant_id, name)
+        else
+          emit "%ptr2union.#{c}.alloca = alloca #{ptr_to_union_target_type}, align 8"
+          emit "store #{ptr_to_union_target_type} zeroinitializer, ptr %ptr2union.#{c}.alloca"
+          # For class references, null still represents Nil.
+          emit "%ptr2union.#{c}.is_nil = icmp eq ptr #{call_reg}, null"
+          emit "%ptr2union.#{c}.tid = select i1 %ptr2union.#{c}.is_nil, i32 0, i32 1"
+          emit "%ptr2union.#{c}.tid_ptr = getelementptr #{ptr_to_union_target_type}, ptr %ptr2union.#{c}.alloca, i32 0, i32 0"
+          emit "store i32 %ptr2union.#{c}.tid, ptr %ptr2union.#{c}.tid_ptr"
+          emit "%ptr2union.#{c}.pay_ptr = getelementptr #{ptr_to_union_target_type}, ptr %ptr2union.#{c}.alloca, i32 0, i32 1"
+          emit "store ptr #{call_reg}, ptr %ptr2union.#{c}.pay_ptr, align 4"
+          emit "#{name} = load #{ptr_to_union_target_type}, ptr %ptr2union.#{c}.alloca"
+        end
         record_emitted_type(name, ptr_to_union_target_type)
         @value_types[inst.id] = inst.type
       elsif needs_scalar_to_union_wrap
@@ -24144,7 +24152,8 @@ module Adamas::MIR
         call_reg = "%s2u_call.#{c}.raw"
         emit "#{call_reg} = call #{return_type} @#{callee_name}(#{args})"
         record_emitted_type(call_reg, return_type)
-        wrapped_val = coerce_union_value_for_type("s2u_call.#{c}", call_reg, scalar_to_union_target_type)
+        source_return_type = callee_func.try(&.return_type)
+        wrapped_val = coerce_union_value_for_type("s2u_call.#{c}", call_reg, scalar_to_union_target_type, source_return_type)
         emit "%s2u_call.#{c}.final = alloca #{scalar_to_union_target_type}, align 8"
         emit "store #{scalar_to_union_target_type} #{wrapped_val}, ptr %s2u_call.#{c}.final"
         emit "#{name} = load #{scalar_to_union_target_type}, ptr %s2u_call.#{c}.final"
@@ -25863,6 +25872,7 @@ module Adamas::MIR
         val_type_str = emitted_val_type unless emitted_val_type == "void"
       end
       val = "null" if val_type_str == "ptr" && val == "0"
+      selected_raw_pointer = union_variant_is_raw_pointer?(inst.union_type, inst.variant_type_id)
 
       # 2. Store type_id discriminator
       # When wrapping a ptr into a nilable union, the ptr might be null (Nil).
@@ -25876,7 +25886,7 @@ module Adamas::MIR
       # parameters are passed as raw ptrs, losing the type_id. Read the class type_id
       # from the object header at runtime and map to the correct union variant_type_id.
       runtime_tid_emitted = false
-      if val_type_str == "ptr" && val != "null"
+      if val_type_str == "ptr" && val != "null" && !selected_raw_pointer
         if union_desc = @module.get_union_descriptor(inst.union_type)
           ref_variants = [] of UnionVariantDescriptor
           variants = union_desc.variants
@@ -25924,7 +25934,7 @@ module Adamas::MIR
       unless runtime_tid_emitted
         # Use globally unique type_ref.id as discriminator
         global_vid = variant_global_id(inst.union_type, inst.variant_type_id)
-        if val_type_str == "ptr" && nil_vid != nil && global_vid != nil_vid
+        if val_type_str == "ptr" && nil_vid != nil && global_vid != nil_vid && !selected_raw_pointer
           emit "%#{base_name}.is_null = icmp eq ptr #{val}, null"
           emit "%#{base_name}.type_id = select i1 %#{base_name}.is_null, i32 #{nil_vid}, i32 #{global_vid}"
           emit "store i32 %#{base_name}.type_id, ptr %#{base_name}.type_id_ptr"
@@ -25961,7 +25971,7 @@ module Adamas::MIR
         if val_type_str == "ptr" && val != "null"
           clone_size = union_variant_value_clone_size(inst.union_type, inst.variant_type_id)
         end
-        if val == "null"
+        if val == "null" && !selected_raw_pointer
           # Nil: skip payload store — zeroinitializer already zeroed everything.
         elsif clone_size > 0
           emit_union_payload_value_clone(base_name, val, clone_size)
@@ -28524,8 +28534,11 @@ module Adamas::MIR
             if actual_emitted_type = @emitted_value_types[val_ref]?
               val_llvm_type = actual_emitted_type
             end
+            raw_pointer_return_variant_id = if @current_return_type_ref
+                                               raw_pointer_variant_global_id_for_source_type(@current_return_type_ref, val_type)
+                                             end
 
-            if @current_return_type.includes?(".union") && val_ref == "null"
+            if @current_return_type.includes?(".union") && val_ref == "null" && !raw_pointer_return_variant_id
               # Preserve nil semantics — use the correct Nil variant type_id.
               nil_vid = nil_variant_id_for_union_type(@current_return_type)
               if nil_vid && nil_vid == 0
@@ -28557,7 +28570,7 @@ module Adamas::MIR
             ret_nil_vid = nil_variant_id_for_union_type(@current_return_type) || 0
             ret_nonnil_vid = first_non_nil_variant_id_for_union_type(@current_return_type) || TypeRef::INT32.id.to_i32
 
-            if val_llvm_type == "void" || val_ref == "null"
+            if val_llvm_type == "void" || (val_ref == "null" && !raw_pointer_return_variant_id)
               # Nil/void return — set correct Nil variant type_id
               emit "store #{@current_return_type} zeroinitializer, ptr %ret#{c}.union_ptr"
               emit "store i32 #{ret_nil_vid}, ptr %ret#{c}.type_id_ptr"
@@ -28572,13 +28585,17 @@ module Adamas::MIR
               emit "%ret#{c}.payload_ptr = getelementptr #{@current_return_type}, ptr %ret#{c}.union_ptr, i32 0, i32 1"
               emit "store #{val_llvm_type} #{val_ref}, ptr %ret#{c}.payload_ptr, align 4"
             elsif val_llvm_type == "ptr"
-              # Pointer value being wrapped into union — the pointer might be null
-              # (from a union Nil variant that was extracted by the ABI fix).
-              # Emit a runtime null check to set the correct type_id.
-              emit "%ret#{c}.is_null = icmp eq ptr #{val_ref}, null"
-              emit "%ret#{c}.type_id = select i1 %ret#{c}.is_null, i32 #{ret_nil_vid}, i32 #{ret_nonnil_vid}"
-              emit "store i32 %ret#{c}.type_id, ptr %ret#{c}.type_id_ptr"
-              emit "%ret#{c}.payload_ptr = getelementptr #{@current_return_type}, ptr %ret#{c}.union_ptr, i32 0, i32 1"
+              if raw_pointer_return_variant_id
+                emit "store i32 #{raw_pointer_return_variant_id}, ptr %ret#{c}.type_id_ptr"
+                emit "%ret#{c}.payload_ptr = getelementptr #{@current_return_type}, ptr %ret#{c}.union_ptr, i32 0, i32 1"
+              else
+                # Class-reference values use null for Nil; raw Pointer arms were
+                # handled above using their source type fact and keep null distinct.
+                emit "%ret#{c}.is_null = icmp eq ptr #{val_ref}, null"
+                emit "%ret#{c}.type_id = select i1 %ret#{c}.is_null, i32 #{ret_nil_vid}, i32 #{ret_nonnil_vid}"
+                emit "store i32 %ret#{c}.type_id, ptr %ret#{c}.type_id_ptr"
+                emit "%ret#{c}.payload_ptr = getelementptr #{@current_return_type}, ptr %ret#{c}.union_ptr, i32 0, i32 1"
+              end
               # For tuple types, copy data instead of storing pointer
               ret_vt_size = 0_u64
               union_mir = @module.type_registry.get(@current_return_type_ref)
@@ -28827,22 +28844,11 @@ module Adamas::MIR
           # Nil is not guaranteed to have variant_id=0, so resolve it from type.
           c = @cond_counter
           @cond_counter += 1
-          nil_vid = nil_variant_id_for_union_type(union_llvm_type) || 0
           emit "%cond#{c}.union_ptr = alloca #{union_llvm_type}, align 8"
           emit "store #{union_llvm_type} #{normalize_union_value(cond, union_llvm_type)}, ptr %cond#{c}.union_ptr"
           emit "%cond#{c}.type_id_ptr = getelementptr #{union_llvm_type}, ptr %cond#{c}.union_ptr, i32 0, i32 0"
           emit "%cond#{c}.type_id = load i32, ptr %cond#{c}.type_id_ptr"
-          emit "%cond#{c}.is_not_nil = icmp ne i32 %cond#{c}.type_id, #{nil_vid}"
-          truthy = "%cond#{c}.is_not_nil"
-          if bool_vid = bool_variant_id_for_union_type(union_llvm_type)
-            # Crystal truthiness treats Bool(false) like Nil. Other non-Nil
-            # union variants are truthy regardless of their payload.
-            emit "%cond#{c}.is_bool = icmp eq i32 %cond#{c}.type_id, #{bool_vid}"
-            emit "%cond#{c}.payload_ptr = getelementptr #{union_llvm_type}, ptr %cond#{c}.union_ptr, i32 0, i32 1"
-            emit "%cond#{c}.bool_value = load i1, ptr %cond#{c}.payload_ptr, align 4"
-            emit "%cond#{c}.truthy = select i1 %cond#{c}.is_bool, i1 %cond#{c}.bool_value, i1 %cond#{c}.is_not_nil"
-            truthy = "%cond#{c}.truthy"
-          end
+          truthy = emit_union_truthiness("cond#{c}", union_llvm_type, "%cond#{c}.union_ptr", "%cond#{c}.type_id")
           emit "br i1 #{truthy}, label %#{then_block}, label %#{else_block}"
         elsif (actual_cond_type == "ptr") ||
               (cond_type && @type_mapper.llvm_type(cond_type) == "ptr" && (slot_llvm_type.nil? || slot_llvm_type == "ptr"))
@@ -29461,6 +29467,63 @@ module Adamas::MIR
       variant_type_id  # fallback
     end
 
+    # A null raw Pointer is still the Pointer variant; only a class-reference
+    # null is represented as Nil. Resolve the selected variant through the
+    # descriptor rather than inferring its meaning from the LLVM `ptr` carrier.
+    private def union_variant_is_raw_pointer?(union_type_ref : TypeRef, variant_type_id : Int32) : Bool
+      return false unless union_desc = @module.get_union_descriptor(union_type_ref)
+      variant = union_desc.variants.find { |entry| entry.type_id == variant_type_id }
+      return false unless variant
+
+      type = @module.type_registry.get(variant.type_ref)
+      Adamas::MIR.raw_pointer_union_variant?(type, variant.full_name)
+    end
+
+    private def source_nil_literal?(value_id : ValueId) : Bool
+      if func = @current_mir_func
+        if def_inst = find_def_inst_in_function(func, value_id)
+          return def_inst.is_a?(Constant) && def_inst.type == TypeRef::NIL
+        end
+      end
+      false
+    end
+
+    private def raw_pointer_variant_global_id_for_source_type(union_type_ref : TypeRef, source_type_ref : TypeRef?) : Int32?
+      return nil unless source_type_ref
+      source_type = @module.type_registry.get(source_type_ref)
+      return nil unless source_type && source_type.kind.pointer?
+      return nil unless union_desc = @module.get_union_descriptor(union_type_ref)
+
+      pointer_variants = [] of UnionVariantDescriptor
+      union_desc.variants.each do |variant|
+        type = @module.type_registry.get(variant.type_ref)
+        next unless Adamas::MIR.raw_pointer_union_variant?(type, variant.full_name)
+        pointer_variants << variant
+      end
+
+      exact = pointer_variants.find { |variant| variant.type_ref == source_type_ref }
+      return exact.type_ref.id.to_i32 if exact
+
+      # Some ABI paths erase a concrete Pointer(T) to the built-in Pointer ref.
+      # A single raw-pointer arm is still unambiguous; with multiple pointer
+      # arms, keep the result unknown instead of choosing a sibling variant.
+      return pointer_variants.first.type_ref.id.to_i32 if pointer_variants.size == 1
+      nil
+    end
+
+    private def emit_raw_pointer_union_wrap(base_name : String, union_llvm_type : String, pointer_value : String, variant_id : Int32, result_name : String) : Nil
+      union_ptr = "%#{base_name}.ptr"
+      type_id_ptr = "%#{base_name}.type_id_ptr"
+      payload_ptr = "%#{base_name}.payload_ptr"
+      emit "#{union_ptr} = alloca #{union_llvm_type}, align 8"
+      emit "store #{union_llvm_type} zeroinitializer, ptr #{union_ptr}"
+      emit "#{type_id_ptr} = getelementptr #{union_llvm_type}, ptr #{union_ptr}, i32 0, i32 0"
+      emit "store i32 #{variant_id}, ptr #{type_id_ptr}"
+      emit "#{payload_ptr} = getelementptr #{union_llvm_type}, ptr #{union_ptr}, i32 0, i32 1"
+      emit "store ptr #{pointer_value}, ptr #{payload_ptr}, align 4"
+      emit "#{result_name} = load #{union_llvm_type}, ptr #{union_ptr}"
+    end
+
     # Byte size of the value-type pointee that a union payload of this variant
     # must own, or 0 when the payload is stored as-is. `variant_type_id` is the
     # descriptor-local id (same index space as variant_global_id), NOT a
@@ -29604,6 +29667,64 @@ module Adamas::MIR
       nil
     end
 
+    private def raw_pointer_variant_global_ids_for_union_type(llvm_type : String) : Array(Int32)
+      ids = [] of Int32
+      union_type_ref = find_union_type_ref_for_llvm_string(llvm_type)
+      return ids unless union_type_ref
+      return ids unless union_desc = @module.get_union_descriptor(union_type_ref)
+
+      union_desc.variants.each do |variant|
+        type = @module.type_registry.get(variant.type_ref)
+        next unless Adamas::MIR.raw_pointer_union_variant?(type, variant.full_name)
+        id = variant.type_ref.id.to_i32
+        ids << id unless ids.includes?(id)
+      end
+      ids
+    end
+
+    # Crystal's union truthiness is false for Nil and Bool(false). Raw Pointer
+    # variants add one case: a null Pointer is also false, while still carrying
+    # its distinct Pointer type-id. Class references retain their established
+    # null-as-Nil representation.
+    private def emit_union_truthiness(base_name : String, union_llvm_type : String, union_ptr : String, type_id : String) : String
+      nil_vid = nil_variant_id_for_union_type(union_llvm_type) || 0
+      emit "%#{base_name}.is_not_nil = icmp ne i32 #{type_id}, #{nil_vid}"
+      truthy = "%#{base_name}.is_not_nil"
+
+      if bool_vid = bool_variant_id_for_union_type(union_llvm_type)
+        emit "%#{base_name}.is_bool = icmp eq i32 #{type_id}, #{bool_vid}"
+        emit "%#{base_name}.bool_payload_ptr = getelementptr #{union_llvm_type}, ptr #{union_ptr}, i32 0, i32 1"
+        emit "%#{base_name}.bool_value = load i1, ptr %#{base_name}.bool_payload_ptr, align 4"
+        emit "%#{base_name}.bool_truthy = select i1 %#{base_name}.is_bool, i1 %#{base_name}.bool_value, i1 %#{base_name}.is_not_nil"
+        truthy = "%#{base_name}.bool_truthy"
+      end
+
+      pointer_ids = raw_pointer_variant_global_ids_for_union_type(union_llvm_type)
+      unless pointer_ids.empty?
+        pointer_arm = ""
+        pointer_ids.each_with_index do |pointer_id, index|
+          emit "%#{base_name}.is_pointer#{index} = icmp eq i32 #{type_id}, #{pointer_id}"
+          current = "%#{base_name}.is_pointer#{index}"
+          if index == 0
+            pointer_arm = current
+          else
+            emit "%#{base_name}.is_pointer_any#{index} = or i1 #{pointer_arm}, #{current}"
+            pointer_arm = "%#{base_name}.is_pointer_any#{index}"
+          end
+        end
+
+        emit "%#{base_name}.pointer_payload_ptr = getelementptr #{union_llvm_type}, ptr #{union_ptr}, i32 0, i32 1"
+        emit "%#{base_name}.pointer_payload = load ptr, ptr %#{base_name}.pointer_payload_ptr, align 4"
+        emit "%#{base_name}.pointer_non_null = icmp ne ptr %#{base_name}.pointer_payload, null"
+        # select masks payload bits for every inactive union arm; an `and`
+        # could propagate poison from an uninitialized non-pointer payload.
+        emit "%#{base_name}.truthy = select i1 #{pointer_arm}, i1 %#{base_name}.pointer_non_null, i1 #{truthy}"
+        truthy = "%#{base_name}.truthy"
+      end
+
+      truthy
+    end
+
     # Find globally unique discriminator for the first non-Nil variant.
     # Uses type_ref.id for non-nil variants.
     private def first_non_nil_variant_id_for_union_type(llvm_type : String) : Int32?
@@ -29696,7 +29817,7 @@ module Adamas::MIR
 
     # Coerce a union value to a specific union LLVM type when the emitted source type
     # differs from the expected destination union type.
-    private def coerce_union_value_for_type(base_name : String, val : String, expected_union_type : String) : String
+    private def coerce_union_value_for_type(base_name : String, val : String, expected_union_type : String, source_type_ref : TypeRef? = nil) : String
       actual_union_type = @emitted_value_types[val]?
       if actual_union_type && actual_union_type == expected_union_type
         return normalize_union_value(val, expected_union_type)
@@ -29735,11 +29856,17 @@ module Adamas::MIR
         # Scalar/pointer to union wrapping.
         nil_variant = nil_variant_id_for_union_type(expected_union_type) || 0
         non_nil_variant = first_non_nil_variant_id_for_union_type(expected_union_type) || (nil_variant == 0 ? 1 : 0)
-        source_type_ref = nil.as(TypeRef?)
         if m = val.match(/^%r(\d+)/)
-          source_type_ref = @value_types[ValueId.new(m[1].to_u32)]?
+          source_type_ref ||= @value_types[ValueId.new(m[1].to_u32)]?
         end
-        source_type_ref ||= find_type_ref_for_llvm_type(actual_union_type)
+        # LLVM `ptr` does not distinguish a raw Pointer from a class reference.
+        # Only a source type fact may admit the raw-Pointer arm; inferring it from
+        # the carrier would collapse class-null/Nil semantics into Pointer-null.
+        source_type_ref ||= find_type_ref_for_llvm_type(actual_union_type) unless actual_union_type == "ptr"
+
+        raw_pointer_variant_id = if expected_union_ref = find_union_type_ref_for_llvm_string(expected_union_type)
+                                   raw_pointer_variant_global_id_for_source_type(expected_union_ref, source_type_ref)
+                                 end
 
         if expected_union_ref = find_type_ref_for_llvm_type(expected_union_type)
           if expected_desc = @module.get_union_descriptor(expected_union_ref)
@@ -29766,7 +29893,12 @@ module Adamas::MIR
         emit "store #{expected_union_type} zeroinitializer, ptr %#{base_name}.s2u_ptr"
         emit "%#{base_name}.s2u_type_id_ptr = getelementptr #{expected_union_type}, ptr %#{base_name}.s2u_ptr, i32 0, i32 0"
 
-        if val == "null" || val == "0"
+        if actual_union_type == "ptr" && raw_pointer_variant_id
+          pointer_value = val == "0" ? "null" : val
+          return_value = "%#{base_name}.s2u_val"
+          emit_raw_pointer_union_wrap("#{base_name}.s2u", expected_union_type, pointer_value, raw_pointer_variant_id, return_value)
+          return return_value
+        elsif val == "null" || val == "0"
           emit "store i32 #{nil_variant}, ptr %#{base_name}.s2u_type_id_ptr"
         elsif actual_union_type == "ptr"
           emit "%#{base_name}.s2u_is_nil = icmp eq ptr #{val}, null"

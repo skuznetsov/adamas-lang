@@ -1492,8 +1492,9 @@ module Adamas::MIR
 
   # Single authoritative union carrier classification shared by HIR->MIR
   # layout and LLVM lowering. Storage, header dispatch, and ownership are
-  # deliberately distinct: a nullable raw Pointer is pointer-sized storage,
-  # but it has neither an object type-id header nor managed ownership.
+  # deliberately distinct. A Pointer arm has no object type-id header, but
+  # Pointer | Nil still needs a tagged carrier because a null Pointer is a
+  # legal Pointer value distinct from Nil.
   enum UnionStorageKind
     Tagged
     RawHeaderPointer
@@ -1557,7 +1558,6 @@ module Adamas::MIR
 
   def self.union_storage_kind(type_registry : TypeRegistry, descriptor : UnionDescriptor) : UnionStorageKind
     saw_header = false
-    saw_nil = false
     raw_pointer_count = 0
     variants = descriptor.variants
     idx = 0
@@ -1566,7 +1566,6 @@ module Adamas::MIR
       idx += 1
 
       if variant.type_ref == TypeRef::NIL
-        saw_nil = true
         next
       end
       next if variant.type_ref == TypeRef::VOID
@@ -1588,7 +1587,6 @@ module Adamas::MIR
     end
 
     return UnionStorageKind::RawHeaderPointer if saw_header
-    return UnionStorageKind::RawNullablePointer if saw_nil && raw_pointer_count == 1
     UnionStorageKind::Tagged
   end
 

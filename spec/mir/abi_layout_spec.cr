@@ -259,21 +259,21 @@ describe "MIR ABI layout sanity" do
     mapper.union_storage_entries = mir_mod.union_storage_entries
 
     mir_mod.get_union_storage_kind(header_union_ref).should eq(Adamas::MIR::UnionStorageKind::RawHeaderPointer)
-    mir_mod.get_union_storage_kind(nullable_ptr_ref).should eq(Adamas::MIR::UnionStorageKind::RawNullablePointer)
+    mir_mod.get_union_storage_kind(nullable_ptr_ref).should eq(Adamas::MIR::UnionStorageKind::Tagged)
     mir_mod.get_union_storage_kind(distinct_ptr_ref).should eq(Adamas::MIR::UnionStorageKind::Tagged)
     mir_mod.get_union_storage_kind(mixed_ptr_ref).should eq(Adamas::MIR::UnionStorageKind::Tagged)
     mir_mod.get_union_storage_kind(tuple_union_ref).should eq(Adamas::MIR::UnionStorageKind::Tagged)
     mir_mod.get_union_storage_kind(scalar_union_ref).should eq(Adamas::MIR::UnionStorageKind::Tagged)
-    mir_mod.get_union_storage_kind(ptr_nil_void_ref).should eq(Adamas::MIR::UnionStorageKind::RawNullablePointer)
+    mir_mod.get_union_storage_kind(ptr_nil_void_ref).should eq(Adamas::MIR::UnionStorageKind::Tagged)
     mir_mod.get_union_storage_kind(duplicate_ptr_ref).should eq(Adamas::MIR::UnionStorageKind::Tagged)
 
-    {header_union_ref, nullable_ptr_ref, ptr_nil_void_ref}.each do |type_ref|
+    {header_union_ref}.each do |type_ref|
       type = registry.get(type_ref).not_nil!
       type.size.should eq(Adamas::MIR::TARGET_POINTER_BYTES_U64)
       type.alignment.should eq(Adamas::MIR::TARGET_POINTER_ALIGN_U32)
       mapper.llvm_type(type_ref).should eq("ptr")
     end
-    {distinct_ptr_ref, mixed_ptr_ref, tuple_union_ref, scalar_union_ref, duplicate_ptr_ref}.each do |type_ref|
+    {nullable_ptr_ref, distinct_ptr_ref, mixed_ptr_ref, tuple_union_ref, scalar_union_ref, ptr_nil_void_ref, duplicate_ptr_ref}.each do |type_ref|
       type = registry.get(type_ref).not_nil!
       type.size.should eq(16)
       type.alignment.should eq(8)

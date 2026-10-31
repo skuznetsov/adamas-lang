@@ -1464,7 +1464,7 @@ describe Adamas::MIR::LLVMIRGenerator do
       body.should match(/%union_to_fp\.\d+\.val = load double, ptr %union_to_fp\.\d+\.payload_ptr, align 4/)
     end
 
-    it "uses a raw nullable pointer for Pointer | Nil with literal null and non-null phi inputs" do
+    it "keeps null Pointer distinct from Nil in a tagged Pointer | Nil phi" do
       mod = Adamas::MIR::Module.new("phi_union_ptr")
 
       union_type = mod.type_registry.create_type(Adamas::MIR::TypeKind::Union, "PtrOrNil", 16, 8)
@@ -1502,6 +1502,8 @@ describe Adamas::MIR::LLVMIRGenerator do
       entry = func.entry_block
       then_block = func.create_block
       else_block = func.create_block
+      null_pointer_block = func.create_block
+      nil_block = func.create_block
       merge_block = func.create_block
 
       cond = builder.const_bool(true)
@@ -1512,13 +1514,21 @@ describe Adamas::MIR::LLVMIRGenerator do
       builder.jump(merge_block)
 
       builder.current_block = else_block
+      builder.branch(cond, null_pointer_block, nil_block)
+
+      builder.current_block = null_pointer_block
+      null_ptr_val = builder.const_nil_typed(Adamas::MIR::TypeRef::POINTER)
+      builder.jump(merge_block)
+
+      builder.current_block = nil_block
       nil_val = builder.const_nil
       builder.jump(merge_block)
 
       builder.current_block = merge_block
       phi = builder.phi(union_ref)
       phi.add_incoming(from: then_block, value: ptr_val)
-      phi.add_incoming(from: else_block, value: nil_val)
+      phi.add_incoming(from: null_pointer_block, value: null_ptr_val)
+      phi.add_incoming(from: nil_block, value: nil_val)
       type_id = builder.emit(Adamas::MIR::UnionTypeIdGet.new(func.next_value_id, phi.id))
       builder.emit(Adamas::MIR::UnionIs.new(func.next_value_id, phi.id, 0, union_ref))
       builder.emit(
@@ -1529,6 +1539,12 @@ describe Adamas::MIR::LLVMIRGenerator do
           union_ref
         )
       )
+      truthy_block = func.create_block
+      falsy_block = func.create_block
+      builder.branch(phi.id, truthy_block, falsy_block)
+      builder.current_block = truthy_block
+      builder.ret(type_id)
+      builder.current_block = falsy_block
       builder.ret(type_id)
 
       gen = Adamas::MIR::LLVMIRGenerator.new(mod)
@@ -1537,18 +1553,15 @@ describe Adamas::MIR::LLVMIRGenerator do
 
       func_ir = output[/define i32 @phi_union_ptr\(\)\s*\{.*?\n\}/m]
       func_ir.should_not be_nil
-      phi_line = func_ir.not_nil!.lines.find { |line| line.includes?(" = phi ptr ") }
+      phi_line = func_ir.not_nil!.lines.find { |line| line.includes?(" = phi %PtrOrNil.union ") }
       phi_line.should_not be_nil
-      phi_line.not_nil!.should contain("null")
-      phi_line.not_nil!.should match(/\[%r\d+/)
-      func_ir.not_nil!.should_not contain("%PtrOrNil.union")
-      func_ir.not_nil!.should match(/\.is_null = icmp eq ptr %r\d+, null/)
-      func_ir.not_nil!.should match(/select i1 %r\d+\.is_null, i32 0, i32 #{Adamas::MIR::TypeRef::POINTER.id}/)
+      func_ir.not_nil!.should contain("%PtrOrNil.union")
+      func_ir.not_nil!.should match(/store i32 #{Adamas::MIR::TypeRef::POINTER.id}, ptr %r\d+(?:\.phi_union_wrap\.\d+)?\.type_id_ptr/)
+      func_ir.not_nil!.should match(/store ptr null, ptr %r\d+\.phi_union_wrap\.3\.payload_ptr, align 4/)
       func_ir.not_nil!.should_not contain("safe_tid_ptr")
       func_ir.not_nil!.should_not contain("obj_tid_raw")
-      func_ir.not_nil!.scan(/ = icmp eq ptr .* null/).size.should be >= 2
-      func_ir.not_nil!.should match(/ = icmp ne ptr %r\d+, null/)
-      func_ir.not_nil!.should match(/ret i32 %r\d+/)
+      func_ir.not_nil!.should match(/pointer_payload = load ptr, ptr %cond\d+\.pointer_payload_ptr/)
+      func_ir.not_nil!.should match(/truthy = select i1 %cond\d+\.is_pointer0, i1 %cond\d+\.pointer_non_null, i1 %cond\d+\.is_not_nil/)
     end
 
     it "uses object headers to dispatch A | B | Nil raw-pointer unions" do
