@@ -23246,3 +23246,21 @@ integration, fresh bootstrap, or LavinMQ parity.
 - Residual scope: these checks qualify generic argument readiness, not stock
   prelude, bootstrap, or LavinMQ parity. The cache map fingerprint adds work
   proportional to the current substitution-map size.
+
+
+## 2026-11-01 — Nested type-literal method owner identity
+
+- Fixed method-symbol parsing to recognize only top-level class/instance
+  separators. A dot in `Box(Proc(Int32.class, Int32))#apply` belongs to the
+  generic owner; it must not change the method kind or shorten that owner.
+- Generic argument readiness now follows a metaclass argument to its registered
+  instance type. Unknown types, non-type constants, and unbound or self-bound
+  formals remain unresolved; explicit root paths retain their identity.
+- Verified on clean parent `74652052` plus this change: 28 focused HIR cases
+  passed; a fresh S1 produced byte-identical `C\n`/`D\n` to Crystal 1.22.1
+  for instance/class calls in lazy and eager modes. The repository regression
+  script also passed. Evidence: `metaclass-shadow-green33ad`, `metaclass-final33ag`,
+  `metaclass-final-native33ah`, `metaclass-final-script33aj` under the external
+  `adamas_codex_oct29_rootcause` artifact directory.
+- Scope: balanced generic method symbols and registered metaclass identities.
+  This does not establish stock-prelude hello, bootstrap, or LavinMQ parity.

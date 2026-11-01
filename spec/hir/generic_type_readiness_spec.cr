@@ -143,6 +143,27 @@ describe "registered generic argument readiness" do
     converter.__test_concrete_type_args(["Array(Int32)"], {} of String => String).should be_true
   end
 
+  it "settles metaclass arguments through registered instance type identities" do
+    converter = registered_type_identity_converter
+    ["Int32.class", "F.class", "::F.class", "Pointer(Int32).class", "Proc(Int32.class, Int32)"].each do |argument|
+      converter.__test_concrete_type_args([argument], {} of String => String).should be_true
+    end
+    converter.__test_concrete_type_args(["::F.class"], {"F" => "F"}).should be_true
+    converter.__test_concrete_type_args(["F.class"], {"F" => "::F"}).should be_true
+    converter.__test_concrete_type_args(["N.class"], {"N" => "Int32"}).should be_true
+    converter.__test_concrete_type_args(["Array(N.class)"], {"N" => "Int32"}).should be_true
+  end
+
+  it "keeps unresolved and non-type identities pending beneath metaclass arguments" do
+    converter = registered_type_identity_converter
+    ["Missing.class", "Array(Missing).class", "TEXT_VALUE.class", "N.class", "4.class"].each do |argument|
+      converter.__test_concrete_type_args([argument], {} of String => String).should be_false
+    end
+    converter.__test_concrete_type_args(["F.class"], {"F" => "F"}).should be_false
+    converter.__test_concrete_type_args_in_owner(["T.class"], "Box(T)").should be_false
+    converter.__test_concrete_type_args(["Proc(F.class, Int32)"], {"F" => "F"}).should be_false
+  end
+
   it "keeps an active self-bound formal unresolved even when a matching class exists" do
     converter = registered_type_identity_converter
     converter.__test_concrete_type_args(["F"], {"F" => "F"}).should be_false

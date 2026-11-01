@@ -2069,6 +2069,49 @@ module Adamas::HIR
       end
     end
 
+    # Find method delimiters only at the top level of the generic owner and
+    # specialization suffix. A dot in a type-literal argument such as
+    # `Box(Proc(Int32.class, Int32)).build` is part of the owner, not the
+    # class-method separator. Preserve the mangling rule that a top-level `#`
+    # overrides an earlier top-level dot, while later dots belong to the method
+    # name.
+    @[AlwaysInline]
+    private def scan_method_name_delimiters(name : String) : {Int32?, Char?, Int32?}
+      separator_index : Int32? = nil
+      separator : Char? = nil
+      suffix_index : Int32? = nil
+      generic_depth = 0
+
+      i = 0
+      while i < name.bytesize
+        byte = name.to_unsafe[i]
+        case byte
+        when '('.ord.to_u8
+          generic_depth += 1
+        when ')'.ord.to_u8
+          generic_depth -= 1 if generic_depth > 0
+        when '$'.ord.to_u8
+          if generic_depth == 0
+            suffix_index = i
+            break
+          end
+        when '#'.ord.to_u8
+          if generic_depth == 0
+            separator_index = i
+            separator = '#'
+          end
+        when '.'.ord.to_u8
+          if generic_depth == 0 && separator_index.nil?
+            separator_index = i
+            separator = '.'
+          end
+        end
+        i += 1
+      end
+
+      {separator_index, separator, suffix_index}
+    end
+
     # Parse method name in single pass - O(n) instead of O(3n) for three separate splits
     @[AlwaysInline]
     private def parse_method_name(name : String) : MethodNameParts
@@ -2086,30 +2129,7 @@ module Adamas::HIR
         return cached
       end
       record_cache_stat("method_name_parts", false)
-      sep_idx : Int32? = nil
-      sep_char : Char? = nil
-      dollar_idx : Int32? = nil
-
-      # Single pass to find both separators
-      i = 0
-      while i < name.bytesize
-        byte = name.to_unsafe[i]
-        case byte
-        when '#'.ord
-          sep_idx = i
-          sep_char = '#'
-        when '.'.ord
-          # Only use . as separator if we haven't seen # yet
-          if sep_idx.nil?
-            sep_idx = i
-            sep_char = '.'
-          end
-        when '$'.ord
-          dollar_idx = i
-          break # $ is always last, no need to continue
-        end
-        i += 1
-      end
+      sep_idx, sep_char, dollar_idx = scan_method_name_delimiters(name)
 
       # Extract parts using byte_slice (zero-copy)
       if sep_idx
@@ -2153,28 +2173,7 @@ module Adamas::HIR
     # Parse method name without touching caches (avoid Hash churn in hot paths).
     @[AlwaysInline]
     private def parse_method_name_uncached(name : String) : MethodNameParts
-      sep_idx : Int32? = nil
-      sep_char : Char? = nil
-      dollar_idx : Int32? = nil
-
-      i = 0
-      while i < name.bytesize
-        byte = name.to_unsafe[i]
-        case byte
-        when '#'.ord
-          sep_idx = i
-          sep_char = '#'
-        when '.'.ord
-          if sep_idx.nil?
-            sep_idx = i
-            sep_char = '.'
-          end
-        when '$'.ord
-          dollar_idx = i
-          break
-        end
-        i += 1
-      end
+      sep_idx, sep_char, dollar_idx = scan_method_name_delimiters(name)
 
       if sep_idx
         owner = name.byte_slice(0, sep_idx)
@@ -2232,27 +2231,7 @@ module Adamas::HIR
       unless v2_string_readable?(name)
         return MethodNamePartsCompact.new(name, nil, nil, name)
       end
-      sep_idx : Int32? = nil
-      sep_char : Char? = nil
-      dollar_idx : Int32? = nil
-
-      i = 0
-      while i < name.bytesize
-        byte = name.to_unsafe[i]
-        if byte == '#'.ord.to_u8
-          sep_idx = i
-          sep_char = '#'
-        elsif byte == '.'.ord.to_u8
-          if sep_idx.nil?
-            sep_idx = i
-            sep_char = '.'
-          end
-        elsif byte == '$'.ord.to_u8
-          dollar_idx = i
-          break
-        end
-        i += 1
-      end
+      sep_idx, sep_char, dollar_idx = scan_method_name_delimiters(name)
 
       if sep_idx
         owner = name.byte_slice(0, sep_idx)
@@ -2282,7 +2261,7 @@ module Adamas::HIR
     @[AlwaysInline]
     private def strip_type_suffix_uncached(name : String) : String
       return "" unless v2_string_readable?(name)
-      if dollar = name.index('$')
+      if dollar = scan_method_name_delimiters(name)[2]
         name.byte_slice(0, dollar)
       else
         name
@@ -2292,20 +2271,7 @@ module Adamas::HIR
     @[AlwaysInline]
     private def method_short_from_name(name : String) : String?
       return nil unless v2_string_readable?(name)
-
-      sep_idx : Int32? = nil
-      dollar_idx : Int32? = nil
-      i = name.bytesize - 1
-      while i >= 0
-        byte = name.to_unsafe[i]
-        if byte == '$'.ord
-          dollar_idx = i
-        elsif byte == '#'.ord || byte == '.'.ord
-          sep_idx = i
-          break
-        end
-        i -= 1
-      end
+      sep_idx, _, dollar_idx = scan_method_name_delimiters(name)
       return nil unless sep_idx
       end_idx = dollar_idx || name.bytesize
       name.byte_slice(sep_idx + 1, end_idx - sep_idx - 1)
@@ -2313,20 +2279,14 @@ module Adamas::HIR
 
     @[AlwaysInline]
     private def method_owner_from_name(name : String) : String
-      sep_idx = name.index('#') || name.index('.')
+      sep_idx = scan_method_name_delimiters(name)[0]
       sep_idx ? name.byte_slice(0, sep_idx) : name
     end
 
     # Quick check helpers that don't allocate
     @[AlwaysInline]
     private def has_method_separator?(name : String) : Bool
-      i = 0
-      while i < name.bytesize
-        byte = name.to_unsafe[i]
-        return true if byte == '#'.ord || byte == '.'.ord
-        i += 1
-      end
-      false
+      !scan_method_name_delimiters(name)[0].nil?
     end
 
     @[AlwaysInline]
@@ -2376,22 +2336,12 @@ module Adamas::HIR
 
     @[AlwaysInline]
     private def instance_method?(name : String) : Bool
-      i = 0
-      while i < name.bytesize
-        return true if name.to_unsafe[i] == '#'.ord
-        i += 1
-      end
-      false
+      scan_method_name_delimiters(name)[1] == '#'
     end
 
     @[AlwaysInline]
     private def class_method?(name : String) : Bool
-      i = 0
-      while i < name.bytesize
-        return true if name.to_unsafe[i] == '.'.ord
-        i += 1
-      end
-      false
+      scan_method_name_delimiters(name)[1] == '.'
     end
 
     # Legacy helpers for compatibility - use parse_method_name for hot paths
@@ -2417,7 +2367,7 @@ module Adamas::HIR
 
     @[AlwaysInline]
     private def method_suffix(name : String) : String?
-      if dollar = name.index('$')
+      if dollar = scan_method_name_delimiters(name)[2]
         name.byte_slice(dollar + 1, name.bytesize - dollar - 1)
       else
         nil
@@ -51392,6 +51342,20 @@ module Adamas::HIR
         if arg.ends_with?('?')
           base = arg[0...-1]
           return unresolved_generic_type_arg?(absolute_name ? "::#{base}" : base)
+        end
+        if arg.ends_with?(".class")
+          # A metaclass argument carries its instance type's source identity.
+          # Resolving the suffix as part of a nominal name would keep a known
+          # type such as Int32.class pending and suppress its generic owner.
+          base = arg[0...-6]
+          source_base = absolute_name ? "::#{base}" : base
+          # The instance type's active formal still outranks a same-spelled
+          # source constant; rooted names deliberately bypass that binding.
+          if !absolute_name && (@type_param_map.has_key?(base) || enclosing_generic_declares_type_param?(base))
+            return unresolved_generic_type_arg?(base)
+          end
+          return true if value_literal_name?(base) || numeric_constant_type_arg(source_base)
+          return unresolved_generic_type_arg?(source_base)
         end
         if info = split_generic_base_and_args(arg)
           base_name = info.base
