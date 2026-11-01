@@ -45169,14 +45169,21 @@ module Adamas::HIR
                                    else
                                      param_ids.dup
                                    end
-        init_call_args = if selected_init_target
-                           forwarded_init_param_ids
-                         else
-                           apply_default_args(
-                             ctx, forwarded_init_param_ids, init_base_name, init_name,
-                             initializer_has_block, call_has_named_args, alloc.id,
-                           )[0]
-                         end
+        # A selected source initializer owns the exact Def and arena, but its
+        # supplied call slots do not include omitted positional defaults. The
+        # allocator wrapper is where those defaults are evaluated. Expand them
+        # against the selected source entry (rather than its private physical
+        # body name) so the expression and parameter binding retain source
+        # identity.
+        default_source_name = if selected = selected_init_target
+                                matched_init_name || selected.symbol_name
+                              else
+                                init_name
+                              end
+        init_call_args = apply_default_args(
+          ctx, forwarded_init_param_ids, init_base_name, default_source_name,
+          initializer_has_block, call_has_named_args, alloc.id,
+        )[0]
         init_call_args.each_with_index do |arg_id, index|
           actual_type = ctx.type_of(arg_id)
           if index >= init_param_types.size

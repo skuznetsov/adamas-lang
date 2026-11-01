@@ -11,7 +11,7 @@ for mode in lazy eager; do
   if [[ "$mode" == eager ]]; then
     env_args+=(ADAMAS_EAGER_HIR=1 ADAMAS_EAGER_MONO=1)
   fi
-  for name in opaque_direct_result constructor_object_result delegating_named_result super_direct_result constructor_bottom; do
+  for name in opaque_direct_result constructor_object_result delegating_named_result super_direct_result constructor_bottom defaulted_aggregate; do
     binary="$WORK_DIR/$name.$mode"
     if ! env "${env_args[@]}" "$ROOT_DIR/scripts/run_safe.sh" "$COMPILER" 60 8192 \
         "$FIXTURES/$name.cr" --no-prelude --no-debug --no-ast-cache --no-llvm-cache \
@@ -26,6 +26,8 @@ for mode in lazy eager; do
     if [[ "$name" == constructor_bottom ]]; then
       expected_status=67
       : >"$WORK_DIR/expected"
+    elif [[ "$name" == defaulted_aggregate ]]; then
+      printf 'A\n' >"$WORK_DIR/expected"
     else
       printf 'B\n' >"$WORK_DIR/expected"
     fi

@@ -23218,3 +23218,15 @@ integration, fresh bootstrap, or LavinMQ parity.
   named delegation, `super`, object return and exit 67. The clean parent
   reproduces NUL instead of B for the opaque direct initializer result.
 - Stock-prelude hello, bootstrap and unchanged LavinMQ parity remain open.
+
+### Selected initializer default arguments (2026-11-01)
+
+- Generated allocator wrappers now expand omitted defaults against the selected
+  initializer source entry before calling its private physical body. Selection
+  must not confuse supplied slots with a complete initializer argument list.
+- The previous code passed no argument for an object-valued default and crashed;
+  the regression now prints the same value as stock Crystal in lazy/eager modes.
+- Verification: 34 focused HIR examples, six native fixtures compared with stock
+  Crystal 1.22.1, and the initializer regression script pass on the isolated
+  candidate. Supplied arguments, direct results, named delegation, super, and
+  NoReturn remain covered. Stock-prelude hello and LavinMQ are still open.
