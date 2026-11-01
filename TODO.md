@@ -23523,3 +23523,25 @@ integration, fresh bootstrap, or LavinMQ parity.
   remains in progress. Full WIP hello also retains the separate pending-result
   depth refusal. No bootstrap or LavinMQ runtime parity claim. Refresh after
   physical symbol redirects, overload caches, body witnesses or source selection.
+
+
+### 2026-11-01: Parse macro command commas with the macro expression grammar
+
+- Root cause: token preloading treated every top-level comma inside `{{ ... }}`
+  as proof of a runtime tuple and rewrote the braces before parsing. A valid
+  macro command such as `{{ raise "message", 29 }}` therefore became a tuple.
+  Remove this shape heuristic; the macro expression parser owns the boundary.
+  The stock parser explicitly requires spaces around nested runtime tuple braces.
+- Verification: the two command-comma regressions fail on the parent and pass
+  after this change. Twenty focused parser examples pass, including an unspaced
+  nested-tuple rejection and runtime tuple/hash controls. Full parser comparison
+  has exactly the same 103 pre-existing failures on both revisions; only the two
+  new command-comma failures disappear (2362 examples; no new failure identity).
+  Evidence: macro-parser-suite-red33vf, macro-parser-suite33vd and
+  macro-parser-adversary33vn under the oct29 root-cause artifact directory.
+- Fresh S1 086d823049b2e9b61b6cd9b24b309d81b9c61220c3860c827d287682ff43371a
+  builds hello against the current stock Crystal stdlib; native output is
+  `hello\n`, exit 0 (prelude-parser-head33vq). Scoped adversary verdict: ROBUST.
+  This does not close macro evaluation effects, the stricter pending-result WIP,
+  bootstrap or LavinMQ parity. Refresh after lexer macro tokens, parser macro
+  boundaries or brace classification changes.

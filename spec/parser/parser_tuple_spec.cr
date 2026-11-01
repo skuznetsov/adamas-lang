@@ -70,7 +70,7 @@ describe "Adamas::Compiler::Frontend::Parser" do
     end
 
     it "parses nested tuples" do
-      source = "{{1, 2}, {3, 4}}"
+      source = "{ {1, 2}, {3, 4} }"
 
       parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program

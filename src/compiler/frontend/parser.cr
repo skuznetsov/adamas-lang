@@ -12,7 +12,6 @@ module Adamas
       class Parser
         @consume_postfix_modifiers : Bool? = true
         @macro_expr_synth_index : Int32?
-        @macro_expr_brace_cache : Hash(Int32, Bool)
         PREFIX_ERROR     = ExprId.new(-1)
         UNARY_PRECEDENCE = 30
         MACRO_EFFECT_NONE = 0_i8
@@ -195,7 +194,6 @@ module Adamas
           @recovery_mode = recovery_mode
           @consume_postfix_modifiers = true
           @macro_expr_synth_index = nil
-          @macro_expr_brace_cache = Hash(Int32, Bool).new
           @allow_inline_rescue = true
           # Ensure lexer can emit diagnostics into this parser's buffer
           lexer.diagnostics = @diagnostics
@@ -207,7 +205,6 @@ module Adamas
             @tokens << token
             trace_abstract_char_fill("ctor1.stored", next_idx, @tokens[next_idx])
           end
-          normalize_preloaded_macro_expr_braces!
           parser_init_trace("ctor1 token fill done size=#{@tokens.size}")
           trace_abstract_char_token_buffer("ctor1")
           @lexer = nil
@@ -392,7 +389,6 @@ module Adamas
           @recovery_mode = recovery_mode
           @consume_postfix_modifiers = true
           @macro_expr_synth_index = nil
-          @macro_expr_brace_cache = Hash(Int32, Bool).new
           @allow_inline_rescue = true
           @lib_depth = 0
           parser_init_trace("ctor2 token fill start")
@@ -402,7 +398,6 @@ module Adamas
             @tokens << token
             trace_abstract_char_fill("ctor2.stored", next_idx, @tokens[next_idx])
           end
-          normalize_preloaded_macro_expr_braces!
           parser_init_trace("ctor2 token fill done size=#{@tokens.size}")
           trace_abstract_char_token_buffer("ctor2")
           @lexer = nil
@@ -1298,84 +1293,6 @@ module Adamas
             @index = @tokens.size - 1
           end
           @tokens[@index]
-        end
-
-        # Normalize brace-like `{{ ... }}` sequences once after token preload so
-        # the parser never mutates Array(Token) during current_token hot-paths.
-        private def normalize_preloaded_macro_expr_braces! : Nil
-          return if ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_DISABLE_MACRO_EXPR_BRACE_SYNTH")
-          return if @tokens.empty?
-
-          brace_like_starts = Hash(Int32, Bool).new
-          extra_tokens = 0
-          i = 0
-          while i < @tokens.size
-            if @tokens[i].kind == Token::Kind::MacroExprStart
-              brace_like = macro_expr_brace_heuristic(@tokens, i)
-              if brace_like
-                brace_like_starts[i] = true
-                extra_tokens += 2
-              end
-            end
-            i += 1
-          end
-          return if extra_tokens == 0
-
-          normalized = Array(Token).new(@tokens.size + extra_tokens)
-          macro_expr_stack = Array(Int32).new
-          i = 0
-          while i < @tokens.size
-            tok = @tokens[i]
-            case tok.kind
-            when Token::Kind::MacroExprStart
-              macro_expr_stack << i
-              if brace_like_starts[i]?
-                normalized << Token.new(Token::Kind::LBrace, tok.slice, tok.span)
-                normalized << Token.new(Token::Kind::LBrace, tok.slice, tok.span)
-              else
-                normalized << tok
-              end
-            when Token::Kind::MacroExprEnd
-              start_index = macro_expr_stack.empty? ? nil : macro_expr_stack.pop?
-              if start_index && brace_like_starts[start_index]?
-                normalized << Token.new(Token::Kind::RBrace, tok.slice, tok.span)
-                normalized << Token.new(Token::Kind::RBrace, tok.slice, tok.span)
-              else
-                normalized << tok
-              end
-            else
-              normalized << tok
-            end
-            i += 1
-          end
-
-          @tokens = normalized
-        end
-
-        private def macro_expr_brace_heuristic(tokens : Array(Token), start_index : Int32) : Bool
-          nest = 0
-          i = start_index + 1
-
-          while i < tokens.size
-            tok = tokens[i]
-            case tok.kind
-            when Token::Kind::MacroExprStart, Token::Kind::LBrace, Token::Kind::LBracket, Token::Kind::LParen
-              nest += 1
-            when Token::Kind::MacroExprEnd
-              break if nest == 0
-              nest -= 1 if nest > 0
-            when Token::Kind::RBrace, Token::Kind::RBracket, Token::Kind::RParen
-              nest -= 1 if nest > 0
-            when Token::Kind::Comma
-              # Top-level comma before closing suggests tuple/hash literal
-              return true if nest == 0
-            end
-
-            break if tok.kind == Token::Kind::MacroExprEnd && nest == 0
-            i += 1
-          end
-
-          false
         end
 
         private def find_matching_macro_expr_start(index : Int32) : Int32?
