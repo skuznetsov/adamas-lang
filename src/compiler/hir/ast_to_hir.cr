@@ -89141,7 +89141,7 @@ module Adamas::HIR
       debug_flag_parse("branches.prefix.slice bytes=#{prefix.bytesize}")
       return nil unless prefix.strip.empty?
       return nil unless tag == "if" || tag == "unless"
-      cond = "!#{cond}" if tag == "unless"
+      cond = "!(#{cond})" if tag == "unless"
       debug_flag_parse("branches.header cond_bytes=#{cond.bytesize}")
 
       branches = [] of Tuple(String, String)
@@ -89202,7 +89202,7 @@ module Adamas::HIR
       tag, cond, first_begin, first_end = first
       return nil unless first_begin == start_pos
       return nil unless tag == "if" || tag == "unless"
-      cond = "!#{cond}" if tag == "unless"
+      cond = "!(#{cond})" if tag == "unless"
 
       branches = [] of Tuple(String, String)
       depth = 0
@@ -89252,34 +89252,35 @@ module Adamas::HIR
       cleaned = cond.strip
       debug_flag_parse("cond.enter bytes=#{cleaned.bytesize}")
       return 0 if cleaned.empty?
-      if cleaned.starts_with?('!')
-        inner = evaluate_flag_condition_state(cleaned[1..])
-        return 0 if inner == 0
-        return inner == 2 ? 1 : 2
-      end
       if sep = top_level_flag_condition_separator(cleaned, '|'.ord.to_u8, '|'.ord.to_u8)
         debug_flag_parse("cond.or sep=#{sep}")
         left = evaluate_flag_condition_state(cleaned.byte_slice(0, sep))
-        return 0 if left == 0
         return 2 if left == 2
+        return 0 if left == 0
         right_start = sep + 2
         right_length = cleaned.bytesize - right_start
         return 0 if right_length < 0
         right = evaluate_flag_condition_state(cleaned.byte_slice(right_start, right_length))
-        return 0 if right == 0
         return right
       end
       if sep = top_level_flag_condition_separator(cleaned, '&'.ord.to_u8, '&'.ord.to_u8)
         debug_flag_parse("cond.and sep=#{sep}")
         left = evaluate_flag_condition_state(cleaned.byte_slice(0, sep))
-        return 0 if left == 0
         return 1 if left == 1
+        return 0 if left == 0
         right_start = sep + 2
         right_length = cleaned.bytesize - right_start
         return 0 if right_length < 0
         right = evaluate_flag_condition_state(cleaned.byte_slice(right_start, right_length))
-        return 0 if right == 0
         return right
+      end
+      if grouped = strip_outer_flag_condition_group(cleaned)
+        return evaluate_flag_condition_state(grouped)
+      end
+      if cleaned.starts_with?('!')
+        inner = evaluate_flag_condition_state(cleaned[1..])
+        return 0 if inner == 0
+        return inner == 2 ? 1 : 2
       end
       if flag_name = parse_flag_condition_name(cleaned)
         return evaluate_macro_flag(flag_name) ? 2 : 1
@@ -89296,10 +89297,50 @@ module Adamas::HIR
                  end
         return result ? 2 : 1
       end
-      if result = evaluate_compare_versions_condition_text(cleaned)
-        return result ? 2 : 1
+      compare_result = evaluate_compare_versions_condition_text(cleaned)
+      unless compare_result.nil?
+        return compare_result ? 2 : 1
       end
       0
+    end
+
+    # Remove one pair of parentheses only when it encloses the full condition.
+    # This preserves grouping for unary negation and compound `unless` tests.
+    private def strip_outer_flag_condition_group(text : String) : String?
+      return nil if text.bytesize < 2 || text.byte_at(0) != '('.ord.to_u8
+
+      depth = 0
+      quote = 0_u8
+      escaped = false
+      idx = 0
+      bytesize = text.bytesize
+      while idx < bytesize
+        byte = text.byte_at(idx)
+        if quote != 0
+          if escaped
+            escaped = false
+          elsif byte == '\\'.ord.to_u8
+            escaped = true
+          elsif byte == quote
+            quote = 0_u8
+          end
+        else
+          case byte
+          when '"'.ord.to_u8, '\''.ord.to_u8
+            quote = byte
+          when '('.ord.to_u8
+            depth += 1
+          when ')'.ord.to_u8
+            depth -= 1
+            return nil if depth < 0
+            return nil if depth == 0 && idx < bytesize - 1
+          end
+        end
+        idx += 1
+      end
+
+      return nil unless depth == 0 && quote == 0_u8
+      text.byte_slice(1, bytesize - 2).strip
     end
 
     private def evaluate_compare_versions_condition_text(text : String) : Bool?
@@ -89486,18 +89527,32 @@ module Adamas::HIR
     ) : Int32?
       idx = 0
       depth = 0
+      quote = 0_u8
+      escaped = false
       bytesize = text.bytesize
 
       while idx + 1 < bytesize
         byte = text.byte_at(idx)
-        case byte
-        when '('.ord.to_u8
-          depth += 1
-        when ')'.ord.to_u8
-          depth -= 1 if depth > 0
+        if quote != 0
+          if escaped
+            escaped = false
+          elsif byte == '\\'.ord.to_u8
+            escaped = true
+          elsif byte == quote
+            quote = 0_u8
+          end
         else
-          if depth == 0 && byte == first && text.byte_at(idx + 1) == second
-            return idx
+          case byte
+          when '"'.ord.to_u8, '\''.ord.to_u8
+            quote = byte
+          when '('.ord.to_u8
+            depth += 1
+          when ')'.ord.to_u8
+            depth -= 1 if depth > 0
+          else
+            if depth == 0 && byte == first && text.byte_at(idx + 1) == second
+              return idx
+            end
           end
         end
 

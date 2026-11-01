@@ -23419,3 +23419,26 @@ integration, fresh bootstrap, or LavinMQ parity.
 - Stock-prelude execution, bootstrap and LavinMQ parity remain open. Refresh
   this evidence after include registration, source ordering, callback owner
   transfer, packed argument ABI or method-body provenance changes.
+
+
+### 2026-11-01: Preserve precedence and unknown state in raw flag macros
+
+- Root cause: the raw macro evaluator applied leading negation before the
+  top-level boolean operators. The Thread scheduler condition therefore selected
+  the wrong branch with preview_mt. Compound unless also negated only the first
+  term, and a false compare_versions result was mistaken for an unknown result.
+- Parse top-level OR, AND, grouping, then unary negation; keep short-circuiting
+  and unknown-left conditions distinct. Ignore operators inside quoted names
+  and group the entire condition when translating unless. No stdlib edits.
+- Verification: 22 HIR examples pass at AST 523549d0c7aa81c4e0afc7007608a702e3a643a00a9a41d9cafc4e5c3dffc4f0.
+  Fresh S1 1545c8931d1e85d6214eff8830aaf6fb28ba35be29c6dcf03f05664a96e4ff70
+  passes the portable raw_macro_flag_branch_repro.sh: five flag combinations,
+  each compared byte-for-byte with Crystal 1.22.1 in lazy and both-flags eager
+  mode (15 runs). The prior S1 prints A where stock prints B with preview_mt.
+  Evidence: spec.raw-flag-contract33nq.result.json, raw-threadlike-old33pp,
+  raw-threadlike-green33ps and raw-portable33pv under the oct29 artifact root.
+- Scoped adversary: unknown-left operands defer expansion, decisive left
+  operands short-circuit, and grouping, quoted names, elsif and compound unless
+  have explicit checks. This establishes the tested evaluator contract only;
+  stock-prelude execution, bootstrap and LavinMQ parity remain open. Refresh
+  after raw macro parsing, flag evaluation or compile-flag propagation changes.
