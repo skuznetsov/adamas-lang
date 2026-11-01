@@ -23343,3 +23343,22 @@ integration, fresh bootstrap, or LavinMQ parity.
   namespace-shadowing HIR regression had three failures before the fix.
 - [ ] Full-prelude hello and LavinMQ parity remain separate open gates;
   this enum-only qualification does not establish either result.
+
+### is_a? structural type argument boundary (2026-11-01)
+
+- Root cause: explicit predicates recovered by skipping to the next closing
+  parenthesis, while the generic annotation scanner accepted adjacent identifiers.
+  Both could discard malformed tokens before lowering used the predicate as a
+  type proof. Parse one structural type and require its exact closing boundary.
+- Preserve macro type atoms, nested types, comments, multiline unions, and bare
+  Proc input continuations. Retain the rendered type source in its owning arena.
+- Verification: 137 parser examples passed on source33js; fresh S1
+  `s1_is-a-proc33ju` matched Crystal 1.22.1 in 24 stock/lazy/eager records.
+  Seven malformed programs reject with exit 1; the valid program prints
+  `ABCDEFG` plus newline with exit 0 in all three modes.
+- Adversary: malformed tails, empty arguments, macro interpolation, and valid
+  multiline Proc syntax are covered. This closes the tested predicate boundary;
+  stock-prelude execution, bootstrap, and LavinMQ parity remain open.
+- Follow-up audit lead (not reproduced here): other intrinsic parsers with
+  fast-forward recovery (`typeof`, `sizeof`, `pointerof`, `as`, `responds_to?`)
+  need equivalent boundary checks before their results establish semantic facts.

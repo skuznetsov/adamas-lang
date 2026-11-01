@@ -1,0 +1,8 @@
+lib LibC
+  fun putchar(value : Int32) : Int32
+end
+fun __crystal_raise_overflow : NoReturn
+  while true
+  end
+end
+is_a?(Int32, trick: true)

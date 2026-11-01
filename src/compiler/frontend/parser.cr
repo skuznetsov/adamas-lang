@@ -10668,21 +10668,25 @@ module Adamas
           end
           lparen = current_token
           advance
-          skip_trivia
+          consume_newlines
 
           # Parse target type using type annotation parser
           type_start = current_token
-          target_type = parse_type_annotation
+          target_type = parse_is_a_type_argument
+          unless target_type
+            @diagnostics << Diagnostic.new("expecting a type argument to is_a?", current_token.span)
+            return PREFIX_ERROR
+          end
           type_end = previous_token
           unless type_end
             emit_unexpected(type_start)
             return PREFIX_ERROR
           end
-          skip_trivia
+          consume_newlines
 
           # Expect ')'
           unless current_token.kind == Token::Kind::RParen
-            emit_unexpected(current_token)
+            @diagnostics << Diagnostic.new("expecting token: ), not #{current_token.kind}", current_token.span)
             return PREFIX_ERROR
           end
           rparen = current_token
@@ -13929,6 +13933,35 @@ current_token.kind == Token::Kind::Identifier &&
           parse_as_like(receiver, as_question_token, true)
         end
 
+        # is_a? consumes a single structural type, which can itself be a bare
+        # Proc type with commas. Retain its source before crossing arenas.
+        private def parse_is_a_type_argument : Slice(UInt8)?
+          start_index = @index
+          return nil unless parse_bare_proc_type
+
+          # The structural parser advances over trivia. Render only its consumed
+          # type tokens, preserving gaps needed by typeof expressions while
+          # excluding comments from the type name used by lowering.
+          buffer = IO::Memory.new
+          previous : Token? = nil
+          index = start_index
+          while index < @index
+            token = @tokens[index]
+            unless token.kind.in?(Token::Kind::Whitespace, Token::Kind::Newline, Token::Kind::Comment)
+              if prior = previous
+                buffer.write_byte(' '.ord.to_u8) if token.span.start_offset > prior.span.end_offset
+              end
+              buffer.write(token.slice)
+              previous = token
+            end
+            index += 1
+          end
+          text = String.new(buffer.to_slice)
+          return nil if text.empty?
+          @arena.retain_source(text)
+          text.to_slice
+        end
+
         # Phase 93: Parse type check (.is_a?(Type) or .is_a? Type)
         private def parse_is_a(receiver : ExprId, dot : Token, is_a_token : Token) : ExprId
           advance # Skip 'is_a?' keyword
@@ -13938,41 +13971,27 @@ current_token.kind == Token::Kind::Identifier &&
             # With parentheses: .is_a?(Type)
             lparen = current_token
             advance
-            skip_trivia
+            consume_newlines
 
             # Parse target type
             type_start_token = current_token
-            target_type = parse_type_annotation
+            target_type = parse_is_a_type_argument
+            unless target_type
+              @diagnostics << Diagnostic.new("expecting a type argument to is_a?", current_token.span)
+              return PREFIX_ERROR
+            end
             type_end_token = previous_token
             unless type_end_token
               emit_unexpected(type_start_token)
               return PREFIX_ERROR
             end
-            skip_trivia
+            consume_newlines
 
-            # Expect closing parenthesis (tolerate stray tokens by fast-forwarding)
+            # is_a? owns one type argument. Recovery must not silently drop
+            # extra positional/named arguments and turn them into a type proof.
             unless current_token.kind == Token::Kind::RParen
-              scan_idx = @index
-              paren_balance = 0
-              while scan_idx < @tokens.size
-                tok = @tokens[scan_idx]
-                if tok.kind == Token::Kind::LParen
-                  paren_balance += 1
-                elsif tok.kind == Token::Kind::RParen
-                  if paren_balance == 0
-                    @index = scan_idx
-                    @previous_token = scan_idx > 0 ? @tokens[scan_idx - 1] : nil
-                    break
-                  else
-                    paren_balance -= 1
-                  end
-                end
-                scan_idx += 1
-              end
-              unless current_token.kind == Token::Kind::RParen
-                emit_unexpected(current_token)
-                return PREFIX_ERROR
-              end
+              @diagnostics << Diagnostic.new("expecting token: ), not #{current_token.kind}", current_token.span)
+              return PREFIX_ERROR
             end
             rparen = current_token
             advance
@@ -13987,7 +14006,11 @@ current_token.kind == Token::Kind::Identifier &&
           else
             # Without parentheses: .is_a? Type
             type_start_token = current_token
-            target_type = parse_type_annotation
+            target_type = parse_is_a_type_argument
+            unless target_type
+              @diagnostics << Diagnostic.new("expecting a type argument to is_a?", current_token.span)
+              return PREFIX_ERROR
+            end
             type_end_token = previous_token
             unless type_end_token
               emit_unexpected(type_start_token)
@@ -17290,7 +17313,7 @@ current_token.kind == Token::Kind::Identifier &&
             # Phase 103S: Use parse_union_type_simple to support unions per input type
             loop do
               advance # consume comma
-              skip_trivia
+              skip_type_list_continuation
 
               next_type = parse_union_type_simple_for_annotation
               return nil if next_type.nil?
@@ -17374,7 +17397,7 @@ current_token.kind == Token::Kind::Identifier &&
           loop do
             break unless current_token.kind == Token::Kind::Comma
             advance
-            skip_trivia
+            skip_type_list_continuation
 
             # Try to skip over a type
             case current_token.kind
@@ -17540,7 +17563,7 @@ current_token.kind == Token::Kind::Identifier &&
           # Parse additional types in union
           loop do
             advance # consume |
-            skip_trivia
+            skip_type_list_continuation
 
             next_type = parse_atomic_type_with_suffix_for_annotation
             return nil if next_type.nil?
@@ -17643,6 +17666,14 @@ current_token.kind == Token::Kind::Identifier &&
           start_token = current_token
 
           case current_token.kind
+          when Token::Kind::MacroExprStart
+            # A macro type is one opaque atom until expansion. Keep its bounds
+            # structural so later garbage cannot become part of the type proof.
+            fast_forward_macro_expression
+            return nil unless macro_closing_sequence?(current_token)
+            end_token = current_token
+            advance
+            retained_token_span_slice(start_token, end_token)
           when Token::Kind::Self
             # self type
             advance
