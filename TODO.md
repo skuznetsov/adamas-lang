@@ -23199,3 +23199,10 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [x] Recover a generic module's parameter map from the receiver's source include when the persisted applied include is not published yet. Concrete receiver bindings take precedence over ambient formal substitutions; conflicting source projections return no binding.
 - Verification: `regression_tests/source_applied_include_binding_repro.sh` passes all 3 focused HIR cases; the same cases fail twice on the parent source. The focused cases plus the 7 replay/source-ownership specs pass 35 examples with no failures or errors.
 - Scope: persisted-map precedence is unchanged. This HIR declaration-binding fix does not establish native Tuple dispatch, prelude execution, bootstrap, or LavinMQ parity.
+
+## Concrete generic owner identity in overload lookup (2026-11-01)
+
+- [x] Compare resolved generic owners outside ambient lexical substitutions, preserving nested root qualifiers and distinguishing declared template formals from explicit nominal types. Reapply the requested owner boundary after every stripped-family overload fallback.
+- Root cause: rooted Proc/Tuple child spellings missed the concrete method-index owner; the resolver then reintroduced an unfiltered sibling family and could select Array(String) for Array(Proc(...)). The source return validator correctly rejected the resulting mismatch.
+- Verification: clean HEAD control fails 5 of the 12 focused owner/resolver cases. HEAD plus this isolated patch passes all 47 focused owner, applied-include, replay, and source-arena cases (`owner-identity-atomic32nj`), including the formal T versus ::T and qualified-name adversaries.
+- Scope: HIR owner selection and fallback admission only. Fresh S1/prelude qualification of the composed experimental compiler is separate; native hello, bootstrap, and LavinMQ parity remain open. Refresh after owner normalization, source binding, overload indexing, or fallback changes.

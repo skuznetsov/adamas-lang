@@ -2567,7 +2567,8 @@ module Adamas::HIR
     ) : Array(String)
       return candidates unless requested_owner.includes?('(')
 
-      requested_base = method_index_owner_key(requested_owner)
+      canonical_requested_owner = canonical_method_owner_name(requested_owner)
+      requested_base = method_index_owner_key(canonical_requested_owner)
       requested_split = split_generic_base_and_args(requested_owner)
       requested_arg_count = requested_split ? split_generic_type_args(requested_split.not_nil!.args).size : nil
       exact = [] of String
@@ -2581,8 +2582,15 @@ module Adamas::HIR
         candidate_owner = parts.owner
         if candidate_owner == requested_owner
           exact << candidate
-        elsif candidate_owner == requested_base ||
-              method_index_unspecialized_template_owner?(candidate_owner, requested_base, requested_arg_count)
+        elsif method_index_unspecialized_template_owner?(candidate_owner, requested_base, requested_arg_count)
+          # A declared formal remains a template fallback even when its spelling
+          # normalizes like an explicitly rooted nominal type (T versus ::T).
+          fallback << candidate
+        elsif canonical_method_owner_name(candidate_owner) == canonical_requested_owner
+          # Resolved owners can differ in child root qualifiers after crossing
+          # a source/canonical boundary. Compare outside ambient lexical maps.
+          exact << candidate
+        elsif candidate_owner == requested_base
           fallback << candidate
         end
       end
@@ -122723,6 +122731,7 @@ module Adamas::HIR
           STDERR.puts "[SLICE_LOOKUP_FN]   method_index empty, trying function_def_overloads(#{func_name}, #{stripped_func})"
         end
         overload_keys = function_def_overload_keys(func_name, stripped_func)
+        overload_keys = filter_method_overload_candidates_for_owner(overload_keys, func_name)
         if dbg_slice_lookup && !overload_keys.empty?
           STDERR.puts "[SLICE_LOOKUP_FN]   function_def_overloads → #{overload_keys.join(", ")}"
         end
@@ -122732,6 +122741,7 @@ module Adamas::HIR
           if base != func_name
             stripped_base = stripped_func != func_name ? strip_type_suffix(stripped_func) : nil
             overload_keys = function_def_overload_keys(base, stripped_base)
+            overload_keys = filter_method_overload_candidates_for_owner(overload_keys, func_name)
             if dbg_slice_lookup && !overload_keys.empty?
               STDERR.puts "[SLICE_LOOKUP_FN]   strip_type fallback → #{overload_keys.join(", ")}"
             end
@@ -122741,6 +122751,7 @@ module Adamas::HIR
           stripped = stripped_func
           if stripped != func_name
             overload_keys = function_def_overload_keys(stripped, stripped)
+            overload_keys = filter_method_overload_candidates_for_owner(overload_keys, func_name)
             if dbg_slice_lookup && !overload_keys.empty?
               STDERR.puts "[SLICE_LOOKUP_FN]   stripped fallback → #{overload_keys.join(", ")}"
             end
