@@ -23193,3 +23193,9 @@ integration, fresh bootstrap, or LavinMQ parity.
   block and splat generic-union queries are outside this selection bridge.
   Refresh these results after source identity, call shape, generic bindings,
   target registration, or return inference changes.
+
+## Source-applied module bindings before lazy materialization (2026-10-31)
+
+- [x] Recover a generic module's parameter map from the receiver's source include when the persisted applied include is not published yet. Concrete receiver bindings take precedence over ambient formal substitutions; conflicting source projections return no binding.
+- Verification: `regression_tests/source_applied_include_binding_repro.sh` passes all 3 focused HIR cases; the same cases fail twice on the parent source. The focused cases plus the 7 replay/source-ownership specs pass 35 examples with no failures or errors.
+- Scope: persisted-map precedence is unchanged. This HIR declaration-binding fix does not establish native Tuple dispatch, prelude execution, bootstrap, or LavinMQ parity.

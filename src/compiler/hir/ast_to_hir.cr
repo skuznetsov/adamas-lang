@@ -69570,8 +69570,7 @@ module Adamas::HIR
     # registration.
     private def included_module_type_param_map(receiver_name : String, owner_base : String) : Hash(String, String)?
       return nil if receiver_name.empty? || owner_base.empty?
-      list = @class_include_instantiations[receiver_name]?
-      return nil unless list
+      list = @class_include_instantiations[receiver_name]? || [] of String
       list.each do |mod_name|
         info = split_generic_base_and_args(mod_name)
         next unless info
@@ -69597,7 +69596,13 @@ module Adamas::HIR
           end
         end
       end
-      nil
+      # Builtin generic receivers can expose an applied source include before
+      # lazy module materialization publishes its instantiated method table.
+      # Recover that same declaration binding; the projection helper rejects
+      # conflicting paths instead of borrowing an ambient formal substitution.
+      param_names = declared_module_type_param_names(owner_base)
+      return nil if param_names.empty?
+      source_included_module_type_param_map(receiver_name, owner_base, param_names)
     end
 
     # A module method restricted by the module's own type param
