@@ -39883,9 +39883,7 @@ module Adamas::HIR
                 contains_yield = def_contains_yield?(member, member_arena)
                 query_has_block_or_yield = contains_yield.not_nil!
               end
-              return_type = if method_name == "initialize"
-                              TypeRef::VOID
-                            elsif rt_name = explicit_return_type_name
+              return_type = if rt_name = explicit_return_type_name
                               resolved_rt_name = resolve_type_name_in_context(rt_name)
                               STDERR.puts "[REG_METHOD_PHASE] class=#{class_name} method=#{method_name} phase=resolved_return raw=#{rt_name} resolved=#{resolved_rt_name}" if trace_method_phase
                               enum_return_name = resolve_enum_name(resolved_rt_name)
@@ -44180,6 +44178,7 @@ module Adamas::HIR
 
       # Call initialize if it exists, passing through the parameters
       # Use inheritance-aware resolution to find initialize in parent classes
+      initializer_return_type : TypeRef? = nil
       init_base_name = resolve_method_with_inheritance(class_name, "initialize")
       if init_base_name
         # Mangle the initialize call with parameter types
@@ -44252,34 +44251,54 @@ module Adamas::HIR
             init_call_args << block_arg_id
           end
         end
-        init_call = Call.with_receiver(ctx.next_id, TypeRef::VOID, alloc.id, init_name, init_call_args)
+        init_function = @module.function_by_name(init_name)
+        unless init_function && @module.has_function_with_body?(init_name)
+          raise LoweringError.new("missing completed initializer body before allocator call: #{init_name}")
+        end
+        initializer_return_type = init_function.return_type
+        init_call = Call.with_receiver(ctx.next_id, initializer_return_type.not_nil!, alloc.id, init_name, init_call_args)
         ctx.emit(init_call)
 
         # V2 BOOTSTRAP: Re-store union-typed fields after initialize.
         # V2 passes union args as ptr → initialize wraps ptr in {tag=Nil, payload=ptr}.
         # We fix this by re-storing the correct union value at the field offset.
-        allocator_params.each_with_index do |(param_name, param_type), idx|
-          # Check if this param maps to an ivar with union type
-          ivar_match = find_ivar_info(class_info.ivars, "@#{param_name}")
-          if ivar_match
-            type_desc = @module.get_type_descriptor(param_type)
-            if type_desc && type_desc.kind == TypeKind::Union
-              # Re-store the union value at the field offset
-              fixup_store = FieldSet.new(ctx.next_id, ivar_match.type, alloc.id, ivar_match.name, param_ids[idx], ivar_match.offset)
-              ctx.emit(fixup_store)
+        unless noreturn_type?(initializer_return_type.not_nil!)
+          allocator_params.each_with_index do |(param_name, param_type), idx|
+            # Check if this param maps to an ivar with union type
+            ivar_match = find_ivar_info(class_info.ivars, "@#{param_name}")
+            if ivar_match
+              type_desc = @module.get_type_descriptor(param_type)
+              if type_desc && type_desc.kind == TypeKind::Union
+                # Re-store the union value at the field offset
+                fixup_store = FieldSet.new(ctx.next_id, ivar_match.type, alloc.id, ivar_match.name, param_ids[idx], ivar_match.offset)
+                ctx.emit(fixup_store)
+              end
             end
           end
         end
       end
 
-      # Return allocated object
-      ctx.terminate(Return.new(alloc.id))
+      # A direct initialize call has its source result; the allocator discards
+      # it and returns the allocated instance. A bottom initializer remains
+      # bottom through .new.
+      allocator_return_type = if init_result = initializer_return_type
+                                noreturn_type?(init_result) ? init_result : class_info.type_ref
+                              else
+                                class_info.type_ref
+                              end
+      func.return_type = allocator_return_type
+      if noreturn_type?(allocator_return_type)
+        ctx.terminate(Unreachable.new)
+      else
+        ctx.terminate(Return.new(alloc.id))
+      end
+      register_function_type(func_name, allocator_return_type, allow_explicit_replacement: true)
       @generated_allocator_layout_bodies[func_name] = {func, func.body_revision, class_name}
 
       # Generate instance #new wrapper for cases where type literals are lowered as receivers.
       instance_name = allocator_instance_new_name_for(class_name)
       unless @module.has_function_with_body?(instance_name) || @function_types.has_key?(instance_name) || has_function_base?(instance_name)
-        instance_func = @module.create_function(instance_name, class_info.type_ref)
+        instance_func = @module.create_function(instance_name, allocator_return_type)
         instance_ctx = LoweringContext.new(instance_func, @module, @arena)
 
         self_param = instance_func.add_param("self", class_info.type_ref)
@@ -44294,10 +44313,15 @@ module Adamas::HIR
           wrapper_param_ids << hir_param.id
         end
 
-        new_call = Call.without_receiver(instance_ctx.next_id, class_info.type_ref, func_name, wrapper_param_ids)
+        new_call = Call.without_receiver(instance_ctx.next_id, allocator_return_type, func_name, wrapper_param_ids)
         instance_ctx.emit(new_call)
-        instance_ctx.register_type(new_call.id, class_info.type_ref)
-        instance_ctx.terminate(Return.new(new_call.id))
+        instance_ctx.register_type(new_call.id, allocator_return_type)
+        if noreturn_type?(allocator_return_type)
+          instance_ctx.terminate(Unreachable.new)
+        else
+          instance_ctx.terminate(Return.new(new_call.id))
+        end
+        register_function_type(instance_name, allocator_return_type, allow_explicit_replacement: true)
       end
 
       set_function_state(func_name, FunctionLoweringState::Completed)
@@ -45033,6 +45057,7 @@ module Adamas::HIR
         ctx.emit(ivar_store)
       end
 
+      initializer_return_type : TypeRef? = nil
       init_base_name = resolve_method_with_inheritance(class_name, "initialize")
       if init_base_name
         init_allocator_params = if forwarded_block_index = forwarded_initializer_block_index
@@ -45216,11 +45241,24 @@ module Adamas::HIR
         end
         init_call_args << block_param_id.not_nil! if block_param_id
         init_call_args = coerce_args_to_types(ctx, init_call_args, init_param_types)
-        init_call = Call.with_receiver(ctx.next_id, TypeRef::VOID, alloc.id, init_name, init_call_args)
+        init_function = @module.function_by_name(init_name)
+        unless init_function && @module.has_function_with_body?(init_name)
+          raise LoweringError.new("missing completed initializer body before allocator call: #{init_name}")
+        end
+        initializer_return_type = init_function.return_type
+        init_call = Call.with_receiver(ctx.next_id, initializer_return_type.not_nil!, alloc.id, init_name, init_call_args)
         ctx.emit(init_call)
+        ctx.terminate(Unreachable.new) if noreturn_type?(initializer_return_type.not_nil!)
       end
 
-      ctx.terminate(Return.new(alloc.id))
+      allocator_return_type = if init_result = initializer_return_type
+                                noreturn_type?(init_result) ? init_result : class_info.type_ref
+                              else
+                                class_info.type_ref
+                              end
+      func.return_type = allocator_return_type
+      ctx.terminate(Return.new(alloc.id)) unless noreturn_type?(allocator_return_type)
+      register_function_type(overload_name, allocator_return_type, allow_explicit_replacement: true)
       @generated_allocator_layout_bodies[overload_name] = {func, func.body_revision, class_name}
       selected_layout_target = selected_init_target.try do |selected|
         source_arena = selected.source_arena || resolve_arena_for_def(selected.def_node, @arena)
@@ -47130,9 +47168,7 @@ module Adamas::HIR
       end
       return_type = TypeRef::VOID
       if extra_type_params.empty?
-        return_type = if is_initialize_method
-                        TypeRef::VOID
-                      elsif rt = node.return_type
+        return_type = if rt = node.return_type
                         direct_return_name = (safe_slice_to_string(rt) || "")
                         # "self" in return type means "the current class type"
                         if direct_return_name == "self"
@@ -47162,9 +47198,7 @@ module Adamas::HIR
         # significantly cheaper during self-host.
       else
         with_type_param_map(extra_type_params) do
-          return_type = if is_initialize_method
-                          TypeRef::VOID
-                        elsif rt = node.return_type
+          return_type = if rt = node.return_type
                           generic_return_name = (safe_slice_to_string(rt) || "")
                           # "self" in return type means "the current class type"
                           if generic_return_name == "self"
@@ -47267,7 +47301,7 @@ module Adamas::HIR
       # Re-resolve annotated return type after type-param map merge.
       # Generic signatures like `: T*` may resolve to VOID before the lazy
       # specialization map is attached.
-      if !is_initialize_method && (rt = node.return_type)
+      if rt = node.return_type
         resolved_return = TypeRef::VOID
         with_type_param_map(extra_type_params) do
           merged_return_name = (safe_slice_to_string(rt) || "")
@@ -47293,7 +47327,7 @@ module Adamas::HIR
         end
       end
 
-      abstract_return_constraint = if !is_initialize_method && !(method_name == "value" && !enum_base_type_by_name?(class_name).nil?)
+      abstract_return_constraint = if !(method_name == "value" && !enum_base_type_by_name?(class_name).nil?)
                                      abstract_numeric_return_constraint(node)
                                    end
 
@@ -47383,7 +47417,7 @@ module Adamas::HIR
         return
       end
 
-      abstract_return_constraint = if !is_initialize_method && !(method_name == "value" && !enum_base_type_by_name?(class_name).nil?)
+      abstract_return_constraint = if !(method_name == "value" && !enum_base_type_by_name?(class_name).nil?)
                                      abstract_numeric_return_constraint(node)
                                    end
       return_type = TypeRef::VOID if abstract_return_constraint
@@ -47756,7 +47790,7 @@ module Adamas::HIR
       # assignments are the body: the call evaluates to the last assigned
       # parameter, not Nil (`Fiber.current.execution_context = new(...)` is the
       # result of `Parallel.default : self`).
-      if last_value.nil? && !is_initialize_method
+      if last_value.nil?
         source_body = node.body
         if source_body.nil? || source_body.empty?
           if last_auto_assign = auto_assign_params.last?
@@ -47801,7 +47835,7 @@ module Adamas::HIR
       # Infer return type from all Return terminators + last expression.
       # Functions with explicit `return` inside conditionals (e.g., check_downcase_ascii)
       # may return different types from different paths. We must merge all of them.
-      if node.return_type.nil? && !is_initialize_method
+      if node.return_type.nil?
         inferred_types = lowered_method_result_types(ctx, last_value)
 
         if inferred_types.any?
@@ -47846,7 +47880,7 @@ module Adamas::HIR
       # Add implicit return if not already terminated
       # BUT don't add return after raise (which sets Unreachable terminator)
       if block.terminator.is_a?(Unreachable) && !block_has_raise && !control_flow_dead_block?(ctx, ctx.current_block)
-        block.terminator = Return.new(is_initialize_method ? nil : last_value)
+        block.terminator = Return.new(last_value)
       end
 
       normalize_function_return_terminators(ctx, return_type)

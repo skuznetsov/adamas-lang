@@ -23206,3 +23206,15 @@ integration, fresh bootstrap, or LavinMQ parity.
 - Root cause: rooted Proc/Tuple child spellings missed the concrete method-index owner; the resolver then reintroduced an unfiltered sibling family and could select Array(String) for Array(Proc(...)). The source return validator correctly rejected the resulting mismatch.
 - Verification: clean HEAD control fails 5 of the 12 focused owner/resolver cases. HEAD plus this isolated patch passes all 47 focused owner, applied-include, replay, and source-arena cases (`owner-identity-atomic32nj`), including the formal T versus ::T and qualified-name adversaries.
 - Scope: HIR owner selection and fallback admission only. Fresh S1/prelude qualification of the composed experimental compiler is separate; native hello, bootstrap, and LavinMQ parity remain open. Refresh after owner normalization, source binding, overload indexing, or fallback changes.
+
+### Initializer source-result ABI (2026-11-01)
+
+- Preserve the normal source result of direct `initialize` calls. Generated
+  allocators call the same physical result ABI, discard its value, and return
+  the allocated instance; terminal initializers keep `NoReturn` through `new`.
+- Qualified on a clean base: 32 HIR examples and
+  `regression_tests/initializer_source_result_repro.sh` pass. Five native
+  programs match Crystal 1.22.1 in lazy/eager modes, including opaque input,
+  named delegation, `super`, object return and exit 67. The clean parent
+  reproduces NUL instead of B for the opaque direct initializer result.
+- Stock-prelude hello, bootstrap and unchanged LavinMQ parity remain open.
