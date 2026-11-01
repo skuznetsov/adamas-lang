@@ -51373,6 +51373,47 @@ module Adamas::HIR
           return true if value_literal_name?(base) || numeric_constant_type_arg(source_base)
           return unresolved_generic_type_arg?(source_base)
         end
+        # Resolve proc syntax before postfix wrappers: `A -> B*` is a proc
+        # returning a pointer, not a pointer whose pointee is a proc.
+        if proc_args = proc_type_argument_names(arg)
+          return proc_args.any? { |part| unresolved_generic_type_arg?(part.strip) }
+        end
+        # Match the annotation resolver's `T[N]` sugar by lowering it through
+        # the registered StaticArray constructor and then applying the same
+        # leaf identity and numeric-constant checks as other generic forms.
+        if static_array_name = static_array_sugar_type_name(arg)
+          if absolute_name
+            if info = split_generic_base_and_args(static_array_name)
+              args = split_generic_type_args(info.args).map(&.strip)
+              if args.size == 2 && !args[0].starts_with?("::")
+                args[0] = "::#{args[0]}"
+                static_array_name = "#{info.base}(#{args.join(", ")})"
+              end
+            end
+          end
+          return unresolved_generic_type_arg?(static_array_name)
+        end
+        # `type_ref_for_name_inner` spells every trailing pointer star as one
+        # nested Pointer(T) application. Resolve that same constructor tree here
+        # so the pointee must have a registered type identity (a value constant
+        # or an unresolved formal cannot become a pointer type by spelling).
+        if arg.ends_with?('*') && proc_type_argument_names(arg).nil?
+          base = arg
+          star_count = 0
+          while base.ends_with?('*')
+            base = base[0...-1]
+            star_count += 1
+          end
+          base = base.strip
+          return true if base.empty?
+          source_base = absolute_name ? "::#{base}" : base
+          active_formal = !absolute_name &&
+                          (@type_param_map.has_key?(base) || enclosing_generic_declares_type_param?(base))
+          return true if !active_formal && (value_literal_name?(base) || numeric_constant_type_arg(source_base))
+          pointer_name = source_base
+          star_count.times { pointer_name = "Pointer(#{pointer_name})" }
+          return unresolved_generic_type_arg?(pointer_name)
+        end
         if info = split_generic_base_and_args(arg)
           base_name = info.base
           base = absolute_name ? resolve_path_type_alias_chain(base_name, true) : resolve_type_alias_chain(base_name)
@@ -51387,9 +51428,6 @@ module Adamas::HIR
             end
           end
           return inner_args.any? { |inner| unresolved_generic_type_arg?(inner) }
-        end
-        if proc_args = proc_type_argument_names(arg)
-          return proc_args.any? { |part| unresolved_generic_type_arg?(part.strip) }
         end
         # A registered alias is not itself a nominal identity. A cycle must
         # stay unresolved even though `type_name_exists?` recognizes aliases.

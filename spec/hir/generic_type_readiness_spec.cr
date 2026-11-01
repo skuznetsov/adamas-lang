@@ -202,6 +202,32 @@ describe "registered generic argument readiness" do
     converter.__test_concrete_type_args(["F"], {} of String => String).should be_true
   end
 
+  it "admits supported pointer and StaticArray suffix wrappers through their source identities" do
+    converter = registered_type_identity_converter
+    {"Void*", "Void**", "F*", "Foo::T*", "::Foo::T*", "Array(Int32)*",
+     "Pointer(Void*)", "Proc(Int32, Void*)", "Int32 | Void*", "Int32 -> Void*",
+     "UInt8[4]", "UInt8[N]"}.each do |argument|
+      converter.__test_concrete_type_args([argument], {} of String => String).should be_true, argument
+    end
+    converter.__test_concrete_type_args(["::F*"], {"F" => "F"}).should be_true
+    converter.__test_concrete_type_args(["F*"], {"F" => "::F"}).should be_true
+    converter.__test_concrete_type_args(["::F[2]"], {"F" => "F"}).should be_true
+  end
+
+  it "keeps unknown, value, and active formal pointees unresolved through wrappers" do
+    converter = registered_type_identity_converter
+    {"Missing*", "Z*", "Array(Missing*)", "Proc(Missing*, Int32)",
+     "Int32 | Missing*", "TEXT_VALUE*", "4*", "N*", "UInt8[Missing]"}.each do |argument|
+      converter.__test_concrete_type_args([argument], {} of String => String).should be_false, argument
+    end
+    converter.__test_concrete_type_args(["F*"], {"F" => "F"}).should be_false
+    converter.__test_concrete_type_args(["Array(E*)"], {"E" => "E"}).should be_false
+    converter.__test_concrete_type_args(["Proc(F*, Int32)"], {"F" => "F"}).should be_false
+    converter.__test_concrete_type_args_in_owner(["T*"], "Box(T)").should be_false
+    converter.__test_concrete_type_args(["UInt8[N]"], {"N" => "N"}).should be_false
+    converter.__test_concrete_type_args(["F[2]"], {"F" => "F"}).should be_false
+  end
+
   it "admits a registered numeric constant in StaticArray arity" do
     converter = registered_type_identity_converter
     converter.__test_concrete_type_args(["UInt8", "N"], {} of String => String).should be_true

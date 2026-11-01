@@ -23285,3 +23285,24 @@ integration, fresh bootstrap, or LavinMQ parity.
 - Open: fresh full-frontier prelude hello and LavinMQ. An unevaluable macro
   condition's existing both-branches registration needs a separate valid-source
   falsifier; these tests cover statically selected branches only.
+
+## 2026-11-01 — Concrete type readiness for suffix syntax
+
+- Generic readiness now normalizes legal pointer-star and StaticArray bracket
+  syntax through the same registered constructor/leaf checks as explicit
+  Pointer(T) and StaticArray(T, N). Proc arrows are decomposed first so a
+  pointer return is not mistaken for a pointer to the whole proc type.
+- Root-qualified identities and active formal substitutions retain their
+  meaning; unknown pointees, non-type values, and self-bound formals stay
+  unresolved. No nominal-name heuristic or weaker type check was introduced.
+- Validation on clean parent 5bc80b08 plus this delta: 45 focused HIR cases
+  passed (pointer-readiness33bg). Fresh S1 pointer-readiness33bh matches
+  Crystal 1.22.1 byte-for-byte in lazy/eager native execution for the Void*
+  generic constructor (pointer-only-green33bs); the parent compiler rejects
+  that same valid source (pointer-only-red33br). The repro script passed
+  shell syntax validation. Evidence is in the external root-cause artifact
+  directory. Scoped adversary verdict: ROBUST for the tested syntax/identity
+  boundary; this is not a prelude or LavinMQ completion claim.
+- Follow-up: a two-formal empty-prelude probe using String? still rejects the
+  constructor independently of Void* syntax. Check builtin String source
+  identity separately; the stock prelude supplies its actual declaration.
