@@ -23329,3 +23329,17 @@ integration, fresh bootstrap, or LavinMQ parity.
   value, explicit None semantics, unknown names, and constant case-folding.
   ROBUST within these tested enum contracts. Stock-prelude runtime, applied
   module composition, bootstrap, and LavinMQ parity remain separate gates.
+
+### Canonical enum constants retain their resolved owner (2026-11-01)
+- [x] Constant paths already resolve an exact registered enum owner. The
+  member-value lookup was interpreting that canonical key again in the
+  current namespace, rejecting existing members or borrowing a member from
+  a shadowing enum. It now reads the exact enum table and Flags owner.
+  Contextual symbol auto-casting remains a separate operation.
+- [x] Added `enum_canonical_constant_owner_repro.sh`: original Crystal 1.22.1,
+  lazy Adamas and eager Adamas print `AXC@` followed by a newline. All three
+  reject borrowed members, incorrect member spelling and non-Flags `All`.
+  The safe-runner regression passes; 45 related HIR examples pass. The
+  namespace-shadowing HIR regression had three failures before the fix.
+- [ ] Full-prelude hello and LavinMQ parity remain separate open gates;
+  this enum-only qualification does not establish either result.

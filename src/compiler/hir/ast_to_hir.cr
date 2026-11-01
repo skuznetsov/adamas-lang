@@ -123732,16 +123732,17 @@ module Adamas::HIR
       @lower_histo_since_check = 0
     end
 
-    # Constant lookup is case-sensitive. Symbol auto-casting below intentionally
-    # accepts underscored member names, but cannot establish a constant identity.
-    private def enum_constant_member_value(type_name : String, member_name : String) : Int64?
-      members = enum_members_for_type_name(type_name)
+    # Callers establish the canonical owner by finding its exact enum_info key.
+    # Never resolve that key again in the current namespace: a shadowing enum
+    # would change the owner after constant-path resolution has completed.
+    # Symbol auto-casting below intentionally retains contextual name lookup.
+    private def enum_constant_member_value(canonical_enum_name : String, member_name : String) : Int64?
+      members = @enum_info.try(&.[canonical_enum_name]?)
       return nil unless members
       if value = members[member_name]?
         return value
       end
-      enum_name = resolve_enum_name(type_name) || type_name
-      return nil unless @flags_enum_names.includes?(enum_name)
+      return nil unless @flags_enum_names.includes?(canonical_enum_name)
       case member_name
       when "None"
         0_i64
