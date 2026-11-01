@@ -1289,8 +1289,9 @@ module Adamas::HIR
     private class IsANarrowingTarget
       getter name : String
       getter type : TypeRef
+      getter type_literal : Bool?
 
-      def initialize(@name : String, @type : TypeRef)
+      def initialize(@name : String, @type : TypeRef, @type_literal : Bool? = nil)
       end
     end
 
@@ -47428,6 +47429,18 @@ module Adamas::HIR
         ctx.register_type(self_literal.id, self_type)
         ctx.mark_type_literal(self_literal.id)
         @type_literal_values.add(self_literal.id)
+        # Class-method self is the exact receiver class object for this
+        # specialized owner. Keep that identity separate from its TypeRef:
+        # ordinary `.class` results can carry an upper bound while denoting a
+        # dynamic class, and must not be folded from that bound alone.
+        mark_runtime_type_identity(
+          ctx,
+          self_literal.id,
+          self_type,
+          TypeValueOrigin::ExplicitTypeLiteral,
+          runtime_stringification_required: false,
+          display_name: class_name
+        )
       else
         # For primitive types (Int32, Bool, etc.), use primitive TypeRef so LLVM passes by value
         # For structs with fields, use class_info.type_ref (passed as pointer)
@@ -94032,10 +94045,11 @@ module Adamas::HIR
           [] of IsANarrowingTarget
         end
       when Adamas::Compiler::Frontend::IsANode
-        target_name = resolve_typeof_in_type_string((safe_slice_to_string(node.target_type) || ""))
+        raw_target_name = safe_slice_to_string(node.target_type) || ""
+        target_name = resolve_typeof_in_type_string(raw_target_name)
         target_type = type_ref_for_name(target_name)
         if var_name = is_a_receiver_var_name(node.expression)
-          [IsANarrowingTarget.new(var_name, target_type)]
+          [IsANarrowingTarget.new(var_name, target_type, is_a_target_type_literal?(target_name))]
         else
           [] of IsANarrowingTarget
         end
@@ -94043,12 +94057,13 @@ module Adamas::HIR
         callee_node = @arena[node.callee]
         if callee_node.is_a?(Adamas::Compiler::Frontend::MemberAccessNode) &&
            (safe_slice_to_string(callee_node.member) || "") == "is_a?" &&
-           node.args.size == 1
+           node.args.size == 1 && node.named_args.nil? && !node.has_block? &&
+           !@arena[node.args.first].is_a?(Adamas::Compiler::Frontend::SplatNode)
           if var_name = is_a_receiver_var_name(callee_node.object)
             if type_str = stringify_type_expr(node.args.first)
               type_str = resolve_typeof_in_type_string(type_str)
               target_type = type_ref_for_name(type_str)
-              return [IsANarrowingTarget.new(var_name, target_type)]
+              return [IsANarrowingTarget.new(var_name, target_type, is_a_target_type_literal?(type_str))]
             end
           end
         end
@@ -94085,19 +94100,68 @@ module Adamas::HIR
                         create_union_type("#{generic_param_type_name_from_ref(left_type)} | #{generic_param_type_name_from_ref(right_type)}")
                       end
         next if target_type == TypeRef::VOID
-        result << IsANarrowingTarget.new(left_entry.name, target_type)
+        type_literal = if left_entry.type_literal == right_matches.first.type_literal
+                         left_entry.type_literal
+                       else
+                         nil
+                       end
+        result << IsANarrowingTarget.new(left_entry.name, target_type, type_literal)
       end
       result
     end
 
+    # Preserve class-literal kind on narrowed SSA values and retain only source
+    # alternatives that are still possible after the type check.
+    private def register_is_a_narrowed_local(
+      ctx : LoweringContext,
+      name : String,
+      source_id : ValueId,
+      narrowed_id : ValueId,
+      target_type : TypeRef,
+      target_type_literal : Bool?,
+    ) : Nil
+      source_facts = ctx.source_value_facts(source_id) || source_block_result_value_facts(ctx, source_id)
+      narrowed_facts = source_facts.compact_map do |(source_type, source_literal)|
+        next if !target_type_literal.nil? && source_literal != target_type_literal
+        relation = statically_is_a_type?(source_type, target_type)
+        next if relation == false
+        # Keep the producer's exact source alternative when the static type
+        # relation is unknown. The Cast/SSA type carries the narrowed target;
+        # rewriting this fact to that target would fabricate source provenance.
+        {source_type, source_literal}
+      end
+      unless narrowed_facts.empty?
+        ctx.register_source_value_facts(narrowed_id, narrowed_facts)
+        if narrowed_facts.all? { |(source_type, source_literal)| source_literal && source_type != TypeRef::VOID }
+          ctx.mark_type_literal(narrowed_id)
+        end
+      end
+      ctx.register_local(name, narrowed_id)
+    end
+
+    private def is_a_target_type_literal?(type_name : String) : Bool?
+      # Resolve the source spelling before classifying it: aliases and `typeof`
+      # targets can denote a class literal without carrying a `.class` suffix
+      # at the guard site. Keep mixed instance/class unions unknown.
+      name = strip_fully_grouped_type_name(substitute_type_params_in_type_name(type_name.strip))
+      name = resolve_type_alias_chain(name, preserve_abstract_int: true)
+      name = strip_fully_grouped_type_name(name)
+      members = split_union_type_name(name).map(&.strip).reject(&.empty?)
+      return nil if members.empty?
+      kinds = members.map { |member| proc_annotation_type_literal?(member) }.uniq
+      kinds.size == 1 ? kinds.first : nil
+    end
+
     # The variable an `is_a?` receiver narrows, mirroring original Crystal's
-    # MainVisitor#get_expression_var: a plain local, the local target of an
-    # assignment (`(x = expr).is_a?(T)`), or either one inside parentheses.
+    # MainVisitor#get_expression_var: a plain local (including the runtime
+    # self binding), the local target of an assignment, or a grouped receiver.
     private def is_a_receiver_var_name(expr_id : ExprId) : String?
       return nil if expr_id.invalid?
 
       node = @arena[expr_id]
       case node
+      when Adamas::Compiler::Frontend::SelfNode
+        "self"
       when Adamas::Compiler::Frontend::IdentifierNode
         identifier_name_text(node)
       when Adamas::Compiler::Frontend::AssignNode
@@ -94292,6 +94356,7 @@ module Adamas::HIR
         end
         local_type = ctx.type_of(local_id)
         if local_type == target_type
+          preserve_is_a_kind_on_nop(ctx, name, local_id, target_type, target_entry.type_literal)
           target_idx += 1
           next
         end
@@ -94307,7 +94372,7 @@ module Adamas::HIR
               unwrap = UnionUnwrap.new(ctx.next_id, matched_type, local_id, variant_id, false)
               ctx.emit(unwrap)
               ctx.register_type(unwrap.id, matched_type)
-              ctx.register_local(name, unwrap.id)
+              register_is_a_narrowed_local(ctx, name, local_id, unwrap.id, target_type, target_entry.type_literal)
             elsif matched.size > 1 && matched.size < total
               union_name = matched.map { |(_, t)| generic_param_type_name_from_ref(t) }.join(" | ")
               narrowed_type = create_union_type(union_name)
@@ -94319,7 +94384,7 @@ module Adamas::HIR
                            end
                 ctx.emit(narrowed)
                 ctx.register_type(narrowed.id, narrowed_type)
-                ctx.register_local(name, narrowed.id)
+                register_is_a_narrowed_local(ctx, name, local_id, narrowed.id, target_type, target_entry.type_literal)
               end
             end
             target_idx += 1
@@ -94330,7 +94395,7 @@ module Adamas::HIR
             unwrap = UnionUnwrap.new(ctx.next_id, matched_type, local_id, variant_id, false)
             ctx.emit(unwrap)
             ctx.register_type(unwrap.id, matched_type)
-            ctx.register_local(name, unwrap.id)
+            register_is_a_narrowed_local(ctx, name, local_id, unwrap.id, target_type, target_entry.type_literal)
             target_idx += 1
             next
           elsif carrier = get_union_descendant_carrier_variant_for_type_check(local_type, target_type)
@@ -94341,7 +94406,7 @@ module Adamas::HIR
             cast = Cast.new(ctx.next_id, target_type, unwrap.id, target_type, safe: false)
             ctx.emit(cast)
             ctx.register_type(cast.id, target_type)
-            ctx.register_local(name, cast.id)
+            register_is_a_narrowed_local(ctx, name, local_id, cast.id, target_type, target_entry.type_literal)
             target_idx += 1
             next
           end
@@ -94357,11 +94422,13 @@ module Adamas::HIR
           target_name_narrow = target_desc.name
           if !target_name_narrow.includes?('(') && local_name.starts_with?(target_name_narrow) &&
              local_name.size > target_name_narrow.size && local_name[target_name_narrow.size] == '('
+            preserve_is_a_kind_on_nop(ctx, name, local_id, target_type, target_entry.type_literal)
             target_idx += 1
             next
           end
           # Also skip if target is a parent class (is_a narrowing to a wider type is a no-op)
           if statically_is_a_type?(local_type, target_type) == true
+            preserve_is_a_kind_on_nop(ctx, name, local_id, target_type, target_entry.type_literal)
             target_idx += 1
             next
           end
@@ -94370,9 +94437,34 @@ module Adamas::HIR
         cast = Cast.new(ctx.next_id, target_type, local_id, target_type, safe: false)
         ctx.emit(cast)
         ctx.register_type(cast.id, target_type)
-        ctx.register_local(name, cast.id)
+        register_is_a_narrowed_local(ctx, name, local_id, cast.id, target_type, target_entry.type_literal)
         target_idx += 1
       end
+    end
+
+    # A type/kind check may be a no-op for the carrier TypeRef while still
+    # narrowing the source value alternatives. Give that narrowed fact set its
+    # own SSA identity so a class literal and an instance of the same source
+    # class cannot share the pre-branch kind marker.
+    private def preserve_is_a_kind_on_nop(
+      ctx : LoweringContext,
+      name : String,
+      source_id : ValueId,
+      target_type : TypeRef,
+      target_type_literal : Bool?,
+    ) : Nil
+      return if target_type_literal.nil?
+      source_facts = ctx.source_value_facts(source_id) || source_block_result_value_facts(ctx, source_id)
+      target_kind = target_type_literal.not_nil!
+      if ctx.type_literal?(source_id) == target_kind &&
+         source_facts.all? { |(_, source_literal)| source_literal == target_kind }
+        return
+      end
+
+      copy = Copy.new(ctx.next_id, target_type, source_id)
+      ctx.emit(copy)
+      ctx.register_type(copy.id, target_type)
+      register_is_a_narrowed_local(ctx, name, source_id, copy.id, target_type, target_type_literal)
     end
 
     # A `when A, B, C` branch proves that a reference-typed subject belongs to
@@ -143715,6 +143807,18 @@ module Adamas::HIR
       target_name = resolve_type_name_in_context((safe_slice_to_string(node.target_type) || ""))
       check_type = type_ref_for_name(target_name)
 
+      # A class-method self literal has no object header to inspect. Its exact
+      # receiver identity is recorded when the method body is specialized;
+      # consume it only for a class-literal target. In particular, do not use
+      # a type-literal bit or a dynamic `.class` upper bound as identity.
+      class_object_result = exact_class_object_is_a?(ctx, value_id, check_type, target_name)
+      unless class_object_result.nil?
+        lit = Literal.new(ctx.next_id, TypeRef::BOOL, class_object_result)
+        ctx.emit(lit)
+        ctx.register_type(lit.id, TypeRef::BOOL)
+        return lit.id
+      end
+
       # Check if value is a union type - use UnionIs for runtime type check
       value_type = ctx.type_of(value_id)
       if is_union_type?(value_type)
@@ -143771,6 +143875,40 @@ module Adamas::HIR
       is_a = IsA.new(ctx.next_id, value_id, check_type)
       ctx.emit(is_a)
       is_a.id
+    end
+
+    private def exact_class_object_is_a?(
+      ctx : LoweringContext,
+      value_id : ValueId,
+      check_type : TypeRef,
+      target_name : String,
+    ) : Bool?
+      return nil unless ctx.type_literal?(value_id)
+      return nil unless is_a_target_type_literal?(target_name) == true
+      identity = ctx.runtime_type_identity?(value_id)
+      return nil unless identity && identity.origin.explicit_type_literal?
+      return nil unless identity.semantic_type == ctx.type_of(value_id)
+      source_facts = source_block_result_value_facts(ctx, value_id)
+      return nil unless source_facts == [{identity.semantic_type, true}]
+
+      source_desc = @module.get_type_descriptor(identity.semantic_type)
+      target_desc = @module.get_type_descriptor(check_type)
+      return nil unless source_desc && target_desc
+      return nil unless source_desc.kind == TypeKind::Class || source_desc.kind == TypeKind::Struct
+      return nil unless target_desc.kind == TypeKind::Class || target_desc.kind == TypeKind::Struct
+      return nil unless @class_info.has_key?(source_desc.name) && @class_info.has_key?(target_desc.name)
+
+      source_name = source_desc.name
+      target_class_name = target_desc.name
+      return true if source_name == target_class_name
+
+      current = parent_name_for_hierarchy_lookup(source_name)
+      while current
+        return true if current == target_class_name
+        current = parent_name_for_hierarchy_lookup(current)
+      end
+
+      false
     end
 
     private def lower_responds_to(ctx : LoweringContext, node : Adamas::Compiler::Frontend::RespondsToNode) : ValueId

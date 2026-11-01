@@ -23362,3 +23362,29 @@ integration, fresh bootstrap, or LavinMQ parity.
 - Follow-up audit lead (not reproduced here): other intrinsic parsers with
   fast-forward recovery (`typeof`, `sizeof`, `pointerof`, `as`, `responds_to?`)
   need equivalent boundary checks before their results establish semantic facts.
+
+
+### 2026-11-01: Preserve value kind and exact class identity when narrowing self
+
+- Root cause: self narrowing changed the SSA type without preserving whether
+  the value was an instance or a class object. Class-method self additionally
+  lacked exact producer identity, so a false class-literal is_a? check reached
+  instance-header code with the null representation of a static class object.
+- Narrow self through the same source-fact contract as locals, preserve class
+  kind through aliases and short-circuit regions, and restore the original
+  binding afterwards. Fold nominal class-object checks only from matching
+  exact producer identity and a single exact source alternative, including
+  false results; an upper-bound TypeRef alone is insufficient.
+- Verification: 30 HIR examples in five suites pass on an isolated HEAD-based
+  source. A fresh S1 passes self_is_a_narrowing_repro.sh: three metaclass stock
+  oracles, ten lazy/eager native positive runs and eight strict negative
+  compilations. The preceding candidate crashed on metaclass_control in both
+  modes; the qualified candidate prints BABABABA, with inherited direct and
+  alias controls printing BA, byte-for-byte with Crystal 1.22.1. Evidence:
+  spec.self-kind-contract33me.result.json, self-meta-native33lz/result.json,
+  and self-kind-qualified33mf.json under the oct29 rootcause artifact root.
+- Adversary: ROBUST for the declared self/alias/branch scope, including
+  instance-only calls rejected through a class receiver and ordinary instance
+  checks retained. This does not establish native prelude, dynamic class joins,
+  bootstrap, or LavinMQ parity. Refresh after self specialization, source-value
+  facts, narrowing, or runtime type-identity publication changes.
