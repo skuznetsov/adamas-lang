@@ -23306,3 +23306,26 @@ integration, fresh bootstrap, or LavinMQ parity.
 - Follow-up: a two-formal empty-prelude probe using String? still rejects the
   constructor independently of Void* syntax. Check builtin String source
   identity separately; the stock prelude supplies its actual declaration.
+
+
+## 2026-11-01 — Source enum predicate and constant authority
+
+- Bare identifiers, explicit empty calls, and member calls now use one enum
+  predicate lowering contract. Ordinary enums compare equality; Flags checks
+  bit membership, including rooted @[::Flags] and source-defined overrides.
+- A guessed return type or body-less HIR signature no longer establishes that
+  a source method exists. This prevented missing all? from reaching the normal
+  undefined-method diagnostic. Source Defs and generated bodies remain valid.
+- Constant lookup preserves exact source spelling separately from normalized
+  symbol auto-casting. Only Flags supplies implicit None/All; unresolved
+  constants on a registered enum are rejected instead of becoming zero.
+- Verified on clean parent ab28fa8b plus this delta: 42 focused HIR cases;
+  fresh S1 enum-exact-constant33fp; enum_predicate_source_contract_repro.sh
+  passed 12 positive native checks and 18 negative compilation checks across
+  lazy/eager HIR. Stock Crystal 1.22.1 supplied the byte-exact outputs and
+  rejection oracles. Evidence: enum-exact-constants33fo, enum-script33fr, and
+  earlier enum oracle runs in the external root-cause artifact directory.
+- Adversary attacks found and then closed custom predicate precedence, All's
+  value, explicit None semantics, unknown names, and constant case-folding.
+  ROBUST within these tested enum contracts. Stock-prelude runtime, applied
+  module composition, bootstrap, and LavinMQ parity remain separate gates.

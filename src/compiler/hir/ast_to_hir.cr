@@ -12837,7 +12837,7 @@ module Adamas::HIR
         members = enum_info[cand]?
       end
       return nil unless members
-      value = members[name]?
+      value = enum_constant_member_value(cand, name)
       return nil unless value
       enum_type = enum_base_type(cand)
       lit = Literal.new(ctx.next_id, enum_type, value)
@@ -13895,7 +13895,7 @@ module Adamas::HIR
         idx -= 1
         next if text.empty? || text.starts_with?("enum ")
         seen += 1
-        return true if text.starts_with?("@[Flags]")
+        return true if text.starts_with?("@[Flags]") || text.starts_with?("@[::Flags]")
         # Any other non-annotation line terminates the annotation block.
         break unless text.starts_with?("@[")
       end
@@ -65590,7 +65590,7 @@ module Adamas::HIR
       return false unless member[0]?.try(&.uppercase?)
       return false unless members = enum_info[full_path[0, idx]]?
       return false if type_name_exists?(full_path)
-      members.has_key?(member) || member == "None" || member == "All"
+      members.has_key?(member) || (@flags_enum_names.includes?(full_path[0, idx]) && (member == "None" || member == "All"))
     end
 
     private def constant_full_name(owner_name : String?, name : String) : String
@@ -81207,9 +81207,11 @@ module Adamas::HIR
       append_qualified_method_owner_candidate(owners, owner_name)
       owners.each do |owner|
         base_name = "#{owner}#{separator}#{method_name}"
+        # An inferred return entry or an empty HIR signature is not a source
+        # declaration. Name-based inference may have created either while
+        # processing the very unresolved call this guard must diagnose.
         return true if @function_defs.has_key?(base_name) ||
-                       @function_types.has_key?(base_name) ||
-                       has_function_base?(base_name) ||
+                       @module.has_function_with_body?(base_name) ||
                        (separator == '.' && @class_accessor_entries.has_key?(base_name))
         overloads = function_def_overloads(base_name)
         return true if overloads.any? do |full_name|
@@ -90226,6 +90228,15 @@ module Adamas::HIR
             return ctor_call.id
           end
         end
+        # An enum member predicate without parentheses is an IdentifierNode,
+        # not a CallNode. Resolve only against the exact active enum owner and
+        # reuse the same receiver-based predicate lowering as explicit calls.
+        # The method body has no argument or block syntax at this point.
+        unless identifier_in_class_method
+          if predicate_id = lower_implicit_enum_predicate(ctx, name)
+            return predicate_id
+          end
+        end
         # The overload index intentionally normalizes owners, but that also
         # means an instance lookup can observe a same-named class method. Never
         # consult the instance namespace for a bare identifier in class context.
@@ -92143,8 +92154,7 @@ module Adamas::HIR
         resolved_left = resolve_path_string_in_context(left_name)
         if enum_info = @enum_info
           if members = enum_info[resolved_left]?
-            if right_name[0]?.try(&.uppercase?)
-              value = members[right_name]? || 0_i64
+            if right_name[0]?.try(&.uppercase?) && (value = enum_constant_member_value(resolved_left, right_name))
               # Found enum value - emit as base literal but remember enum type.
               enum_type = enum_base_type(resolved_left)
               lit = Literal.new(ctx.next_id, enum_type, value)
@@ -92163,8 +92173,7 @@ module Adamas::HIR
           resolved_prefix = resolve_path_string_in_context(prefix)
           if enum_info = @enum_info
             if members = enum_info[resolved_prefix]?
-              if right_name[0]?.try(&.uppercase?)
-                value = members[right_name]? || 0_i64
+              if right_name[0]?.try(&.uppercase?) && (value = enum_constant_member_value(resolved_prefix, right_name))
                 enum_type = enum_base_type(resolved_prefix)
                 lit = Literal.new(ctx.next_id, enum_type, value)
                 ctx.emit(lit)
@@ -92210,6 +92219,18 @@ module Adamas::HIR
         lit = Literal.new(ctx.next_id, TypeRef::STRING, builtin)
         ctx.emit(lit)
         return lit.id
+      end
+
+      # A registered enum owns a complete member set. Its unknown constants
+      # must not become the generic unresolved-path zero literal. Source constants
+      # have already been resolved above; only Flags supplies implicit None/All.
+      if right_name && right_name[0]?.try(&.uppercase?)
+        if separator = full_path.rindex("::")
+          enum_owner = full_path[0, separator]
+          if @enum_info.try(&.has_key?(enum_owner))
+            raise LoweringError.new("undefined constant #{full_path}", node)
+          end
+        end
       end
 
       # If we're inside a function that returns a type literal, treat unresolved
@@ -99086,7 +99107,7 @@ module Adamas::HIR
       return nil unless enum_name
       members = enum_info[enum_name]?
       return nil unless members
-      value = members[ident_name]?
+      value = enum_constant_member_value(enum_name, ident_name)
       return nil unless value
       # Constant lookup only reaches the member from inside the enum; elsewhere
       # a member name that also names a type (`Bool`, `Int32`) is that type.
@@ -108766,6 +108787,11 @@ module Adamas::HIR
             return lower_string_each_char_intrinsic(ctx, self_id, blk_node)
           end
         end
+        if receiver_id && call_args.empty? && node.named_args.nil? && !has_block_call
+          if predicate_id = lower_enum_predicate(ctx, receiver_id, method_name)
+            return predicate_id
+          end
+        end
       else
         if callee_kind == Adamas::Compiler::Frontend::NodeKind::MemberAccess
           callee_node = callee_node.unsafe_as(Adamas::Compiler::Frontend::MemberAccessNode)
@@ -110380,7 +110406,7 @@ module Adamas::HIR
                 end
               end
             end
-            if call_args.empty? && !has_block_call
+            if call_args.empty? && node.named_args.nil? && !has_block_call
               if predicate_id = lower_enum_predicate(ctx, receiver_id, method_name)
                 return predicate_id
               end
@@ -123706,6 +123732,28 @@ module Adamas::HIR
       @lower_histo_since_check = 0
     end
 
+    # Constant lookup is case-sensitive. Symbol auto-casting below intentionally
+    # accepts underscored member names, but cannot establish a constant identity.
+    private def enum_constant_member_value(type_name : String, member_name : String) : Int64?
+      members = enum_members_for_type_name(type_name)
+      return nil unless members
+      if value = members[member_name]?
+        return value
+      end
+      enum_name = resolve_enum_name(type_name) || type_name
+      return nil unless @flags_enum_names.includes?(enum_name)
+      case member_name
+      when "None"
+        0_i64
+      when "All"
+        combined = 0_i64
+        members.each_value { |value| combined |= value }
+        combined
+      else
+        nil
+      end
+    end
+
     private def enum_member_value(type_name : String, symbol_name : String, context : String? = nil) : Int64?
       members = enum_members_for_type_name(type_name, context)
       return nil unless members
@@ -123714,7 +123762,10 @@ module Adamas::HIR
       members.each do |member_name, value|
         return value if underscore_lower(member_name) == target
       end
-      # @[Flags] enums auto-generate None = 0 and All = bitor(all members)
+      # Only Flags enums synthesize these constants. The source-member table
+      # remains authoritative for which member predicates actually exist.
+      enum_name = resolve_enum_name(type_name) || type_name
+      return nil unless @flags_enum_names.includes?(enum_name)
       if target == "none"
         return 0_i64
       elsif target == "all"
@@ -133200,6 +133251,23 @@ module Adamas::HIR
       false
     end
 
+    private def lower_implicit_enum_predicate(
+      ctx : LoweringContext,
+      member_name : String,
+    ) : ValueId?
+      return nil if @current_method_is_class
+      return nil unless member_name.ends_with?('?')
+      return nil unless current_class = @current_class
+      # This is only valid when the active source owner itself is a registered
+      # enum. A module that merely shares an enum's short suffix can receive
+      # arbitrary instance types and must not borrow that enum's predicates.
+      return nil unless @enum_info.try(&.has_key?(current_class))
+
+      self_id = emit_self(ctx)
+      track_enum_value(self_id, current_class)
+      lower_enum_predicate(ctx, self_id, member_name)
+    end
+
     private def lower_enum_predicate(ctx : LoweringContext, object_id : ValueId, member_name : String) : ValueId?
       return nil unless member_name.ends_with?('?')
       enum_name = enum_value_name_for(ctx, object_id)
@@ -133239,6 +133307,11 @@ module Adamas::HIR
       return nil unless members
       enum_name ||= resolve_enum_name(type_name) || enum_key
 
+      # Source definitions (including overrides of generated predicates) take
+      # precedence over the compiler-synthesized member operation.
+      predicate_base = "#{enum_name}##{member_name}"
+      return nil if lookup_function_def_for_return(predicate_base, predicate_base, 0)
+
       # Try to match the predicate to an enum member (e.g., "data1?" -> "Data1").
       base_name = member_name[0...-1]
       target = underscore_lower(base_name)
@@ -133253,7 +133326,7 @@ module Adamas::HIR
         end
         member_idx += 1
       end
-      if member_match.nil? && target == "none"
+      if member_match.nil? && target == "none" && @flags_enum_names.includes?(enum_name)
         enum_type = enum_base_type(enum_name)
         lit = Literal.new(ctx.next_id, enum_type, 0_i64)
         ctx.emit(lit)
@@ -133270,7 +133343,14 @@ module Adamas::HIR
       lit = Literal.new(ctx.next_id, enum_type, member_value)
       ctx.emit(lit)
       ctx.register_type(lit.id, enum_type)
-      cmp = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Eq, object_id, lit.id)
+      comparison_id = object_id
+      if @flags_enum_names.includes?(enum_name)
+        bit_subset = BinaryOperation.new(ctx.next_id, enum_type, BinaryOp::BitAnd, object_id, lit.id)
+        ctx.emit(bit_subset)
+        ctx.register_type(bit_subset.id, enum_type)
+        comparison_id = bit_subset.id
+      end
+      cmp = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Eq, comparison_id, lit.id)
       ctx.emit(cmp)
       ctx.register_type(cmp.id, TypeRef::BOOL)
       cmp.id
@@ -134152,8 +134232,9 @@ module Adamas::HIR
         end
       end
 
-      # Handle enum predicate methods (.data1?, .block?, etc.)
-      # These should compile to `value == Enum::Member` comparisons, not function calls
+      # Handle enum predicate methods (.data1?, .block?, etc.) through the shared
+      # enum helper: ordinary enums compare equality, while Flags enums test bit
+      # membership. Unknown names fall through to ordinary method resolution.
       if member_name.ends_with?('?')
         if predicate_id = lower_enum_predicate(ctx, object_id, member_name)
           return predicate_id
