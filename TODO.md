@@ -23264,3 +23264,24 @@ integration, fresh bootstrap, or LavinMQ parity.
   `adamas_codex_oct29_rootcause` artifact directory.
 - Scope: balanced generic method symbols and registered metaclass identities.
   This does not establish stock-prelude hello, bootstrap, or LavinMQ parity.
+
+
+## 2026-11-01 — Macro-expanded instance field assignments
+
+- Confirmed the stock-prelude `Sync::Exclusive#lock` failure was preceded by
+  a missing `@lock` in ClassInfo: macro-expanded AssignNodes registered
+  constants/class vars but skipped instance vars. A direct field control
+  compiled; wrapping the same assignment in `{% if true %}` reproduced Void.
+- Field-capable macro routes now pass their layout context to the existing
+  expanded-member registration path, preserving field type, offset, default
+  expression, and its exact arena. Constant-only record-time scanning retains
+  its previous scope. No stdlib changes.
+- Validation: 21 focused HIR checks passed (`macro-ivar-identity33aa`); all
+  macro/type-identity checks also passed in the 155-case composition, whose
+  single remaining error concerns a module block parameter, not field layout.
+  Five native controls/if/else/begin/for cases matched Crystal 1.22.1 in
+  lazy/eager (`macro-ivar-native33ao`). Clean-parent S1 `macro-ivar-clean33aq`
+  passed all ten repository-script executions (`macro-ivar-script33ar`).
+- Open: fresh full-frontier prelude hello and LavinMQ. An unevaluable macro
+  condition's existing both-branches registration needs a separate valid-source
+  falsifier; these tests cover statically selected branches only.

@@ -35448,6 +35448,8 @@ module Adamas::HIR
       expr_id : Adamas::Compiler::Frontend::ExprId,
       assign : Adamas::Compiler::Frontend::AssignNode,
       class_name : String,
+      ivars : Array(IVarInfo)? = nil,
+      offset_ref : Pointer(Int32)? = nil,
     )
       target = @arena[assign.target]
       case target
@@ -35458,6 +35460,20 @@ module Adamas::HIR
         if env_has?("DEBUG_DEFERRED_CLASSVAR")
           cvar_name = (safe_slice_to_string(target.name) || "").lstrip('@')
           STDERR.puts "[DEFERRED_CLASSVAR] Added from macro expansion: class=#{class_name} cvar=#{cvar_name}"
+        end
+      when Adamas::Compiler::Frontend::InstanceVarNode
+        if ivars && offset_ref
+          # Expanded assignment nodes use the same field contract as other
+          # expanded class members, including type inference and the exact
+          # arena for nontrivial defaults.
+          register_class_members_from_expansion(
+            class_name,
+            expr_id,
+            Set(String).new,
+            Set(String).new,
+            ivars,
+            offset_ref,
+          )
         end
       end
     end
@@ -35540,7 +35556,7 @@ module Adamas::HIR
                   when Adamas::Compiler::Frontend::ConstantNode
                     record_constant_definition(class_name, expr_node, @arena)
                   when Adamas::Compiler::Frontend::AssignNode
-                    register_class_assign_from_expansion(expr_id, expr_node, class_name)
+                    register_class_assign_from_expansion(expr_id, expr_node, class_name, ivars, offset_ref)
                   # `private C = 1` arrives wrapped in a visibility modifier; the general
                   # expansion registration unwraps it and keeps the inner expression id.
                   when Adamas::Compiler::Frontend::CallNode,
@@ -35623,7 +35639,7 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::ConstantNode
         record_constant_definition(class_name, body_node, @arena)
       when Adamas::Compiler::Frontend::AssignNode
-        register_class_assign_from_expansion(body_id, body_node, class_name)
+        register_class_assign_from_expansion(body_id, body_node, class_name, ivars, offset_ref)
       when Adamas::Compiler::Frontend::CallNode,
            Adamas::Compiler::Frontend::IncludeNode,
            Adamas::Compiler::Frontend::VisibilityModifierNode,
@@ -35723,7 +35739,7 @@ module Adamas::HIR
               when Adamas::Compiler::Frontend::ConstantNode
                 record_constant_definition(class_name, expr_node, @arena)
               when Adamas::Compiler::Frontend::AssignNode
-                register_class_assign_from_expansion(expr_id, expr_node, class_name)
+                register_class_assign_from_expansion(expr_id, expr_node, class_name, ivars, offset_ref)
               when Adamas::Compiler::Frontend::CallNode,
                    Adamas::Compiler::Frontend::IncludeNode,
                    Adamas::Compiler::Frontend::VisibilityModifierNode,
@@ -35789,7 +35805,7 @@ module Adamas::HIR
             when Adamas::Compiler::Frontend::ConstantNode
               record_constant_definition(class_name, expr_node, @arena)
             when Adamas::Compiler::Frontend::AssignNode
-              register_class_assign_from_expansion(expr_id, expr_node, class_name)
+              register_class_assign_from_expansion(expr_id, expr_node, class_name, ivars, offset_ref)
             when Adamas::Compiler::Frontend::CallNode,
                  Adamas::Compiler::Frontend::IncludeNode,
                  Adamas::Compiler::Frontend::VisibilityModifierNode,
@@ -36055,7 +36071,7 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::ConstantNode
         record_constant_definition(class_name, expr_node, @arena)
       when Adamas::Compiler::Frontend::AssignNode
-        register_class_assign_from_expansion(expr_id, expr_node, class_name)
+        register_class_assign_from_expansion(expr_id, expr_node, class_name, ivars, offset_ref)
       when Adamas::Compiler::Frontend::CallNode,
            Adamas::Compiler::Frontend::IncludeNode,
            Adamas::Compiler::Frontend::VisibilityModifierNode,
