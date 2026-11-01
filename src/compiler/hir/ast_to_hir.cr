@@ -6491,6 +6491,114 @@ module Adamas::HIR
       @function_type_revision = @function_type_revision &+ 1_u64
     end
 
+    # A bare inherited nilary body can be emitted under the receiver's
+    # physical symbol even when that symbol was previously occupied by an
+    # untyped required-argument overload. Rebind only that exact, still-cold
+    # body slot to the selected source declaration before lower_method creates
+    # the HIR function. Keep the source declaration's namespace and type map at
+    # its own key: the physical bare key is also an overload-family fallback and
+    # must not leak those facts into arity siblings.
+    private def bind_inherited_bare_redirect_physical_source!(
+      physical_name : String,
+      source_name : String,
+      source_def : Adamas::Compiler::Frontend::DefNode,
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
+      shadow_def : Adamas::Compiler::Frontend::DefNode,
+      shadow_arena : Adamas::Compiler::Frontend::ArenaLike,
+      materialized_name : String,
+    ) : Nil
+      physical_parts = parse_method_name_compact(physical_name)
+      source_parts = parse_method_name_compact(source_name)
+      unless materialized_name == physical_name && !physical_name.includes?('$') &&
+             physical_parts.separator == '#' && source_parts.separator == '#' &&
+             physical_parts.method == source_parts.method &&
+             physical_parts.owner != source_parts.owner
+        raise LoweringError.new("inherited bare body redirect lost its exact physical/source shape: #{physical_name}")
+      end
+
+      unless @function_defs[physical_name]?.try(&.same?(shadow_def)) &&
+             @function_def_arenas[physical_name]?.try(&.object_id) == shadow_arena.object_id
+        raise LoweringError.new("inherited bare body redirect physical owner changed: #{physical_name}", shadow_def)
+      end
+      unless @function_defs[source_name]?.try(&.same?(source_def)) &&
+             @function_def_arenas[source_name]?.try(&.object_id) == source_arena.object_id
+        raise LoweringError.new("inherited bare body redirect source owner changed: #{source_name}", source_def)
+      end
+
+      shadow_stats = function_param_stats(physical_name, shadow_def)
+      source_stats = function_param_stats(source_name, source_def)
+      unless def_params_untyped?(shadow_def) && shadow_stats.required > 0 &&
+             !shadow_stats.has_splat && !shadow_stats.has_double_splat &&
+             source_stats.param_count == 0 && source_stats.required == 0 &&
+             !source_stats.has_block && !source_stats.has_splat && !source_stats.has_double_splat
+        raise LoweringError.new("inherited bare body redirect no longer matches its nilary-shadow contract: #{physical_name}", shadow_def)
+      end
+
+      state = function_state(physical_name)
+      if @module.has_function_with_body?(physical_name) || state.in_progress? || state.completed?
+        raise LoweringError.new("cannot rebind inherited bare body after materialization began: #{physical_name}", source_def)
+      end
+      if callsite = @pending_arg_types[physical_name]?
+        unless callsite.types.empty? && !callsite.has_block && !callsite.has_named_args
+          raise LoweringError.new("inherited bare body redirect call shape changed: #{physical_name}", source_def)
+        end
+      end
+
+      # Validate the lexical super provider before mutating any registry state.
+      # A stale certificate must leave the physical owner and its metadata intact.
+      source_super = @method_body_super_sources[source_name]?
+      if source_super
+        unless source_super[0].same?(source_def) && source_super[1].object_id == source_arena.object_id
+          raise LoweringError.new("inherited bare body redirect super source changed: #{source_name}", source_def)
+        end
+      end
+
+      # The old Def may still be registered under its typed arity sibling.
+      # set_function_def_entry invalidates its Def-keyed parameter cache while
+      # replacing any one name, so retain that immutable source cache across
+      # this physical-key move. The sibling's name-keyed facts remain intact.
+      shadow_param_infos = @function_param_infos_by_def_id[shadow_def.object_id.to_u64]?
+
+      # Replacing the exact registry entry makes the physical HIR body's Def
+      # and arena agree with the source selected for this redirect. The sibling
+      # arity key is intentionally untouched.
+      set_function_def_entry(physical_name, source_def, record_current_arena: false)
+      set_function_def_arena(physical_name, source_arena)
+      if shadow_param_infos
+        @function_param_infos_by_def_id[shadow_def.object_id.to_u64] = shadow_param_infos
+      end
+
+      # Discard facts previously attached to the shadow overload's bare family
+      # key. Source-owned annotations, namespace, and generic bindings remain
+      # authoritative at source_name and are consumed through target_name while
+      # lowering; copying them onto this shared family key would poison sibling
+      # lookup fallbacks.
+      clear_function_type_entry(physical_name)
+      if @function_base_return_types.delete(physical_name)
+        @function_base_return_type_revision = @function_base_return_type_revision &+ 1_u64
+      end
+      @function_explicit_return_defs.delete(physical_name)
+      clear_enum_return_metadata(physical_name, strip_type_suffix(physical_name))
+      @function_enum_value_types.delete(physical_name)
+      @narrowed_body_returns.delete(physical_name)
+      stale_literal_returns = @function_return_type_literal_defs.select do |entry|
+        entry[0] == physical_name
+      end
+      stale_literal_returns.each do |entry|
+        @function_return_type_literal_defs.delete(entry)
+      end
+      @function_type_param_maps.delete(physical_name)
+      @function_namespace_overrides.delete(physical_name)
+
+      # `super` needs its exact lexical provider on the physical emitted body.
+      # Transfer the already-validated certificate only after the owner move.
+      if source_super
+        @method_body_super_sources[physical_name] = source_super
+      else
+        @method_body_super_sources.delete(physical_name)
+      end
+    end
+
     private def enqueue_pending_function(name : String, source : String) : Nil
       @pending_function_queue << name # missing-revision-owner
       @pending_function_queue_revision =
@@ -106515,6 +106623,11 @@ module Adamas::HIR
       lookup_expect_block = callback_source_binding.callsite.has_block if callback_source_binding
       bare_inherited_exact_name = nil.as(String?)
       bare_inherited_exact_def = nil.as(Adamas::Compiler::Frontend::DefNode?)
+      redirected_source_name = nil.as(String?)
+      redirected_source_def = nil.as(Adamas::Compiler::Frontend::DefNode?)
+      redirected_source_arena = nil.as(Adamas::Compiler::Frontend::ArenaLike?)
+      redirected_shadow_def = nil.as(Adamas::Compiler::Frontend::DefNode?)
+      redirected_shadow_arena = nil.as(Adamas::Compiler::Frontend::ArenaLike?)
       # Bare inherited instance wrappers must not reuse the "last seen" typed
       # callsite from the shared base key. In overload families like `IO#puts`,
       # the String callsite is often recorded last; if we reuse it for a bare
@@ -106593,7 +106706,10 @@ module Adamas::HIR
       # local body. Scoped strictly: bare instance, lookup_expected_param_count==0,
       # an inherited 0-arg target exists, current candidate untyped required>0 no
       # splat. No name minting — uses the existing inherited target.
-      if bare_inherited_exact_name && (m4c3_bie = bare_inherited_exact_def) &&
+      m4c3_bare_callsite = explicit_lookup_callsite.try do |callsite|
+        callsite.types.empty? && !callsite.has_block && !callsite.has_named_args
+      end || explicit_lookup_callsite.nil?
+      if callback_source_binding.nil? && bare_inherited_exact_name && (m4c3_bie = bare_inherited_exact_def) &&
          lookup_suffix.nil? && lookup_expected_param_count == 0 && (m4c3_cur = func_def)
         m4c3_st = function_param_stats(target_name, m4c3_cur)
         m4c3_shadow = def_params_untyped?(m4c3_cur) && m4c3_st.required > 0 &&
@@ -106601,10 +106717,23 @@ module Adamas::HIR
         if env_has?("ADAMAS_REGMAT_ASSERT") && name_parts.is_instance && (mm = name_parts.method) && mm == "hash"
           STDERR.puts "[MAT_REDIRECT_SEEN] requested=#{name} target=#{target_name} bie=#{bare_inherited_exact_name} cur_req=#{m4c3_st.required} cur_untyped=#{def_params_untyped?(m4c3_cur) ? 1 : 0} shadow=#{m4c3_shadow ? 1 : 0}"
         end
-        if m4c3_shadow
+        if m4c3_shadow && m4c3_bare_callsite
+          physical_shadow = @function_defs[name]?
+          physical_shadow_arena = @function_def_arenas[name]?
+          selected_source_arena = @function_def_arenas[bare_inherited_exact_name]?
+          unless physical_shadow && physical_shadow.same?(m4c3_cur) &&
+                 physical_shadow_arena && selected_source_arena &&
+                 @function_defs[bare_inherited_exact_name]?.try(&.same?(m4c3_bie))
+            raise LoweringError.new("inherited bare body redirect lacks exact source/physical Def arena ownership: #{name}", m4c3_cur)
+          end
           STDERR.puts "[MAT_BINDING_REDIRECT] requested=#{name} from=#{target_name} to=#{bare_inherited_exact_name} expected=0 req=#{m4c3_st.required}" if env_has?("ADAMAS_REGMAT_ASSERT")
+          redirected_source_name = bare_inherited_exact_name
+          redirected_source_def = m4c3_bie
+          redirected_source_arena = selected_source_arena
+          redirected_shadow_def = physical_shadow
+          redirected_shadow_arena = physical_shadow_arena
           func_def = m4c3_bie
-          arena = @function_def_arenas[bare_inherited_exact_name]? || arena
+          arena = selected_source_arena
           target_name = bare_inherited_exact_name
           lookup_branch = "inherited_bare_exact_redirect"
         end
@@ -108710,6 +108839,18 @@ module Adamas::HIR
       end
       return if has_in_module
       return if is_lowering_resolved
+
+      if source_name = redirected_source_name
+        bind_inherited_bare_redirect_physical_source!(
+          name,
+          source_name,
+          redirected_source_def.not_nil!,
+          redirected_source_arena.not_nil!,
+          redirected_shadow_def.not_nil!,
+          redirected_shadow_arena.not_nil!,
+          materialized_name,
+        )
+      end
 
       record_pending_callee_for_rta(target_name)
       # Re-parse resolved target name once for use in the rest of this function

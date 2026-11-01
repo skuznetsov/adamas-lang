@@ -23497,3 +23497,29 @@ integration, fresh bootstrap, or LavinMQ parity.
   Pointer in Crystal::System.to_string_slice. This commit does not establish that
   stricter result contract, bootstrap or LavinMQ parity. Refresh after default
   inference, source recovery, arenas, initializer replay or declaration bindings.
+
+
+### 2026-11-01: Bind inherited nilary bodies to their physical source owner
+
+- Root cause: a receiver's bare symbol could still hold its required-argument
+  overload while the materializer emitted the inherited nilary source body
+  under that symbol. The body witness then correctly rejected the stale Def
+  and arena. Rebind the exact cold physical slot before emitting the selected
+  body; retain typed siblings, source namespace/type bindings and lexical super.
+  Validate source and super ownership before mutating the registry.
+- Verification at AST 2d5b7e8b745e6fa62032895d2f8c22248a2d07b6da376ec07dc5dbed27ccb5a8:
+  the parent fails all three split-arena HIR cases; the candidate passes 18
+  examples, including both materialization orders and stale-super rejection.
+  Fresh S1 92aa32f307dd68f03042eb8af3c5e3583666803bef2fe88d7dde397578d4c9c9
+  passes inherited_bare_physical_owner_repro.sh against Crystal 1.22.1: four
+  runtime fixtures and two type-error negatives in stock/lazy/both-flags eager
+  modes. Stock-prelude hello and ExecutionContext.default.stack_pool also pass.
+  Evidence: physical-owner-red33rp, spec.physical-owner-green33rs.result.json,
+  physical-owner-portable33ry and physical-prelude-controls33sl under the oct29
+  root-cause artifact directory. Scoped adversary verdict: ROBUST.
+- This qualifies physical body ownership only. Full WIP LavinMQ now exposes an
+  earlier consumer that retained the shadow Def instead of the selected source
+  (lavinmq-physical-owner33sa); an explicit source/physical transition certificate
+  remains in progress. Full WIP hello also retains the separate pending-result
+  depth refusal. No bootstrap or LavinMQ runtime parity claim. Refresh after
+  physical symbol redirects, overload caches, body witnesses or source selection.
