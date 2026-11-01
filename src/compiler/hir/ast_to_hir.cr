@@ -92653,8 +92653,11 @@ module Adamas::HIR
       visited << module_name
 
       mod_defs = @module_defs[module_name]?
+      mod_def_groups = [] of Array(Tuple(Adamas::Compiler::Frontend::ModuleNode, Adamas::Compiler::Frontend::ArenaLike))
+      mod_def_groups << mod_defs if mod_defs
       if generic_key = module_defs_stripped_lookup(module_name)
         if generic_defs = @module_defs[generic_key]?
+          mod_def_groups << generic_defs
           mod_defs = mod_defs ? mod_defs + generic_defs : generic_defs
           module_name = generic_key
         end
@@ -92663,30 +92666,52 @@ module Adamas::HIR
         resolved_mod = resolve_alias_in_module_path(module_name)
         if resolved_mod != module_name
           mod_defs = @module_defs[resolved_mod]?
-          module_name = resolved_mod if mod_defs
+          if mod_defs
+            mod_def_groups << mod_defs
+            module_name = resolved_mod
+          end
         end
       end
       return nil unless mod_defs
 
       found : Tuple(Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike, String)? = nil
-      include_names = [] of String
-      mod_defs.each do |mod_node, mod_arena|
-        next if found
-        with_arena(mod_arena) do
-          if body = mod_node.body
-            body.each do |expr_id|
-              next if found
-              member = unwrap_visibility_member(@arena[expr_id])
-              case member
-              when Adamas::Compiler::Frontend::DefNode
-                next if (recv = member.receiver) && class_method_receiver_text?(safe_slice_to_string(recv) || "")
-                next if member.is_abstract
-                next unless (safe_slice_to_string(member.name) || "") == method_base
-                effective_member = source_recovered_def_for(member, mod_arena) || member
+      # Reopened modules use the newest compatible direct definition. The
+      # direct-owner groups retain exact-application priority over the
+      # stripped generic-template fallback.
+      mod_def_groups.each do |def_group|
+        break if found
+        def_group.reverse_each do |mod_node, mod_arena|
+          next if found
+          with_arena(mod_arena) do
+            if body = mod_node.body
+              body.reverse_each do |expr_id|
+                next if found
+                member = unwrap_visibility_member(@arena[expr_id])
+                next unless def_node = member.as?(Adamas::Compiler::Frontend::DefNode)
+                next if (recv = def_node.receiver) && class_method_receiver_text?(safe_slice_to_string(recv) || "")
+                next if def_node.is_abstract
+                next unless (safe_slice_to_string(def_node.name) || "") == method_base
+                effective_member = source_recovered_def_for(def_node, mod_arena) || def_node
                 if super_block_def_matches?(effective_member, mod_arena, positional_count, named_names)
                   found = {effective_member, mod_arena, strip_generic_args(module_name)}
                 end
-              when Adamas::Compiler::Frontend::IncludeNode
+              end
+            end
+          end
+        end
+      end
+      return found if found
+
+      # Only recurse through includes when no direct owner Def matches. Gather
+      # them in original source order so the reverse walk below retains the
+      # established last-include-first precedence.
+      include_names = [] of String
+      mod_defs.each do |mod_node, mod_arena|
+        with_arena(mod_arena) do
+          if body = mod_node.body
+            body.each do |expr_id|
+              member = unwrap_visibility_member(@arena[expr_id])
+              if member.is_a?(Adamas::Compiler::Frontend::IncludeNode)
                 if include_name = resolve_path_like_name(member.target)
                   include_names << include_name
                 end
@@ -92695,7 +92720,6 @@ module Adamas::HIR
           end
         end
       end
-      return found if found
 
       include_names.reverse_each do |include_name|
         if nested = find_module_block_super_def(include_name, method_base, positional_count, named_names, visited)

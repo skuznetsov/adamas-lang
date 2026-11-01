@@ -23442,3 +23442,24 @@ integration, fresh bootstrap, or LavinMQ parity.
   have explicit checks. This establishes the tested evaluator contract only;
   stock-prelude execution, bootstrap and LavinMQ parity remain open. Refresh
   after raw macro parsing, flag evaluation or compile-flag propagation changes.
+
+
+### 2026-11-01: Select the newest compatible reopened module block-super body
+
+- Root cause: literal-block super scanned reopened module definitions oldest
+  first. Ordinary calls used the later declaration while block-super lowered
+  the earlier body. Scan direct definitions newest first, keeping exact module
+  applications ahead of generic templates and the existing include precedence.
+- Verification: at AST a736130ea9921e3c909d56fe1c51f454b17119cc5143714e2143dbb4f9c79da2,
+  29 HIR examples pass across reopened-super, applied-super, transitive origin
+  and macro suites. Fresh S1 dd8d4c7239598b23ee22c65f46473bdf17b565cc1edad4e3e4e339dbab4c5375
+  passes source_reopened_block_super_repro.sh against Crystal 1.22.1 in lazy
+  and both-flags eager modes: reopened target prints B, shape control prints A.
+  The preceding S1 printed A for the first fixture. Evidence:
+  mro-block-yield33pe, spec.block-super-flags33qe.result.json and
+  block-super-portable33qf under the oct29 artifact root.
+- Scoped adversary: newer incompatible block signatures are skipped, and HIR
+  checks retain the exact selected Def and arena. This closes the tested
+  reopening boundary; broader block-super include-order behavior, stock prelude,
+  bootstrap and LavinMQ parity remain open. Refresh after module reopening,
+  block-call matching, include ordering or source-body registration changes.
