@@ -21,6 +21,14 @@ class Adamas::HIR::AstToHir
     end
   end
 
+  def __test_selected_include_source_application(owner : String, method : String) : Tuple(String, Hash(String, String)?)?
+    origin = find_included_module_def_origin_for_owner(
+      owner, method, 0, false, respect_direct_declarations: false,
+    )
+    return nil unless origin
+    {origin[3], included_module_type_param_map_for_origin(owner, origin[2], origin[3])}
+  end
+
   def __test_selected_include_modules(owner : String) : Array(String)
     (@class_included_modules[owner]? || [] of String).dup
   end
@@ -299,5 +307,31 @@ describe "includes emitted by selected class macro branches" do
     converter.__test_selected_include_binding("SelectedFrameIntOwner", "SelectedFrameNamespace::Leaf", "T").should eq(Adamas::HIR::TypeRef::INT32)
     converter.__test_selected_include_binding("SelectedFrameBoolOwner", "SelectedFrameOuter", "T").should eq(Adamas::HIR::TypeRef::BOOL)
     converter.__test_selected_include_binding("SelectedFrameBoolOwner", "SelectedFrameNamespace::Leaf", "T").should eq(Adamas::HIR::TypeRef::BOOL)
+  end
+end
+
+describe "macro source include binding frames" do
+  it "keeps an explicit root type separate from a captured same-spelling formal" do
+    converter = selected_macro_class_include_fixture(<<-CRYSTAL)
+      class T
+      end
+      module RootedMacroLeaf(U)
+        def rooted_value : U
+          U.new
+        end
+      end
+      module RootedMacroOuter(T)
+        macro included
+          include RootedMacroLeaf(::T)
+        end
+      end
+      class RootedMacroHost
+        include RootedMacroOuter(Int32)
+      end
+    CRYSTAL
+    origin = converter.__test_selected_include_source_application("RootedMacroHost", "rooted_value")
+    origin.should_not be_nil
+    origin.not_nil![0].should eq("RootedMacroLeaf(::T)")
+    origin.not_nil![1].should eq({"U" => "::T"})
   end
 end

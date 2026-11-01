@@ -23388,3 +23388,34 @@ integration, fresh bootstrap, or LavinMQ parity.
   checks retained. This does not establish native prelude, dynamic class joins,
   bootstrap, or LavinMQ parity. Refresh after self specialization, source-value
   facts, narrowing, or runtime type-identity publication changes.
+
+
+### 2026-11-01: Keep applied module source identity through call selection
+
+- Root cause: included-method lookup, return inference and body registration
+  reconstructed provenance independently from flattened include tables and
+  physical aliases. This lost the selected module application, concrete Tuple
+  arguments, source arena or declaration order on the next lowering boundary.
+- Carry the selected Def, arena, module owner and applied name together. Resolve
+  source includes and ordinary super in declaration order; retain applied type
+  bindings and namespace through callback inference and body registration.
+  Generated zero-argument getters and same-named Defs use exact source order
+  and call shape, without borrowing a rest/yield overload's body. Packed rest
+  targets retain their exact source Def and arena, with collision checks.
+- Verification at isolated HEAD 771b6f1f plus this slice: 107 HIR examples pass;
+  fresh S1 s1_mro-packed33nb (39ed9090c97fcca8c3562d17fbbed16795747c80de415b46d7952d4d6f7b68d3)
+  matches Crystal 1.22.1 on 20 native fixtures in stock/lazy/eager modes.
+  The packed-rest script passes both modes and rejects incompatible elements;
+  additional generic rest probes preserve Tuple.size and reject Bool and an
+  out-of-range Int64 for Int32. Evidence: spec.mro-contract33nl.result.json,
+  mro-native33ng, packed-arity-oracle33nk and packed-regression33nn under the
+  oct29 root-cause artifact directory. The complete include-contract script
+  also passes with the stock oracle enabled (mro-script33pf, exit 0).
+- Scoped adversary verdict: ROBUST for these qualified ordinary selection,
+  callback, getter, Tuple and ordinary-super contracts. Literal-block super
+  remains separate: a reopened block-super target prints A instead of stock B
+  (mro-block-yield33pe). Representable Int64 literals in an Int32 rest formal
+  also need contextual auto-casting; rejecting an out-of-range value is correct.
+- Stock-prelude execution, bootstrap and LavinMQ parity remain open. Refresh
+  this evidence after include registration, source ordering, callback owner
+  transfer, packed argument ABI or method-body provenance changes.
