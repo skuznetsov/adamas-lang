@@ -3286,6 +3286,7 @@ module Adamas::HIR
     @unresolved_generic_arg_cache : Hash(String, Bool) = {} of String => Bool
     @unresolved_generic_arg_cache_gen : UInt64 = 0_u64
     @unresolved_generic_arg_cache_class : String? = nil
+    @unresolved_generic_arg_cache_namespace : String? = nil
     # Recursion guard for resolve_type_name_in_context to prevent alias/context loops.
     @resolve_type_name_stack : Set(String) = Set(String).new
     # Cache for split_union_type_name (pure function of input string).
@@ -8708,6 +8709,7 @@ module Adamas::HIR
       @unresolved_generic_arg_cache = {} of String => Bool
       @unresolved_generic_arg_cache_gen = 0_u64
       @unresolved_generic_arg_cache_class = nil.as(String?)
+      @unresolved_generic_arg_cache_namespace = nil.as(String?)
       # Resolve type name stack
       @resolve_type_name_stack = Set(String).new
       # Split union type
@@ -41870,17 +41872,11 @@ module Adamas::HIR
     end
 
     private def concrete_type_args?(type_args : Array(String)) : Bool
-      # NOTE: unions like `String | Nil` are concrete and must be allowed here.
-      unresolved_token_re = /(?:^|[^A-Za-z0-9_:])(K2|V2|K|V|T|U|L|W|self)(?:$|[^A-Za-z0-9_:])/
-      unresolved_param_names = {"K2", "V2", "K", "V", "T", "U", "L", "W", "self"}
       # Bare generic names without type params (like Array, Hash) are not concrete
       bare_generic_names = {"Array", "Hash", "Set", "Slice", "Pointer", "StaticArray", "Iterator", "Enumerable"}
       type_args.none? do |arg|
         arg = arg.strip
-        short = last_namespace_component(arg)
-        # Namespaced type params like Adamas::HIR::K should still be treated as unresolved.
-        short = short.gsub(/[^A-Za-z0-9_]/, "")
-        next true if unresolved_param_names.includes?(short)
+        next true if arg.empty?
         # Path-like type args are never concrete (guard against require path leakage).
         next true if arg.includes?('/')
         # typeof(...) in type positions is not fully resolved during bootstrap.
@@ -41891,8 +41887,7 @@ module Adamas::HIR
         next true if arg == "NoReturn"
         # Bare generic class names without type params are not concrete
         next true if bare_generic_names.includes?(arg)
-        # Detect remaining generic placeholders as standalone tokens (avoid false positives like "ValueId").
-        arg.matches?(unresolved_token_re)
+        unresolved_generic_type_arg?(arg)
       end
     end
 
@@ -51300,10 +51295,15 @@ module Adamas::HIR
 
     private def unresolved_generic_type_arg?(arg : String) : Bool
       cc = @current_class
-      if cc != @unresolved_generic_arg_cache_class || @unresolved_generic_arg_cache_gen != @subst_cache_gen
+      namespace = @current_namespace_override
+      cache_gen = unresolved_generic_type_arg_cache_generation
+      if cc != @unresolved_generic_arg_cache_class ||
+         namespace != @unresolved_generic_arg_cache_namespace ||
+         @unresolved_generic_arg_cache_gen != cache_gen
         @unresolved_generic_arg_cache.clear
         @unresolved_generic_arg_cache_class = cc
-        @unresolved_generic_arg_cache_gen = @subst_cache_gen
+        @unresolved_generic_arg_cache_namespace = namespace
+        @unresolved_generic_arg_cache_gen = cache_gen
       end
 
       if cached = @unresolved_generic_arg_cache[arg]?
@@ -51315,48 +51315,124 @@ module Adamas::HIR
       result
     end
 
+    private def unresolved_generic_type_arg_cache_generation : UInt64
+      # Readiness depends on both lexical substitutions and source identities.
+      # A cached "unknown" must not survive registration of a class, alias,
+      # generic template, or foldable integer constant with that spelling.
+      stamp = @subst_cache_gen
+      prime = 1099511628211_u64
+      stamp = (stamp ^ type_name_exists_universe_stamp) &* prime
+      stamp = (stamp ^ @constant_defs.size.to_u64) &* prime
+      stamp = (stamp ^ @pre_scan_constant_defs.size.to_u64) &* prime
+      stamp = (stamp ^ @constant_literal_values.size.to_u64) &* prime
+      # A few inference helpers temporarily replace or merge the map without
+      # advancing @subst_cache_gen. Include the actual bindings so a readiness
+      # answer cannot leak across those same-owner scopes.
+      stamp = (stamp ^ @type_param_map.hash.to_u64) &* prime
+      stamp
+    end
+
     private def unresolved_generic_type_arg_uncached?(arg : String) : Bool
       arg = normalize_tuple_literal_type_name(arg.strip)
       return true if arg.empty?
-      return true if unresolved_short_type_param_token?(arg)
-      if @unresolved_generic_arg_stack.includes?(arg)
+      absolute_name = arg.starts_with?("::")
+      if absolute_name
+        # Preserve root identity before consulting the active generic map: an
+        # explicit `::F` is the root declaration even when F is a formal in
+        # the caller. Children of an absolute generic application are still
+        # resolved in their ordinary source context below.
+        arg = strip_absolute_name_prefix(arg)
+        return true if arg.empty?
+      end
+      # Keep absolute and relative spellings distinct while descending. For
+      # example, a formal `F => ::F` must be allowed to resolve the root class
+      # `F`; stripping the prefix before the cycle check would look like a
+      # recursive substitution even though the identity is different.
+      stack_key = absolute_name ? "::#{arg}" : arg
+      if @unresolved_generic_arg_stack.includes?(stack_key)
         return true
       end
-      @unresolved_generic_arg_stack << arg
+      @unresolved_generic_arg_stack << stack_key
       @unresolved_generic_arg_depth += 1
       begin
         return true if @unresolved_generic_arg_depth > 64
+        # An active generic formal takes precedence over a same-spelled source
+        # type. Self bindings (E => E) are the unresolved sentinel; composed
+        # bindings are followed through the same readiness check.
+        unless absolute_name
+          if mapped = @type_param_map[arg]?
+            return true if mapped == arg
+            return unresolved_generic_type_arg?(mapped)
+          end
+          # The lexical formal remains unresolved while template registration
+          # has not installed a substitution for it, even if a source class or
+          # alias with the same spelling is already registered.
+          return true if enclosing_generic_declares_type_param?(arg)
+        end
+        return false if value_literal_name?(arg)
+        if !enclosing_generic_declares_type_param?(arg)
+          constant_name = absolute_name ? "::#{arg}" : arg
+          return false if numeric_constant_type_arg(constant_name)
+        end
         if arg.includes?('|')
           parts = split_union_type_name(arg)
           if parts.size > 1
-            return parts.any? { |part| unresolved_generic_type_arg?(part.strip) }
+            # Split results are cached and shared by other type queries.
+            # Root qualification belongs to this lookup, never to the cache.
+            parts.each_with_index do |part, index|
+              child = part.strip
+              if absolute_name && index == 0 && !child.starts_with?("::")
+                child = "::#{child}"
+              end
+              return true if unresolved_generic_type_arg?(child)
+            end
+            return false
           end
         end
         if arg.ends_with?('?')
-          return unresolved_generic_type_arg?(arg[0...-1])
+          base = arg[0...-1]
+          return unresolved_generic_type_arg?(absolute_name ? "::#{base}" : base)
         end
         if info = split_generic_base_and_args(arg)
           base_name = info.base
-          base_known = known_type_name?(base_name) || @generic_templates.has_key?(base_name)
-          unless base_known
-            base = resolve_type_alias_chain(base_name)
-            base_known = known_type_name?(base) || @generic_templates.has_key?(base)
-          end
+          base = absolute_name ? resolve_path_type_alias_chain(base_name, true) : resolve_type_alias_chain(base_name)
+          base_known = BUILTIN_GENERIC_BASES.includes?(base) ||
+                       type_name_exists?(base) || @generic_templates.has_key?(base)
           return true unless base_known
           inner_args = split_generic_type_args(info.args).map(&.strip)
+          if base_name == "NamedTuple"
+            return inner_args.any? do |entry|
+              named_entry = split_named_tuple_entry(entry)
+              !named_entry || unresolved_generic_type_arg?(named_entry[1])
+            end
+          end
           return inner_args.any? { |inner| unresolved_generic_type_arg?(inner) }
         end
-        if type_param_like?(arg)
-          return !@type_param_map.has_key?(arg)
+        if proc_args = proc_type_argument_names(arg)
+          return proc_args.any? { |part| unresolved_generic_type_arg?(part.strip) }
         end
-        first = arg[0]?
-        if first && first.ascii_lowercase?
-          return !known_type_name?(arg)
+        # A registered alias is not itself a nominal identity. A cycle must
+        # stay unresolved even though `type_name_exists?` recognizes aliases.
+        # The alias index also contains canonical names for source classes.
+        # Those entries are nominal identities, not recursive alias declarations.
+        source_nominal = @class_info.has_key?(arg) || @module_defs.has_key?(arg) ||
+                         !!(@enum_info && @enum_info.not_nil!.has_key?(arg)) ||
+                         !!primitive_self_type(arg)
+        alias_target = @type_aliases[arg]?
+        resolved = absolute_name ? resolve_path_type_alias_chain(arg, true) : resolve_type_alias_chain(arg)
+        return true if alias_target && resolved == arg && !source_nominal
+        if resolved != arg
+          resolved = "::#{resolved}" if absolute_name && !resolved.starts_with?("::")
+          return unresolved_generic_type_arg?(resolved)
         end
-        false
+        # Only a registered source/builtin type identity can settle an
+        # uppercase or qualified nominal. Token spelling alone is not proof.
+        return true if @generic_templates.has_key?(arg)
+        return false if type_name_exists?(arg)
+        true
       ensure
         @unresolved_generic_arg_depth -= 1
-        @unresolved_generic_arg_stack.delete(arg)
+        @unresolved_generic_arg_stack.delete(stack_key)
       end
     end
 
@@ -65434,9 +65510,9 @@ module Adamas::HIR
 
     private def type_name_exists?(name : String) : Bool
       return false if name.unsafe_as(UInt64) == 0_u64
-      # Primitive source types exist before the prelude is loaded. Their
-      # identifiers denote type objects, never unresolved runtime locals.
-      return true if primitive_self_type(name)
+      # Primitive and compiler-defined special types exist before prelude.
+      # Their type objects do not imply a selected body's control-flow effect.
+      return true if primitive_self_type(name) || name == "Nil" || name == "Void" || name == "NoReturn"
       trace_type_exists = if filter = env_get("DEBUG_TYPE_EXISTS_TRACE")
                             filter == "*" || filter == name
                           else

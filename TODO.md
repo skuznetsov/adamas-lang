@@ -23230,3 +23230,19 @@ integration, fresh bootstrap, or LavinMQ parity.
   Crystal 1.22.1, and the initializer regression script pass on the isolated
   candidate. Supplied arguments, direct results, named delegation, super, and
   NoReturn remain covered. Stock-prelude hello and LavinMQ are still open.
+
+
+### Generic argument readiness by source identity (2026-11-01)
+
+- Fixed generic admission to use registered source identities and active formal
+  bindings instead of a short-name whitelist. Root-qualified types keep their
+  identity; unknown formals, alias cycles, and non-type constants remain rejected.
+- Readiness queries no longer mutate shared union split arrays; Nil is recognized
+  before prelude loading. Cache validity includes namespace, source registration,
+  and actual type-map contents so scoped bindings cannot leak stale answers.
+- Verified clean candidate AST 1675bace: 23 focused HIR cases; fresh S1
+  064e1f72 and four stock/lazy/eager native constructor controls; repository
+  generic_argument_readiness_repro.sh passes both compiler modes.
+- Residual scope: these checks qualify generic argument readiness, not stock
+  prelude, bootstrap, or LavinMQ parity. The cache map fingerprint adds work
+  proportional to the current substitution-map size.
