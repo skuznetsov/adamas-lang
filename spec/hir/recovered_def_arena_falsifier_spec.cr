@@ -20,6 +20,23 @@ class Adamas::HIR::AstToHir
     source_recovered_def_for(definition, arena)
   end
 
+  def __test_infer_registered_default_type(
+    default_expr : Adamas::Compiler::Frontend::ExprId,
+    runtime_owner : String,
+    definition : Adamas::Compiler::Frontend::DefNode,
+    logical_name : String,
+    fallback_arena : Adamas::Compiler::Frontend::ArenaLike,
+  ) : Adamas::HIR::TypeRef?
+    infer_registered_method_default_type(
+      default_expr,
+      runtime_owner,
+      definition,
+      logical_name,
+      fallback_arena,
+      nil,
+    )
+  end
+
   def __test_registered_body_owner?(
     body : Array(Adamas::Compiler::Frontend::ExprId),
     expected : Adamas::Compiler::Frontend::ArenaLike,
@@ -73,6 +90,14 @@ private def recovered_arena_source(literal : String) : String
   CRYSTAL
 end
 
+private def recovered_arena_default_source(default_literal : String) : String
+  <<-CRYSTAL
+    def recoverable(value = #{default_literal})
+      value
+    end
+  CRYSTAL
+end
+
 private def recovered_arena_definition(
   arena : Adamas::Compiler::Frontend::ArenaLike,
   roots : Array(Adamas::Compiler::Frontend::ExprId),
@@ -95,6 +120,78 @@ private def recovered_arena_body_literal(
 end
 
 describe "source-recovered Def arena identity" do
+  it "keeps recovered default ExprIds paired with their exact arena" do
+    owner_source = recovered_arena_default_source("65_i32")
+    foreign_source = recovered_arena_default_source("65_i64")
+    owner_arena, owner_roots = parse_recovered_arena_source(owner_source)
+    foreign_arena, foreign_roots = parse_recovered_arena_source(foreign_source)
+    owner_def = recovered_arena_definition(owner_arena, owner_roots)
+    foreign_def = recovered_arena_definition(foreign_arena, foreign_roots)
+    owner_def.span.should eq(foreign_def.span)
+    owner_def.params.not_nil!.clear
+
+    # Give the foreign recovered default's ExprId a valid, conflicting node in
+    # the registered owner arena. Range checks alone must not admit this value.
+    padding_parser = Adamas::Compiler::Frontend::Parser.new(
+      Adamas::Compiler::Frontend::Lexer.new("77_i16"), owner_arena,
+    )
+    padding = padding_parser.parse_program
+
+    converter = Adamas::HIR::AstToHir.new(
+      foreign_arena,
+      sources_by_arena: {
+        owner_arena.object_id.to_u64 => owner_source,
+        foreign_arena.object_id.to_u64 => foreign_source,
+      },
+      main_arenas: [foreign_arena, owner_arena],
+    )
+    converter.__test_register_exact_source_owner("recoverable", owner_def, owner_arena)
+
+    recovered = converter.__test_recover_source_def(owner_def, foreign_arena)
+    recovered.should_not be_nil
+    recovered = recovered.not_nil!
+    default_expr = recovered.params.not_nil!.first.default_value.not_nil!
+    default_expr.index.should eq(padding.roots.first.index)
+    owner_arena[default_expr].as(Adamas::Compiler::Frontend::NumberNode).parsed_int.should eq(77)
+
+    # The recovered Parameter and its default ExprId came from the foreign
+    # arena, while the registered source declaration belongs to owner_arena.
+    # Inference must reject this mismatch before indexing either arena.
+    converter.__test_infer_registered_default_type(
+      default_expr,
+      "RecoverableOwner",
+      recovered,
+      "recoverable",
+      owner_arena,
+    ).should be_nil
+    converter.__test_recover_source_def(owner_def, owner_arena).should be_nil
+  end
+
+  it "infers a recovered default when its execution and registered arenas match" do
+    owner_source = recovered_arena_default_source("65_i32")
+    owner_arena, owner_roots = parse_recovered_arena_source(owner_source)
+    owner_def = recovered_arena_definition(owner_arena, owner_roots)
+    owner_def.params.not_nil!.clear
+
+    converter = Adamas::HIR::AstToHir.new(
+      owner_arena,
+      sources_by_arena: {owner_arena.object_id.to_u64 => owner_source},
+      main_arenas: [owner_arena],
+    )
+    converter.__test_register_exact_source_owner("recoverable", owner_def, owner_arena)
+
+    recovered = converter.__test_recover_source_def(owner_def, owner_arena).not_nil!
+    default_expr = recovered.params.not_nil!.first.default_value.not_nil!
+    inferred = converter.__test_infer_registered_default_type(
+      default_expr,
+      "RecoverableOwner",
+      recovered,
+      "recoverable",
+      owner_arena,
+    )
+    inferred.should eq(Adamas::HIR::TypeRef::INT32)
+  end
+
   it "prefers the exact retained body owner over a same-shape fallback arena" do
     owner_source = recovered_arena_source("65")
     foreign_source = recovered_arena_source("66")

@@ -3071,7 +3071,10 @@ module Adamas::HIR
     # parser-owned Parameter objects but keeps the original body/metadata, so
     # all registration, lookup, and lowering consumers observe one durable
     # complete signature without mutating the foreign AST.
-    @source_recovered_defs : Hash(UInt64, Adamas::Compiler::Frontend::DefNode)
+    @source_recovered_defs : Hash(
+      UInt64,
+      {Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike},
+    )
     @function_visibilities : Hash(String, Adamas::Compiler::Frontend::Visibility)
     @accessor_visibilities : Hash(Tuple(String, Int32), Adamas::Compiler::Frontend::Visibility)
     @function_def_arenas : Hash(String, Adamas::Compiler::Frontend::ArenaLike)
@@ -8300,7 +8303,10 @@ module Adamas::HIR
       @union_descriptors = {} of MIR::TypeRef => MIR::UnionDescriptor
       @union_descriptor_entries = [] of UnionDescriptorRegistration
       @function_defs = Hash(String, Adamas::Compiler::Frontend::DefNode).new(initial_capacity: 32768)
-      @source_recovered_defs = {} of UInt64 => Adamas::Compiler::Frontend::DefNode
+      @source_recovered_defs = {} of UInt64 => {
+        Adamas::Compiler::Frontend::DefNode,
+        Adamas::Compiler::Frontend::ArenaLike,
+      }
       @included_forall_virtual_return_certificates = [] of IncludedForallVirtualReturnCertificate
       @deferred_union_variant_contracts = [] of DeferredUnionVariantContract
       @materialized_initializer_sources = {} of String => MaterializedInitializerSource
@@ -8877,7 +8883,10 @@ module Adamas::HIR
       # Source recovery is consulted from bootstrap registrations as well as
       # the ordinary constructor path.  Re-seed the sidecar here so a
       # generated stage2 constructor cannot leave this explicit ivar nil.
-      @source_recovered_defs = {} of UInt64 => Adamas::Compiler::Frontend::DefNode
+      @source_recovered_defs = {} of UInt64 => {
+        Adamas::Compiler::Frontend::DefNode,
+        Adamas::Compiler::Frontend::ArenaLike,
+      }
       @macro_generated_parameter_def_ids = Set(UInt64).new
       @macro_generated_parameter_sources = {} of {UInt64, UInt64} => String
       @macro_generated_parameter_annotation_sources = {} of {UInt64, UInt64} => String
@@ -25463,7 +25472,13 @@ module Adamas::HIR
       param_count = count_params(params) { true }
 
       def_id = node.object_id.to_u64
-      if recovered = @source_recovered_defs[def_id]?
+      if recovered_entry = @source_recovered_defs[def_id]?
+        # A recovered header contains ExprIds allocated in the arena used for
+        # reparsing. Reusing that sidecar with another arena would interpret
+        # the same IDs against unrelated nodes, even when both arenas fit the
+        # original Def span.
+        return nil unless recovered_entry[1].same?(arena)
+        recovered = recovered_entry[0]
         # The sidecar is also indexed by the recovered node itself so nested
         # consumers can recognize it without reparsing.  Returning `nil` for
         # that identity lets the caller proceed with the already-complete node
@@ -25571,11 +25586,11 @@ module Adamas::HIR
         node.receiver,
         node.forall_type_params
       )
-      @source_recovered_defs[def_id] = recovered
+      @source_recovered_defs[def_id] = {recovered, arena}
       # Lowering re-enters this boundary with the recovered sidecar node. Keep
       # that node self-stable so a valid source witness is not reparsed
       # recursively on every consumer call.
-      @source_recovered_defs[recovered.object_id.to_u64] = recovered
+      @source_recovered_defs[recovered.object_id.to_u64] = {recovered, arena}
       recovered
     rescue
       # Source recovery is opportunistic.  A malformed/truncated source span
@@ -46641,6 +46656,88 @@ module Adamas::HIR
       end
     end
 
+    # Infer a default argument only after re-entering the exact source
+    # declaration context. Lazy body lowering can run while an unrelated caller
+    # scope is active; its current class, namespace, type map, and arena are not
+    # evidence for a callee-owned default expression.
+    private def infer_registered_method_default_type(
+      default_expr : ExprId,
+      runtime_owner : String,
+      definition : Adamas::Compiler::Frontend::DefNode,
+      logical_name : String?,
+      fallback_arena : Adamas::Compiler::Frontend::ArenaLike,
+      initializer_source : MaterializedInitializerSource?,
+    ) : TypeRef?
+      source_name = initializer_source.try(&.source_name) || logical_name || return nil
+      source_def = initializer_source.try(&.source_def) || @function_defs[source_name]?
+      return nil unless source_def
+      recovered_arena = nil.as(Adamas::Compiler::Frontend::ArenaLike?)
+      recovered_entry = @source_recovered_defs[source_def.object_id.to_u64]?
+      unless source_def.same?(definition)
+        return nil unless recovered_entry && recovered_entry[0].same?(definition)
+        recovered_arena = recovered_entry[1]
+      else
+        # A source Def may itself be the self-indexed recovered sidecar. Keep
+        # its arena provenance even when Def identity already matches.
+        if recovered_entry && recovered_entry[0].same?(definition)
+          recovered_arena = recovered_entry[1]
+        end
+      end
+
+      source_arena = if initializer_source
+                       initializer_source.source_arena
+                     else
+                       registered_arena = @function_def_arenas[source_name]? || return nil
+                       declaration_arena = source_method_declaration_arena(source_def, fallback_arena)
+                       return nil unless registered_arena.object_id == declaration_arena.object_id
+                       registered_arena
+                     end
+      return nil if recovered_arena && !recovered_arena.not_nil!.same?(source_arena)
+
+      # Included initializers are registered under receiver-specialized names,
+      # but their default expressions still belong to the exact included
+      # module source. Prefer that Def+arena provenance over a transported
+      # symbol's namespace metadata.
+      included_source_owner = @included_initializer_def_origins[{source_def, source_arena}]?
+      namespace_override = if included_source_owner
+                             included_source_owner
+                           elsif initializer_source
+                             initializer_source.namespace
+                           else
+                             function_namespace_override_for(source_name)
+                           end
+      type_params = if initializer_source
+                      initializer_source.bindings
+                    else
+                      function_type_param_map_for_name(source_name) || EMPTY_DEFERRED_TYPE_PARAM_SNAPSHOT
+                    end
+      declaration_owner = if namespace_override && !namespace_override.empty?
+                            namespace_override
+                          elsif has_method_separator?(source_name)
+                            method_owner_from_name(source_name)
+                          else
+                            nil
+                          end
+
+      saved_class = @current_class
+      saved_namespace = @current_namespace_override
+      saved_type_params = @type_param_map
+      @current_class = declaration_owner
+      @current_namespace_override = namespace_override
+      @type_param_map = type_params.dup
+      @subst_cache_gen &+= 1
+      begin
+        with_arena(source_arena) do
+          infer_type_from_expr(default_expr, runtime_owner)
+        end
+      ensure
+        @current_class = saved_class
+        @current_namespace_override = saved_namespace
+        @type_param_map = saved_type_params
+        @subst_cache_gen &+= 1
+      end
+    end
+
     # Lower a method within a class
     private def lower_method(
       class_name : String,
@@ -47043,7 +47140,14 @@ module Adamas::HIR
               elsif param.is_double_splat
                 inferred << type_ref_for_name("NamedTuple")
               elsif default_value = param.default_value
-                inferred_type = infer_type_from_expr(default_value, class_name)
+                inferred_type = infer_registered_method_default_type(
+                  default_value,
+                  class_name,
+                  node,
+                  logical_registered_name,
+                  @arena,
+                  initializer_replay_source,
+                )
                 inferred << (inferred_type || TypeRef::VOID)
               else
                 all_defaulted = false
@@ -74854,7 +74958,7 @@ module Adamas::HIR
             return nil unless provenance.function_name == target_name && provenance.owner_name == target_function_owner &&
                               provenance.owner_type == expected_self_type && provenance.self_type == expected_self_type &&
                               provenance.source_def.same?(source_def) && provenance.source_arena.same?(target_arena) &&
-                              included_forall_virtual_body_lowered_def_matches_source?(provenance.lowered_def, source_def) &&
+                              included_forall_virtual_body_lowered_def_matches_source?(provenance.lowered_def, source_def, target_arena) &&
                               provenance.parameter_types == full_parameter_types &&
                               provenance.return_type == target_function.return_type
             return nil unless provenance.source_arena.same?(source_arena)
@@ -75051,10 +75155,14 @@ module Adamas::HIR
     private def included_forall_virtual_body_lowered_def_matches_source?(
       lowered_def : Adamas::Compiler::Frontend::DefNode,
       source_def : Adamas::Compiler::Frontend::DefNode,
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
     ) : Bool
-      return true if lowered_def.same?(source_def)
-      recovered = @source_recovered_defs[source_def.object_id.to_u64]?
-      !!(recovered && recovered.same?(lowered_def))
+      if lowered_def.same?(source_def)
+        registered_arena = registered_arena_for_def(source_def)
+        return !registered_arena || registered_arena.not_nil!.same?(source_arena)
+      end
+      recovered_entry = @source_recovered_defs[source_def.object_id.to_u64]?
+      !!(recovered_entry && recovered_entry[0].same?(lowered_def) && recovered_entry[1].same?(source_arena))
     end
 
     # Publish provenance only after the exact-demand invocation has emitted and
@@ -75073,7 +75181,7 @@ module Adamas::HIR
       return unless full_name == demand.target_name && function.name == demand.target_name
       return unless class_name == demand.owner_name && !is_class_method
       return unless method_arena && method_arena.not_nil!.same?(demand.source_arena)
-      return unless included_forall_virtual_body_lowered_def_matches_source?(node, demand.source_def)
+      return unless included_forall_virtual_body_lowered_def_matches_source?(node, demand.source_def, method_arena.not_nil!)
       return unless hir_function_body_emitted?(function)
 
       owner_type = included_forall_class_type_ref(demand.owner_name) || return

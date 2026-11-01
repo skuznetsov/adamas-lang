@@ -23463,3 +23463,37 @@ integration, fresh bootstrap, or LavinMQ parity.
   reopening boundary; broader block-super include-order behavior, stock prelude,
   bootstrap and LavinMQ parity remain open. Refresh after module reopening,
   block-call matching, include ordering or source-body registration changes.
+
+
+### 2026-11-01: Infer default parameters with exact Def and arena ownership
+
+- Root cause: early method-parameter inference read a callee-owned default ExprId
+  through the ambient caller arena. A valid index could denote another AST node;
+  lexical constants and generic bindings also belonged to the declaration. The
+  recovered-parameter sidecar similarly retained a Def without its parse arena.
+- Re-enter the exact registered Def and arena, declaration namespace and applied
+  type bindings before inference; restore caller state with ensure. Pair each
+  recovered Def with its arena, reject mismatched cache hits and prevent a foreign
+  recovered default from being interpreted in a structurally fitting arena.
+- Verification at AST 88e750261f86c6f359ac3c21aa7b9ba01061b5ed43d0d1a72674dfd20c373766:
+  22 focused HIR examples pass. Two measured red cases infer Int32 instead of
+  String through the caller arena, or Int16 instead of rejecting foreign recovery.
+  Fresh S1 3141fda6b2eac0680b7fde35bdea578bc59ef8c5ab1d688e396ca3e4e74cd047
+  passes monitor_default_lexical_context_repro.sh against Crystal 1.22.1 in
+  stock/lazy/both-flags eager modes. Those native fixtures are compatibility
+  controls; the split-arena HIR cases are the direct behavioral regressions.
+- prelude_virtual_layout_replay_repro.sh passes stock and candidate hello and
+  ExecutionContext.default.stack_pool checks. The original parent fails hello
+  compilation at Fiber::ExecutionContext::Monitor#initialize$arity1. Evidence:
+  spec.monitor-default-valid-red33qr.result.json, spec.monitor-recovery-red33rd.result.json,
+  spec.monitor-recovery-focused33rg.result.json, monitor-recovery-portable33rl,
+  prelude-monitor-head-old33qz and prelude-context-monitor-recovery33rm under
+  the oct29 root-cause artifact directory.
+- Scoped adversary: ROBUST for the measured default/recovery ownership contract.
+  An expanded 35-example gate has seven pre-existing forall failures on both
+  parent and candidate (monitor-recovery-baseline33rf / monitor-recovery-green33re):
+  six virtual-certificate errors and one numeric-literal negative. Those remain
+  open. Full WIP also exposes a pending-result depth refusal followed by a guessed
+  Pointer in Crystal::System.to_string_slice. This commit does not establish that
+  stricter result contract, bootstrap or LavinMQ parity. Refresh after default
+  inference, source recovery, arenas, initializer replay or declaration bindings.
