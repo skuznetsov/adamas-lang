@@ -23557,3 +23557,20 @@ integration, fresh bootstrap, or LavinMQ parity.
   No cache behavior is enabled. Promotion requires fresh/cached semantic and
   runtime parity, lookup-set invalidation, concurrent snapshot/compaction and
   corrupt-record fallback checks, plus matched wall-time/RSS/disk measurements.
+
+
+### 2026-11-02: Preserve heredoc opener tails and raw macro source ownership
+
+- [x] Keep modifiers, sibling arguments and block openers after a heredoc
+  delimiter in the token stream. Retain the semantic token span and represent
+  physical opener/body coverage separately; macro reconstruction publishes each
+  body once, at its header newline, in physical order. Preserve CRLF and reject
+  bare CR.
+- Verification: 25 targeted lexer/parser examples pass; all six fixtures match
+  stock Crystal 1.22.1 with exact A\n output and exit 0 in lazy and eager HIR
+  (macro-heredoc-source-green34aw, macro-heredoc-regression34bk). The full
+  lexer/parser suite retains the same 107 failing identities as its parent;
+  this is not whole-suite closure. Read-only source adversary: ROBUST within
+  this scope. Refresh after lexer cursor, raw-source span or macro-trim changes.
+- Open separately: active macro-raise rejection, strict pending source-result
+  settlement, fresh stock-prelude integration, bootstrap and LavinMQ parity.

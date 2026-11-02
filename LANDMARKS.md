@@ -22554,3 +22554,18 @@ recipe replay and the dedicated specs/regression together.
   fallback cache and contradictory-span rejection. This does not certify
   recovered initializer identity transport, native prelude, bootstrap or LavinMQ.
   Refresh after Def recovery, source-body registration or arena-cache changes.
+
+
+### 2026-11-02: Heredoc semantic spans are not raw-source coverage
+
+The lexer scans heredoc bodies before returning to the opener-line tokens, so
+a String token's semantic span overlaps later commas, arguments and block
+openers. Macro reconstruction must consume disjoint opener/body spans and
+publish queued bodies at the matching physical newline, not copy the semantic
+span or suppress overlapped tokens. Qualified on 25 lexer/parser examples and
+six stock/lazy/eager native fixtures (18 exact A\n results, exit 0). The full
+lexer/parser suite still has 107 pre-existing failures with unchanged identities.
+Evidence: macro-heredoc-source-green34aw, macro-heredoc-parser-comparison34ba,
+macro-heredoc-regression34bk under the oct29 evidence root. Source adversary:
+ROBUST within that scope; refresh after cursor, raw-source or trim changes.
+Active macro-raise rejection and stock-prelude/bootstrap/LavinMQ remain open.

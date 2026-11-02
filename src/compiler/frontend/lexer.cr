@@ -27,6 +27,8 @@ module Adamas
         getter source : String
         @bytes_ptr : Pointer(UInt8)
         @byte_size : Int32
+        @heredoc_body_position : Tuple(Int32, Int32, Int32)?
+        @heredoc_header_newline_offset : Int32?
 
         def initialize(source : String, *, diagnostics : Array(Diagnostic)? = nil)
           @source = source
@@ -39,6 +41,8 @@ module Adamas
           @offset = 0
           @line = 1
           @column = 1
+          @heredoc_body_position = nil
+          @heredoc_header_newline_offset = nil
           @processed_strings = [] of Bytes # Phase 54: retained views; StringPool owns processed-token storage
           @last_token_kind = nil           # Phase 57: for regex vs division disambiguation
           @at_statement_start = true       # Phase 57: Start of file is statement start
@@ -97,7 +101,7 @@ module Adamas
           token = case
                   when whitespace?(byte)
                     lex_whitespace
-                  when byte == NEWLINE
+                  when byte == NEWLINE || byte == CARRIAGE_RETURN
                     lex_newline
                   when byte == AT_SIGN
                     lex_instance_var
@@ -374,6 +378,12 @@ module Adamas
           {@offset, @line, @column}
         end
 
+        private def restore_position(position : Tuple(Int32, Int32, Int32)) : Nil
+          @offset = position[0]
+          @line = position[1]
+          @column = position[2]
+        end
+
         private def current_byte
           @bytes_ptr[@offset]
         end
@@ -429,14 +439,39 @@ module Adamas
 
         private def lex_newline
           start_offset, start_line, start_column = capture_position
-          @offset += 1
-          @line += 1
-          @column = 1
-          Token.new(
+          if current_byte == CARRIAGE_RETURN
+            if peek_byte == NEWLINE
+              @offset += 2
+              @line += 1
+              @column = 1
+            else
+              @offset += 1
+              @column += 1
+              emit_diagnostic(
+                "expected '\\n' after '\\r'",
+                Span.new(start_offset, @offset, start_line, start_column, @line, @column)
+              )
+            end
+          else
+            @offset += 1
+            @line += 1
+            @column = 1
+          end
+          token = Token.new(
             Token::Kind::Newline,
             bytes_range(start_offset, @offset),
             build_span(start_offset, start_line, start_column)
           )
+
+          if @heredoc_header_newline_offset == start_offset
+            if body_position = @heredoc_body_position
+              restore_position(body_position)
+            end
+            @heredoc_body_position = nil
+            @heredoc_header_newline_offset = nil
+          end
+
+          token
         end
 
         private def lex_identifier
@@ -2771,6 +2806,7 @@ module Adamas
         SPACE        = 0x20_u8 # ' '
         TAB          = 0x09_u8 # '\t'
         NEWLINE      = 0x0A_u8 # '\n'
+        CARRIAGE_RETURN = 0x0D_u8 # '\r'
         DOUBLE_QUOTE = 0x22_u8 # '"'
         SINGLE_QUOTE = 0x27_u8 # '\''
         BACKTICK     = 0x60_u8 # '`'
@@ -2853,16 +2889,46 @@ module Adamas
           end
           debug { "[HEREDOC] delimiter='#{delimiter}'" }
 
-          # Skip to end of line (heredoc content starts on NEXT line)
-          while @offset < @rope.size && current_byte != '\n'.ord.to_u8
-            advance
+          # Keep tokenizing the opener line from the byte after this delimiter.
+          # Scan each body on a separate cursor and resume this line so commas,
+          # modifiers, and other suffix tokens remain visible in source order.
+          tail_position = capture_position
+          opener_span = Span.new(
+            start_offset,
+            tail_position[0],
+            start_line,
+            start_column,
+            tail_position[1],
+            tail_position[2]
+          )
+          previous_body_position = @heredoc_body_position
+          header_newline_offset : Int32
+          body_start_position : Tuple(Int32, Int32, Int32)
+          if previous_body_position
+            header_newline_offset = @heredoc_header_newline_offset.not_nil!
+            body_start_position = previous_body_position
+            restore_position(previous_body_position)
+          else
+            # The first body begins after the opener line's physical newline.
+            while @offset < @rope.size && current_byte != NEWLINE && current_byte != CARRIAGE_RETURN
+              advance
+            end
+            if @offset >= @rope.size
+              debug { "[HEREDOC] returning nil: EOF before newline after delimiter" }
+              emit_diagnostic("Unterminated heredoc", Span.new(start_offset, @offset, start_line, start_column, @line, @column))
+              return nil
+            end
+            header_newline_offset = @offset
+            if current_byte == CARRIAGE_RETURN
+              # A carriage return only starts a physical newline when followed
+              # by LF. Leave a bare CR for the regular lexer diagnostic path.
+              return nil unless peek_byte == NEWLINE
+              advance(2)
+            else
+              advance
+            end
+            body_start_position = capture_position
           end
-          if @offset >= @rope.size
-            debug { "[HEREDOC] returning nil: EOF before newline after delimiter" }
-            emit_diagnostic("Unterminated heredoc", Span.new(start_offset, @offset, start_line, start_column, @line, @column))
-            return nil
-          end
-          advance # consume newline
           debug { "[HEREDOC] starting content scan at offset #{@offset}" }
 
           # Accumulate content until we find delimiter on its own line
@@ -2876,9 +2942,11 @@ module Adamas
             if @offset >= @rope.size
               debug { "[HEREDOC] returning nil: reached EOF while scanning lines" }
               emit_diagnostic("Unterminated heredoc: can't find \"#{delimiter}\" anywhere before the end of file", Span.new(start_offset, @offset, start_line, start_column, @line, @column))
+              restore_position(tail_position) if previous_body_position
               return nil
             end
-            line_start = @offset
+            line_start_position = capture_position
+            line_start = line_start_position[0]
 
             # Capture indentation (allowed to be zero with <<-)
             while @offset < @rope.size && (current_byte == ' '.ord.to_u8 || current_byte == '\t'.ord.to_u8)
@@ -2920,7 +2988,7 @@ module Adamas
 
             # Not end delimiter, rewind to line start and consume the line
             debug { "[HEREDOC] rewinding to line_start=#{line_start}" }
-            @offset = line_start
+            restore_position(line_start_position)
             while @offset < @rope.size && current_byte != '\n'.ord.to_u8
               content.write_byte(current_byte)
               advance
@@ -2929,6 +2997,7 @@ module Adamas
             if @offset >= @rope.size
               debug { "[HEREDOC] returning nil: unterminated heredoc (EOF before delimiter)" }
               emit_diagnostic("Unterminated heredoc: can't find \"#{delimiter}\" anywhere before the end of file", Span.new(start_offset, @offset, start_line, start_column, @line, @column))
+              restore_position(tail_position) if previous_body_position
               return nil # Unterminated heredoc
             end
 
@@ -2949,18 +3018,34 @@ module Adamas
           content_slice = Slice(UInt8).new(content.size)
           content.to_slice.copy_to(content_slice)
 
+          body_end_position = capture_position
+          @heredoc_body_position = body_end_position
+          @heredoc_header_newline_offset ||= header_newline_offset
+          restore_position(tail_position)
+
+          body_span = Span.new(
+            body_start_position[0],
+            body_end_position[0],
+            body_start_position[1],
+            body_start_position[2],
+            body_end_position[1],
+            body_end_position[2]
+          )
+          heredoc_source = HeredocSource.new(opener_span, header_newline_offset, body_span)
+
           debug { "[HEREDOC] returning String token" }
           Token.new(
             Token::Kind::String,
             content_slice,
             Span.new(
               start_offset,
-              @offset,
+              body_end_position[0],
               start_line,
               start_column,
-              @line,
-              @column
-            )
+              body_end_position[1],
+              body_end_position[2]
+            ),
+            heredoc_source: heredoc_source
           )
         end
 

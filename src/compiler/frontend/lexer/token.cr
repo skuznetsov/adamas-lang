@@ -4,14 +4,35 @@ require "../ast"  # For NumberKind
 module Adamas
   module Compiler
     module Frontend
+      # Raw source ownership for a heredoc token. The token's semantic span
+      # continues to cover the opener through the heredoc body; these spans
+      # let macro parsing emit the physical source once while retaining the
+      # ordinary tokens from the opener line.
+      class HeredocSource
+        getter opener_span : Span
+        getter header_newline_offset : Int32
+        getter body_span : Span
+
+        def initialize(@opener_span : Span, @header_newline_offset : Int32, @body_span : Span)
+        end
+      end
+
       struct Token
         getter kind : Kind
         getter slice : Slice(UInt8)
         getter span : Span
         getter number_kind : NumberKind?
         getter number_kind_explicit : Bool
+        getter heredoc_source : HeredocSource?
 
-        def initialize(@kind : Kind, @slice : Slice(UInt8), @span : Span, @number_kind : NumberKind? = nil, @number_kind_explicit : Bool = false)
+        def initialize(
+          @kind : Kind,
+          @slice : Slice(UInt8),
+          @span : Span,
+          @number_kind : NumberKind? = nil,
+          @number_kind_explicit : Bool = false,
+          @heredoc_source : HeredocSource? = nil,
+        )
         end
 
         def lexeme : String

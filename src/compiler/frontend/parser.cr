@@ -8653,6 +8653,7 @@ module Adamas
             buffer = IO::Memory.new
             buffer_start_span : Span? = nil
             buffer_end_span : Span? = nil
+            pending_heredocs = [] of HeredocSource
             depth_state = MacroDepthState.new
             trim_next_left = false
             trim_final = false
@@ -8662,7 +8663,20 @@ module Adamas
 
             loop do
               if trim_next_left
-                skip_macro_whitespace_after_escape
+                # A heredoc's header newline is structural: the lexer has
+                # queued raw body spans to be emitted immediately after it.
+                # Keep that newline in the stream so the body event is not
+                # skipped along with ordinary macro-trim whitespace.
+                preserve_heredoc_header = false
+                if current_token.kind == Token::Kind::Newline
+                  pending_heredocs.each do |heredoc|
+                    if heredoc.header_newline_offset == current_token.span.start_offset
+                      preserve_heredoc_header = true
+                      break
+                    end
+                  end
+                end
+                skip_macro_whitespace_after_escape unless preserve_heredoc_header
                 trim_final = true # Remember for final flush
                 trim_next_left = false
                 trim_gap = true
@@ -8890,7 +8904,11 @@ module Adamas
 
               # Track start of text buffer
               if buffer_start_span.nil? && buffer.size == 0
-                buffer_start_span = token.span
+                if heredoc_source = token.heredoc_source
+                  buffer_start_span = heredoc_source.opener_span
+                else
+                  buffer_start_span = token.span
+                end
               end
 
               # Maintain block depth for regular language constructs so we don't
@@ -8946,7 +8964,18 @@ module Adamas
               # verbatim, breaking stdlib constructs like Ryu's DIGIT_TABLE.
               # Mirrors how original Crystal's next_macro_token scans raw
               # bytes for macro delimiters regardless of string context.
-              if token.kind == Token::Kind::String || token.kind == Token::Kind::StringInterpolation
+              if heredoc_source = token.heredoc_source
+                if buffer_end_span
+                  trim_gap = append_macro_gap(buffer, buffer_end_span, heredoc_source.opener_span, trim_gap)
+                else
+                  trim_gap = false
+                end
+                buffer.write(source_span_slice(heredoc_source.opener_span))
+                buffer_end_span = heredoc_source.opener_span
+                pending_heredocs << heredoc_source
+                advance
+                next
+              elsif token.kind == Token::Kind::String || token.kind == Token::Kind::StringInterpolation
                 if expanded = expand_macro_directives_in_string_token(token)
                   if buffer_end_span
                     trim_gap = append_macro_gap(buffer, buffer_end_span, token.span, trim_gap)
@@ -8969,6 +8998,21 @@ module Adamas
               end
               buffer.write(macro_token_text_slice(token))
               buffer_end_span = token.span
+
+              if token.kind == Token::Kind::Newline && !pending_heredocs.empty? &&
+                 pending_heredocs[0].header_newline_offset == token.span.start_offset
+                pending_heredocs.each do |heredoc|
+                  buffer_start_span, buffer_end_span, trim_gap = append_macro_heredoc_body(
+                    heredoc,
+                    buffer,
+                    pieces,
+                    buffer_start_span,
+                    buffer_end_span,
+                    trim_gap
+                  )
+                end
+                pending_heredocs.clear
+              end
               advance
             end
 
@@ -15086,6 +15130,10 @@ current_token.kind == Token::Kind::Identifier &&
             return literal
           end
 
+          if heredoc_source = token.heredoc_source
+            return source_span_slice(heredoc_source.opener_span)
+          end
+
           span = token.span
           start = span.start_offset
           finish = span.end_offset
@@ -15094,6 +15142,53 @@ current_token.kind == Token::Kind::Identifier &&
             return @source.to_slice[start, len]
           end
           token.slice
+        end
+
+        private def source_span_slice(span : Span) : Slice(UInt8)
+          start = span.start_offset
+          finish = span.end_offset
+          if start >= 0 && finish >= start && finish <= @source.bytesize
+            len = finish - start
+            return @source.to_slice[start, len]
+          end
+          Slice(UInt8).empty
+        end
+
+        private def append_macro_heredoc_body(
+          heredoc : HeredocSource,
+          buffer : IO::Memory,
+          pieces : MacroPieceBuffer,
+          buffer_start_span : Span?,
+          buffer_end_span : Span?,
+          trim_gap : Bool,
+        ) : {Span?, Span?, Bool}
+          body_span = heredoc.body_span
+          body_token = Token.new(Token::Kind::String, source_span_slice(body_span), body_span)
+
+          if expanded = expand_macro_directives_in_string_token(body_token)
+            if buffer_end_span
+              trim_gap = append_macro_gap(buffer, buffer_end_span, body_span, trim_gap)
+            else
+              trim_gap = false
+            end
+            flush_macro_text(buffer, pieces, false, buffer_start_span, buffer_end_span)
+            buffer_start_span = nil
+            buffer_end_span = nil
+            expanded.each { |piece| pieces << piece }
+            buffer_end_span = body_span
+            trim_gap = false
+          else
+            if buffer_end_span
+              trim_gap = append_macro_gap(buffer, buffer_end_span, body_span, trim_gap)
+            else
+              trim_gap = false
+            end
+            buffer_start_span ||= body_span
+            buffer.write(source_span_slice(body_span))
+            buffer_end_span = body_span
+          end
+
+          {buffer_start_span, buffer_end_span, trim_gap}
         end
 
         private def append_macro_gap(buffer : IO::Memory, previous_span : Span, next_span : Span, trim_gap : Bool) : Bool
