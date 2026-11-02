@@ -23545,3 +23545,15 @@ integration, fresh bootstrap, or LavinMQ parity.
   This does not close macro evaluation effects, the stricter pending-result WIP,
   bootstrap or LavinMQ parity. Refresh after lexer macro tokens, parser macro
   boundaries or brace classification changes.
+
+
+### 2026-11-02: Deferred indexed metadata retention candidate
+
+- Preserve the persistent indexed-store option in section 10.1 of
+  docs/incremental_build_cache_sdd.md: lazy bodies, immutable segments, pinned
+  mmap snapshots, versioned publication and explicit compaction. Evaluate
+  crystal-click reuse through exact-key and lifetime measurements.
+- Status: PROPOSED, design-only, after compiler stabilization and LavinMQ parity.
+  No cache behavior is enabled. Promotion requires fresh/cached semantic and
+  runtime parity, lookup-set invalidation, concurrent snapshot/compaction and
+  corrupt-record fallback checks, plus matched wall-time/RSS/disk measurements.

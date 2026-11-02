@@ -9,6 +9,10 @@ disabled because previous bootstrap/runtime bugs made them unsafe. The desired
 direction is to reuse the existing work, not design a second cache stack from
 scratch.
 
+Deferred architecture candidate (2026-11-02): an indexed persistent metadata
+store with lazy body loading, described in section 10.1. Recording this option
+does not interrupt compiler stabilization or admit cache reads into compilation.
+
 Bounded context:
 
 - compiler CLI cache surfaces in `src/compiler/cli.cr`,
@@ -414,6 +418,84 @@ Recommended first limits:
 - AST blobs: 256 MB per project,
 - materialized HIR/MIR: disabled initially,
 - LLVM tail: configurable, default capped rather than unbounded.
+
+### 10.1. Indexed persistent metadata retention (PROPOSED)
+
+Intent: preserve Crystal semantics while avoiding repeated parsing and keeping
+only the actively used AST and IR bodies resident. A compact project-wide
+declaration index may remain available while bodies are loaded on demand.
+Storage does not by itself establish separate compilation or semantic validity.
+Implement this only after the active stabilization and LavinMQ parity frontier.
+
+Candidate storage boundary:
+
+- One logical store with an exact symbol/owner/signature index pointing to
+  immutable AST blobs and certified metadata records. Later artifact tiers
+  remain subject to their existing promotion gates.
+- Append new segments and versioned replacements or tombstones, then atomically
+  publish a manifest/root generation. A single physical file with append-only
+  pages and a versioned root is an alternative, not a required format.
+- A compiler operation or LSP query pins one coherent snapshot. Its mapped
+  bytes and referenced generations remain alive until the reader releases them.
+  Updating the store must not change the snapshot beneath an active reader.
+- An explicit future compaction command may merge segments without changing
+  lookup results. Reclaim old segments only after their readers finish; bound
+  retained bytes and expose a rebuild/prune path.
+- Persistent references use stable definition/source identities, generations
+  and local IDs or offsets. Process pointers, `object_id`, compilation-local
+  TypeRef IDs and unqualified ExprIds are not persistent identities. Compaction
+  must preserve reference meaning through stable IDs or an explicit remap.
+
+Ownership and invalidation:
+
+- The compiler owns the meaning, producer, input certificate and invalidation
+  rule of every fact. The storage adapter owns bytes, indexes, publication and
+  lifetime; it must not infer or repair semantic facts while reading.
+- Track lookup-set dependencies, including negative lookups. Adding a better
+  overload, reopening a class or changing an include can invalidate a selected
+  call even when the previously selected body is unchanged.
+- Preserve source/require ordering and macro expansion provenance. Untracked
+  shell/environment inputs or global reflection queries require a broader
+  rebuild instead of an assumed cache hit.
+- A body edit preserves unrelated summaries only when their exposed facts
+  remain valid; a changed inferred return type can change the interface.
+- Missing, stale, corrupt or incompatible records fall back to source rebuild.
+  This is reconstructible cache state; no new source-of-truth database is
+  introduced, and a plausible record is not evidence of semantic validity.
+
+Reuse candidate, inspected read-only on 2026-11-02: `crystal-click` at
+`eb7b669` provides immutable parts, merging, a sparse primary-key index and
+mmap-backed data reads. Its `scan_uint64_pk_candidates` returns conservative
+granules requiring exact row filtering; `MMapDataSource.with_file` unmaps bytes
+when the callback ends. Compiler use therefore needs measured exact-key lookup,
+version/deletion visibility and snapshot-owned mapping lifetimes. Do not retain
+callback-borrowed bytes. Reinspect the library before choosing it over a smaller
+adapter; this inventory is not an integration or performance result.
+
+Required future falsifiers before consuming stored records:
+
+1. Compare fresh and cached compilation diagnostics, selected calls, result
+   types and native behavior on the same source/flags/stdlib.
+2. Add an overload or definition after a cached lookup, including a previous
+   miss; require the same new selection or error as a fresh compilation.
+3. Edit a body with an unchanged exposed interface and measure reuse of
+   unrelated summaries; separately change an inferred return and require
+   invalidation of its consumers.
+4. Hold an old reader while publishing and compacting a new generation. Both
+   readers must retain their own correct view, with no dangling mapped bytes
+   or references; new readers must observe replacements and deletions.
+5. Inject a truncated segment, incompatible schema and interrupted publication;
+   require source rebuild or a complete prior snapshot, never a partial hit.
+6. Measure cold and warm wall time, peak RSS, bytes read/written and retained
+   disk bytes against the no-store baseline on matched inputs. mmap and a high
+   hit count alone do not establish a compilation speedup or bounded memory.
+
+Future executable DoD: one safe-runner harness must exercise these mutation,
+snapshot and corruption cases with cache consumption both enabled and disabled,
+and report equivalent behavior plus separate resource measurements. No such
+harness or storage implementation is supplied by this design-only section.
+Drop or simplify the storage candidate if it cannot improve the measured
+bottleneck without weakening correctness or resource bounds.
 
 ## 11. Execution order
 
