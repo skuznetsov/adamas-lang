@@ -147,7 +147,7 @@ if [[ "$hir_compile_rc" -ne 0 || ! -s "$HIR_BASE.hir" ]]; then
   tail -40 "$WORKDIR/stage.hir.compile.log" >&2
   exit 1
 fi
-proc_type_id="$(sed -nE 's/.*func_pointer @__crystal_block_proc_0 : ([0-9]+)$/\1/p' "$HIR_BASE.hir" | head -1)"
+proc_type_id="$(sed -nE 's/.*func_pointer @__crystal_block_proc_0[^[:space:]]* : ([0-9]+)$/\1/p' "$HIR_BASE.hir" | head -1)"
 formal_type_id="$(sed -nE 's/^func @consume\$Int32 \| Int64_Int32 \| Int64_block\([^,]+, [^,]+, %[^:]+: ([0-9]+) \[block\]\).*/\1/p' "$HIR_BASE.hir" | head -1)"
 hir_contract_ok=1
 if [[ -z "$proc_type_id" || -z "$formal_type_id" ]]; then

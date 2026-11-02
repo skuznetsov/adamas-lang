@@ -12,7 +12,9 @@ private def lower_semantic_proc_result(source : String) : {Adamas::HIR::Module, 
   converter.no_prelude = true
   converter.lower_main(program.roots.map(&.index.to_u64))
   converter.flush_pending_functions
-  function = converter.module.functions.find { |fn| fn.name == "__crystal_proc_0" }.not_nil!
+  function = converter.module.functions.find do |fn|
+    fn.name.starts_with?("__crystal_proc_0") && fn.name.includes?("\x01")
+  end.not_nil!
   {converter.module, function}
 end
 

@@ -142390,14 +142390,28 @@ module Adamas::HIR
       raise LoweringError.new("undefined constant #{name}", node)
     end
 
+    private def next_generated_proc_function_name(prefix : String) : String
+      loop do
+        # The control byte is an internal symbol discriminator, not part of a
+        # source-level identifier. A later macro can publish any legal
+        # `__crystal_*_proc_N` spelling, so a printable prefix alone cannot
+        # keep generated Proc functions out of the source namespace. The name
+        # mangler encodes this byte as `$x01` before emitting LLVM text.
+        candidate = "#{prefix}_#{@proc_function_counter}\x01"
+        @proc_function_counter += 1
+        next if @module.function_by_name(candidate)
+        next if @function_defs.has_key?(candidate)
+        return candidate
+      end
+    end
+
     private def lower_proc_literal(
       ctx : LoweringContext,
       node : Adamas::Compiler::Frontend::ProcLiteralNode,
       param_type_override : Array(TypeRef)? = nil,
     ) : ValueId
       # Generate unique function name for the proc body
-      proc_func_name = "__crystal_proc_#{@proc_function_counter}"
-      @proc_function_counter += 1
+      proc_func_name = next_generated_proc_function_name("__crystal_proc")
 
       # Resolve source Proc annotations before the permissive type-name interner
       # can turn an unresolved annotation into an ABI placeholder.
@@ -143649,8 +143663,7 @@ module Adamas::HIR
       end
       debug_trace_each = env_get("DEBUG_TRACE_EACH_WITH_INDEX") &&
                          ctx.function.name.includes?("each_with_index")
-      proc_func_name = "__crystal_block_proc_#{@proc_function_counter}"
-      @proc_function_counter += 1
+      proc_func_name = next_generated_proc_function_name("__crystal_block_proc")
 
       # Determine param types from annotation or override
       proc_param_types = [] of TypeRef

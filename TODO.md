@@ -23591,3 +23591,18 @@ integration, fresh bootstrap, or LavinMQ parity.
   Fresh combined S1 crosses the previous scope guard but still rejects an
   unsettled exact source replay in CallStack (`prelude-try-private-identity34gi`).
   Stock-prelude hello, bootstrap and LavinMQ parity remain open.
+
+
+### Stabilization: private generated Proc identity (2026-11-02)
+
+- Completed source/generated namespace separation for Proc literals and block
+  Procs. A future macro-published legal method name cannot alias an existing
+  generated function; internal names use the existing LLVM byte escaping.
+- Qualified independent HEAD candidate: nine HIR examples, all four native
+  fixtures against stock Crystal 1.22.1 in lazy and eager modes, and the
+  raw-yield Nil callback regression. Full source manifest stayed unchanged
+  during the fresh S1 build. Late-publication red and combined debug-emission
+  evidence are under /opt/mldata_ssd/adamas_codex_oct29_rootcause.
+- Scope is generated identity only. Captured callback storage, nested scope
+  unwinding, prelude provisional dependencies, S2 and LavinMQ parity remain
+  separate obligations; no bootstrap closure is claimed.
