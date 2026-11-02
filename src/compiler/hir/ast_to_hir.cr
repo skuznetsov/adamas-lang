@@ -131995,41 +131995,52 @@ module Adamas::HIR
       param_value : ValueId,
     ) : ValueId
       block_parameters = [] of String
-      ctx.push_scope(ScopeKind::Block)
-      if debug_env_filter_match?("DEBUG_INLINE_TRY_NARROW", ctx.function.name)
-        names = [] of String
+      block_scope = ctx.push_scope(ScopeKind::Block)
+      begin
+        if debug_env_filter_match?("DEBUG_INLINE_TRY_NARROW", ctx.function.name)
+          names = [] of String
+          if params = block_node.params
+            each_param(params) do |param|
+              names << ((name = param.name) ? (safe_slice_to_string(name) || "") : "")
+            end
+          end
+          STDERR.puts "[INLINE_TRY_NARROW] stage=block_body caller=#{ctx.function.name} param_value=#{param_value} param_type=#{get_type_name_from_ref(ctx.type_of(param_value))} params=#{names.join(",")}"
+        end
+
         if params = block_node.params
-          each_param(params) do |param|
-            names << ((name = param.name) ? (safe_slice_to_string(name) || "") : "")
+          each_param_with_index(params) do |param, i|
+            param_name = if (nm = param.name) && (nm_s = safe_slice_to_string(nm))
+                           nm_s
+                         else
+                           "_block_param_#{i}"
+                         end
+            block_parameters << param_name
+            register_inline_block_parameter(ctx, param_name, param_value, block_node)
+            ctx.register_type(param_value, ctx.type_of(param_value))
           end
         end
-        STDERR.puts "[INLINE_TRY_NARROW] stage=block_body caller=#{ctx.function.name} param_value=#{param_value} param_type=#{get_type_name_from_ref(ctx.type_of(param_value))} params=#{names.join(",")}"
-      end
+        block_parameters.concat(block_unpack_leaf_names(block_node).to_a)
 
-      if params = block_node.params
-        each_param_with_index(params) do |param, i|
-          param_name = if (nm = param.name) && (nm_s = safe_slice_to_string(nm))
-                         nm_s
-                       else
-                         "_block_param_#{i}"
-                       end
-          block_parameters << param_name
-          register_inline_block_parameter(ctx, param_name, param_value, block_node)
-          ctx.register_type(param_value, ctx.type_of(param_value))
+        value_id = if body = block_node.body
+                     lower_body(ctx, body)
+                   else
+                     nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+                     ctx.emit(nil_lit)
+                     nil_lit.id
+                   end
+
+        unless ctx.current_scope == block_scope
+          raise LoweringError.new("inline try block lost its owned Block scope", block_node)
         end
+        ctx.pop_scope_preserving_captured_locals(block_parameters)
+        value_id
+      rescue error
+        # A failed inline generation owns only this scope. Restore its locals
+        # snapshot when it is still the innermost scope, then preserve the
+        # original lowering error or pending-source suspension.
+        ctx.pop_scope if ctx.current_scope == block_scope
+        raise error
       end
-      block_parameters.concat(block_unpack_leaf_names(block_node).to_a)
-
-      value_id = if body = block_node.body
-                   lower_body(ctx, body)
-                 else
-                   nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
-                   ctx.emit(nil_lit)
-                   nil_lit.id
-                 end
-
-      ctx.pop_scope_preserving_captured_locals(block_parameters)
-      value_id
     end
 
     private def inline_try_with_proc(
@@ -132058,31 +132069,38 @@ module Adamas::HIR
       param_value : ValueId,
     ) : ValueId
       block_parameters = [] of String
-      ctx.push_scope(ScopeKind::Block)
-
-      if params = proc_node.params
-        each_param_with_index(params) do |param, i|
-          param_name = if (nm = param.name) && (nm_s = safe_slice_to_string(nm))
-                         nm_s
-                       else
-                         "_block_param_#{i}"
+      proc_scope = ctx.push_scope(ScopeKind::Block)
+      begin
+        if params = proc_node.params
+          each_param_with_index(params) do |param, i|
+            param_name = if (nm = param.name) && (nm_s = safe_slice_to_string(nm))
+                           nm_s
+                         else
+                           "_block_param_#{i}"
                        end
-          block_parameters << param_name
-          register_inline_block_parameter(ctx, param_name, param_value)
-          ctx.register_type(param_value, ctx.type_of(param_value))
+            block_parameters << param_name
+            register_inline_block_parameter(ctx, param_name, param_value)
+            ctx.register_type(param_value, ctx.type_of(param_value))
+          end
         end
+
+        value_id = if body = proc_node.body
+                     lower_body(ctx, body)
+                   else
+                     nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+                     ctx.emit(nil_lit)
+                     nil_lit.id
+                   end
+
+        unless ctx.current_scope == proc_scope
+          raise LoweringError.new("inline try proc lost its owned Block scope", proc_node)
+        end
+        ctx.pop_scope_preserving_captured_locals(block_parameters)
+        value_id
+      rescue error
+        ctx.pop_scope if ctx.current_scope == proc_scope
+        raise error
       end
-
-      value_id = if body = proc_node.body
-                   lower_body(ctx, body)
-                 else
-                   nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
-                   ctx.emit(nil_lit)
-                   nil_lit.id
-                 end
-
-      ctx.pop_scope_preserving_captured_locals(block_parameters)
-      value_id
     end
 
     private def inline_try_block_core(
@@ -132131,10 +132149,12 @@ module Adamas::HIR
         ctx.register_type(non_nil_id, non_nil_type)
       end
 
-      value_id = inline_try_block_body(ctx, block_node, non_nil_id)
-
-      if original_type
-        ctx.register_type(receiver_id, original_type.not_nil!)
+      value_id = begin
+        inline_try_block_body(ctx, block_node, non_nil_id)
+      ensure
+        if original_type
+          ctx.register_type(receiver_id, original_type.not_nil!)
+        end
       end
 
       value_locals = ctx.save_locals.locals
@@ -132221,10 +132241,12 @@ module Adamas::HIR
         ctx.register_type(receiver_id, non_nil_type)
       end
 
-      value_id = inline_try_proc_body(ctx, proc_node, non_nil_id)
-
-      if original_type
-        ctx.register_type(receiver_id, original_type.not_nil!)
+      value_id = begin
+        inline_try_proc_body(ctx, proc_node, non_nil_id)
+      ensure
+        if original_type
+          ctx.register_type(receiver_id, original_type.not_nil!)
+        end
       end
 
       value_locals = ctx.save_locals.locals

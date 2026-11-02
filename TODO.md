@@ -23574,3 +23574,20 @@ integration, fresh bootstrap, or LavinMQ parity.
   this scope. Refresh after lexer cursor, raw-source span or macro-trim changes.
 - Open separately: active macro-raise rejection, strict pending source-result
   settlement, fresh stock-prelude integration, bootstrap and LavinMQ parity.
+
+
+### 2026-11-02: Unwind owned inline try scopes on lowering failure
+
+- [x] The block and Proc forms of inline `try` pop the exact lexical scope they
+  push when lowering fails, and restore temporary receiver narrowing in `ensure`.
+  Successful capture writeback still uses its existing path; failure restores
+  the parent locals snapshot and preserves the original lowering exception.
+- Verification: the new block/Proc error cases fail on a1fcc498 (scope 3 remains
+  instead of parent scope 2); four focused cases and three caller-local controls
+  pass with the change (`inline-try-head-controls34gs`). The neighboring rescue
+  suite retains its pre-existing raise-instruction failure on both revisions.
+- Scope is direct inline try ownership. Nested branch owners still require
+  their own exception cleanup; do not pop foreign scopes or recreate a root.
+  Fresh combined S1 crosses the previous scope guard but still rejects an
+  unsettled exact source replay in CallStack (`prelude-try-private-identity34gi`).
+  Stock-prelude hello, bootstrap and LavinMQ parity remain open.
