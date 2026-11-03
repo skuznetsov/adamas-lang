@@ -5256,3 +5256,23 @@ Refresh after source resolution, alias expansion, type serialization, generic
 publication, dispatch ownership or allocator inference changes; roll back the
 slice and tests together. Unreviewed string APIs, full integration, bootstrap
 and LavinMQ runtime/test parity remain separate obligations.
+
+
+#### Concrete Proc instance-method source ownership
+
+A concrete Proc descriptor supplies the instance-method receiver owner and its
+source argument/result kind contract. The shared Proc ClassInfo supplies layout
+only. Proc instance templates remain source declarations until a concrete demand;
+explicit, implicit and bare zero-argument Proc calls use the same strict input
+admission before ABI coercion. MemberAccess binds the selected Def and arena
+before return inference can materialize the target. Existing bodyless source
+reservations and complete materialized bindings are checked before publication.
+
+Admitted evidence: 29 HIR examples, fresh S1, stock-prelude hello and 18 original-
+first native controls in proc_receiver_materialization_repro.sh (34zd-34zg).
+The exact prior HEAD fails the primary fixture (34yh). Call-side splats and
+tuple-rest forall, complete bootstrap and LavinMQ parity remain open; a bool-only
+argument-kind carrier is insufficient for mixed Class/instance tuple facts.
+Rollback removes the bounded Proc owner/admission/publication change and its
+regressions together. Requalify after source selection, descriptor, ABI or
+materialization order changes.

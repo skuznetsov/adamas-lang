@@ -22623,3 +22623,20 @@ alias selection or body-retirement changes.
 Static adversary review found the recipe/retirement keys and exact Def/arena
 alias binding aligned. A stale reservation can conservatively create an extra
 alias; native evidence covers the two fixtures, not every reservation lifetime.
+
+
+### 2026-11-03: Proc signatures own bodies; source binding precedes inference
+
+Proc is signature-generic without a GenericClassTemplate. Preserve its full
+descriptor identity when a shared Proc declaration is selected. Layout/display
+metadata cannot own source argument and result facts. Bind the exact selected
+Def and arena to a concrete no-argument member target before return inference
+can publish its body. Body absence does not release a source reservation.
+
+Evidence: prior-HEAD native failure 34yh, 29 HIR controls 34zd, unchanged-source
+S1 34ze, 18 stock/lazy/eager native controls 34zf and stock-prelude hello 34zg.
+This covers ordinary Proc receiver materialization, not tuple-rest forall or
+call-side splats, complete bootstrap or LavinMQ parity. A bool-only literal bit
+cannot represent a Phi of Owner and Owner.new; reuse rich source facts for any
+future tuple-rest binding. Refresh after owner, ABI, source arena or target
+publication changes.

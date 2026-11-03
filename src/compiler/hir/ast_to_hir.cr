@@ -3692,17 +3692,25 @@ module Adamas::HIR
       if info = @class_info[owner]?
         return info
       end
-      return nil unless strip_generic_args(owner) == "Tuple" && owner.includes?('(')
+      base_owner = strip_generic_args(owner)
+      concrete_tuple = base_owner == "Tuple" && owner.includes?('(')
+      concrete_proc = base_owner == "Proc" && !proc_type_argument_names(owner).nil?
+      return nil unless concrete_tuple || concrete_proc
 
-      base_info = @class_info["Tuple"]?
+      base_info = @class_info[base_owner]?
       return nil unless base_info
-      owner_type = type_ref_for_name(owner)
+      owner_type = if concrete_proc
+                     proc_type_ref_for_name(owner) || TypeRef::VOID
+                   else
+                     type_ref_for_name(owner)
+                   end
       return nil if owner_type == TypeRef::VOID
 
-      # Tuple is variadic and does not receive the ordinary generic-class
-      # monomorphization/ClassInfo entry. Materialize inherited methods with the
-      # shared Tuple layout metadata but the concrete tuple TypeRef so `self`
-      # keeps its exact value ABI and element identity.
+      # Tuple and Proc signatures do not receive ordinary generic-class
+      # monomorphization/ClassInfo entries. Materialize inherited methods with
+      # the shared base layout but the exact value TypeRef so `self` keeps its
+      # receiver identity. Proc's TypeDescriptor also carries source argument,
+      # result, and class-literal facts used by its call contract.
       ClassInfo.new(
         owner,
         owner_type,
@@ -43528,6 +43536,20 @@ module Adamas::HIR
                                 else
                                   false
                                 end
+              if class_name == "Proc" && !is_class_method
+                # Proc is a signature-generic value type, but unlike ordinary
+                # generic classes it has no GenericClassTemplate entry. Its
+                # instance bodies must be materialized only after a concrete
+                # Proc receiver supplies the argument, result, and literal-slot
+                # facts used by Proc#call. Source Defs remain registered for
+                # the existing exact-receiver demand path.
+                # The lower pass replays annotations in source order; consume
+                # the skipped Def's pending annotations so they cannot attach
+                # to a later method or class.
+                clear_pending_effect_annotations
+                add_defined_instance_methods_from_expr(class_name, defined_full_names, expr_id)
+                next
+              end
               base_name = is_class_method ? "#{class_name}.#{method_name}" : "#{class_name}##{method_name}"
               param_types = [] of TypeRef
               has_block = false
@@ -76684,6 +76706,95 @@ module Adamas::HIR
       "Proc(#{names.join(", ")})"
     end
 
+    # A runtime Proc's source signature owns its instance method body. Its
+    # display name and shared ClassInfo are only `Proc`; using either for return
+    # inference would demand an unspecialized body before the call is selected.
+    private def concrete_proc_receiver_owner(ctx : LoweringContext, receiver : ValueId) : String?
+      return nil if ctx.type_literal?(receiver)
+      descriptor = @module.get_type_descriptor(ctx.type_of(receiver))
+      return nil unless descriptor && proc_type_descriptor?(descriptor)
+      return nil if descriptor.type_params.empty?
+      proc_source_signature_name(descriptor)
+    end
+
+    private def selected_proc_member_source_target(
+      name : String,
+      def_node : Adamas::Compiler::Frontend::DefNode,
+      node : Adamas::Compiler::Frontend::MemberAccessNode,
+    ) : SelectedCallTarget
+      registered_def = @function_defs[name]?
+      unless registered_def && registered_def.same?(def_node)
+        raise LoweringError.new("selected Proc member definition changed before source binding", node)
+      end
+
+      source_arena = registered_source_arena_for_def(def_node)
+      unless source_arena
+        raise LoweringError.new("selected Proc member has no registered source arena", node)
+      end
+      if named_arena = @function_def_arenas[name]?
+        unless named_arena.object_id == source_arena.object_id
+          raise LoweringError.new("selected Proc member arena disagrees with its registered source owner", node)
+        end
+      end
+
+      SelectedCallTarget.new(name, def_node, source_arena)
+    end
+
+    private def concrete_proc_member_target_name?(name : String, owner : String, member_name : String) : Bool
+      return false if name.empty?
+      base_name = strip_type_suffix(name)
+      method_owner(base_name) == owner && method_part(base_name) == member_name
+    end
+
+    private def bind_concrete_proc_member_source_target!(
+      target_name : String,
+      selected : SelectedCallTarget,
+      node : Adamas::Compiler::Frontend::MemberAccessNode,
+    ) : Nil
+      source_arena = selected.source_arena ||
+                     raise LoweringError.new("selected Proc member lost its source arena", node)
+      selected_def = selected.def_node
+      existing_def = @function_defs[target_name]?
+      existing_arena = @function_def_arenas[target_name]?
+      has_body = @module.has_function_with_body?(target_name)
+
+      if existing_def
+        unless same_def_node?(existing_def, selected_def)
+          raise LoweringError.new(
+            "exact Proc member target #{target_name} already has a different source definition",
+            node,
+          )
+        end
+
+        if existing_arena
+          unless existing_arena.object_id == source_arena.object_id
+            raise LoweringError.new(
+              "exact Proc member target #{target_name} already has a different source arena",
+              node,
+            )
+          end
+        elsif has_body
+          raise LoweringError.new(
+            "exact Proc member target #{target_name} has a body without a complete source binding",
+            node,
+          )
+        end
+      elsif existing_arena
+        raise LoweringError.new(
+          "exact Proc member target #{target_name} has a source arena without its source definition",
+          node,
+        )
+      elsif has_body
+        raise LoweringError.new(
+          "exact Proc member target #{target_name} has a body without a complete source binding",
+          node,
+        )
+      end
+
+      set_function_def_entry(target_name, selected_def, false)
+      set_function_def_arena(target_name, source_arena)
+    end
+
     private def intern_proc_source_contract(
       types : Array(TypeRef),
       type_literal_slots : Array(Bool)? = nil,
@@ -76800,6 +76911,45 @@ module Adamas::HIR
         end
         admitted
       end
+    end
+
+    private def proc_type_descriptor?(descriptor : TypeDescriptor) : Bool
+      descriptor.kind == TypeKind::Proc || descriptor.name == "Proc" || descriptor.name.starts_with?("Proc(")
+    end
+
+    private def proc_call_result_type(ctx : LoweringContext, descriptor : TypeDescriptor) : TypeRef
+      result = descriptor.type_params.last? || TypeRef::VOID
+      return result unless result == TypeRef::VOID
+
+      hinted_return = proc_materialize_hint_return_type(ctx)
+      return hinted_return unless hinted_return == TypeRef::VOID || hinted_return == TypeRef::NIL
+
+      contextual_bare_proc_call_return_type(ctx) || TypeRef::VOID
+    end
+
+    # Both explicit `value.call(...)` and implicit `call(...)` on a Proc
+    # receiver must admit the same source facts before ABI coercion. Keep this
+    # at the receiver boundary so the selected Proc signature and its
+    # class-literal/mixed source kinds survive through argument validation.
+    private def lower_proc_call(
+      ctx : LoweringContext,
+      receiver : ValueId,
+      descriptor : TypeDescriptor,
+      source_args : Array(ExprId),
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
+      node : Adamas::Compiler::Frontend::Node,
+    ) : ValueId
+      args = source_args.map do |argument|
+        with_arena(source_arena) { lower_expr(ctx, argument) }
+      end
+      args = validate_proc_call_source_kinds(ctx, descriptor, args, source_args, source_arena, node)
+      result_type = proc_call_result_type(ctx, descriptor)
+      call = Call.with_receiver(ctx.next_id, result_type, receiver, "Proc#call", args)
+      ctx.emit(call)
+      ctx.register_type(call.id, result_type)
+      register_proc_source_slot(ctx, call.id, descriptor, descriptor.type_params.size - 1)
+      @control_flow_dead_blocks.add({ctx.function.id, ctx.current_block}) if noreturn_type?(result_type)
+      call.id
     end
 
     private def proc_reachable_result_type_literal?(ctx : LoweringContext) : Bool
@@ -77164,6 +77314,15 @@ module Adamas::HIR
       raw_resolved_owner = method_owner(resolved_base)
       return false if raw_requested_owner.empty? || raw_resolved_owner.empty?
       return false if raw_requested_owner == raw_resolved_owner
+
+      # Proc's signature is generic source identity without an ordinary
+      # generic-template entry. Keep that exact receiver when lookup returns
+      # its shared Proc declaration, including zero-argument body demands.
+      if strip_generic_args(raw_resolved_owner) == "Proc"
+        if signature_args = proc_type_argument_names(raw_requested_owner)
+          return true if !signature_args.empty? && concrete_type_args?(signature_args)
+        end
+      end
 
       # Primitive/value types that need origin-specific dispatch (Int32, Bool,
       # enums, structs) must keep the requested owner so the method is
@@ -92581,6 +92740,21 @@ module Adamas::HIR
         macro_entry, macro_key = macro_lookup
         macro_def, macro_arena = macro_entry
         return expand_macro(ctx, macro_def, macro_arena, [] of ExprId, nil, nil, macro_key)
+      end
+
+      # A bare `call` inside a Proc instance method is the zero-argument form
+      # of the same source-signature contract used by `call(...)` and
+      # `self.call(...)`. Keep local, constant, and macro resolution above it.
+      if name == "call"
+        if self_id = ctx.lookup_local("self")
+          if !ctx.type_literal?(self_id)
+            if self_desc = @module.get_type_descriptor(ctx.type_of(self_id))
+              if proc_type_descriptor?(self_desc)
+                return lower_proc_call(ctx, self_id, self_desc, [] of ExprId, @arena, node)
+              end
+            end
+          end
+        end
       end
 
       # Inside a class: check if it's a method call on self (e.g., getter without parens)
@@ -111259,6 +111433,21 @@ module Adamas::HIR
             ctx.register_type(value_id, ctx.type_of(value_id))
           end
         end
+        # An unqualified call inside a Proc method has the same source call
+        # contract as `self.call(...)`. Do this after macro lookup, but before
+        # generic self-method resolution can bind the base Proc#call template
+        # with a carrier-only Proc receiver.
+        if method_name == "call" && !current_is_class && block_expr.nil? && block_pass_expr.nil?
+          if self_id = ctx.lookup_local("self")
+            if !ctx.type_literal?(self_id)
+              if self_desc = @module.get_type_descriptor(ctx.type_of(self_id))
+                if proc_type_descriptor?(self_desc)
+                  return lower_proc_call(ctx, self_id, self_desc, call_args, call_arena, node)
+                end
+              end
+            end
+          end
+        end
         if !current_is_class
           if self_id = ctx.lookup_local("self")
             self_type = ctx.type_of(self_id)
@@ -111661,34 +111850,8 @@ module Adamas::HIR
             proc_recv_id = lower_expr(ctx, obj_expr)
             proc_recv_type = ctx.type_of(proc_recv_id)
             if proc_recv_desc = @module.get_type_descriptor(proc_recv_type)
-              if proc_recv_desc.kind == TypeKind::Proc || proc_recv_desc.name == "Proc" || proc_recv_desc.name.starts_with?("Proc(")
-                # Lower each arg before admission, but do not coerce until the
-                # complete source vector has passed arity, type, and value-kind checks.
-                proc_call_args = call_args.map { |arg_expr| lower_expr(ctx, arg_expr) }
-                proc_call_args = validate_proc_call_source_kinds(
-                  ctx, proc_recv_desc, proc_call_args, call_args, call_arena, node,
-                )
-                # Extract return type from Proc type_params (last element)
-                proc_call_return = TypeRef::VOID
-                if proc_recv_desc.type_params.size > 0
-                  proc_ret = proc_recv_desc.type_params.last
-                  proc_call_return = proc_ret if proc_ret != TypeRef::VOID
-                end
-                if proc_call_return == TypeRef::VOID
-                  hinted_return = proc_materialize_hint_return_type(ctx)
-                  proc_call_return = hinted_return unless hinted_return == TypeRef::VOID || hinted_return == TypeRef::NIL
-                end
-                if proc_call_return == TypeRef::VOID
-                  proc_call_return = contextual_bare_proc_call_return_type(ctx) || proc_call_return
-                end
-                proc_call = Call.with_receiver(ctx.next_id, proc_call_return, proc_recv_id, "Proc#call", proc_call_args)
-                ctx.emit(proc_call)
-                ctx.register_type(proc_call.id, proc_call_return)
-                register_proc_source_slot(ctx, proc_call.id, proc_recv_desc, proc_recv_desc.type_params.size - 1)
-                # As in lower_call: a NoReturn proc ends the block, so an enclosing
-                # call does not resolve against the bottom value.
-                @control_flow_dead_blocks.add({ctx.function.id, ctx.current_block}) if noreturn_type?(proc_call_return)
-                return proc_call.id
+              if proc_type_descriptor?(proc_recv_desc)
+                return lower_proc_call(ctx, proc_recv_id, proc_recv_desc, call_args, call_arena, node)
               end
             end
           end
@@ -116223,7 +116386,12 @@ module Adamas::HIR
       if concrete_call_owner.nil? && receiver_id
         receiver_type = ctx.type_of(receiver_id)
         if receiver_desc = @module.get_type_descriptor(receiver_type)
-          if receiver_desc.kind == TypeKind::Tuple && receiver_desc.name.starts_with?("Tuple(")
+          if proc_owner = concrete_proc_receiver_owner(ctx, receiver_id)
+            # The TypeRef carrier for Proc is shared. Keep the receiver's
+            # complete source signature as the owner identity so methods such
+            # as `invoke` are lowered with an exact Proc `self` parameter.
+            concrete_call_owner = proc_owner
+          elsif receiver_desc.kind == TypeKind::Tuple && receiver_desc.name.starts_with?("Tuple(")
             concrete_call_owner = receiver_desc.name
           end
         end
@@ -136593,31 +136761,8 @@ module Adamas::HIR
         proc_recv_id = lower_expr(ctx, node.object)
         proc_recv_type = ctx.type_of(proc_recv_id)
         if proc_recv_desc = @module.get_type_descriptor(proc_recv_type)
-          if proc_recv_desc.kind == TypeKind::Proc || proc_recv_desc.name == "Proc" || proc_recv_desc.name.starts_with?("Proc(")
-            proc_call_args = validate_proc_call_source_kinds(
-              ctx, proc_recv_desc, [] of ValueId, [] of ExprId, @arena, node,
-            )
-            # Extract return type from Proc type_params (last element)
-            proc_call_return = TypeRef::VOID
-            if proc_recv_desc.type_params.size > 0
-              proc_ret = proc_recv_desc.type_params.last
-              proc_call_return = proc_ret if proc_ret != TypeRef::VOID
-            end
-            if proc_call_return == TypeRef::VOID
-              hinted_return = proc_materialize_hint_return_type(ctx)
-              proc_call_return = hinted_return unless hinted_return == TypeRef::VOID || hinted_return == TypeRef::NIL
-            end
-            if proc_call_return == TypeRef::VOID
-              proc_call_return = contextual_bare_proc_call_return_type(ctx) || proc_call_return
-            end
-            proc_call = Call.with_receiver(ctx.next_id, proc_call_return, proc_recv_id, "Proc#call", proc_call_args)
-            ctx.emit(proc_call)
-            ctx.register_type(proc_call.id, proc_call_return)
-            register_proc_source_slot(ctx, proc_call.id, proc_recv_desc, proc_recv_desc.type_params.size - 1)
-            # As in lower_call: a NoReturn proc ends the block, so an enclosing
-            # call does not resolve against the bottom value.
-            @control_flow_dead_blocks.add({ctx.function.id, ctx.current_block}) if noreturn_type?(proc_call_return)
-            return proc_call.id
+          if proc_type_descriptor?(proc_recv_desc)
+            return lower_proc_call(ctx, proc_recv_id, proc_recv_desc, [] of ExprId, @arena, node)
           end
         end
       end
@@ -137938,7 +138083,9 @@ module Adamas::HIR
       end
 
       # Determine receiver type to find the correct method
-      resolved_method_name : String? = nil
+      receiver_proc_owner = concrete_proc_receiver_owner(ctx, object_id)
+      selected_proc_member_target : SelectedCallTarget? = nil
+      resolved_method_name : String? = receiver_proc_owner.try { |owner| "#{owner}##{member_name}" }
       return_type = TypeRef::VOID
       receiver_owner_hint : String? = nil
       if obj_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
@@ -137994,7 +138141,7 @@ module Adamas::HIR
       # maps to the integer class (Int32). Leave enum-tagged receivers to
       # resolve_method_call, which dispatches on the enum (`Op#to_s`, not `Int32#to_s`).
       enum_carrier = receiver_type.id > 0 && enum_carrier_receiver?(ctx, object_id, receiver_type)
-      if receiver_type.id > 0 && !receiver_is_module_type && !enum_carrier
+      if resolved_method_name.nil? && receiver_type.id > 0 && !receiver_is_module_type && !enum_carrier
         info = @class_info_by_type_id[receiver_type.id]?
         if info
           normalized_info_name = normalize_method_owner_name(info.name)
@@ -138137,7 +138284,7 @@ module Adamas::HIR
       end
 
       if resolved_method_name && receiver_type.id > 0 && !receiver_is_module_type
-        concrete_receiver_owner = normalize_method_owner_name(get_type_name_from_ref(receiver_type))
+        concrete_receiver_owner = receiver_proc_owner || normalize_method_owner_name(get_type_name_from_ref(receiver_type))
         if !concrete_receiver_owner.empty? && concrete_receiver_owner != "Void" && concrete_receiver_owner != "Unknown"
           if template_owner = primitive_template_owner(concrete_receiver_owner)
             resolved_owner = method_owner(resolved_method_name)
@@ -138222,11 +138369,14 @@ module Adamas::HIR
       unless admitted_member_self_dispatch_root
         if entry = lookup_function_def_for_call(base_method_name, args.size, false, arg_types)
           actual_name = entry[0]
+          if receiver_proc_owner
+            selected_proc_member_target = selected_proc_member_source_target(entry[0], entry[1], node)
+          end
           # The method index stores generic defs under the template owner
           # (`Tuple#size`). Re-own onto the concrete receiver like lower_call
           # does, otherwise every instantiation shares one bare body.
           if receiver_type.id > 0 && !receiver_is_module_type
-            concrete_owner = normalize_method_owner_name(get_type_name_from_ref(receiver_type))
+            concrete_owner = receiver_proc_owner || normalize_method_owner_name(get_type_name_from_ref(receiver_type))
             if concrete_owner.includes?('(')
               actual_name = specialize_method_owner_name(actual_name, concrete_owner)
             end
@@ -138241,6 +138391,18 @@ module Adamas::HIR
               base_method_name = reference_base
               resolved_method_name = reference_base
             end
+          end
+        end
+      end
+      # Return inference below can force-lower `actual_name`. Publish the exact
+      # selected source owner before that first materialization, after receiver
+      # specialization and wrapper re-owning have settled the emitted key.
+      # The late binding below remains as an idempotent guard for a distinct
+      # primary name selected by later dispatch normalization.
+      if proc_owner = receiver_proc_owner
+        if selected_target = selected_proc_member_target
+          if concrete_proc_member_target_name?(actual_name, proc_owner, member_name)
+            bind_concrete_proc_member_source_target!(actual_name, selected_target, node)
           end
         end
       end
@@ -138279,7 +138441,7 @@ module Adamas::HIR
 
       included_noarg_source_result = nil.as(Tuple(TypeRef?)?)
       if receiver_type.id > 0 && !receiver_is_module_type
-        concrete_owner = normalize_method_owner_name(get_type_name_from_ref(receiver_type))
+        concrete_owner = receiver_proc_owner || normalize_method_owner_name(get_type_name_from_ref(receiver_type))
         if !concrete_owner.empty? && concrete_owner != "Void" && concrete_owner != "Unknown"
           included_noarg_source_result = included_module_noarg_result_for_target(
             concrete_owner,
@@ -138648,6 +138810,14 @@ module Adamas::HIR
                        actual_name
                      end
       actual_name = prefer_concrete_primitive_template_target(actual_name, primary_name, ctx.type_of(object_id))
+      if proc_owner = receiver_proc_owner
+        if selected_target = selected_proc_member_target
+          [primary_name, actual_name].uniq.each do |target_name|
+            next unless concrete_proc_member_target_name?(target_name, proc_owner, member_name)
+            bind_concrete_proc_member_source_target!(target_name, selected_target, node)
+          end
+        end
+      end
       if (desc = @module.get_type_descriptor(receiver_type))
         if desc.kind == TypeKind::Tuple || desc.name.starts_with?("Tuple(")
           union_parts = desc.type_params.map { |ref| get_type_name_from_ref(ref) }.reject(&.empty?)

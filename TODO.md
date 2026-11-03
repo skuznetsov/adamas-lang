@@ -23765,3 +23765,31 @@ integration, fresh bootstrap, or LavinMQ parity.
   Class/typeof contracts, Proc receiver materialization, bootstrap and unchanged
   LavinMQ remain separate frontiers. Refresh after callback target allocation,
   initializer retirement or source recipe lifetime changes.
+
+
+### 2026-11-03: Concrete Proc receiver and source publication contract
+
+- A concrete Proc signature owns its instance-method materialization, including
+  argument/result types and class-literal slot facts. Shared Proc ClassInfo is
+  layout metadata; its display name must not replace that receiver identity.
+  Unused Proc instance templates remain registered without eager lowering.
+- Implicit call, self.call and explicit Proc#call share source admission before
+  ABI coercion. Bare zero-argument member calls bind the selected source Def and
+  arena before return inference can materialize a body. A bodyless target still
+  reserves its source identity; incomplete materialized bindings are rejected.
+- Root cause: Proc has no ordinary generic-class template, so generic owner
+  preservation discarded its signature. The handwritten no-parentheses path
+  also materialized a concrete target before publishing its source witness.
+- Verification: 29 HIR examples, a fresh unchanged-source S1, and stock-prelude
+  hello pass. Native ordinary/forwarded/nested Proc fixtures match Crystal
+  1.22.1 in stock/lazy/eager; four invalid signature/kind/receiver fixtures reject
+  with exit 1. The main native fixture fails on the exact prior HEAD (34yh).
+  DoD: bash regression_tests/proc_receiver_materialization_repro.sh <fresh-S1>;
+  expect all 18 controls PASS. Evidence: 34zd/34ze/34zf/34zg under the oct29 root.
+- Open: call-side Proc splats and method tuple-rest forall remain separate
+  capabilities. The initial tuple-rest candidate loses mixed Class/instance
+  facts in its bool-only callsite carrier and is not admitted. Preserve rich
+  source facts and exact declaration arenas before implementing that binding.
+  Class/typeof integration, S2/bootstrap and unchanged LavinMQ parity remain
+  unqualified. Refresh after receiver ownership, source selection, Proc ABI or
+  publication timing changes.
