@@ -8124,6 +8124,21 @@ module Adamas::HIR
     # Track virtual targets so newly-registered subclasses can be lowered later.
     record VirtualTarget, method_name : String, arg_types : Array(TypeRef), has_block : Bool, has_splat : Bool
 
+    # Yield legality belongs to the source construct that owns a block, not
+    # the generated HIR Function used to execute it. Generated Procs and
+    # outlined blocks therefore carry this immutable source provenance.
+    enum SourceYieldContextKind
+      TopLevel
+      Method
+      ProcLiteral
+      CapturedBlock
+    end
+
+    record SourceYieldContext,
+      kind : SourceYieldContextKind,
+      source_def : Adamas::Compiler::Frontend::DefNode?,
+      source_arena : Adamas::Compiler::Frontend::ArenaLike?
+
     class BlockOwner
       getter class_name : String?
       getter method_name : String?
@@ -8132,10 +8147,55 @@ module Adamas::HIR
       # An active nil context denotes the physical function. Absence means
       # that this producer has not recorded a lexical return target.
       getter return_target : InlineReturnOverride?
+      getter source_yield_context : SourceYieldContext
 
-      def initialize(@class_name : String?, @method_name : String?, @is_class : Bool, @namespace_override : String? = nil,
+      def initialize(@class_name : String?, @method_name : String?, @is_class : Bool,
+                     @source_yield_context : SourceYieldContext, @namespace_override : String? = nil,
                      @return_target : InlineReturnOverride? = nil)
       end
+    end
+
+    private def exact_source_arena_for_yield_owner(
+      source_def : Adamas::Compiler::Frontend::DefNode,
+      preferred_arena : Adamas::Compiler::Frontend::ArenaLike?,
+    ) : Adamas::Compiler::Frontend::ArenaLike?
+      # A recovered Def may be a fresh node object that shares the original
+      # source body. Prefer that body's registered owner before trying a
+      # structurally compatible caller arena.
+      if registered = registered_source_arena_for_def(source_def)
+        return registered if arena_fits_def?(registered, source_def)
+      end
+      if preferred = preferred_arena
+        return preferred if arena_fits_def?(preferred, source_def)
+      end
+      resolved = resolve_arena_for_def(source_def, preferred_arena || @arena)
+      arena_fits_def?(resolved, source_def) ? resolved : nil
+    end
+
+    private def method_source_yield_context(
+      source_def : Adamas::Compiler::Frontend::DefNode,
+      preferred_arena : Adamas::Compiler::Frontend::ArenaLike?,
+    ) : SourceYieldContext
+      source_arena = exact_source_arena_for_yield_owner(source_def, preferred_arena) ||
+                     raise LoweringError.new("cannot establish exact source arena for yield owner", source_def)
+      SourceYieldContext.new(SourceYieldContextKind::Method, source_def, source_arena)
+    end
+
+    private def captured_block_source_yield_context(
+      source_def : Adamas::Compiler::Frontend::DefNode,
+      preferred_arena : Adamas::Compiler::Frontend::ArenaLike?,
+      authenticated_proc_constructor : Bool = false,
+    ) : SourceYieldContext?
+      source_arena = exact_source_arena_for_yield_owner(source_def, preferred_arena)
+      return nil unless source_arena
+      return nil unless authenticated_proc_constructor || def_requires_heap_block?(source_def, source_arena)
+      SourceYieldContext.new(SourceYieldContextKind::CapturedBlock, source_def, source_arena)
+    end
+
+    private def proc_literal_source_yield_context(
+      owner : SourceYieldContext,
+    ) : SourceYieldContext
+      SourceYieldContext.new(SourceYieldContextKind::ProcLiteral, owner.source_def, owner.source_arena)
     end
 
     @virtual_targets_by_parent : Hash(String, Array(VirtualTarget)) = {} of String => Array(VirtualTarget)
@@ -8227,6 +8287,8 @@ module Adamas::HIR
     @block_node_arenas : Hash(UInt64, Adamas::Compiler::Frontend::ArenaLike) = {} of UInt64 => Adamas::Compiler::Frontend::ArenaLike
     # Map block node object ids to their defining scope (class/method).
     @block_owner : Hash(UInt64, BlockOwner) = {} of UInt64 => BlockOwner
+    # Current source lexical owner, independent of the generated runtime Function.
+    @source_yield_context : SourceYieldContext
     @block_owner_self_ids : Hash(UInt64, ValueId) = {} of UInt64 => ValueId
     # Map block node object ids to the function being lowered when the block was registered.
     # Used to detect whether a `return` inside a yield block should exit the current function.
@@ -8336,6 +8398,7 @@ module Adamas::HIR
       function_type_aux_capacity = 4096 if function_type_aux_capacity < 4096
       function_type_processed_capacity = function_type_capacity * 2
       @module = hir_module || Adamas::HIR::Module.new(module_name)
+      @source_yield_context = SourceYieldContext.new(SourceYieldContextKind::TopLevel, nil, @arena)
       @semantic_call_target_arena_id = nil
       @semantic_call_target_context = nil
       @function_types = Hash(String, TypeRef).new(initial_capacity: function_type_capacity)
@@ -38328,6 +38391,8 @@ module Adamas::HIR
       call_arg_enum_names : Array(String?)? = nil,
       full_name_override : String? = nil,
     )
+      previous_source_yield_context = @source_yield_context
+      begin
       if recovered = source_recovered_def_for(node, @arena)
         return lower_module_method(
           module_name,
@@ -38338,6 +38403,7 @@ module Adamas::HIR
           full_name_override
         )
       end
+      @source_yield_context = method_source_yield_context(node, @arena)
       method_name = (safe_slice_to_string(node.name) || "")
       is_class_method = if recv = node.receiver
                           class_method_receiver_text?(safe_slice_to_string(recv) || "")
@@ -39005,6 +39071,9 @@ module Adamas::HIR
       @enum_value_types = old_enum_value_types
       @closure_ref_cells = saved_closure_ref_cells_mm
       @closure_ref_prefer_cell = saved_closure_ref_prefer_mm
+      ensure
+        @source_yield_context = previous_source_yield_context
+      end
     end
 
     # Register a class type and its methods (pass 1)
@@ -46862,7 +46931,9 @@ module Adamas::HIR
       initializer_replay_source : MaterializedInitializerSource? = nil,
       super_source_module : String? = nil,
     )
+      previous_source_yield_context = @source_yield_context
       previous_super_source_module = @current_super_source_module
+      begin
       # Every physical body owns this context, including ordinary bodies whose
       # lexical provider is nil. Nested lowering must not inherit its caller's.
       @current_super_source_module = super_source_module || included_forall_virtual_body_demand.try(&.source_module_owner)
@@ -46883,6 +46954,9 @@ module Adamas::HIR
           super_source_module,
         )
       end
+      @source_yield_context = method_source_yield_context(
+        node, initializer_replay_source.try(&.source_arena) || @arena,
+      )
       included_forall_body_method_arena = nil.as(Adamas::Compiler::Frontend::ArenaLike?)
       method_name = forced_method_name.empty? ? (safe_slice_to_string(node.name) || "") : forced_method_name
       effective_full_name_override = forced_full_name.empty? ? (full_name_override || "") : forced_full_name
@@ -48664,6 +48738,9 @@ module Adamas::HIR
       @current_class = old_class
       @current_method = old_method
       @current_method_is_class = old_method_is_class || false
+      ensure
+        @source_yield_context = previous_source_yield_context
+      end
     ensure
       @current_super_source_module = previous_super_source_module
     end
@@ -80112,9 +80189,12 @@ module Adamas::HIR
       call_arg_enum_names : Array(String?)? = nil,
       full_name_override : String? = nil,
     ) : Adamas::HIR::Function
+      previous_source_yield_context = @source_yield_context
+      begin
       if recovered = source_recovered_def_for(node, @arena)
         return lower_def(recovered, call_arg_types, call_arg_literals, call_arg_enum_names, full_name_override)
       end
+      @source_yield_context = method_source_yield_context(node, @arena)
       # Enum value tracking is per-function; preserve outer context.
       old_enum_value_types = @enum_value_types
       @enum_value_types = nil
@@ -80770,6 +80850,9 @@ module Adamas::HIR
       @closure_ref_prefer_cell = saved_closure_ref_prefer
 
       func
+      ensure
+        @source_yield_context = previous_source_yield_context
+      end
     end
 
     # Lower top-level expressions into a synthetic main function
@@ -80777,6 +80860,8 @@ module Adamas::HIR
     # to it, because the (unmodifiable) original stdlib's `fun main` calls
     # LibCrystalMain.__crystal_main (src/stdlib/crystal/main.cr).
     def lower_main(main_exprs : Array(UInt64)) : Adamas::HIR::Function
+      previous_source_yield_context = @source_yield_context
+      begin
       # Enum provenance is function-local. Keep the synthetic main isolated just
       # like lower_def/lower_method so late receiver repair can recover semantic
       # enum owners from their integer carriers.
@@ -80815,6 +80900,7 @@ module Adamas::HIR
       @current_namespace_override = nil
 
       old_arena = @arena
+      @source_yield_context = SourceYieldContext.new(SourceYieldContextKind::TopLevel, nil, old_arena)
       STDERR.puts "[LOWER_MAIN_FRONTIER] before_deferred lazy=#{@lazy_classvar_init_active}" if lower_main_frontier
       bootstrap_trace_puts "[STAGE2_TRACE] lower_main: start, lazy=#{@lazy_classvar_init_active}"
       initialized_runtime_top_level_constants = Set(String).new
@@ -80872,6 +80958,7 @@ module Adamas::HIR
             initialized_runtime_top_level_constants.add(const_name)
           end
           @arena = init_arena
+          @source_yield_context = SourceYieldContext.new(SourceYieldContextKind::TopLevel, nil, init_arena)
           old_class = @current_class
           old_deferred_constant_owner = @deferred_constant_owner
           @current_class = owner == "$" ? nil : owner
@@ -80900,6 +80987,7 @@ module Adamas::HIR
           end
         end
         @arena = old_arena
+        @source_yield_context = SourceYieldContext.new(SourceYieldContextKind::TopLevel, nil, old_arena)
         @deferred_constant_inits.clear
       else
         # EAGER MODE: Process all deferred classvar/constant inits at startup (original behavior).
@@ -80911,6 +80999,7 @@ module Adamas::HIR
           init_arena = entry.arena
           owner_class = entry.owner_class
           @arena = init_arena
+          @source_yield_context = SourceYieldContext.new(SourceYieldContextKind::TopLevel, nil, init_arena)
           old_class = @current_class
           @current_class = owner_class
           begin
@@ -80941,6 +81030,7 @@ module Adamas::HIR
           end
         end
         @arena = old_arena
+        @source_yield_context = SourceYieldContext.new(SourceYieldContextKind::TopLevel, nil, old_arena)
         @deferred_classvar_inits.clear
 
         # Process deferred constant initializations (string literals, etc.)
@@ -80967,6 +81057,7 @@ module Adamas::HIR
             initialized_runtime_top_level_constants.add(const_name)
           end
           @arena = init_arena
+          @source_yield_context = SourceYieldContext.new(SourceYieldContextKind::TopLevel, nil, init_arena)
           old_class = @current_class
           old_deferred_constant_owner = @deferred_constant_owner
           @current_class = owner == "$" ? nil : owner
@@ -80986,6 +81077,7 @@ module Adamas::HIR
           end
         end
         @arena = old_arena
+        @source_yield_context = SourceYieldContext.new(SourceYieldContextKind::TopLevel, nil, old_arena)
         @deferred_constant_inits.clear
       end
       bootstrap_trace_puts "[STAGE2_TRACE] lower_main: deferred processing done"
@@ -81068,6 +81160,7 @@ module Adamas::HIR
         STDERR.puts "[LOWER_MAIN_FRONTIER] arena_bounds_ok ei=#{expr_id.index} as=#{arena.size}" if lower_main_frontier
         # Switch arena context for this expression
         @arena = arena
+        @source_yield_context = SourceYieldContext.new(SourceYieldContextKind::TopLevel, nil, arena)
         STDERR.puts "[LOWER_MAIN_FRONTIER] arena_set" if lower_main_frontier
         skipped_runtime_const = nil.as(String?)
         unless initialized_runtime_top_level_constants.empty?
@@ -81236,6 +81329,9 @@ module Adamas::HIR
       @current_namespace_override = old_main_namespace
       STDERR.puts "[LOWER_MAIN_FRONTIER] owner_restore_done" if lower_main_frontier
       func
+      ensure
+        @source_yield_context = previous_source_yield_context
+      end
     end
 
     # Emit `STDOUT.flush` then `STDERR.flush` into the current block. Mirrors the
@@ -85023,6 +85119,10 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::ReturnNode
         lower_return(ctx, node)
       when Adamas::Compiler::Frontend::YieldNode
+        # Check lexical legality before the inline-yield fast path. Inline
+        # substitution must not turn a `yield` nested in a Proc or captured
+        # block into a yield owned by the caller's method.
+        validate_source_yield_context!(node)
         if env_get("DEBUG_WITH_BRACE_CALL")
           inline_name = @inline_yield_name_stack.last? || ""
           if inline_name.includes?("with_brace_newlines_skipped") || ctx.function.name.includes?("parse_hash_or_tuple")
@@ -103149,7 +103249,15 @@ module Adamas::HIR
       resolved
     end
 
+    private def validate_source_yield_context!(node : Adamas::Compiler::Frontend::YieldNode) : Nil
+      if @source_yield_context.kind == SourceYieldContextKind::ProcLiteral ||
+         @source_yield_context.kind == SourceYieldContextKind::CapturedBlock
+        raise LoweringError.new("can't use `yield` inside a proc literal or captured block", node)
+      end
+    end
+
     private def lower_yield(ctx : LoweringContext, node : Adamas::Compiler::Frontend::YieldNode) : ValueId
+      validate_source_yield_context!(node)
       args = if node_args = node.args
                node_args.reject(&.invalid?).map { |arg| lower_expr(ctx, arg) }
              else
@@ -120068,6 +120176,7 @@ module Adamas::HIR
         blk_node = node_for_call_expr(call_arena, block_expr)
         if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
           proc_constructor_type = nil.as(TypeRef?)
+          source_yield_context_for_proc = nil.as(SourceYieldContext?)
           if selected_proc_def = selected_call_entry_def
             selected_proc_name = selected_call_entry_name || mangled_method_name
             selected_proc_target = SelectedCallTarget.new(
@@ -120077,6 +120186,9 @@ module Adamas::HIR
                  selected_proc_target, node, call_arena, proc_constructor_receiver,
                )
               proc_constructor_type = proc_contract.proc_type
+              source_yield_context_for_proc = captured_block_source_yield_context(
+                proc_contract.source_def, proc_contract.source_arena, authenticated_proc_constructor: true,
+              )
             end
           end
           block_param_types_for_proc = block_param_types_for_call(
@@ -120200,11 +120312,15 @@ module Adamas::HIR
                 source_result_binding,
               )
             end
+            source_yield_context_for_proc ||= source_result_definition.try do |definition|
+              captured_block_source_yield_context(definition, source_result_arena)
+            end
             proc_id = lower_block_to_proc(
               ctx, blk_node, block_param_types_for_proc, block_arena_for_proc,
               heap_block_proc, hint_return_type, proc_constructor_type,
               constructor_observed_return_type,
               source_result_contract,
+              source_yield_context: source_yield_context_for_proc,
             )
             if raw_callback_target && raw_callback_source_def && raw_callback_source_arena
               expected_callback = raw_callback_abi_for(raw_callback_target)
@@ -132511,7 +132627,8 @@ module Adamas::HIR
                              proc_materialize_hint_return_type(ctx)
                            end
         proc_id = lower_block_to_proc(ctx, block, block_param_types, block_arena_for_proc, heap_block_proc, hint_return_type,
-          source_result_contract: source_result_contract)
+          source_result_contract: source_result_contract,
+          source_yield_context: captured_block_source_yield_context(selected_def, selected_arena))
         fallback_args << proc_id
         # `inline_key` can still be a bare `Owner#m` when the yield inline path bails out early,
         # or it can be the currently-lowered splat wrapper when a nested inline fallback hits a
@@ -132902,6 +133019,7 @@ module Adamas::HIR
       callee_arena : Adamas::Compiler::Frontend::ArenaLike,
       source_binding : SourceCallBinding? = nil,
     ) : ValueId
+      caller_source_yield_context = @source_yield_context
       entry_local_declaration_scopes = ctx.save_local_declaration_scopes
       entry_arena = @arena
       entry_inline_arenas = @inline_arenas
@@ -132912,6 +133030,7 @@ module Adamas::HIR
         # hint without changing the selected Def. Consume its registered source
         # owner before building contracts or choosing an inline/fallback path.
         callee_arena = registered_arena_for_def(func_def) || resolve_arena_for_def(func_def, callee_arena)
+        block_source_yield_context = captured_block_source_yield_context(func_def, callee_arena) || caller_source_yield_context
         if debug_env_filter_match?("DEBUG_INLINE_PICK", inline_key)
           stats = function_param_stats(inline_key, func_def)
           STDERR.puts "[INLINE_PICK] key=#{inline_key} named_required=#{stats.named_required} has_named_only=#{stats.has_named_only} params=#{stats.param_count} required=#{stats.required} caller=#{ctx.function.name}"
@@ -133109,6 +133228,7 @@ module Adamas::HIR
           @inline_arenas = [caller_arena, callee_arena, block_arena]
         end
         @arena = callee_arena
+        @source_yield_context = method_source_yield_context(func_def, callee_arena)
 
         # Isolate callee locals from caller locals, but keep caller locals available for block bodies.
         caller_locals = ctx.save_locals.locals
@@ -133175,7 +133295,10 @@ module Adamas::HIR
         # making `block_owned_by_current_fn` false for subsequent instantiations, which
         # broke non-local returns (return inside block jumped to inline exit instead of
         # doing a real method return).
-        @block_owner[block.object_id] = BlockOwner.new(old_current_class, old_current_method, old_current_method_is_class || false, @current_namespace_override, caller_return_target)
+        @block_owner[block.object_id] = BlockOwner.new(
+          old_current_class, old_current_method, old_current_method_is_class || false,
+          block_source_yield_context, @current_namespace_override, caller_return_target,
+        )
         @block_owner_function_ids[block.object_id] = ctx.function.id
         prev_block_owner_frame_index = @block_owner_caller_frame_index[block.object_id]?
         @block_owner_caller_frame_index[block.object_id] = @inline_caller_locals_stack.size - 1
@@ -133462,7 +133585,8 @@ module Adamas::HIR
                     hint_return_type = expected_nil_block_return_type_for_param(param, callee_arena) ||
                                        proc_materialize_hint_return_type(ctx)
                     proc_id = lower_block_to_proc(ctx, block, block_param_types, block_arena_for_proc, heap_block_proc, hint_return_type,
-                      source_result_contract: inline_return.block_result_contract)
+                      source_result_contract: inline_return.block_result_contract,
+                      source_yield_context: block_source_yield_context)
                     ctx.restore_locals(saved_inline_locals)
                     ctx.register_local(param_name, proc_id)
                     ctx.register_type(proc_id, ctx.type_of(proc_id))
@@ -133639,6 +133763,7 @@ module Adamas::HIR
           @inline_callee_local_names_stack.pop?
           @inline_callee_local_names_frame_stack.pop?
           @arena = caller_arena
+          @source_yield_context = caller_source_yield_context
           @inline_arenas = old_inline_arenas
           @inline_yield_function_depth -= 1
           unless ctx.current_scope == inline_scope
@@ -133665,6 +133790,7 @@ module Adamas::HIR
           ctx.pop_scope
           ctx.restore_local_declaration_scopes(entry_local_declaration_scopes)
           @arena = entry_arena
+          @source_yield_context = caller_source_yield_context
           @inline_arenas = entry_inline_arenas
         end
       end
@@ -134257,11 +134383,14 @@ module Adamas::HIR
                              pushed_break_target = true
                            end
                            saved_inlined_block_return_owner = @captured_block_return_owner
+                           saved_inlined_block_source_yield_context = @source_yield_context
+                           @source_yield_context = owner.try(&.source_yield_context) || saved_inlined_block_source_yield_context
                            @captured_block_return_owner = @inline_yield_caller_return_owner_stack.last? || false
                            block_body_lr = begin
                              lower_body(ctx, block.body)
                            ensure
                              @captured_block_return_owner = saved_inlined_block_return_owner
+                             @source_yield_context = saved_inlined_block_source_yield_context
                              @inline_block_break_stack.pop? if pushed_break_target
                              if pushed_yield_loop
                                @loop_cond_stack.pop?
@@ -140200,6 +140329,7 @@ module Adamas::HIR
       saved_tuple_each_loop_exit_depth_stack = @inline_tuple_each_loop_exit_depth_stack
       saved_inline_yield_return_stack = @inline_yield_return_stack
       saved_inline_yield_return_override_stack = @inline_yield_return_override_stack
+      saved_source_yield_context = @source_yield_context
       previous_block_node_arena = @block_node_arenas[node.object_id]?
       previous_block_owner = @block_owner[node.object_id]?
       previous_block_owner_function_id = @block_owner_function_ids[node.object_id]?
@@ -140211,9 +140341,14 @@ module Adamas::HIR
         block_arena = @block_node_arenas[node.object_id]? ||
                       resolve_arena_for_block(node, saved_arena_for_block) ||
                       saved_arena_for_block
+        block_source_yield_context = previous_block_owner.try(&.source_yield_context) || saved_source_yield_context
         @arena = block_arena
+        @source_yield_context = block_source_yield_context
         store_block_arena(node.object_id, block_arena)
-        @block_owner[node.object_id] = BlockOwner.new(@current_class, @current_method, @current_method_is_class, @current_namespace_override)
+        @block_owner[node.object_id] = BlockOwner.new(
+          @current_class, @current_method, @current_method_is_class,
+          block_source_yield_context, @current_namespace_override,
+        )
         @block_owner_function_ids[node.object_id] = ctx.function.id
         if ctx.lookup_local("self").nil?
           param = find_self_param(ctx.function)
@@ -140379,6 +140514,7 @@ module Adamas::HIR
             @inline_tuple_each_loop_exit_depth_stack = saved_tuple_each_loop_exit_depth_stack
             @inline_yield_return_stack = saved_inline_yield_return_stack
             @inline_yield_return_override_stack = saved_inline_yield_return_override_stack
+            @source_yield_context = saved_source_yield_context
             @current_typeof_locals = old_typeof_locals
             @current_typeof_local_names = old_typeof_local_names
             @current_typeof_local_names_hash = old_typeof_local_names_hash
@@ -142680,6 +142816,7 @@ module Adamas::HIR
       node : Adamas::Compiler::Frontend::ProcLiteralNode,
       param_type_override : Array(TypeRef)? = nil,
     ) : ValueId
+      proc_literal_owner_yield_context = @source_yield_context
       # Generate unique function name for the proc body
       proc_func_name = next_generated_proc_function_name("__crystal_proc")
 
@@ -142925,15 +143062,37 @@ module Adamas::HIR
       # Keep lexical self/yield captures, but isolate this function-local state.
       saved_proc_literal_return_owner = @captured_block_return_owner
       saved_proc_literal_return_type = @current_def_return_type
+      saved_proc_source_yield_context = @source_yield_context
       @captured_block_return_owner = false
       @current_def_return_type = TypeRef::VOID
+      @source_yield_context = proc_literal_source_yield_context(proc_literal_owner_yield_context)
+      # A Proc literal has an independent source yield owner. Do not let an
+      # inlined enclosing method substitute its caller block into this body.
+      # The dispatcher checks the lexical owner before choosing its inline path;
+      # these stacks keep the Proc body's other yield state independent too.
+      saved_yield_block_stack_pl = @inline_yield_block_stack
+      saved_yield_arena_stack_pl = @inline_yield_block_arena_stack
+      saved_yield_param_stack_pl = @inline_yield_block_param_types_stack
+      saved_yield_block_return_stack_pl = @inline_yield_block_return_stack
+      saved_yield_name_stack_pl = @inline_yield_name_stack
       last_value = begin
+        @inline_yield_block_stack = [] of Adamas::Compiler::Frontend::BlockNode
+        @inline_yield_block_arena_stack = [] of Adamas::Compiler::Frontend::ArenaLike
+        @inline_yield_block_param_types_stack = [] of Array(TypeRef)?
+        @inline_yield_block_return_stack = [] of String?
+        @inline_yield_name_stack = [] of String
         lower_body(proc_ctx, node.body)
       ensure
         @captured_block_return_owner = saved_proc_literal_return_owner
         @current_def_return_type = saved_proc_literal_return_type
+        @source_yield_context = saved_proc_source_yield_context
         @explicit_yield_target_stack.pop? if pushed_explicit_yield_target
         @inline_yield_proc_depth -= 1
+        @inline_yield_block_stack = saved_yield_block_stack_pl
+        @inline_yield_block_arena_stack = saved_yield_arena_stack_pl
+        @inline_yield_block_param_types_stack = saved_yield_param_stack_pl
+        @inline_yield_block_return_stack = saved_yield_block_return_stack_pl
+        @inline_yield_name_stack = saved_yield_name_stack_pl
         @inline_yield_return_stack = saved_return_stack_pl
         @inline_yield_return_override_stack = saved_override_stack_pl
         @inline_tuple_each_loop_exit_depth_stack = saved_tuple_each_loop_exit_depth_stack_pl
@@ -143916,6 +144075,7 @@ module Adamas::HIR
       proc_constructor_type : TypeRef? = nil,
       semantic_return_type : TypeRef? = nil,
       source_result_contract : SourceBlockResultContract? = nil,
+      source_yield_context : SourceYieldContext? = nil,
     ) : ValueId
       constructor_contract = nil.as(TypeDescriptor?)
       if constructor_type = proc_constructor_type
@@ -143979,7 +144139,9 @@ module Adamas::HIR
       owner_method = @current_method
       owner_is_class = @current_method_is_class
       owner_namespace = @current_namespace_override
+      owner_source_yield_context = source_yield_context || @source_yield_context
       if previous_owner = @block_owner[block_node.object_id]?
+        owner_source_yield_context = source_yield_context || previous_owner.source_yield_context
         # Prefer lexical owner metadata when available.
         # In inline lowering, @current_class/@current_method may temporarily point
         # to the inlined callee, while the block itself is lexically owned by the
@@ -143997,7 +144159,9 @@ module Adamas::HIR
           owner_namespace = previous_owner.namespace_override
         end
       end
-      @block_owner[block_node.object_id] = BlockOwner.new(owner_class, owner_method, owner_is_class, owner_namespace)
+      @block_owner[block_node.object_id] = BlockOwner.new(
+        owner_class, owner_method, owner_is_class, owner_source_yield_context, owner_namespace,
+      )
       @block_owner_function_ids[block_node.object_id] = ctx.function.id
       proc_ctx.source_annotation_type_params = proc_literal_annotation_type_param_bindings(owner_class || owner_namespace, ctx)
       owner_self_id = ctx.lookup_local("self") || @block_owner_self_ids[block_node.object_id]?
@@ -144496,6 +144660,8 @@ module Adamas::HIR
 
       saved_arena_outer = @arena
       @arena = block_arena
+      saved_block_source_yield_context = @source_yield_context
+      @source_yield_context = owner_source_yield_context
       @inline_yield_proc_depth += 1
       pushed_explicit_yield_target = false
       if explicit_yield_target_binding
@@ -144513,6 +144679,7 @@ module Adamas::HIR
       last_value = begin
         lower_closure_block_body(proc_ctx, block_node)
       ensure
+        @source_yield_context = saved_block_source_yield_context
         @captured_block_return_owner = saved_block_return_owner
         @expected_proc_return_type_hint_stack.pop? if pushed_return_type_hint
         unless heap_proc

@@ -23660,3 +23660,30 @@ integration, fresh bootstrap, or LavinMQ parity.
 - Scope: no-prelude callback storage and carrier contracts. This does not
   establish prelude, bootstrap, or LavinMQ parity; refresh after capture,
   producer coercion, or callback ABI changes.
+
+
+### 2026-11-02: Source lexical yield ownership
+
+- Carry the selected source Def, arena and lexical yield kind through methods,
+  inline caller blocks, Proc literals and captured-block materialization. A
+  helper method called inside a Proc owns its own legal yield; a yield written
+  in the Proc or a captured block is rejected before argument lowering.
+- Root cause: the YieldNode dispatcher substituted an enclosing inline callback
+  before reaching lower_yield's legality check. Proc lowering also retained the
+  enclosing inline-yield stacks. Validate at the common dispatcher and isolate
+  all five stacks for the Proc body, restoring their original identities in
+  ensure. Keep captured callback ABI targets separate from lexical legality.
+- Baseline source34ju accepts forbidden Proc yields and resolves a forbidden
+  argument. Exact candidate source34md passes 28 focused HIR checks, a fresh S1,
+  the stock Crystal 1.22.1 CLI matrix in default/depth-zero/disabled-inline modes,
+  diagnostic precedence, captured-block fallback and the stdlib-backed Proc.new
+  oracle. The captured-producer composition passes 20 HIR/MIR examples and ten
+  native cases; stock-prelude hello compiles and prints exactly hello\n.
+  Evidence: source-lexical-dispatch34lz/34ma/34me,
+  captured-producer-with-lexical34mf and prelude-source-lexical34mh under
+  /opt/mldata_ssd/adamas_codex_oct29_rootcause.
+- DoD: RUN_PROC_NEW_YIELD_PRELUDE_ORACLE=1 bash
+  regression_tests/yield_lexical_owner_repro.sh <fresh-S1>; expect every positive
+  output and source-matched rejection to match original Crystal. Bootstrap and
+  unchanged LavinMQ parity remain separate open gates. Refresh after source
+  owner, arena, inline-block or Proc lifecycle changes.
