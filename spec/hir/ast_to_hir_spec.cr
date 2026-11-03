@@ -749,8 +749,7 @@ class Adamas::HIR::AstToHir
       existing.name,
       type_ref,
       existing.offset,
-      existing.default_expr_id,
-      existing.default_arena,
+      existing.default_source,
     )
   end
 
@@ -11638,6 +11637,11 @@ describe Adamas::HIR::AstToHir do
 
     it "preserves concrete owner type params for generic-module unsafe_as and constants" do
       converter = lower_program_with_main(<<-CRYSTAL)
+        # This unit helper does not load the stdlib that normally declares MAX.
+        struct UInt64
+          MAX = 18_446_744_073_709_551_615_u64
+        end
+
         module Reint(F, U)
           def self.bits(num : F)
             u = num.unsafe_as(U)

@@ -999,10 +999,32 @@ module Adamas::HIR
     end
   end
 
+  # A field initializer keeps the declaration context that gives its names
+  # meaning. Layout copies must retain this receipt rather than adopt the
+  # including class, subclass, or allocator caller's lexical scope.
+  enum IVarDefaultScope
+    TypeBody
+    InstanceGetter
+  end
+
+  record IVarDefaultSource,
+    expr_id : Adamas::Compiler::Frontend::ExprId,
+    arena : Adamas::Compiler::Frontend::ArenaLike,
+    lexical_owner : String,
+    type_bindings : Hash(String, String),
+    execution_scope : IVarDefaultScope
+
   # Instance variable info for class layout
   record IVarInfo, name : String, type : TypeRef, offset : Int32,
-    default_expr_id : Adamas::Compiler::Frontend::ExprId? = nil,
-    default_arena : Adamas::Compiler::Frontend::ArenaLike? = nil
+    default_source : IVarDefaultSource? = nil do
+    def default_expr_id : Adamas::Compiler::Frontend::ExprId?
+      default_source.try(&.expr_id)
+    end
+
+    def default_arena : Adamas::Compiler::Frontend::ArenaLike?
+      default_source.try(&.arena)
+    end
+  end
 
   # Class variable info
   record ClassVarInfo, name : String, type : TypeRef, initial_value : Int64?
@@ -14961,7 +14983,8 @@ module Adamas::HIR
         nil,
         nil,
         owner_is_struct,
-        owner_is_c_struct
+        owner_is_c_struct,
+        class_name,
       )
       true
     end
@@ -15467,8 +15490,7 @@ module Adamas::HIR
           unless ivars.any? { |iv| iv.name == ivar_name }
             offset = align_offset(offset_ref.value, type_alignment(ivar_type))
             ivars << IVarInfo.new(ivar_name, ivar_type, offset,
-              default_expr_id: decl_default_expr_id,
-              default_arena: decl_default_arena)
+              default_source: capture_ivar_default_source(decl_default_expr_id, decl_default_arena, class_name))
             offset_ref.value = offset + field_storage_size(ivar_type)
           end
         end
@@ -15512,8 +15534,7 @@ module Adamas::HIR
           unless ivars.any? { |iv| iv.name == ivar_name }
             offset = align_offset(offset_ref.value, type_alignment(ivar_type))
             ivars << IVarInfo.new(ivar_name, ivar_type, offset,
-              default_expr_id: typed_default_expr_id,
-              default_arena: typed_default_arena)
+              default_source: capture_ivar_default_source(typed_default_expr_id, typed_default_arena, class_name))
             offset_ref.value = offset + field_storage_size(ivar_type)
           end
         end
@@ -15670,6 +15691,7 @@ module Adamas::HIR
             needs_expr ? @arena : nil,
             owner_is_struct,
             owner_is_c_struct,
+            class_name,
           )
         end
       when Adamas::Compiler::Frontend::CallNode
@@ -24683,8 +24705,7 @@ module Adamas::HIR
         end
         offset = align_offset(offset, type_alignment(ivar_type))
         ivars << IVarInfo.new(ivar_name, ivar_type, offset,
-          default_expr_id: default_expr_id,
-          default_arena: default_arena)
+          default_source: capture_ivar_default_source(default_expr_id, default_arena, class_name))
         offset += field_storage_size(ivar_type)
       end
 
@@ -24892,8 +24913,7 @@ module Adamas::HIR
                 ivar_name,
                 param_type,
                 existing.offset,
-                default_expr_id: existing.default_expr_id,
-                default_arena: existing.default_arena
+                default_source: existing.default_source
               )
               realign_registered_ivars(
                 ivars,
@@ -25063,8 +25083,7 @@ module Adamas::HIR
               ivar.name,
               proc_type,
               ivar.offset,
-              default_expr_id: ivar.default_expr_id,
-              default_arena: ivar.default_arena,
+              default_source: ivar.default_source,
             )
             owner_refined = true
           end
@@ -25974,8 +25993,7 @@ module Adamas::HIR
             ivar.name,
             ivar_type,
             offset,
-            default_expr_id: ivar.default_expr_id,
-            default_arena: ivar.default_arena
+            default_source: ivar.default_source
           )
           offset += field_storage_size(ivar_type, is_c_struct)
         end
@@ -26869,8 +26887,7 @@ module Adamas::HIR
                       end
                       offset = align_offset(offset, type_alignment(ivar_type))
                       ivars << IVarInfo.new(ivar_name, ivar_type, offset,
-                        default_expr_id: default_expr_id,
-                        default_arena: default_arena)
+                        default_source: capture_ivar_default_source(default_expr_id, default_arena, class_name))
                       offset += field_storage_size(ivar_type)
                     end
                   when Adamas::Compiler::Frontend::AssignNode
@@ -26895,8 +26912,7 @@ module Adamas::HIR
                         needs_expr = !is_trivial_default(value_node)
                         offset = align_offset(offset, type_alignment(inferred))
                         ivars << IVarInfo.new(ivar_name, inferred, offset,
-                          default_expr_id: needs_expr ? default_expr : nil,
-                          default_arena: needs_expr ? @arena : nil)
+                          default_source: capture_ivar_default_source(needs_expr ? default_expr : nil, needs_expr ? @arena : nil, class_name))
                         offset += field_storage_size(inferred)
                       end
                     end
@@ -37753,7 +37769,8 @@ module Adamas::HIR
               spec.default_value,
               spec.default_value ? @arena : nil,
               owner_is_struct,
-              owner_is_c_struct
+              owner_is_c_struct,
+              class_name,
             )
             getter_base = "#{class_name}##{getter_name}"
             full_name = mangle_function_name(getter_base, [] of TypeRef)
@@ -37789,7 +37806,8 @@ module Adamas::HIR
               spec.default_value,
               spec.default_value ? @arena : nil,
               owner_is_struct,
-              owner_is_c_struct
+              owner_is_c_struct,
+              class_name,
             )
             setter_name = "#{class_name}##{storage_name}="
             full_name = mangle_function_name(setter_name, [ivar_type])
@@ -37828,7 +37846,8 @@ module Adamas::HIR
               spec.default_value,
               spec.default_value ? @arena : nil,
               owner_is_struct,
-              owner_is_c_struct
+              owner_is_c_struct,
+              class_name,
             )
             getter_base = "#{class_name}##{getter_name}"
             getter_full = mangle_function_name(getter_base, [] of TypeRef)
@@ -40185,17 +40204,15 @@ module Adamas::HIR
         if existing.type == TypeRef::VOID && ivar_type != TypeRef::VOID
           resolved_type = ivar_type
         end
-        resolved_default_expr = existing.default_expr_id || default_expr_id
-        resolved_default_arena = existing.default_arena || default_arena
+        resolved_default_source = existing.default_source ||
+                                  capture_ivar_default_source(default_expr_id, default_arena, class_name)
         if resolved_type != existing.type ||
-           resolved_default_expr != existing.default_expr_id ||
-           resolved_default_arena != existing.default_arena
+           resolved_default_source != existing.default_source
           ivars[existing_idx] = IVarInfo.new(
             ivar_name,
             resolved_type,
             existing.offset,
-            default_expr_id: resolved_default_expr,
-            default_arena: resolved_default_arena
+            default_source: resolved_default_source
           )
           if existing.type == TypeRef::VOID && resolved_type != TypeRef::VOID
             realign_registered_ivars(ivars, offset_ref, is_struct, is_c_struct)
@@ -40212,8 +40229,7 @@ module Adamas::HIR
           ivar_name,
           ivar_type,
           offset_ref.value,
-          default_expr_id: default_expr_id,
-          default_arena: default_arena
+          default_source: capture_ivar_default_source(default_expr_id, default_arena, class_name)
         )
         offset_ref.value += field_storage_size(ivar_type, is_c_struct)
         if debug_filter = env_get("DEBUG_CLASS_IVAR_DECL")
@@ -40233,6 +40249,7 @@ module Adamas::HIR
       default_arena : Adamas::Compiler::Frontend::ArenaLike?,
       is_struct : Bool,
       is_c_struct : Bool,
+      class_name : String,
     ) : Int32
       if existing_idx = ivars.index { |ivar| ivar.name == ivar_name }
         existing = ivars[existing_idx]
@@ -40242,17 +40259,15 @@ module Adamas::HIR
           else
             existing.type
           end
-        resolved_default_expr = existing.default_expr_id || default_expr_id
-        resolved_default_arena = existing.default_arena || default_arena
+        resolved_default_source = existing.default_source ||
+                                  capture_ivar_default_source(default_expr_id, default_arena, class_name)
         if resolved_type != existing.type ||
-           resolved_default_expr != existing.default_expr_id ||
-           resolved_default_arena != existing.default_arena
+           resolved_default_source != existing.default_source
           ivars[existing_idx] = IVarInfo.new(
             ivar_name,
             resolved_type,
             existing.offset,
-            default_expr_id: resolved_default_expr,
-            default_arena: resolved_default_arena
+            default_source: resolved_default_source
           )
           if existing.type == TypeRef::VOID && resolved_type != TypeRef::VOID
             return realign_registered_ivar_offsets(ivars, is_struct, is_c_struct)
@@ -40266,8 +40281,7 @@ module Adamas::HIR
         ivar_name,
         ivar_type,
         aligned_offset,
-        default_expr_id: default_expr_id,
-        default_arena: default_arena
+        default_source: capture_ivar_default_source(default_expr_id, default_arena, class_name)
       )
       aligned_offset + field_storage_size(ivar_type, is_c_struct)
     end
@@ -41489,7 +41503,8 @@ module Adamas::HIR
                     spec.default_value,
                     spec.default_value ? @arena : nil,
                     is_struct,
-                    is_c_struct
+                    is_c_struct,
+                    class_name,
                   )
                   # Register getter method: def name : Type
                   getter_base = "#{class_name}##{getter_name}"
@@ -41539,7 +41554,8 @@ module Adamas::HIR
                     spec.default_value,
                     spec.default_value ? @arena : nil,
                     is_struct,
-                    is_c_struct
+                    is_c_struct,
+                    class_name,
                   )
                   # Register setter method: def name=(value : Type) : Type
                   setter_name = "#{class_name}##{storage_name}="
@@ -41585,7 +41601,8 @@ module Adamas::HIR
                     spec.default_value,
                     spec.default_value ? @arena : nil,
                     is_struct,
-                    is_c_struct
+                    is_c_struct,
+                    class_name,
                   )
                   # Register getter method
                   getter_base = "#{class_name}##{getter_name}"
@@ -41645,7 +41662,8 @@ module Adamas::HIR
                   needs_expr ? default_expr : nil,
                   needs_expr ? @arena : nil,
                   is_struct,
-                  is_c_struct
+                  is_c_struct,
+                  class_name,
                 )
               elsif target_node.is_a?(Adamas::Compiler::Frontend::ClassVarNode)
                 raw_name = (safe_slice_to_string(target_node.name) || "")
@@ -42631,7 +42649,7 @@ module Adamas::HIR
             end
             offset = align_offset(offset, type_alignment(ivar_type, is_c_struct))
             new_ivars << IVarInfo.new(ivar.name, ivar_type, offset,
-              default_expr_id: ivar.default_expr_id, default_arena: ivar.default_arena)
+              default_source: ivar.default_source)
             offset += field_storage_size(ivar_type, is_c_struct)
             ivar_idx += 1
           end
@@ -42720,7 +42738,7 @@ module Adamas::HIR
         ivar_type = authoritative_ivar_storage_type_ref(ivar, class_name)
         offset = align_offset(offset, type_alignment(ivar_type, is_c_struct))
         new_ivars << IVarInfo.new(ivar.name, ivar_type, offset,
-          default_expr_id: ivar.default_expr_id, default_arena: ivar.default_arena)
+          default_source: ivar.default_source)
         offset += field_storage_size(ivar_type, is_c_struct)
         ivar_idx += 1
       end
@@ -42981,7 +42999,7 @@ module Adamas::HIR
               while own_idx < own_ivars.size
                 ivar = own_ivars[own_idx]
                 new_ivars << IVarInfo.new(ivar.name, ivar.type, ivar.offset + offset_adjust,
-                  default_expr_id: ivar.default_expr_id, default_arena: ivar.default_arena)
+                  default_source: ivar.default_source)
                 own_idx += 1
               end
 
@@ -44682,7 +44700,9 @@ module Adamas::HIR
                                 else
                                   requested_init_name
                                 end
-            lower_method(init_defining_class, init_class_info, init_def, callsite_types, nil, nil, materialized_name)
+            with_namespace_override_or_clear(initializer_declaration_namespace(resolved_name, init_def, init_arena)) do
+              lower_method(init_defining_class, init_class_info, init_def, callsite_types, nil, nil, materialized_name)
+            end
           end
         end
       end
@@ -44799,6 +44819,79 @@ module Adamas::HIR
       {blk, param_types, return_name}
     end
 
+    private def capture_ivar_default_source(
+      expr_id : Adamas::Compiler::Frontend::ExprId?,
+      arena : Adamas::Compiler::Frontend::ArenaLike?,
+      owner_name : String,
+    ) : IVarDefaultSource?
+      return nil unless expr_id && arena
+      execution_scope = arena[expr_id].is_a?(Adamas::Compiler::Frontend::BlockNode) ?
+                          IVarDefaultScope::InstanceGetter : IVarDefaultScope::TypeBody
+      IVarDefaultSource.new(
+        expr_id, arena, @current_namespace_override || owner_name, @type_param_map.dup,
+        execution_scope,
+      )
+    end
+
+    private def with_ivar_default_source(ctx : LoweringContext, ivar : IVarInfo, class_name : String, &)
+      source = ivar.default_source
+      raise LoweringError.new("ivar initializer has no declaration source: #{class_name}##{ivar.name}") unless source
+      saved_arena = @arena
+      saved_class = @current_class
+      saved_method = @current_method
+      saved_method_kind = @current_method_is_class
+      saved_namespace = @current_namespace_override
+      saved_bindings = @type_param_map
+      saved_locals = ctx.save_locals
+      saved_inline_locals = @inline_caller_locals_stack.map { |locals| {locals, locals.dup} }
+      saved_ref_cells = @closure_ref_cells
+      saved_ref_preference = @closure_ref_prefer_cell
+      begin
+        @arena = source.arena
+        @current_namespace_override = source.lexical_owner
+        @type_param_map = source.type_bindings.dup
+        @subst_cache_gen &+= 1
+        if source.execution_scope.type_body?
+          # Crystal types eager ivar initializers in the declaring metaclass.
+          # An allocator's instance, arguments, inline frames and captures are
+          # not lexical locals of the declaration, even when lowering inline.
+          @current_class = source.lexical_owner
+          @current_method = nil
+          @current_method_is_class = true
+          @inline_caller_locals_stack.each(&.clear)
+          @closure_ref_cells = {} of String => {String, String, TypeRef}
+          @closure_ref_prefer_cell = Set(String).new
+          ctx.restore_locals({} of String => ValueId)
+          ctx.restore_block_parameter_bindings({} of String => ValueId)
+          self_literal = lower_type_literal_from_name(ctx, source.lexical_owner)
+          ctx.register_local("self", self_literal)
+        else
+          # A lazy getter block runs as an instance method. Its actual self
+          # and field layout still belong to the receiving concrete class.
+          @current_class = class_name
+          @current_method = method_short_from_name(ctx.function.name)
+          @current_method_is_class = false
+        end
+        yield
+      ensure
+        ctx.restore_locals(saved_locals)
+        saved_inline_locals.each do |entry|
+          locals, contents = entry
+          locals.clear
+          locals.merge!(contents)
+        end
+        @closure_ref_cells = saved_ref_cells
+        @closure_ref_prefer_cell = saved_ref_preference
+        @arena = saved_arena
+        @current_class = saved_class
+        @current_method = saved_method
+        @current_method_is_class = saved_method_kind
+        @current_namespace_override = saved_namespace
+        @type_param_map = saved_bindings
+        @subst_cache_gen &+= 1
+      end
+    end
+
     # Store every ivar's declared default (or its zero value) into the object
     # `obj_id` of class `class_name`. Shared by the generated allocator and the
     # `pre_initialize` primitive, which both run inline ivar initializers.
@@ -44832,7 +44925,9 @@ module Adamas::HIR
             # Enums are registered as Struct (no TypeKind::Enum) but are integer
             # value types: their defaults are plain scalar literals.
             ivar_is_struct = !!(type_desc && type_desc.kind == TypeKind::Struct) && !enum_type_ref?(ivar.type)
-            resolved_literal = try_resolve_simple_default(default_node, default_arena, ivar.type)
+            resolved_literal = with_ivar_default_source(ctx, ivar, class_name) do
+              try_resolve_simple_default(default_node, default_arena, ivar.type)
+            end
             # A struct-typed ivar must never be initialized from a scalar literal:
             # under the inline-struct ABI the field store memcpy's from the value's
             # address, so a scalar-register source crashes. Route struct ivars to
@@ -44861,11 +44956,9 @@ module Adamas::HIR
               next
             end
 
-            saved_arena = @arena
-            saved_class = @current_class
-            @arena = default_arena
-            @current_class = class_name
-            default_id = try_lower_enum_symbol_default(ctx, class_name, ivar.type, default_node) || lower_expr(ctx, default_expr_id)
+            default_id = with_ivar_default_source(ctx, ivar, class_name) do
+              try_lower_enum_symbol_default(ctx, class_name, ivar.type, default_node) || lower_expr(ctx, default_expr_id)
+            end
             # If a struct-typed ivar default degraded to a non-struct scalar — an
             # unresolvable module struct constant (e.g. Arena::INVALID_INDEX) that
             # lower_expr collapses to `literal 0 : Int32` — storing it would memcpy
@@ -44884,8 +44977,6 @@ module Adamas::HIR
             end
             ivar_store = FieldSet.new(ctx.next_id, ivar.type, obj_id, ivar.name, default_id, ivar.offset)
             ctx.emit(ivar_store)
-            @arena = saved_arena
-            @current_class = saved_class
             next
           end
           # Fall through for lazy getters: zero/nil the field below
@@ -45429,7 +45520,9 @@ module Adamas::HIR
                                   else
                                     requested_init_name
                                   end
-              lower_method(init_defining_class, init_class_info, init_def, callsite_types, nil, nil, materialized_name)
+              with_namespace_override_or_clear(initializer_declaration_namespace(resolved_name, init_def, init_arena)) do
+                lower_method(init_defining_class, init_class_info, init_def, callsite_types, nil, nil, materialized_name)
+              end
             end
           end
         end
@@ -46070,7 +46163,9 @@ module Adamas::HIR
         # object layout and field defaults. No name-level lookup is authority.
         rematerialize_missing_function_body(body_name) do
           with_arena(source_arena) do
-            lower_method(source_owner, source_info, selected.def_node, initializer_call_arg_types, nil, nil, body_name)
+            with_namespace_override_or_clear(initializer_declaration_namespace(selected.symbol_name, selected.def_node, source_arena)) do
+              lower_method(source_owner, source_info, selected.def_node, initializer_call_arg_types, nil, nil, body_name)
+            end
           end
         end
         bound_initializer_body_name = body_name
@@ -46171,7 +46266,9 @@ module Adamas::HIR
             # Enums are registered as Struct (no TypeKind::Enum) but are integer
             # value types: their defaults are plain scalar literals.
             ivar_is_struct = !!(type_desc && type_desc.kind == TypeKind::Struct) && !enum_type_ref?(ivar.type)
-            resolved_literal = try_resolve_simple_default(default_node, default_arena, ivar.type)
+            resolved_literal = with_ivar_default_source(ctx, ivar, class_name) do
+              try_resolve_simple_default(default_node, default_arena, ivar.type)
+            end
             # Struct-typed ivars are never initialized from a scalar literal (the
             # inline-struct field store memcpy's from the value's address); route
             # them to the zero-struct fallback instead.
@@ -46194,11 +46291,9 @@ module Adamas::HIR
               next
             end
 
-            saved_arena = @arena
-            saved_class = @current_class
-            @arena = default_arena
-            @current_class = class_name
-            default_id = try_lower_enum_symbol_default(ctx, class_name, ivar.type, default_node) || lower_expr(ctx, default_expr_id)
+            default_id = with_ivar_default_source(ctx, ivar, class_name) do
+              try_lower_enum_symbol_default(ctx, class_name, ivar.type, default_node) || lower_expr(ctx, default_expr_id)
+            end
             # If a struct-typed ivar default degraded to a non-struct scalar — an
             # unresolvable module struct constant (e.g. Arena::INVALID_INDEX) that
             # lower_expr collapses to `literal 0 : Int32` — storing it would memcpy
@@ -46217,8 +46312,6 @@ module Adamas::HIR
             end
             ivar_store = FieldSet.new(ctx.next_id, ivar.type, alloc.id, ivar.name, default_id, ivar.offset)
             ctx.emit(ivar_store)
-            @arena = saved_arena
-            @current_class = saved_class
             next
           end
         end
@@ -46435,7 +46528,9 @@ module Adamas::HIR
             init_arena ||= resolve_arena_for_def(init_def, @arena)
             callsite_types = init_param_types.empty? ? nil : init_param_types
             with_arena(init_arena) do
-              lower_method(class_name, class_info, init_def, callsite_types, nil, nil, init_name)
+              with_namespace_override_or_clear(initializer_declaration_namespace(init_def_name || init_base_name, init_def, init_arena)) do
+                lower_method(class_name, class_info, init_def, callsite_types, nil, nil, init_name)
+              end
             end
           end
         end
@@ -46789,22 +46884,19 @@ module Adamas::HIR
 
       # Init block: evaluate default expression, store it, jump to return
       ctx.switch_to_block(init_block)
-      old_class = @current_class
-      @current_class = class_name
-      begin
+      default_val = with_ivar_default_source(ctx, ivar_info, class_name) do
         # Unwrap BlockNode: getter x : T { expr } stores a BlockNode as default.
         # We need to evaluate the body expressions inline, not create a Proc.
         default_node = @arena[default_expr]
         if default_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
-          default_val = 0_u32
+          last_default_value = 0_u32
           default_node.body.each do |body_expr|
-            default_val = lower_expr(ctx, body_expr)
+            last_default_value = lower_expr(ctx, body_expr)
           end
+          last_default_value
         else
-          default_val = lower_expr(ctx, default_expr)
+          lower_expr(ctx, default_expr)
         end
-      ensure
-        @current_class = old_class
       end
       ctx.register_type(default_val, ivar_type)
 
@@ -46842,18 +46934,11 @@ module Adamas::HIR
       return if default_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
       return if default_node.is_a?(Adamas::Compiler::Frontend::NilNode)
 
-      saved_arena = @arena
-      saved_class = @current_class
-      @arena = default_arena
-      @current_class = class_name
-      begin
+      with_ivar_default_source(ctx, ivar, class_name) do
         default_id = lower_expr(ctx, default_expr_id)
         default_id = coerce_value_to_type(ctx, default_id, ivar.type)
         return unless ctx.type_of(default_id) == ivar.type
         ctx.emit(FieldSet.new(ctx.next_id, ivar.type, alloc_id, ivar.name, default_id, ivar.offset))
-      ensure
-        @arena = saved_arena
-        @current_class = saved_class
       end
     end
 
@@ -47440,6 +47525,19 @@ module Adamas::HIR
         @type_param_map = saved_type_params
         @subst_cache_gen &+= 1
       end
+    end
+
+    # Allocator materialization is a callee boundary. Its exact initializer
+    # declaration owns constant lookup, including when the caller is an
+    # inherited/included method with a different namespace override.
+    private def initializer_declaration_namespace(
+      source_name : String,
+      source_def : Adamas::Compiler::Frontend::DefNode,
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : String?
+      @included_initializer_def_origins[{source_def, source_arena}]? ||
+        function_namespace_override_for(source_name) ||
+        function_context_from_name(source_name)
     end
 
     # Lower a method within a class
@@ -48346,8 +48444,7 @@ module Adamas::HIR
             next unless ivar.name == ivar_name && ivar.type == TypeRef::VOID
             refined_ivars[ivar_index] = IVarInfo.new(
               ivar.name, param_type, ivar.offset,
-              default_expr_id: ivar.default_expr_id,
-              default_arena: ivar.default_arena,
+              default_source: ivar.default_source,
             )
             refined_ivar_types = true
             break
@@ -62370,7 +62467,7 @@ module Adamas::HIR
           while ivar_idx < source_ivars.size
             ivar = source_ivars[ivar_idx]
             offset = align_offset(offset, type_alignment(ivar.type, true))
-            new_ivars << IVarInfo.new(ivar.name, ivar.type, offset, ivar.default_expr_id, ivar.default_arena)
+            new_ivars << IVarInfo.new(ivar.name, ivar.type, offset, ivar.default_source)
             offset += field_storage_size(ivar.type, true)
             ivar_idx += 1
           end
@@ -64490,8 +64587,7 @@ module Adamas::HIR
                   ivar_name,
                   inferred,
                   existing.offset,
-                  default_expr_id: existing.default_expr_id,
-                  default_arena: existing.default_arena
+                  default_source: existing.default_source
                 )
                 realign_registered_ivars(
                   ivars,
@@ -68162,14 +68258,18 @@ module Adamas::HIR
 
     private def resolve_constant_name_in_context(name : String) : String?
       return nil if name.empty?
+      # An explicit root path never reopens lexical or receiver lookup.
+      if name.starts_with?("::")
+        root_name = strip_absolute_name_prefix(name)
+        return constant_name_exists?(root_name) ? root_name : nil
+      end
       if debug_filter = env_get("DEBUG_CONST_LOOKUP")
         if debug_filter == "1" || name.includes?(debug_filter)
           STDERR.puts "[CONST_LOOKUP] name=#{name} current=#{@current_class || "nil"} override=#{@current_namespace_override || "nil"}"
         end
       end
-      return name if constant_name_exists?(name)
-
       if name.includes?("::")
+        return name if constant_name_exists?(name)
         resolved = resolve_path_string_in_context(name)
         return resolved if constant_name_exists?(resolved)
         return name if constant_name_exists?(name)
@@ -68185,15 +68285,12 @@ module Adamas::HIR
       end
 
       namespaces = [] of String
-      if override = @current_namespace_override
-        namespaces << override
-        if info = split_generic_base_and_args(override)
-          namespaces << info.base unless namespaces.includes?(info.base)
-        end
-      end
-      if current = @current_class
-        namespaces << current unless namespaces.includes?(current)
-        if info = split_generic_base_and_args(current)
+      # A method's receiver owns layout, not lexical constant lookup. Once
+      # declaration scope is known, an absent name must not fall through to
+      # the includer or subclass. Global lookup follows lexical ancestry.
+      if owner = @current_namespace_override || @current_class
+        namespaces << owner
+        if info = split_generic_base_and_args(owner)
           namespaces << info.base unless namespaces.includes?(info.base)
         end
       end
@@ -68215,6 +68312,7 @@ module Adamas::HIR
         end
       end
 
+      return name if constant_name_exists?(name)
       nil
     end
 
@@ -69286,20 +69384,8 @@ module Adamas::HIR
 
     private def namespace_path_head_in_context(head : String) : String?
       return nil if head.empty?
-      namespaces = [] of String
-      if override = @current_namespace_override
-        namespaces << override
-      end
-      if current = @current_class
-        namespaces << current unless namespaces.includes?(current)
-      end
-
-      namespaces.each do |ns|
-        if resolved = namespace_path_head_in_namespace(head, ns)
-          return resolved
-        end
-      end
-      nil
+      owner = @current_namespace_override || @current_class
+      owner ? namespace_path_head_in_namespace(head, owner) : nil
     end
 
     private def nested_shadowed_type_name?(name : String) : Bool
@@ -69493,20 +69579,28 @@ module Adamas::HIR
       tail_start = sep + 2
       tail = tail_start < path.bytesize ? path.byte_slice(tail_start, path.bytesize - tail_start) : ""
 
-      # Binding the first component commits the rest of this relative path
-      # to that namespace. A missing tail cannot reopen global-head lookup.
-      contextual_head = namespace_path_head_in_context(head)
-      resolved_head = if contextual_head
-                        resolve_type_alias_chain(contextual_head)
-                      else
-                        resolve_class_name_in_context(head)
-                      end
-      return path if resolved_head == head
+      saved_path_class = @current_class
+      begin
+        # Qualified names use the same declaration owner as bare constants.
+        # Keep receiver layout available to expression lowering outside lookup.
+        @current_class = @current_namespace_override || saved_path_class
+        # Binding the first component commits the rest of this relative path
+        # to that namespace. A missing tail cannot reopen global-head lookup.
+        contextual_head = namespace_path_head_in_context(head)
+        resolved_head = if contextual_head
+                          resolve_type_alias_chain(contextual_head)
+                        else
+                          resolve_class_name_in_context(head)
+                        end
+        return path if resolved_head == head
 
-      resolved = "#{resolved_head}::#{tail}"
-      return resolved if contextual_head || type_name_exists?(resolved)
-      return path if type_name_exists?(path)
-      resolved
+        resolved = "#{resolved_head}::#{tail}"
+        return resolved if contextual_head || type_name_exists?(resolved)
+        return path if type_name_exists?(path)
+        resolved
+      ensure
+        @current_class = saved_path_class
+      end
     end
 
     private def function_context_from_name(name : String) : String?
@@ -95186,7 +95280,6 @@ module Adamas::HIR
       if right_name && raw_path.includes?("::")
         if idx = raw_path.rindex("::")
           prefix = raw_path[0, idx]
-          prefix = prefix.starts_with?("::") ? (prefix.size > 2 ? prefix[2..] : "") : prefix
           resolved_prefix = resolve_path_string_in_context(prefix)
           if enum_info = @enum_info
             if members = enum_info[resolved_prefix]?
@@ -95225,7 +95318,8 @@ module Adamas::HIR
         return lower_type_literal_from_name(ctx, full_path)
       end
 
-      if full_name = resolve_constant_name_in_context(full_path)
+      constant_path = raw_path.starts_with?("::") ? "::#{full_path}" : full_path
+      if full_name = resolve_constant_name_in_context(constant_path)
         return emit_constant_get(ctx, full_name)
       end
 
@@ -95238,36 +95332,10 @@ module Adamas::HIR
         return lit.id
       end
 
-      # A registered enum owns a complete member set. Its unknown constants
-      # must not become the generic unresolved-path zero literal. Source constants
-      # have already been resolved above; only Flags supplies implicit None/All.
-      if right_name && right_name[0]?.try(&.uppercase?)
-        if separator = full_path.rindex("::")
-          enum_owner = full_path[0, separator]
-          if @enum_info.try(&.has_key?(enum_owner))
-            raise LoweringError.new("undefined constant #{full_path}", node)
-          end
-        end
-      end
-
-      # If we're inside a function that returns a type literal, treat unresolved
-      # constant paths as type literals to avoid falling back to Int32.
-      if right_name && right_name[0]?.try(&.uppercase?)
-        if @current_method && @current_class
-          if type_literal_return_recorded_for_name?(ctx.function.name)
-            return lower_type_literal_from_name(ctx, full_path)
-          end
-        end
-      end
-
-      # Fallback: treat as constant or module access (for future expansion)
-      # For now, just return 0
-      if env_has?("DEBUG_PATH_FALLBACK") && (full_path.includes?("Kqueue") || full_path.includes?("EventLoop"))
-        STDERR.puts "[PATH_FALLBACK] full_path=#{full_path} raw_path=#{raw_path} exists=#{type_name_exists?(full_path)} class_info=#{@class_info.has_key?(full_path)} func=#{ctx.function.name} class=#{@current_class} method=#{@current_method}"
-      end
-      lit = Literal.new(ctx.next_id, TypeRef::INT32, 0_i64)
-      ctx.emit(lit)
-      lit.id
+      # A source path must resolve to a declared value or type. Inventing a
+      # type literal from an enclosing result hint, or emitting Int32 zero,
+      # accepts invalid programs and can turn a missing String into null.
+      raise LoweringError.new("undefined constant #{raw_path}", node)
     end
 
     private def lower_global(ctx : LoweringContext, node : Adamas::Compiler::Frontend::GlobalNode) : ValueId
@@ -139827,8 +139895,7 @@ module Adamas::HIR
                     name,
                     merged_type,
                     existing.offset,
-                    default_expr_id: existing.default_expr_id,
-                    default_arena: existing.default_arena
+                    default_source: existing.default_source
                   )
                   class_info = realign_class_info_ivars(class_name, class_info, ivars)
                   updated = class_info.ivars[idx]
@@ -139847,8 +139914,7 @@ module Adamas::HIR
                     name,
                     merged_type,
                     existing.offset,
-                    default_expr_id: existing.default_expr_id,
-                    default_arena: existing.default_arena
+                    default_source: existing.default_source
                   )
                   ivar_type = merged_type
                   debug_hook("ivar.union.widen", "class=#{class_name} ivar=#{name} method=#{@current_method || "?"} fn=#{ctx.function.name} from=#{get_type_name_from_ref(existing.type)} to=#{get_type_name_from_ref(merged_type)}")
@@ -141080,8 +141146,7 @@ module Adamas::HIR
                     name,
                     merged_type,
                     existing.offset,
-                    default_expr_id: existing.default_expr_id,
-                    default_arena: existing.default_arena
+                    default_source: existing.default_source
                   )
                   class_info = realign_class_info_ivars(class_name, class_info, ivars)
                   updated = class_info.ivars[idx]
@@ -141100,8 +141165,7 @@ module Adamas::HIR
                     name,
                     merged_type,
                     existing.offset,
-                    default_expr_id: existing.default_expr_id,
-                    default_arena: existing.default_arena
+                    default_source: existing.default_source
                   )
                   ivar_type = merged_type
                   debug_hook("ivar.union.widen", "class=#{class_name} ivar=#{name} method=#{@current_method || "?"} fn=#{ctx.function.name} from=#{get_type_name_from_ref(existing.type)} to=#{get_type_name_from_ref(merged_type)}")

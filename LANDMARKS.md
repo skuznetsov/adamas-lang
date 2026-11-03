@@ -22746,3 +22746,39 @@ The composed LavinMQ probe still rejects DEFAULT_LOG_LEVEL (35q584); its exact
 lexical owner is correct but the registry lacks that declaration. Trace
 registration/arena ownership before changing lookup rules. No LavinMQ or stdlib
 changes, weakened checks, bootstrap or runtime-parity claim are authorized.
+
+
+### 2026-11-03: Declaration scope and runtime receiver are separate owners
+
+An initializer's syntax is meaningful only with its exact declaration arena,
+lexical owner, generic substitutions and execution scope. IVarDefaultSource
+retains that receipt through layout copying and refinement. Type-body defaults
+must not capture allocator locals or its caller's inline frames. Lazy getter
+blocks use their receiving concrete instance while retaining declaration lookup.
+
+Relative constant lookup commits to the declaration namespace; receiver layout
+does not authorize fallback to a subclass/includer. Explicit root paths remain
+rooted. Missing paths are errors, never zero values or inferred type literals.
+Allocator initializer lowering is a callee boundary on all four direct routes;
+without resetting its namespace, a correct lexical lookup still inherits the
+caller's namespace (Time::Span prelude failure 35q600; nested constructor 35q616).
+
+Qualified production f5f4e494aff8b8ce845c4efcd40e9b0ea5b3c5bccc81bd04c8866ceda8f7ccc1
+passes fresh S1 35q639, 12 initializer controls 35q650, 23 lexical controls
+35q649, and native stock-prelude hello 35q651. Stock Crystal 1.22.1, lazy and
+eager agree on positive output and negative source diagnostics. The 55 focused
+HIR examples in 35q640 pass; the core suite retains its 77 baseline failures
+(35q648). Adversary verdict: ROBUST for the tested declaration-scope boundaries,
+including generic bodies, nested constructors, missing includer-only names and
+lazy getter instance access. Requalify after scope, layout copying, initializer
+materialization or constant/path resolution changes. This is not bootstrap or
+LavinMQ parity evidence. Original broad WIP remains outside this atomic slice.
+
+Continuation: clean qualified LavinMQ source stops at Log.for (35q637).
+The broader composed source has a separately observed arena substitution:
+the options.cr Config node arrives with its correct arena but class registration
+replaces it with float/fast_float/bigint.cr (35q633). A structural ExprId/span
+fit is not node ownership. Next discriminator is the ambient fit subpredicate
+and exact node membership (diagnostic-only 35q646); do not widen lexical lookup
+or weaken type checks to hide that failure. Metadata retention remains deferred
+and PROPOSED in docs/incremental_build_cache_sdd.md section 10.1.

@@ -23943,3 +23943,31 @@ integration, fresh bootstrap, or LavinMQ parity.
 - Initializer execution count, absolute/relative paths and type-path exclusion
   are guards. This does not repair provisional nullable constant publication,
   missing declaration registration, S2/bootstrap, or unchanged LavinMQ parity.
+
+
+### 2026-11-03: Declaration scope survives field initialization and call materialization
+
+- IVarDefaultSource keeps the exact initializer ExprId, declaration arena,
+  lexical owner, generic bindings and TypeBody/InstanceGetter execution scope.
+  Layout copies retain this receipt. Eager defaults use the declaring metaclass
+  without allocator locals/captures; lazy getter blocks retain runtime self.
+- Bare and qualified constants use declaration scope, with lexical ancestry
+  before global lookup. Missing names cannot fall through to an includer or
+  subclass. Absolute paths stay rooted; unresolved paths fail instead of
+  becoming Int32 zero or an invented result-hint type literal. All four direct
+  allocator initializer materializers establish the callee declaration scope.
+- DoD: regression_tests/ivar_default_source_owner_repro.sh <fresh-S1> and
+  regression_tests/lexical_constant_lookup_contract_repro.sh <fresh-S1>.
+  Qualified production hash f5f4e494aff8b8ce845c4efcd40e9b0ea5b3c5bccc81bd04c8866ceda8f7ccc1:
+  fresh S1 35q639; 12 initializer controls 35q650; 23 lexical controls 35q649;
+  stock Crystal 1.22.1 versus lazy/eager output or rejection parity; unchanged
+  stock-prelude hello compiles and runs in 35q651. All binaries use run_safe.sh.
+- The 55 focused/neighbor HIR examples in 35q640 pass. The separate core suite
+  remains red with the same 77 failing examples as HEAD (35q642/35q648). Its
+  generic-module UInt64::MAX fixture now declares MAX explicitly, matching its
+  no-prelude helper instead of depending on the removed zero fallback.
+- LavinMQ remains open: qualified source 35q637 stops at Log.for with an
+  AMQP::Client::Connection argument. Broader composed source 35q633 separately
+  substitutes a BigInt arena for the known options.cr Config node; investigate
+  exact node/arena provenance before changing constant lookup again. No S2,
+  bootstrap or unchanged LavinMQ runtime/test parity claim follows from this.

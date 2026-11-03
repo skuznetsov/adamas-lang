@@ -1,0 +1,1 @@
+::AbsoluteMissingOwner::VALUE

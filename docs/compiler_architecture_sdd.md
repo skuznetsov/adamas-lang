@@ -5458,3 +5458,43 @@ Roll back this source binding/annotation slice together with its fixtures and
 regression. Refresh after source MRO, declaration arenas, target publication,
 result annotation resolution or cache ownership changes. S2/bootstrap and
 unchanged LavinMQ compilation/runtime/test parity are still unqualified.
+
+
+#### Field initialization and constant lookup retain declaration scope
+
+IVarDefaultSource owns the initializer ExprId together with its retained arena,
+lexical owner, generic bindings and TypeBody/InstanceGetter execution scope.
+Every field layout copy/refinement preserves the same receipt. Eager type-body
+initializers lower under the declaring metaclass and cannot read the allocator's
+locals, caller inline frames or capture cells. Lazy getter blocks keep the
+concrete runtime instance and field layout, with names resolved in declaration
+scope. Restore the previous lowering context on all exits.
+
+The exact initializer Def/arena and included-source origin establish the callee
+namespace at all four direct allocator materialization boundaries. A receiver
+specialization remains a layout owner, not an alternative constant namespace.
+Bare and qualified lookup use the declaration namespace and its lexical ancestry
+before legal global fallback. Once a path head is resolved, a missing tail does
+not reopen lookup through the includer. Absolute paths resolve only from root.
+Missing constants/paths reject; neither Int32 zero nor a type-literal result hint
+is a semantic substitute for a declaration.
+
+DoD: run regression_tests/ivar_default_source_owner_repro.sh <fresh-S1> and
+regression_tests/lexical_constant_lookup_contract_repro.sh <fresh-S1>, plus the
+focused ivar/default/materialization/path HIR specs and stock-prelude hello.
+Production hash f5f4e494aff8b8ce845c4efcd40e9b0ea5b3c5bccc81bd04c8866ceda8f7ccc1
+passes fresh S1 35q639, all 12 initializer controls 35q650 and 23 lexical controls
+35q649 against stock Crystal 1.22.1 in lazy/eager modes, and native prelude hello
+35q651. The 55 focused/neighbor examples in 35q640 pass. Core ast_to_hir_spec
+still has its 77 baseline failures (35q642/35q648), with no new failing example
+after correcting its undeclared no-prelude UInt64::MAX fixture. Retain its
+generic typing assertions; do not restore permissive missing-constant behavior.
+
+Adversary verdict: ROBUST within these exercised boundaries. Guards include
+includer/subclass shadows and missing constants, root/global lookup, nested and
+generic constructors, generic method bodies, lazy getter receiver ivars and
+allocator-local isolation. Roll back this ownership slice with its tests and
+fixtures. Refresh after declaration context, field-copy, generic binding, path
+resolution or allocator materialization changes. S2/bootstrap and unchanged
+LavinMQ compilation/runtime/test parity remain open; source-arena recovery and
+the clean Log.for frontier require separate root-cause work.
