@@ -23928,3 +23928,18 @@ integration, fresh bootstrap, or LavinMQ parity.
 - Broader composed source reaches native hello with stock prelude but still
   crashes in CURRENT_DIR initialization (35q444/35q451); local numeric parity
   does not close that defect, bootstrap, or unchanged LavinMQ test parity.
+
+
+### 2026-11-03: Initialize qualified value-constant aliases
+
+- Registration scheduled IdentifierNode aliases but omitted PathNode aliases,
+  leaving qualified runtime constant aliases at their zero-initialized storage.
+  Classify the path in its declaration arena and lexical owner; schedule it only
+  when it names a constant, preserving type paths as compile-time values.
+- Qualified HEAD-relative source 35q566: fresh S1 35q581, seven HIR examples
+  35q583, native stock/lazy/eager and strict union rejection 35q582, and native
+  hello with stock Crystal 1.22.1 prelude 35q585 pass. Prior HEAD fails the same
+  permanent regression (35q588). Run deferred_path_constant_alias_repro.sh.
+- Initializer execution count, absolute/relative paths and type-path exclusion
+  are guards. This does not repair provisional nullable constant publication,
+  missing declaration registration, S2/bootstrap, or unchanged LavinMQ parity.

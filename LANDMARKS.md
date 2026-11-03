@@ -22723,3 +22723,26 @@ consumption remain under separate gates. Composed hello compiles but crashes
 while CURRENT_DIR inlines INITIAL_PWD.try (35q444; caller trace 35q451).
 Inspect actual inline receiver/block-parameter identity before changing Path or
 String; stdlib/LavinMQ edits and relaxed checks remain outside authority.
+
+
+### 2026-11-03: A qualified value path needs runtime initialization
+
+A PathNode can name either a type or a value constant. Runtime scheduling must
+resolve the path using the initializer's exact arena and lexical owner, then
+admit the registered value constant rather than every path indiscriminately.
+The existing declaration-identity deduplication still owns execution count.
+
+Evidence: source 35q566, fresh S1 35q581, seven HIR cases 35q583, permanent
+stock/lazy/eager native and union-rejection regression 35q582, stock-prelude
+hello 35q585. Prior HEAD fails that regression (35q588). Adversary: ROBUST for
+qualified/absolute/relative aliases, initialization once, type-path exclusion
+and retained nullable rejection. Refresh after path resolution, constant
+registration, initializer scheduling or storage-type publication changes.
+
+Continuation: persistent metadata remains PROPOSED/deferred in the Frontier
+SDD. Field-default declaration receipts are separately gated; a lazy getter
+missing its declaring-module constant still wrongly falls back to the includer.
+The composed LavinMQ probe still rejects DEFAULT_LOG_LEVEL (35q584); its exact
+lexical owner is correct but the registry lacks that declaration. Trace
+registration/arena ownership before changing lookup rules. No LavinMQ or stdlib
+changes, weakened checks, bootstrap or runtime-parity claim are authorized.

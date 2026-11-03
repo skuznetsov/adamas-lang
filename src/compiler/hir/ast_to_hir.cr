@@ -68414,6 +68414,36 @@ module Adamas::HIR
         # also parse as IdentifierNode. Lower them with ordinary name resolution;
         # limiting this to bare `new` silently leaves their globals uninitialized.
         needs_deferred = true if val_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
+        # A qualified value-constant alias (for example `VALUE = Source::VALUE`)
+        # is a PathNode, but a type path is also a PathNode. Resolve it with the
+        # initializer's exact source arena and lexical owner, and defer only when
+        # the path names a registered constant. This keeps `Owner`/`Owner::Type`
+        # as type-level paths while ensuring runtime aliases are initialized.
+        if path_node = val_node.as?(Adamas::Compiler::Frontend::PathNode)
+          old_path_arena = @arena
+          old_path_class = @current_class
+          old_path_namespace = @current_namespace_override
+          is_constant_path = begin
+            @arena = arena
+            @current_class = owner_name
+            @current_namespace_override = owner_name
+            raw_path = collect_path_string(path_node)
+            absolute = raw_path.starts_with?("::")
+            full_path = absolute ? absolute_path_body(raw_path) : resolve_path_string_in_context(raw_path)
+            full_path = resolve_path_type_alias_chain(full_path, true) if absolute
+            resolved = if absolute
+                         full_path unless full_path.empty? || !constant_name_exists?(full_path)
+                       else
+                         resolve_constant_name_in_context(full_path)
+                       end
+            !resolved.nil?
+          ensure
+            @current_namespace_override = old_path_namespace
+            @current_class = old_path_class
+            @arena = old_path_arena
+          end
+          needs_deferred = true if is_constant_path
+        end
         # Output macros may have no type until their expanded value is lowered.
         if val_node.is_a?(Adamas::Compiler::Frontend::MacroExpressionNode) && val_node.output
           needs_deferred = true
