@@ -8323,6 +8323,9 @@ module Adamas::HIR
     getter constant_literal_names : Hash(String, String)
     getter global_debug_infos : Hash(String, DebugGlobalInfo)
     @nested_type_names : Hash(String, Set(String))
+    # Macro record-time discovery needs the nominal kind of nested owners before
+    # the ordinary class/module registration pass publishes their bodies.
+    @record_only_source_type_kinds : Hash(String, TypeKind)
 
     # Track top-level `def main` so we can remap calls and avoid entrypoint collisions.
     @top_level_main_defined : Bool
@@ -8606,6 +8609,7 @@ module Adamas::HIR
       @allocator_layout_prelower_in_progress = Set(String).new
       @deferred_allocators = Set(String).new
       @type_ref_depth = 0
+      @enum_body_published_names = Set(String).new
       # Layout owner/ivar context: which class layout (and which ivar slot) is
       # currently consuming field sizes. Always maintained around the layout
       # loops (cheap scalar writes); feeds both the B1a0 diagnostic ledger and
@@ -8756,6 +8760,7 @@ module Adamas::HIR
       @constant_literal_names = {} of String => String
       @global_debug_infos = {} of String => DebugGlobalInfo
       @nested_type_names = {} of String => Set(String)
+      @record_only_source_type_kinds = {} of String => TypeKind
       @debug_callsite = nil
       @pending_def_annotations = [] of Tuple(Adamas::Compiler::Frontend::AnnotationNode, Adamas::Compiler::Frontend::ArenaLike)
       @deferred_classvar_inits = [] of DeferredClassvarInit
@@ -9073,6 +9078,7 @@ module Adamas::HIR
       @constant_literal_names = {} of String => String
       @global_debug_infos = {} of String => DebugGlobalInfo
       @nested_type_names = {} of String => Set(String)
+      @record_only_source_type_kinds = {} of String => TypeKind
       @debug_callsite = nil
       @pending_def_annotations = [] of Tuple(Adamas::Compiler::Frontend::AnnotationNode, Adamas::Compiler::Frontend::ArenaLike)
       @deferred_classvar_inits = [] of DeferredClassvarInit
@@ -12304,6 +12310,9 @@ module Adamas::HIR
 
     # Enum info: name -> {member_name -> value}
     @enum_info : Hash(String, Hash(String, Int64))?
+    # Enum names whose source body has completed its publication phase. The
+    # metadata map also contains entries discovered by record-only passes.
+    @enum_body_published_names : Set(String)
     # Enum base types: name -> underlying type
     @enum_base_types : Hash(String, TypeRef)?
     @flags_enum_names = [] of String
@@ -14034,6 +14043,23 @@ module Adamas::HIR
       full_enum_name : String,
       declaration_id : ExprId? = nil,
     )
+      register_enum_with_name_mode(node, full_enum_name, declaration_id, publish_body: true)
+    end
+
+    private def record_enum_metadata_with_name(
+      node : Adamas::Compiler::Frontend::EnumNode,
+      full_enum_name : String,
+      declaration_id : ExprId? = nil,
+    ) : Nil
+      register_enum_with_name_mode(node, full_enum_name, declaration_id, publish_body: false)
+    end
+
+    private def register_enum_with_name_mode(
+      node : Adamas::Compiler::Frontend::EnumNode,
+      full_enum_name : String,
+      declaration_id : ExprId?,
+      publish_body : Bool,
+    ) : Nil
       full_enum_name = strip_absolute_name_prefix(full_enum_name) if full_enum_name.starts_with?("::")
       full_enum_name = normalize_missing_generic_parens(full_enum_name)
       @enum_info ||= {} of String => Hash(String, Int64)
@@ -14041,7 +14067,13 @@ module Adamas::HIR
       old_class = @current_class
       old_override = @current_namespace_override
       begin
-        register_enum_in_best_arena(node, full_enum_name, debug_enum, generated_source_for_expr(declaration_id, @arena))
+        register_enum_in_best_arena(
+          node,
+          full_enum_name,
+          debug_enum,
+          generated_source_for_expr(declaration_id, @arena),
+          publish_body,
+        )
         register_hir_class_parent(full_enum_name, "Enum") unless full_enum_name.empty?
       ensure
         @current_class = old_class
@@ -14054,11 +14086,12 @@ module Adamas::HIR
       full_enum_name : String,
       debug_enum : Bool,
       generated_source : String? = nil,
+      publish_body : Bool = true,
     ) : Nil
       # Exact generated-node ownership outranks the legacy arena/span
       # heuristic: generated spans may exceed this arena's primary source.
       if generated_source || enum_body_ids_fit_current_arena?(node)
-        register_enum_with_name_in_current_arena(node, full_enum_name, debug_enum, generated_source)
+        register_enum_with_name_in_current_arena(node, full_enum_name, debug_enum, generated_source, publish_body)
         return
       end
 
@@ -14068,7 +14101,7 @@ module Adamas::HIR
            if debug_enum
              STDERR.puts "[ENUM_ARENA] enum=#{full_enum_name} reparsed=1 current=#{input_arena_key} chosen=#{arena_map_key(@arena)} current_path=#{input_path} chosen_path=#{source_path_for(@arena) || "?"}"
            end
-           register_enum_with_name_in_current_arena(enum_node, full_enum_name, debug_enum)
+           register_enum_with_name_in_current_arena(enum_node, full_enum_name, debug_enum, nil, publish_body)
          }
         return
       end
@@ -14088,7 +14121,7 @@ module Adamas::HIR
         STDERR.puts "[ENUM_ARENA] enum=#{full_enum_name} changed=#{arena_map_key(enum_arena) == input_arena_key ? 0 : 1} current=#{input_arena_key} chosen=#{arena_map_key(enum_arena)} current_path=#{input_path} chosen_path=#{source_path_for(enum_arena) || "?"} values=#{value_count} first=#{first_value}"
       end
       with_arena(enum_arena) do
-        register_enum_with_name_in_current_arena(node, full_enum_name, debug_enum)
+        register_enum_with_name_in_current_arena(node, full_enum_name, debug_enum, nil, publish_body)
       end
     end
 
@@ -14133,6 +14166,7 @@ module Adamas::HIR
       full_enum_name : String,
       debug_enum : Bool,
       generated_source : String? = nil,
+      publish_body : Bool = true,
     ) : Nil
       full_enum_name = strip_absolute_name_prefix(full_enum_name) if full_enum_name.starts_with?("::")
       full_enum_name = normalize_missing_generic_parens(full_enum_name)
@@ -14144,10 +14178,7 @@ module Adamas::HIR
         unless @enum_base_types.try(&.has_key?(full_enum_name))
           register_enum_base_type(full_enum_name, enum_base_type_for_node(node))
         end
-        register_enum_methods(node, full_enum_name)
-        # Register Enum as included module so enum instances can dispatch Enum methods
-        enum_list = @class_included_modules[full_enum_name] ||= [] of String
-        bump_resolved_type_name_cache_epoch if push_unique_module_name(enum_list, "Enum")
+        publish_enum_body_members(node, full_enum_name) if publish_body
         return
       end
 
@@ -14212,11 +14243,20 @@ module Adamas::HIR
       base_type = enum_base_type_for_node(node)
       register_enum_base_type(full_enum_name, base_type)
       debug_hook_enum_register(full_enum_name, @module.get_type_descriptor(base_type).try(&.name) || "?")
-      register_enum_methods(node, full_enum_name)
-      # Register Enum as included module so enum instances can dispatch Enum methods
-      enum_list = @class_included_modules[full_enum_name] ||= [] of String
+      publish_enum_body_members(node, full_enum_name) if publish_body
+    end
+
+    private def publish_enum_body_members(
+      node : Adamas::Compiler::Frontend::EnumNode,
+      enum_name : String,
+    ) : Nil
+      register_enum_methods(node, enum_name)
+      # Enum inclusion and inherited method attachment are body-publication
+      # effects. Defer both during record-only discovery.
+      enum_list = @class_included_modules[enum_name] ||= [] of String
       bump_resolved_type_name_cache_epoch if push_unique_module_name(enum_list, "Enum")
-      attach_enum_instance_methods(full_enum_name)
+      attach_enum_instance_methods(enum_name)
+      @enum_body_published_names << enum_name
     end
 
     # Lazy-discover an enum definition from sibling Crystal stdlib files.
@@ -14781,6 +14821,17 @@ module Adamas::HIR
       expr_id : ExprId,
       member : Adamas::Compiler::Frontend::ClassVarDeclNode,
     ) : Nil
+      cvar_name, cvar_type, initial_value, needs_runtime_init = expanded_class_var_metadata(class_name, member)
+      record_class_var_type(class_name, cvar_name, cvar_type, initial_value, source_location_for_node(@arena, member))
+      if needs_runtime_init
+        @deferred_classvar_inits << DeferredClassvarInit.new(expr_id, @arena, class_name)
+      end
+    end
+
+    private def expanded_class_var_metadata(
+      class_name : String,
+      member : Adamas::Compiler::Frontend::ClassVarDeclNode,
+    ) : Tuple(String, TypeRef, Int64?, Bool)
       raw_name = (safe_slice_to_string(member.name) || "")
       cvar_name = raw_name.lstrip('@')
       type_name = (safe_slice_to_string(member.type) || "")
@@ -14797,10 +14848,7 @@ module Adamas::HIR
         end
       end
 
-      record_class_var_type(class_name, cvar_name, cvar_type, initial_value, source_location_for_node(@arena, member))
-      if needs_runtime_init
-        @deferred_classvar_inits << DeferredClassvarInit.new(expr_id, @arena, class_name)
-      end
+      {cvar_name, cvar_type, initial_value, needs_runtime_init}
     end
 
     private def register_expanded_class_var_type_pair(
@@ -27781,6 +27829,9 @@ module Adamas::HIR
       return true if @class_info.has_key?(name)
       return true if @generic_templates.has_key?(name)
       return true if @top_level_class_kinds.has_key?(name)
+      if record_only_kind = @record_only_source_type_kinds[name]?
+        return true if record_only_kind == TypeKind::Class || record_only_kind == TypeKind::Struct
+      end
       false
     end
 
@@ -32811,11 +32862,7 @@ module Adamas::HIR
             register_type_method_from_def(member, "Enum")
           end
         end
-        if enum_info = @enum_info
-          enum_info.each_key do |enum_name|
-            attach_enum_instance_methods(enum_name)
-          end
-        end
+        attach_enum_instance_methods_to_registered_enums
       end
       # Add module to short_type_index so Printer can resolve to Float::Printer
       short_name = last_namespace_component(module_name)
@@ -33247,11 +33294,7 @@ module Adamas::HIR
             register_module_class_methods_for(module_name, nil, defined_class_method_full_names, visited_extends)
           end
           if module_name == "Enum"
-            if enum_info = @enum_info
-              enum_info.each_key do |enum_name|
-                attach_enum_instance_methods(enum_name)
-              end
-            end
+            attach_enum_instance_methods_to_registered_enums
           end
           propagate_module_macro_for_methods_to_existing_includers(module_name, body)
         ensure
@@ -34509,13 +34552,16 @@ module Adamas::HIR
     private def attach_enum_instance_methods_to_registered_enums : Nil
       enum_info = @enum_info
       return unless enum_info && !enum_info.empty?
+      published_enum_names = @enum_body_published_names
+      return if published_enum_names.empty?
       enum_defs = [] of Tuple(String, Adamas::Compiler::Frontend::DefNode)
       @function_defs.each do |full_name, def_node|
         next unless enum_attached_method_name(full_name, "Enum")
         enum_defs << {full_name, def_node}
       end
       return if enum_defs.empty?
-      enum_info.each_key do |enum_name|
+      published_enum_names.each do |enum_name|
+        next unless enum_info.has_key?(enum_name)
         enum_defs.each do |(full_name, def_node)|
           next unless enum_full_name = enum_attached_method_name(full_name, enum_name)
           next if @function_defs.has_key?(enum_full_name)
@@ -36830,34 +36876,426 @@ module Adamas::HIR
     end
 
     private def record_class_record_time_member_from_expansion(class_name : String, expr_id : ExprId)
-      expr_node = @arena[expr_id]
+      return if expr_id.null_ptr? || expr_id.invalid?
+
+      expr_node = unwrap_visibility_member(@arena[expr_id])
       case expr_node
       when Adamas::Compiler::Frontend::BlockNode
         expr_node.body.each do |child_id|
           record_class_record_time_member_from_expansion(class_name, child_id)
         end
+      when Adamas::Compiler::Frontend::BeginNode
+        expr_node.body.each do |child_id|
+          record_class_record_time_member_from_expansion(class_name, child_id)
+        end
+        if rescue_clauses = expr_node.rescue_clauses
+          rescue_clauses.each do |clause|
+            clause.body.each do |child_id|
+              record_class_record_time_member_from_expansion(class_name, child_id)
+            end
+          end
+        end
+        if else_body = expr_node.else_body
+          else_body.each do |child_id|
+            record_class_record_time_member_from_expansion(class_name, child_id)
+          end
+        end
+        if ensure_body = expr_node.ensure_body
+          ensure_body.each do |child_id|
+            record_class_record_time_member_from_expansion(class_name, child_id)
+          end
+        end
       when Adamas::Compiler::Frontend::MacroIfNode
-        process_macro_if_in_class(expr_node, class_name)
+        record_constants_from_class_macro_if(expr_node, class_name)
       when Adamas::Compiler::Frontend::MacroForNode
         record_constants_from_class_macro_for(expr_node, class_name)
       when Adamas::Compiler::Frontend::MacroLiteralNode
-        process_macro_literal_in_class(expr_node, class_name)
+        record_constants_from_class_macro_literal(expr_node, class_name)
+      when Adamas::Compiler::Frontend::MacroDefNode
+        # Nested macros may emit later record-time constants. Registering the
+        # macro definition makes the subsequent call expandable without
+        # publishing any method or accessor from its body.
+        register_macro(expr_node, class_name)
       when Adamas::Compiler::Frontend::ClassNode
-        nested_name = (safe_slice_to_string(expr_node.name) || "")
-        full_nested_name = "#{class_name}::#{nested_name}"
-        register_class_with_name(expr_node, full_nested_name)
+        record_nested_class_from_record_time_expansion(class_name, expr_node)
       when Adamas::Compiler::Frontend::EnumNode
         nested_name = (safe_slice_to_string(expr_node.name) || "")
         full_nested_name = qualified_source_declaration_name(class_name, nested_name)
-        register_enum_with_name(expr_node, full_nested_name, expr_id)
+        record_enum_metadata_with_name(expr_node, full_nested_name, expr_id)
       when Adamas::Compiler::Frontend::ModuleNode
-        nested_name = (safe_slice_to_string(expr_node.name) || "")
-        full_nested_name = "#{class_name}::#{nested_name}"
-        register_nested_module(expr_node, full_nested_name)
+        record_nested_module_from_record_time_expansion(class_name, expr_node)
       when Adamas::Compiler::Frontend::ConstantNode
         record_constant_definition(class_name, expr_node, @arena)
+      when Adamas::Compiler::Frontend::ClassVarDeclNode
+        cvar_name, cvar_type, initial_value, _needs_runtime_init = expanded_class_var_metadata(class_name, expr_node)
+        record_class_var_type(
+          class_name,
+          cvar_name,
+          cvar_type,
+          initial_value,
+          source_location_for_node(@arena, expr_node),
+          allow_record_only_source_owner: true,
+        )
       when Adamas::Compiler::Frontend::AssignNode
-        register_class_assign_from_expansion(expr_id, expr_node, class_name)
+        target = @arena[expr_node.target]
+        if target.is_a?(Adamas::Compiler::Frontend::ConstantNode)
+          record_constant_definition(class_name, safe_slice_to_string(target.name) || "", expr_node.value, @arena)
+        elsif target.is_a?(Adamas::Compiler::Frontend::ClassVarNode)
+          cvar_name = (safe_slice_to_string(target.name) || "").lstrip('@')
+          cvar_type = infer_type_from_expr(expr_node.value, class_name) || TypeRef::VOID
+          initial_value = if value = @arena[expr_node.value].as?(Adamas::Compiler::Frontend::NumberNode)
+                            (safe_slice_to_string(value.value) || "").to_i64?
+                          end
+          record_class_var_type(
+            class_name,
+            cvar_name,
+            cvar_type,
+            initial_value,
+            source_location_for_node(@arena, expr_node),
+            allow_record_only_source_owner: true,
+          )
+        end
+      when Adamas::Compiler::Frontend::AliasNode
+        alias_name = safe_slice_to_string(expr_node.name) || ""
+        old_class = @current_class
+        target_name = begin
+          @current_class = class_name
+          resolve_alias_target(safe_slice_to_string(expr_node.value) || "", class_name)
+        ensure
+          @current_class = old_class
+        end
+        register_source_type_alias(qualified_source_declaration_name(class_name, alias_name), target_name)
+      when Adamas::Compiler::Frontend::CallNode
+        record_class_macro_call_constants(class_name, expr_node)
+      when Adamas::Compiler::Frontend::IdentifierNode
+        record_class_macro_identifier_constants(class_name, expr_node)
+      end
+    end
+
+    private def record_nested_class_from_record_time_expansion(
+      owner_name : String,
+      node : Adamas::Compiler::Frontend::ClassNode,
+    ) : Nil
+      nested_name = class_name_from_node(node) || (safe_slice_to_string(node.name) || "")
+      full_name = if node.absolute
+                    nested_name.starts_with?("::") ? nested_name[2..] : nested_name
+                  else
+                    qualified_nested_type_name(owner_name, nested_name)
+                  end
+      kind = node.is_struct == true ? TypeKind::Struct : TypeKind::Class
+      record_only_source_type!(full_name, kind, node)
+      record_only_source_type_body(full_name, node.body)
+    end
+
+    private def record_nested_module_from_record_time_expansion(
+      owner_name : String,
+      node : Adamas::Compiler::Frontend::ModuleNode,
+    ) : Nil
+      nested_name = module_name_from_node(node) || (safe_slice_to_string(node.name) || "")
+      full_name = if node.absolute
+                    nested_name.starts_with?("::") ? nested_name[2..] : nested_name
+                  else
+                    qualified_nested_type_name(owner_name, nested_name)
+                  end
+
+      # Path wrappers establish a namespace path in the parser tree; they are
+      # not source module declarations and must not be entered in the module
+      # registry. Their members still need record-time discovery under that path.
+      unless node.namespace_wrapper
+        record_only_source_type!(source_module_declaration_name(full_name), TypeKind::Module, node)
+        full_name = source_module_declaration_name(full_name)
+      end
+      record_only_source_type_body(full_name, node.body)
+    end
+
+    private def record_only_source_type_body(
+      owner_name : String,
+      body : Array(ExprId)?,
+    ) : Nil
+      return unless body
+
+      old_class = @current_class
+      old_namespace_override = @current_namespace_override
+      @current_class = owner_name
+      @current_namespace_override = owner_name
+      begin
+        record_nested_type_names(owner_name, body)
+        body.each do |expr_id|
+          record_class_record_time_member_from_expansion(owner_name, expr_id)
+        end
+      ensure
+        @current_class = old_class
+        @current_namespace_override = old_namespace_override
+      end
+    end
+
+    private def record_only_source_type!(
+      name : String,
+      kind : TypeKind,
+      node : Adamas::Compiler::Frontend::Node,
+    ) : Nil
+      return if name.empty?
+
+      expected_existing_kind = if info = @class_info[name]?
+                                 info.is_struct ? TypeKind::Struct : TypeKind::Class
+                               elsif @top_level_class_kinds.has_key?(name)
+                                 @top_level_class_kinds[name] ? TypeKind::Struct : TypeKind::Class
+                               elsif @module_defs.has_key?(name)
+                                 TypeKind::Module
+                               elsif @enum_info.try(&.has_key?(name))
+                                 TypeKind::Struct
+                               else
+                                 nil
+                               end
+      if expected_existing_kind && expected_existing_kind != kind
+        raise LoweringError.new("record-only source type kind conflict for #{name}", node)
+      end
+
+      if existing_kind = @record_only_source_type_kinds[name]?
+        if existing_kind != kind
+          raise LoweringError.new("record-only source type kind conflict for #{name}", node)
+        end
+        return
+      end
+
+      @record_only_source_type_kinds[name] = kind
+      register_reopened_nested_type_name(name)
+      short_name = last_namespace_component(name)
+      record_short_type_candidate(short_name, name) if short_name != name
+      invalidate_type_cache_for_namespace(name)
+    end
+
+    # The class registration prepass needs constants and nested type names to
+    # resolve declarations, but it must not publish methods from a macro body.
+    # The ordinary source-order class-body pass below performs that publication
+    # once. Keep this walk record-only while still expanding nested macro
+    # conditionals/literals that can contain record-time declarations.
+    private def record_constants_from_class_macro_if(
+      node : Adamas::Compiler::Frontend::MacroIfNode,
+      class_name : String,
+    ) : Nil
+      with_source_declaration_origin(node, @arena) do
+        record_constants_from_class_macro_if_in_source_order(node, class_name)
+      end
+    end
+
+    private def record_constants_from_class_macro_if_in_source_order(
+      node : Adamas::Compiler::Frontend::MacroIfNode,
+      class_name : String,
+    ) : Nil
+      if begin_style_body_macro?(node)
+        record_constants_from_begin_macro_if_in_class(node, class_name)
+        return
+      end
+
+      branch_needs_threading = macro_branch_needs_local_threading?(node.then_body) ||
+                               ((else_body = node.else_body) ? macro_branch_needs_local_threading?(else_body) : false)
+      unless branch_needs_threading
+        if raw_text = macro_if_raw_text(node)
+          unless contains_nested_macro_end?(raw_text)
+            if expanded = expand_flag_macro_text(raw_text)
+              if parsed = parse_macro_literal_class_body(expanded)
+                parsed_arena, body_ids = parsed
+                with_arena(parsed_arena) do
+                  body_ids.each do |expr_id|
+                    record_class_record_time_member_from_expansion(class_name, expr_id)
+                  end
+                end
+                return
+              end
+            end
+          end
+        end
+      end
+
+      result = try_evaluate_macro_condition(node.condition)
+      if result == true
+        if branch_needs_threading && record_threaded_macro_branch_constants_in_class(node.then_body, class_name)
+          return
+        end
+        record_class_record_time_member_from_expansion(class_name, node.then_body)
+      elsif result == false
+        if else_body = node.else_body
+          else_node = @arena[else_body]
+          if else_node.is_a?(Adamas::Compiler::Frontend::MacroIfNode)
+            record_constants_from_class_macro_if(else_node, class_name)
+          elsif branch_needs_threading && record_threaded_macro_branch_constants_in_class(else_body, class_name)
+            return
+          else
+            record_class_record_time_member_from_expansion(class_name, else_body)
+          end
+        end
+      else
+        if macro_branch_needs_local_threading?(node.then_body) &&
+           record_threaded_macro_branch_constants_in_class(node.then_body, class_name)
+          # The expanded branch has already contributed its record-time members.
+        else
+          record_class_record_time_member_from_expansion(class_name, node.then_body)
+        end
+        if else_body = node.else_body
+          if macro_branch_needs_local_threading?(else_body) &&
+             record_threaded_macro_branch_constants_in_class(else_body, class_name)
+            # The expanded branch has already contributed its record-time members.
+          else
+            record_class_record_time_member_from_expansion(class_name, else_body)
+          end
+        end
+      end
+    end
+
+    private def record_constants_from_begin_macro_if_in_class(
+      node : Adamas::Compiler::Frontend::MacroIfNode,
+      class_name : String,
+    ) : Nil
+      body_node = @arena[node.then_body]
+      return unless body_node.is_a?(Adamas::Compiler::Frontend::MacroLiteralNode)
+
+      expander = macro_expander_for_current_context
+      owner_type = macro_owner_type_for(class_name)
+      output = expander.expand_top_level_text(node.then_body, owner_type: owner_type, scope: owner_type.try(&.scope))
+      return if output.strip.empty?
+
+      expanded_source = wrap_class_body_macro_output(output)
+      expanded_id = expander.reparse_output(expanded_source, node.then_body)
+      return if expanded_id.invalid?
+
+      remember_macro_generated_parameter_sources(expanded_id, @arena, expanded_source)
+      expanded_node = @arena[expanded_id]
+      return unless expanded_node.is_a?(Adamas::Compiler::Frontend::ClassNode)
+
+      (expanded_node.body || [] of ExprId).each do |expr_id|
+        record_class_record_time_member_from_expansion(class_name, expr_id)
+      end
+    end
+
+    private def record_threaded_macro_branch_constants_in_class(
+      body_id : ExprId,
+      class_name : String,
+    ) : Bool
+      return false unless @arena[body_id].is_a?(Adamas::Compiler::Frontend::MacroLiteralNode)
+
+      expander = macro_expander_for_current_context
+      owner_type = macro_owner_type_for(class_name)
+      output = expander.expand_top_level_text(body_id, owner_type: owner_type, scope: owner_type.try(&.scope))
+      return true if output.strip.empty?
+
+      expanded_source = wrap_class_body_macro_output(output)
+      expanded_id = expander.reparse_output(expanded_source, body_id)
+      return true if expanded_id.invalid?
+
+      remember_macro_generated_parameter_sources(expanded_id, @arena, expanded_source)
+      expanded_node = @arena[expanded_id]
+      return true unless expanded_node.is_a?(Adamas::Compiler::Frontend::ClassNode)
+
+      (expanded_node.body || [] of ExprId).each do |expr_id|
+        record_class_record_time_member_from_expansion(class_name, expr_id)
+      end
+      true
+    end
+
+    private def record_constants_from_class_macro_literal(
+      node : Adamas::Compiler::Frontend::MacroLiteralNode,
+      class_name : String,
+    ) : Nil
+      with_source_declaration_origin(node, @arena) do
+        record_constants_from_class_macro_literal_in_source_order(node, class_name)
+      end
+    end
+
+    private def record_constants_from_class_macro_literal_in_source_order(
+      node : Adamas::Compiler::Frontend::MacroLiteralNode,
+      class_name : String,
+    ) : Nil
+      if raw_text = macro_literal_raw_text(node)
+        expression_expanded = expand_macro_literal_expressions_for_registration(node) || raw_text
+        expanded = expand_flag_macro_text(expression_expanded) || expression_expanded
+        if parsed = parse_macro_literal_class_body(expanded)
+          parsed_arena, body_ids = parsed
+          with_arena(parsed_arena) do
+            body_ids.each { |expr_id| record_class_record_time_member_from_expansion(class_name, expr_id) }
+          end
+          return
+        end
+        if parsed_program = parse_macro_literal_program_with_sanitized_fallback(expanded, "record_class_literal:#{class_name}")
+          program_arena, roots = parsed_program
+          with_arena(program_arena) do
+            roots.each { |expr_id| record_class_record_time_member_from_expansion(class_name, expr_id) }
+          end
+          return
+        end
+      end
+
+      texts = macro_literal_active_texts(node)
+      combined = texts.join("\n")
+      expanded_combined = expand_flag_macro_text(combined) || combined
+      if parsed = parse_macro_literal_class_body_with_sanitized_fallback(
+           expanded_combined,
+           "record_class_literal_combined:#{class_name}",
+         )
+        parsed_arena, body_ids = parsed
+        with_arena(parsed_arena) do
+          body_ids.each { |expr_id| record_class_record_time_member_from_expansion(class_name, expr_id) }
+        end
+        return
+      end
+
+      texts.each do |text|
+        next if text.strip.empty?
+        parsed = parse_macro_literal_class_body_with_sanitized_fallback(text, "record_class_literal_text:#{class_name}")
+        next unless parsed
+        parsed_arena, body_ids = parsed
+        with_arena(parsed_arena) do
+          body_ids.each { |expr_id| record_class_record_time_member_from_expansion(class_name, expr_id) }
+        end
+      end
+    end
+
+    private def record_class_macro_call_constants(class_name : String, node : Adamas::Compiler::Frontend::CallNode) : Nil
+      callee = @arena[node.callee]
+      return unless callee.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
+
+      method_name = safe_slice_to_string(callee.name) || ""
+      macro_lookup = lookup_macro_entry_with_inheritance(method_name, class_name)
+      macro_lookup ||= lookup_macro_entry(method_name, "Object") if class_name != "Object"
+      return unless macro_lookup
+
+      macro_entry, macro_key = macro_lookup
+      macro_def, macro_arena = macro_entry
+      macro_args, macro_block = extract_macro_block_from_args(node.args, node.block)
+      expanded_id = with_source_declaration_origin(node, @arena) do
+        expand_macro_expr(macro_def, macro_arena, macro_args, node.named_args, macro_block, macro_key)
+      end
+      return if expanded_id.invalid?
+
+      old_arena = @arena
+      @arena = macro_arena
+      begin
+        record_class_record_time_member_from_expansion(class_name, expanded_id)
+      ensure
+        @arena = old_arena
+      end
+    end
+
+    private def record_class_macro_identifier_constants(
+      class_name : String,
+      node : Adamas::Compiler::Frontend::IdentifierNode,
+    ) : Nil
+      method_name = safe_slice_to_string(node.name) || ""
+      macro_lookup = lookup_macro_entry_with_inheritance(method_name, class_name)
+      macro_lookup ||= lookup_macro_entry(method_name, "Object") if class_name != "Object"
+      return unless macro_lookup
+
+      macro_entry, macro_key = macro_lookup
+      macro_def, macro_arena = macro_entry
+      expanded_id = expand_macro_expr(macro_def, macro_arena, [] of ExprId, nil, nil, macro_key)
+      return if expanded_id.invalid?
+
+      old_arena = @arena
+      @arena = macro_arena
+      begin
+        record_class_record_time_member_from_expansion(class_name, expanded_id)
+      ensure
+        @arena = old_arena
       end
     end
 
@@ -38015,7 +38453,7 @@ module Adamas::HIR
         when Adamas::Compiler::Frontend::MacroIfNode
           STDERR.puts "[RECORD_CONSTANTS] owner=#{owner_name} phase=macro_if idx=#{record_idx}" if trace_record_constants
           if class_like_namespace?(owner_name)
-            process_macro_if_in_class(member, owner_name)
+            record_constants_from_class_macro_if(member, owner_name)
           else
             process_macro_if_in_module(member, owner_name)
           end
@@ -38029,7 +38467,7 @@ module Adamas::HIR
         when Adamas::Compiler::Frontend::MacroLiteralNode
           STDERR.puts "[RECORD_CONSTANTS] owner=#{owner_name} phase=macro_literal idx=#{record_idx}" if trace_record_constants
           if class_like_namespace?(owner_name)
-            process_macro_literal_in_class(member, owner_name)
+            record_constants_from_class_macro_literal(member, owner_name)
           else
             process_macro_literal_in_module(member, owner_name)
           end
@@ -79451,6 +79889,7 @@ module Adamas::HIR
       cvar_type : TypeRef,
       initial_value : Int64? = nil,
       location : SourceLocation? = nil,
+      allow_record_only_source_owner : Bool = false,
     ) : Nil
       return if owner_name.empty?
       return if cvar_type == TypeRef::VOID
@@ -79470,7 +79909,8 @@ module Adamas::HIR
         return
       end
 
-      return unless @module_defs.has_key?(owner_name)
+      return unless @module_defs.has_key?(owner_name) ||
+                    (allow_record_only_source_owner && @record_only_source_type_kinds.has_key?(owner_name))
       vars = @module_class_vars[owner_name]? || begin
         new_vars = [] of ClassVarInfo
         @module_class_vars[owner_name] = new_vars
@@ -149152,7 +149592,8 @@ module Adamas::HIR
             crystal_prefixed = "Crystal::#{module_name}"
             module_name = crystal_prefixed if @module_defs.has_key?(crystal_prefixed)
           end
-          if @module_defs.has_key?(module_name) && !class_like_namespace?(module_name)
+          record_only_module = @record_only_source_type_kinds[module_name]? == TypeKind::Module
+          if (@module_defs.has_key?(module_name) && !class_like_namespace?(module_name)) || record_only_module
             if cached && (desc = @module.get_type_descriptor(cached))
               if desc.kind != TypeKind::Module
                 result = @module.intern_type(TypeDescriptor.new(TypeKind::Module, module_name))
@@ -149167,6 +149608,19 @@ module Adamas::HIR
           end
         end
         if cached
+          if record_only_kind = @record_only_source_type_kinds[lookup_name]?
+            if desc = @module.get_type_descriptor(cached)
+              if desc.kind != record_only_kind
+                result = @module.intern_type(TypeDescriptor.new(record_only_kind, lookup_name))
+                store_type_cache(cache_key, result)
+                return result
+              end
+            else
+              result = @module.intern_type(TypeDescriptor.new(record_only_kind, lookup_name))
+              store_type_cache(cache_key, result)
+              return result
+            end
+          end
           if info = split_generic_base_and_args(lookup_name)
             if template = @generic_templates[info.base]?
               if desc = @module.get_type_descriptor(cached)
@@ -149663,6 +150117,11 @@ module Adamas::HIR
                    is_struct = @top_level_class_kinds[lookup_name]
                    type_kind = is_struct ? TypeKind::Struct : TypeKind::Class
                    result = @module.intern_type(TypeDescriptor.new(type_kind, lookup_name))
+                   store_type_cache(cache_key, result)
+                   return result
+                 end
+                 if record_only_kind = @record_only_source_type_kinds[lookup_name]?
+                   result = @module.intern_type(TypeDescriptor.new(record_only_kind, lookup_name))
                    store_type_cache(cache_key, result)
                    return result
                  end

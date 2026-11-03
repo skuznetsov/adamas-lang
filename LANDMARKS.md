@@ -22569,3 +22569,21 @@ Evidence: macro-heredoc-source-green34aw, macro-heredoc-parser-comparison34ba,
 macro-heredoc-regression34bk under the oct29 evidence root. Source adversary:
 ROBUST within that scope; refresh after cursor, raw-source or trim changes.
 Active macro-raise rejection and stock-prelude/bootstrap/LavinMQ remain open.
+
+
+### 2026-11-02: Constant discovery does not publish macro method bodies
+
+The class constant prepass preserves exact source/arena ownership while recording
+declarations without publishing methods or deferred initializers. Nested classes,
+modules and enums follow this boundary. Enum metadata is not body-publication
+evidence: all global inherited-method sweeps require the successful body-
+publication set. Ordinary registration owns publication.
+
+Adversary: ROBUST within the executed phase boundary, enum batch bypass and
+source-order controls. Three successive pure-phase counterexamples fail before
+their corrections; the final source passes 43 HIR examples, a fresh S1, stock/
+lazy/eager native controls and stock-prelude hello. Evidence under the oct29 root:
+34qt/34sc/34ss RED, 34su/34sv/34sw/34sx green. This does not close strict pending
+validation, Class/typeof consumption, bootstrap or LavinMQ. Refresh after macro
+source ownership, declaration order or enum registration changes. Declaration-
+dependent branch reflection still needs a separate probe.

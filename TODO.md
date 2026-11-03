@@ -23687,3 +23687,33 @@ integration, fresh bootstrap, or LavinMQ parity.
   output and source-matched rejection to match original Crystal. Bootstrap and
   unchanged LavinMQ parity remain separate open gates. Refresh after source
   owner, arena, inline-block or Proc lifecycle changes.
+
+
+### 2026-11-02: Record-only macro discovery and ordered body publication
+
+- Separate declaration metadata discovery from runtime method publication. The
+  constant prepass expands macro conditionals, literals and calls under their
+  exact source arena, but records nested class/module headers, constants and
+  classvar declarations without registering methods or deferred initializer work.
+  Normal source-order registration remains the body publication owner.
+- Enum discovery shares the exact-arena metadata path with ordinary registration
+  and preserves base/member constants. Defer enum methods, Enum inclusion and
+  inherited attachment until body publication. All enum-wide attachment sweeps
+  use the same successful-publication eligibility set.
+- Root cause: the constant prepass used full macro registration, making a second
+  physical Def/arena during ordered registration. Earlier traces reproduced a
+  mismatched Fiber getter identity; strict pending validation correctly rejected
+  it. Do not merge names or weaken the witness check. Enum body and global
+  attachment paths exposed the same phase violation in separate RED tests.
+- Verification: 43 focused HIR examples, a fresh unchanged-source S1, stock-first
+  lazy/eager declaration-order/native controls and stock-prelude hello all pass.
+  Evidence: record-only-publication-final34su/34sv,
+  record-only-publication-native34sw and prelude-record-only-publication-final34sx
+  under /opt/mldata_ssd/adamas_codex_oct29_rootcause.
+- DoD: bash regression_tests/macro_record_only_declaration_order_repro.sh
+  <fresh-S1>; expect all three modes PASS, including future-superclass rejection.
+  Phase assertions: spec/hir/record_only_macro_nested_side_effects_spec.cr.
+- Open: qualify declaration-dependent macro branch observations, strict pending
+  closure, S2/bootstrap and unchanged LavinMQ separately. Class argument and
+  typeof result contracts remain in progress. Refresh these facts after macro
+  expansion, arena, source-order or enum publication changes.
