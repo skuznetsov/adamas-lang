@@ -23793,3 +23793,24 @@ integration, fresh bootstrap, or LavinMQ parity.
   Class/typeof integration, S2/bootstrap and unchanged LavinMQ parity remain
   unqualified. Refresh after receiver ownership, source selection, Proc ABI or
   publication timing changes.
+
+
+### 2026-11-03: Copy preserves source value facts across carrier changes
+
+- Copy aliases retain their producer's semantic type and Class/instance kind;
+  the destination carrier does not establish a conversion. Explicit source
+  facts still own enum extraction, and Cast owns its target result facts.
+- Root cause: a retagged Copy replaced its source facts with the destination
+  TypeRef and a single literal bit, erasing known alternatives and provenance.
+- Verification: the original source fails the new retagged-Copy HIR control
+  (35j5); the isolated fix passes 44 HIR examples (35j6), a fresh S1 build
+  (35jf), and installed Crystal 1.22.1 stock-prelude hello (35l5). Direct case
+  argument probes match stock in lazy/eager modes (35l7/35l9).
+- DoD: crystal spec spec/hir/source_block_result_value_facts_spec.cr
+  spec/hir/source_block_result_pattern_spec.cr
+  spec/hir/source_block_argument_binding_spec.cr, through scripts/run_safe.sh;
+  expect 44 passing examples. Requalify after Copy/Cast or source-fact changes.
+- Open: case producers must publish filtered result facts. A case/Proc overload
+  fixture prints stock A versus B on both the original source and this fix
+  (35js/35jt/35jw). Mixed runtime Class/instance predicates, bootstrap and
+  unchanged LavinMQ parity remain separate frontiers.

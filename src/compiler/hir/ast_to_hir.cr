@@ -144534,7 +144534,7 @@ module Adamas::HIR
     # A carrier union has one type-literal bit, so it cannot represent mixed
     # instance/class results. Read their source facts from the SSA producers
     # instead of guessing a single kind after a control-flow merge. Copies
-    # preserve the fact only when their carrier is unchanged; casts own a new
+    # preserve source provenance across carrier changes; casts own a new
     # result. A visited set computes the finite leaf set even for loop PHIs.
     private def source_block_result_value_facts(
       ctx : LoweringContext,
@@ -144560,11 +144560,10 @@ module Adamas::HIR
         when UnionWrap
           pending << producer.value
         when Copy
-          if enum_tracked_type(ctx, producer.source) == actual
-            pending << producer.source
-          else
-            facts << {actual, ctx.type_literal?(current)}
-          end
+          # Copy aliases the source value; its carrier does not convert the
+          # semantic type or value kind. Explicit source facts above still
+          # own conversions such as enum extraction.
+          pending << producer.source
         else
           facts << {actual, ctx.type_literal?(current)}
         end

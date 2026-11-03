@@ -5276,3 +5276,22 @@ argument-kind carrier is insufficient for mixed Class/instance tuple facts.
 Rollback removes the bounded Proc owner/admission/publication change and its
 regressions together. Requalify after source selection, descriptor, ABI or
 materialization order changes.
+
+
+#### Copy source facts and semantic narrowing ownership
+
+Copy transports the semantic type and value kind of its source even when its
+carrier changes. Only a semantic conversion or an explicit producer-owned fact
+set can establish different alternatives. Cast retains its target result, and
+an enum extraction with explicit facts remains an admitted conversion. An alias
+consumer must not derive narrowed facts from its destination TypeRef: a case
+narrowing producer owns that filtered set.
+
+The bounded Copy fix is qualified by a red/green retagged-alias control, 44 HIR
+examples (35j5/35j6), a fresh S1 and installed-stock-prelude hello (35jf/35l5),
+and native direct/union case argument comparisons in lazy/eager mode
+(35l7/35l9). The case/Proc overload mismatch remains present on both the original
+source and this fix (35js/35jt/35jw); these checks do not establish its repair,
+bootstrap closure or LavinMQ parity. Rollback removes the Copy traversal change
+and its two regressions together. Refresh after source-fact publication,
+semantic narrowing or value-transport changes.

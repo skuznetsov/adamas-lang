@@ -85,6 +85,49 @@ describe "source block result value facts" do
     )
   end
 
+  it "preserves grounded instance and class facts across a retagged Copy" do
+    converter, ctx, function = source_block_result_value_facts_fixture
+    owner = converter.module.intern_type(
+      Adamas::HIR::TypeDescriptor.new(Adamas::HIR::TypeKind::Class, "SourceBlockFacts::RetaggedOwner")
+    )
+    instance = function.add_param("instance", owner)
+    ctx.register_type(instance.id, owner)
+    type_value = function.add_param("type_value", owner)
+    ctx.register_type(type_value.id, owner)
+    ctx.mark_type_literal(type_value.id)
+
+    instance_copy = Adamas::HIR::Copy.new(function.next_value_id, Adamas::HIR::TypeRef::POINTER, instance.id)
+    ctx.emit(instance_copy)
+    type_copy = Adamas::HIR::Copy.new(function.next_value_id, Adamas::HIR::TypeRef::POINTER, type_value.id)
+    ctx.emit(type_copy)
+    converter.__test_source_block_result_value_facts(ctx, instance_copy.id).should eq([{owner, false}])
+    converter.__test_source_block_result_value_facts(ctx, type_copy.id).should eq([{owner, true}])
+
+    phi = Adamas::HIR::Phi.new(function.next_value_id, owner)
+    phi.add_incoming(function.entry_block, instance.id)
+    phi.add_incoming(function.entry_block, type_value.id)
+    ctx.emit(phi)
+    mixed_copy = Adamas::HIR::Copy.new(function.next_value_id, Adamas::HIR::TypeRef::POINTER, phi.id)
+    ctx.emit(mixed_copy)
+    converter.__test_source_block_result_value_facts(ctx, mixed_copy.id).should eq([{owner, true}, {owner, false}])
+  end
+
+  it "keeps explicit source facts as the owner of an enum extraction Copy" do
+    converter, ctx, function = source_block_result_value_facts_fixture
+    enum_type = converter.module.intern_type(
+      Adamas::HIR::TypeDescriptor.new(Adamas::HIR::TypeKind::Class, "SourceBlockFacts::EnumValue")
+    )
+    source = function.add_param("source", enum_type)
+    ctx.register_type(source.id, enum_type)
+    extracted = Adamas::HIR::Copy.new(function.next_value_id, Adamas::HIR::TypeRef::INT32, source.id)
+    ctx.emit(extracted)
+    ctx.register_source_value_facts(extracted.id, [{Adamas::HIR::TypeRef::INT32, false}])
+
+    converter.__test_source_block_result_value_facts(ctx, extracted.id).should eq([
+      {Adamas::HIR::TypeRef::INT32, false},
+    ])
+  end
+
   it "treats a numeric Cast result as its target type" do
     converter, ctx, function = source_block_result_value_facts_fixture
     source = function.add_param("source", Adamas::HIR::TypeRef::UINT64)
