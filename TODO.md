@@ -23606,3 +23606,18 @@ integration, fresh bootstrap, or LavinMQ parity.
 - Scope is generated identity only. Captured callback storage, nested scope
   unwinding, prelude provisional dependencies, S2 and LavinMQ parity remain
   separate obligations; no bootstrap closure is claimed.
+
+### 2026-11-02: owned if scopes unwind on lowering failures
+
+- Root cause: an error inside a static or dynamic if branch left its Block
+  scope active. The enclosing inline try then could not close its own scope.
+- Each if branch now owns its exact scope, unwinds it on an error, preserves
+  the original source diagnostic, and restores inline caller locals. Normal
+  branch-local merging and receiver narrowing keep their existing behavior.
+- Qualification: independent HEAD reproduces all 14 new branch/error cases;
+  the candidate passes all 21 checks in inline_try_scope_cleanup_repro.sh.
+  The same candidate passes 33 HIR checks including flow-union precision and
+  primitive else narrowing. Tested compiler source SHA: 3f469aca824516d3.
+- Scope: if lowering and the shared static-branch cleanup. Other scope-owning
+  constructs, fallback ownership, prelude closure and LavinMQ parity remain
+  separate obligations. No stdlib changes or relaxed type checks.

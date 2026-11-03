@@ -153,3 +153,46 @@ describe "inline try exception cleanup" do
     probe.context.type_of(value_id).should eq(receiver_type)
   end
 end
+
+
+describe "conditional scopes inside inline try" do
+  {
+    "static true" => "if true; MissingInlineTryScopeConstant; else; 1; end",
+    "static false" => "if false; 1; else; MissingInlineTryScopeConstant; end",
+    "static nil" => "if nil; 1; else; MissingInlineTryScopeConstant; end",
+    "static is_a" => "if value.is_a?(Int32); MissingInlineTryScopeConstant; else; 1; end",
+    "dynamic then" => "if flag; MissingInlineTryScopeConstant; else; 1; end",
+    "dynamic elsif" => "if flag; 1; elsif flag; MissingInlineTryScopeConstant; else; 2; end",
+    "dynamic else" => "if flag; 1; else; MissingInlineTryScopeConstant; end",
+  }.each do |label, body|
+    {false, true}.each do |proc_body|
+      it "restores exact caller scope and receiver after #{label} in #{proc_body ? "Proc" : "block"}" do
+        source = proc_body ? "->(value : Int32) { #{body} }" : "receiver.try { |value| #{body} }"
+        probe = inline_try_scope_converter(source)
+        receiver_id, receiver_type = inline_try_scope_receiver(probe)
+        flag = probe.function.add_param("flag", Adamas::HIR::TypeRef::BOOL)
+        probe.context.register_local("flag", flag.id)
+        probe.context.register_type(flag.id, Adamas::HIR::TypeRef::BOOL)
+        expected_scope, expected_state = inline_try_scope_parent_state(probe)
+        error = nil.as(Adamas::HIR::LoweringError?)
+        begin
+          if proc_body
+            probe.converter.__test_inline_try_proc_core(
+              probe.context, receiver_id, receiver_type, inline_try_proc_node(probe))
+          else
+            probe.converter.__test_inline_try_block_core(
+              probe.context, receiver_id, receiver_type, inline_try_block_node(probe))
+          end
+        rescue caught : Adamas::HIR::LoweringError
+          error = caught
+        end
+        error.should_not be_nil
+        error.not_nil!.message.should eq("undefined constant MissingInlineTryScopeConstant")
+        error.not_nil!.node.should_not be_nil
+        probe.context.current_scope.should eq(expected_scope)
+        probe.context.__test_scope_state.should eq(expected_state)
+        probe.context.type_of(receiver_id).should eq(receiver_type)
+      end
+    end
+  end
+end

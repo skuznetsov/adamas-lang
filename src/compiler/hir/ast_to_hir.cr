@@ -97874,6 +97874,23 @@ module Adamas::HIR
       lower_if(ctx, continuation)
     end
 
+    # Conditional branch lowering can raise while a lexical scope is active.
+    # Unwind only the scope this branch owns; never pop a nested scope whose
+    # owner failed to clean up.
+    private def with_owned_scope_error_cleanup(
+      ctx : LoweringContext,
+      owned_scope : ScopeId,
+      inline_caller_locals_snapshot : Array(Hash(String, ValueId))? = nil,
+      &
+    )
+      yield
+    rescue error
+      ctx.pop_scope if ctx.current_scope == owned_scope
+      if snapshot = inline_caller_locals_snapshot
+        @inline_caller_locals_stack = snapshot.map(&.dup)
+      end
+      raise error
+    end
     private def lower_if(ctx : LoweringContext, node : Adamas::Compiler::Frontend::IfNode) : ValueId
       STDERR.puts "[NILABLE_BRANCH] lower_if start func=#{ctx.function.name}" if env_has?("ADAMAS_TRACE_NILABLE_BRANCH_REPRO")
       truthy_targets = truthy_narrowing_targets(node.condition)
@@ -97885,11 +97902,13 @@ module Adamas::HIR
         pre_branch_locals = ctx.save_locals
         pre_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
         if static_cond
-          ctx.push_scope(ScopeKind::Block)
-          apply_truthy_narrowing(ctx, truthy_targets)
-          apply_is_a_narrowing(ctx, is_a_targets)
-          return lower_static_if_branch(ctx, pre_branch_locals, pre_inline_caller_locals) do
-            lower_body(ctx, node.then_body)
+          branch_scope = ctx.push_scope(ScopeKind::Block)
+          return with_owned_scope_error_cleanup(ctx, branch_scope, pre_inline_caller_locals) do
+            apply_truthy_narrowing(ctx, truthy_targets)
+            apply_is_a_narrowing(ctx, is_a_targets)
+            lower_static_if_branch(ctx, pre_branch_locals, pre_inline_caller_locals, branch_scope) do
+              lower_body(ctx, node.then_body)
+            end
           end
         end
 
@@ -97899,22 +97918,24 @@ module Adamas::HIR
           end
         end
 
-        ctx.push_scope(ScopeKind::Block)
-        apply_truthy_narrowing(ctx, falsy_targets)
-        apply_is_a_else_narrowing(ctx, is_a_targets)
-        return lower_static_if_branch(ctx, pre_branch_locals, pre_inline_caller_locals) do
-          if else_body = node.else_body
-            if else_body.empty?
+        branch_scope = ctx.push_scope(ScopeKind::Block)
+        return with_owned_scope_error_cleanup(ctx, branch_scope, pre_inline_caller_locals) do
+          apply_truthy_narrowing(ctx, falsy_targets)
+          apply_is_a_else_narrowing(ctx, is_a_targets)
+          lower_static_if_branch(ctx, pre_branch_locals, pre_inline_caller_locals, branch_scope) do
+            if else_body = node.else_body
+              if else_body.empty?
+                nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+                ctx.emit(nil_lit)
+                nil_lit.id
+              else
+                lower_body(ctx, else_body)
+              end
+            else
               nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
               ctx.emit(nil_lit)
               nil_lit.id
-            else
-              lower_body(ctx, else_body)
             end
-          else
-            nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
-            ctx.emit(nil_lit)
-            nil_lit.id
           end
         end
       end
@@ -97971,16 +97992,18 @@ module Adamas::HIR
           pre_branch_locals = ctx.save_locals
           pre_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
           if static_val
-            ctx.push_scope(ScopeKind::Block)
-            apply_truthy_narrowing(ctx, truthy_targets)
-            apply_is_a_narrowing(ctx, is_a_targets)
-            return lower_static_if_branch(ctx, pre_branch_locals, pre_inline_caller_locals) do
-              lower_body_with_direct_capture_truthy_narrowing(
-                ctx,
-                node.then_body,
-                truthy_targets,
-                then_capture_sources,
-              )
+            branch_scope = ctx.push_scope(ScopeKind::Block)
+            return with_owned_scope_error_cleanup(ctx, branch_scope, pre_inline_caller_locals) do
+              apply_truthy_narrowing(ctx, truthy_targets)
+              apply_is_a_narrowing(ctx, is_a_targets)
+              lower_static_if_branch(ctx, pre_branch_locals, pre_inline_caller_locals, branch_scope) do
+                lower_body_with_direct_capture_truthy_narrowing(
+                  ctx,
+                  node.then_body,
+                  truthy_targets,
+                  then_capture_sources,
+                )
+              end
             end
           end
 
@@ -97990,21 +98013,23 @@ module Adamas::HIR
             end
           end
 
-          ctx.push_scope(ScopeKind::Block)
-          apply_truthy_narrowing(ctx, falsy_targets)
-          return lower_static_if_branch(ctx, pre_branch_locals, pre_inline_caller_locals) do
-            if else_body = node.else_body
-              if else_body.empty?
+          branch_scope = ctx.push_scope(ScopeKind::Block)
+          return with_owned_scope_error_cleanup(ctx, branch_scope, pre_inline_caller_locals) do
+            apply_truthy_narrowing(ctx, falsy_targets)
+            lower_static_if_branch(ctx, pre_branch_locals, pre_inline_caller_locals, branch_scope) do
+              if else_body = node.else_body
+                if else_body.empty?
+                  nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+                  ctx.emit(nil_lit)
+                  nil_lit.id
+                else
+                  lower_body(ctx, else_body)
+                end
+              else
                 nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
                 ctx.emit(nil_lit)
                 nil_lit.id
-              else
-                lower_body(ctx, else_body)
               end
-            else
-              nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
-              ctx.emit(nil_lit)
-              nil_lit.id
             end
           end
         end
@@ -98026,37 +98051,41 @@ module Adamas::HIR
           if then_reachable
             @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
             ctx.current_block = then_block
-            ctx.push_scope(ScopeKind::Block)
-            apply_truthy_narrowing(ctx, truthy_targets)
-            apply_is_a_narrowing(ctx, is_a_targets)
-            return lower_static_if_branch(ctx, pre_branch_locals, pre_inline_caller_locals) do
-              lower_body_with_direct_capture_truthy_narrowing(
-                ctx,
-                node.then_body,
-                truthy_targets,
-                then_capture_sources,
-              )
+            branch_scope = ctx.push_scope(ScopeKind::Block)
+            return with_owned_scope_error_cleanup(ctx, branch_scope, pre_inline_caller_locals) do
+              apply_truthy_narrowing(ctx, truthy_targets)
+              apply_is_a_narrowing(ctx, is_a_targets)
+              lower_static_if_branch(ctx, pre_branch_locals, pre_inline_caller_locals, branch_scope) do
+                lower_body_with_direct_capture_truthy_narrowing(
+                  ctx,
+                  node.then_body,
+                  truthy_targets,
+                  then_capture_sources,
+                )
+              end
             end
           end
 
           @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
           ctx.current_block = next_test_block
-          ctx.push_scope(ScopeKind::Block)
-          apply_truthy_narrowing(ctx, falsy_targets)
-          apply_is_a_else_narrowing(ctx, is_a_targets)
-          return lower_static_if_branch(ctx, pre_branch_locals, pre_inline_caller_locals) do
-            if else_body = node.else_body
-              if else_body.empty?
+          branch_scope = ctx.push_scope(ScopeKind::Block)
+          return with_owned_scope_error_cleanup(ctx, branch_scope, pre_inline_caller_locals) do
+            apply_truthy_narrowing(ctx, falsy_targets)
+            apply_is_a_else_narrowing(ctx, is_a_targets)
+            lower_static_if_branch(ctx, pre_branch_locals, pre_inline_caller_locals, branch_scope) do
+              if else_body = node.else_body
+                if else_body.empty?
+                  nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+                  ctx.emit(nil_lit)
+                  nil_lit.id
+                else
+                  lower_body(ctx, else_body)
+                end
+              else
                 nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
                 ctx.emit(nil_lit)
                 nil_lit.id
-              else
-                lower_body(ctx, else_body)
               end
-            else
-              nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
-              ctx.emit(nil_lit)
-              nil_lit.id
             end
           end
         end
@@ -98074,20 +98103,28 @@ module Adamas::HIR
       @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
       ctx.current_block = then_block
       ctx.rebind_closure_cell_write_proofs(branch_cell_proofs, then_block)
-      ctx.push_scope(ScopeKind::Block)
-      apply_truthy_narrowing(ctx, truthy_targets)
-      apply_is_a_narrowing(ctx, is_a_targets)
-      then_value = lower_body_with_direct_capture_truthy_narrowing(
-        ctx,
-        node.then_body,
-        truthy_targets,
-        then_capture_sources,
-      )
-      then_exit_block = ctx.current_block
-      branch_exit_cell_proofs = [ctx.closure_cell_write_proofs_on(then_exit_block)]
-      then_locals = ctx.save_locals.locals
-      then_inline_locals = @inline_caller_locals_stack.map(&.dup)
-      ctx.pop_scope
+      then_scope = ctx.push_scope(ScopeKind::Block)
+      then_exit_block, then_value, then_locals, then_inline_locals, then_cell_proofs =
+        with_owned_scope_error_cleanup(ctx, then_scope, pre_inline_caller_locals) do
+          apply_truthy_narrowing(ctx, truthy_targets)
+          apply_is_a_narrowing(ctx, is_a_targets)
+          branch_value = lower_body_with_direct_capture_truthy_narrowing(
+            ctx,
+            node.then_body,
+            truthy_targets,
+            then_capture_sources,
+          )
+          exit_block = ctx.current_block
+          cell_proofs = ctx.closure_cell_write_proofs_on(exit_block)
+          locals = ctx.save_locals.locals
+          inline_locals = @inline_caller_locals_stack.map(&.dup)
+          unless ctx.current_scope == then_scope
+            raise LoweringError.new("if then branch lost its owned Block scope", node)
+          end
+          ctx.pop_scope
+          {exit_block, branch_value, locals, inline_locals, cell_proofs}
+        end
+      branch_exit_cell_proofs = [then_cell_proofs]
 
       then_block_data = ctx.get_block(ctx.current_block)
       then_has_noreturn = block_has_raise_or_return_instruction?(then_block_data)
@@ -98181,21 +98218,29 @@ module Adamas::HIR
           # Process elsif body
           ctx.current_block = elsif_body_block
           ctx.rebind_closure_cell_write_proofs(test_cell_proofs, elsif_body_block)
-          ctx.push_scope(ScopeKind::Block)
-          apply_truthy_narrowing(ctx, accumulated_falsy_targets)
-          apply_truthy_narrowing(ctx, elsif_truthy_targets)
-          apply_is_a_narrowing(ctx, elsif_is_a_targets)
-          elsif_value = lower_body_with_direct_capture_truthy_narrowing(
-            ctx,
-            elsif_branch.body,
-            elsif_truthy_targets,
-            elsif_capture_sources,
-          )
-          elsif_exit_block = ctx.current_block
-          branch_exit_cell_proofs << ctx.closure_cell_write_proofs_on(elsif_exit_block)
-          elsif_locals = ctx.save_locals.locals
-          elsif_inline_locals = @inline_caller_locals_stack.map(&.dup)
-          ctx.pop_scope
+          elsif_scope = ctx.push_scope(ScopeKind::Block)
+          elsif_exit_block, elsif_value, elsif_locals, elsif_inline_locals, elsif_cell_proofs =
+            with_owned_scope_error_cleanup(ctx, elsif_scope, test_inline_locals) do
+              apply_truthy_narrowing(ctx, accumulated_falsy_targets)
+              apply_truthy_narrowing(ctx, elsif_truthy_targets)
+              apply_is_a_narrowing(ctx, elsif_is_a_targets)
+              branch_value = lower_body_with_direct_capture_truthy_narrowing(
+                ctx,
+                elsif_branch.body,
+                elsif_truthy_targets,
+                elsif_capture_sources,
+              )
+              exit_block = ctx.current_block
+              cell_proofs = ctx.closure_cell_write_proofs_on(exit_block)
+              locals = ctx.save_locals.locals
+              inline_locals = @inline_caller_locals_stack.map(&.dup)
+              unless ctx.current_scope == elsif_scope
+                raise LoweringError.new("if elsif branch lost its owned Block scope", node)
+              end
+              ctx.pop_scope
+              {exit_block, branch_value, locals, inline_locals, cell_proofs}
+            end
+          branch_exit_cell_proofs << elsif_cell_proofs
 
           elsif_block_data = ctx.get_block(ctx.current_block)
           elsif_has_noreturn = block_has_raise_or_return_instruction?(elsif_block_data)
@@ -98220,28 +98265,36 @@ module Adamas::HIR
         @inline_caller_locals_stack = test_inline_locals.map(&.dup)
         ctx.current_block = next_test_block
         ctx.rebind_closure_cell_write_proofs(test_cell_proofs, next_test_block)
-        ctx.push_scope(ScopeKind::Block)
-        apply_truthy_narrowing(ctx, accumulated_falsy_targets)
-        apply_is_a_else_narrowing(ctx, is_a_targets) unless has_elsifs
-        else_value = if else_body = node.else_body
-                       if else_body.empty?
-                         nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
-                         ctx.emit(nil_lit)
-                         nil_lit.id
-                       else
-                         lower_body(ctx, else_body)
-                       end
-                     else
-                       # No else: produce nil
-                       nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
-                       ctx.emit(nil_lit)
-                       nil_lit.id
-                     end
-        else_exit_block = ctx.current_block
-        branch_exit_cell_proofs << ctx.closure_cell_write_proofs_on(else_exit_block)
-        else_locals = ctx.save_locals.locals
-        else_inline_locals = @inline_caller_locals_stack.map(&.dup)
-        ctx.pop_scope
+        else_scope = ctx.push_scope(ScopeKind::Block)
+        else_exit_block, else_value, else_locals, else_inline_locals, else_cell_proofs =
+          with_owned_scope_error_cleanup(ctx, else_scope, test_inline_locals) do
+            apply_truthy_narrowing(ctx, accumulated_falsy_targets)
+            apply_is_a_else_narrowing(ctx, is_a_targets) unless has_elsifs
+            branch_value = if else_body = node.else_body
+                             if else_body.empty?
+                               nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+                               ctx.emit(nil_lit)
+                               nil_lit.id
+                             else
+                               lower_body(ctx, else_body)
+                             end
+                           else
+                             # No else: produce nil
+                             nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+                             ctx.emit(nil_lit)
+                             nil_lit.id
+                           end
+            exit_block = ctx.current_block
+            cell_proofs = ctx.closure_cell_write_proofs_on(exit_block)
+            locals = ctx.save_locals.locals
+            inline_locals = @inline_caller_locals_stack.map(&.dup)
+            unless ctx.current_scope == else_scope
+              raise LoweringError.new("if else branch lost its owned Block scope", node)
+            end
+            ctx.pop_scope
+            {exit_block, branch_value, locals, inline_locals, cell_proofs}
+          end
+        branch_exit_cell_proofs << else_cell_proofs
 
         else_block_data = ctx.get_block(ctx.current_block)
         else_has_noreturn = block_has_raise_or_return_instruction?(else_block_data)
@@ -98453,12 +98506,22 @@ module Adamas::HIR
       ctx : LoweringContext,
       pre_branch_locals : LoweringContext::LocalsSnapshot,
       pre_inline_caller_locals : Array(Hash(String, ValueId)),
+      owned_scope : ScopeId? = nil,
       &
     ) : ValueId
-      value = yield
-      exit_block = ctx.current_block
-      branch_locals = ctx.save_locals.locals
-      branch_inline_locals = @inline_caller_locals_stack.map(&.dup)
+      owned_scope = owned_scope || ctx.current_scope
+      begin
+        value = yield
+        exit_block = ctx.current_block
+        branch_locals = ctx.save_locals.locals
+        branch_inline_locals = @inline_caller_locals_stack.map(&.dup)
+      rescue error
+        ctx.pop_scope if ctx.current_scope == owned_scope
+        raise error
+      end
+      unless ctx.current_scope == owned_scope
+        raise LoweringError.new("static conditional branch lost its owned Block scope")
+      end
       ctx.pop_scope
 
       merge_if_branch_locals(ctx, pre_branch_locals.locals, [{exit_block, branch_locals}])
