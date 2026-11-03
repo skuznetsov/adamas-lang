@@ -4707,6 +4707,17 @@ module Adamas
           self[id]
         end
 
+        # A file-backed node keeps file-local child ExprIds. Consumers that
+        # execute its body must use this exact file arena, not the global view.
+        # Generated nodes may reference global IDs and deliberately have no
+        # file-local source here.
+        def file_source_for(id : ExprId) : Tuple(AstArena, ExprId)?
+          return nil if id.null_ptr? || id.invalid?
+          return nil if id.index >= @offsets.last
+          arena_idx, local_idx = decompose_id(id.index)
+          {@file_arenas[arena_idx], ExprId.new(local_idx)}
+        end
+
         # For LSP: find which file contains this global ID
         def file_for_id(id : ExprId) : String?
           arena_idx, _ = decompose_id(id.index)

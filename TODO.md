@@ -23971,3 +23971,26 @@ integration, fresh bootstrap, or LavinMQ parity.
   substitutes a BigInt arena for the known options.cr Config node; investigate
   exact node/arena provenance before changing constant lookup again. No S2,
   bootstrap or unchanged LavinMQ runtime/test parity claim follows from this.
+
+
+### 2026-11-03: Class declarations retain exact in-memory source ownership
+
+- Normal CLI and AST traversal registration/lowering carry ClassDeclarationSource
+  (arena plus declaration ExprId). Validate the exact ClassNode identity, including
+  visibility wrappers, before publication; an explicit mismatch cannot reopen
+  structural arena recovery. Retained views strongly own the node as well as the
+  arena and are revalidated on replay.
+- File-backed VirtualArena declarations execute in their exact backing file
+  arena because their child IDs remain file-local. Keep the original virtual
+  view as the stale-source guard. Generated nodes retain the virtual ID domain.
+- DoD: class_declaration_arena_owner_repro.sh <fresh-S1>, the new frontend/HIR
+  receipt specs and macro/source-arena neighbors, plus stock-prelude hello.
+  Qualified AST d5f3dae5194d2678c174c49eb8728757f80edb4295f93119bd5a77db2a9ad59b:
+  S1 35q692, 59 focused/neighbor examples 35q696, five native positive cases and
+  one strict missing-constant rejection 35q697 match stock Crystal 1.22.1 in
+  lazy/eager modes. Stock-prelude hello passes 35q699. Core remains at the same
+  77 baseline failures; normalized failure details are unchanged (35q698).
+- Legacy no-handle/invalid-ID fallback and ModuleNode arena recovery remain
+  outside this claim. hir_frontier_probe_host still uses the compatibility API;
+  pass its available declaration ID before treating that probe as ownership
+  evidence. No S2/bootstrap or unchanged LavinMQ runtime/test parity is claimed.

@@ -5498,3 +5498,43 @@ fixtures. Refresh after declaration context, field-copy, generic binding, path
 resolution or allocator materialization changes. S2/bootstrap and unchanged
 LavinMQ compilation/runtime/test parity remain open; source-arena recovery and
 the clean Log.for frontier require separate root-cause work.
+
+
+#### Exact class declaration source precedes structural recovery
+
+Normal CLI collection and AST traversal carry ClassDeclarationSource, containing
+the declaration ExprId and retained ArenaLike. Registration and lowering must
+validate the exact ClassNode at that slot, optionally through a known visibility
+wrapper. Invalid supplied handles reject before class/constant publication;
+structural similarity is not an alternative authority for a known source.
+Receipt-less replay revalidates retained exact views, with a strongly retained
+ClassNode so a replaced arena cannot allow object-id reuse to authenticate a
+new declaration. Object IDs are only in-process map keys, not ownership proof.
+
+VirtualArena file nodes retain file-local child ExprIds even when the root is
+addressed by a global ExprId. file_source_for exposes the exact backing file and
+local declaration ID using the existing offset lookup. Execute file-backed
+bodies in that file arena while retaining the supplied virtual view for stale
+replacement checks. Generated virtual nodes keep their global ID domain.
+Multiple exact views of one node are legal; replay without an ambient match
+must not guess between distinct execution arenas. Restore the caller arena.
+
+DoD: regression_tests/class_declaration_arena_owner_repro.sh <fresh-S1>,
+spec/frontend/virtual_arena_file_source_spec.cr,
+spec/hir/class_declaration_source_receipt_spec.cr, macro/source-arena neighbors
+and stock-prelude hello, all through run_safe.sh. Qualified production AST
+d5f3dae5194d2678c174c49eb8728757f80edb4295f93119bd5a77db2a9ad59b passes S1
+35q692, 59 focused/neighbor examples 35q696, five positive native cases plus a
+strict missing-own-constant rejection against Crystal 1.22.1 in lazy/eager modes
+35q697, and native prelude hello 35q699. The core suite has the same 77 baseline
+failures with unchanged normalized failure details (35q698); it is not green.
+
+Adversary verdict: ROBUST within these handoffs, including same-shape foreign
+arenas, legal executable/annotation class bodies, nested classes, nonzero virtual
+offsets, ambient restoration and stale replacement rejection. Roll back this
+source-ownership slice with its fixtures. Refresh after AST/visibility, arena
+replacement/lifetime, registration or generated-source changes. Legacy public
+no-handle/invalid-ID recovery and ModuleNode recovery remain outside this claim.
+S2/bootstrap and unchanged LavinMQ runtime/test parity remain open. This receipt
+is not a persistent identity; metadata retention remains deferred in section
+10.1 of incremental_build_cache_sdd.md.

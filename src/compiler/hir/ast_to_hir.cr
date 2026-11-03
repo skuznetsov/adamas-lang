@@ -1035,6 +1035,19 @@ module Adamas::HIR
   # Class type info (is_struct=true for value types)
   record ClassInfo, name : String, type_ref : TypeRef, ivars : Array(IVarInfo), class_vars : Array(ClassVarInfo), size : Int32, is_struct : Bool = false, parent_name : String? = nil
 
+  # Exact source ownership for one class declaration view. A ClassNode can be
+  # visible through more than one arena (for example a file arena and a
+  # VirtualArena), so each supplied view is validated independently.
+  record ClassDeclarationSource,
+    expr_id : Adamas::Compiler::Frontend::ExprId,
+    arena : Adamas::Compiler::Frontend::ArenaLike
+
+  # Retaining the node prevents object_id reuse from aliasing an old receipt
+  # after a VirtualArena drops a replaced file arena.
+  private record RetainedClassDeclarationSource,
+    node : Adamas::Compiler::Frontend::ClassNode,
+    source : ClassDeclarationSource
+
   # Exact declaration context while a class body registers nested declarations.
   record ActiveClassDeclarationFrame,
     owner_name : String,
@@ -3069,6 +3082,10 @@ module Adamas::HIR
     # Class type information
     getter class_info : Hash(String, ClassInfo)
     @class_info_by_type_id : Hash(TypeId, ClassInfo)
+    # Verified source views retained only for ClassNodes registered through an
+    # explicit declaration handle. Multiple exact views are allowed; replay
+    # without a handle must resolve one unambiguously.
+    @class_declaration_sources_by_node : Hash(UInt64, Array(RetainedClassDeclarationSource))
     # Source-owned annotations attached to instance variables. Keep the
     # annotation's defining arena in each fact because macro reflection can be
     # requested while lowering a different file or macro body arena.
@@ -8497,6 +8514,7 @@ module Adamas::HIR
       @function_return_type_literal_defs = Set({String, UInt64, UInt64}).new
       @class_info = Hash(String, ClassInfo).new(initial_capacity: 2048)
       @class_info_by_type_id = {} of TypeId => ClassInfo
+      @class_declaration_sources_by_node = {} of UInt64 => Array(RetainedClassDeclarationSource)
       @ivar_annotation_facts = {} of {String, String} => Array(Adamas::Compiler::Semantic::AnnotationInfo)
       @ivar_source_declarations = {} of String => Set(String)
       @active_class_declaration_frames = [] of ActiveClassDeclarationFrame
@@ -14854,7 +14872,7 @@ module Adamas::HIR
         if env_get("DEBUG_MACRO_TYPE_REG")
           STDERR.puts "[DEBUG_MACRO_TYPE_REG] register class #{full_name}"
         end
-        register_class_with_name(member, full_name)
+        register_class_with_name(member, full_name, ClassDeclarationSource.new(expr_id, @arena))
       when Adamas::Compiler::Frontend::ModuleNode
         nested_name = (safe_slice_to_string(member.name) || "")
         full_name = "#{class_name}::#{nested_name}"
@@ -15540,7 +15558,7 @@ module Adamas::HIR
         end
       when Adamas::Compiler::Frontend::ClassNode
         nested_name = (safe_slice_to_string(member.name) || "")
-        register_class_with_name(member, "#{class_name}::#{nested_name}")
+        register_class_with_name(member, "#{class_name}::#{nested_name}", ClassDeclarationSource.new(expr_id, @arena))
       when Adamas::Compiler::Frontend::EnumNode
         nested_name = (safe_slice_to_string(member.name) || "")
         register_enum_with_name(member, qualified_source_declaration_name(class_name, nested_name), expr_id)
@@ -15882,7 +15900,7 @@ module Adamas::HIR
           nested_name = class_name_from_node(member, source) || ""
           full_nested_name = qualified_nested_type_name(owner_name, nested_name)
           next if self_nested_module_name?(owner_name, full_nested_name)
-          register_class_with_name(member, full_nested_name)
+          register_class_with_name(member, full_nested_name, ClassDeclarationSource.new(expr_id, @arena))
         when Adamas::Compiler::Frontend::EnumNode
           nested_name = enum_name_from_node(member, source) || ""
           full_nested_name = qualified_source_declaration_name(owner_name, nested_name)
@@ -16487,15 +16505,15 @@ module Adamas::HIR
             reparsed_node, reparsed_arena = reparsed
             with_arena(reparsed_arena) do
               STDERR.puts "[LIB_CLASS_PHASE] class=#{full_struct_name} phase=before_register_reparsed" if trace_lib_class
-              register_class_with_name_in_current_arena(reparsed_node, full_struct_name)
+              register_class_with_name(reparsed_node, full_struct_name)
             end
           else
             STDERR.puts "[LIB_CLASS_PHASE] class=#{full_struct_name} phase=before_register_original_after_reparse_miss" if trace_lib_class
-            register_class_with_name(node, full_struct_name)
+            register_class_with_name(node, full_struct_name, declaration_id.try { |id| ClassDeclarationSource.new(id, @arena) })
           end
         else
           STDERR.puts "[LIB_CLASS_PHASE] class=#{full_struct_name} phase=before_register_original" if trace_lib_class
-          register_class_with_name(node, full_struct_name)
+          register_class_with_name(node, full_struct_name, declaration_id.try { |id| ClassDeclarationSource.new(id, @arena) })
         end
       when Adamas::Compiler::Frontend::FunNode
         if pass == :types
@@ -16647,6 +16665,7 @@ module Adamas::HIR
         expr_id = program.roots.unsafe_fetch(root_idx)
         candidate = program.arena[expr_id]
         if candidate.is_a?(Adamas::Compiler::Frontend::ClassNode)
+          retain_class_declaration_source!(candidate, ClassDeclarationSource.new(expr_id, program.arena))
           class_node = candidate
           break
         end
@@ -16767,6 +16786,7 @@ module Adamas::HIR
           body_span = body_node.span
           if body_span.start_offset == target_span.start_offset &&
              body_span.end_offset == target_span.end_offset
+            retain_class_declaration_source!(body_node, ClassDeclarationSource.new(body_id, arena))
             return body_node
           end
         end
@@ -16936,6 +16956,7 @@ module Adamas::HIR
         expr_id = program.roots.unsafe_fetch(root_idx)
         candidate = reparsed_arena[expr_id]
         if candidate.is_a?(Adamas::Compiler::Frontend::ClassNode)
+          retain_class_declaration_source!(candidate, ClassDeclarationSource.new(expr_id, reparsed_arena))
           class_node = candidate
           break
         end
@@ -17006,6 +17027,7 @@ module Adamas::HIR
         expr_id = program.roots.unsafe_fetch(root_idx)
         candidate = reparsed_arena.[]?(expr_id)
         if candidate.is_a?(Adamas::Compiler::Frontend::ClassNode)
+          retain_class_declaration_source!(candidate, ClassDeclarationSource.new(expr_id, reparsed_arena))
           return {reparsed_arena, candidate, reparsed_name_from_snippet}
         end
         root_idx += 1
@@ -18127,8 +18149,8 @@ module Adamas::HIR
         name = (safe_slice_to_string(node.name) || "")
         full_name = resolve_class_name_for_definition(name)
         mark_macro_generated_parameter_defs_in_body(node.body, @arena)
-        register_class_with_name(node, full_name)
-        lower_class_with_name(node, full_name)
+        register_class_with_name(node, full_name, ClassDeclarationSource.new(expr_id, @arena))
+        lower_class_with_name(node, full_name, ClassDeclarationSource.new(expr_id, @arena))
         nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
         ctx.emit(nil_lit)
         nil_lit.id
@@ -21946,6 +21968,150 @@ module Adamas::HIR
     ) : Bool
       return false unless arena_fits_body_ids?(arena, node.body, node.span)
       class_body_nodes_match_arena?(arena, node)
+    end
+
+    # A supplied ClassDeclarationSource is authoritative only when its exact
+    # slot contains this ClassNode (possibly behind the visibility wrapper
+    # that the caller traversed). Never use structural body similarity to
+    # validate a source handle. A VirtualArena file view is checked both as
+    # supplied and at its exact file-local slot; the supplied view is retained
+    # so a later file replacement invalidates the receipt.
+    private def class_declaration_source_matches_node?(
+      node : Adamas::Compiler::Frontend::ClassNode,
+      source : ClassDeclarationSource,
+    ) : Bool
+      return false unless expr_id_matches_arena?(source.arena, source.expr_id)
+      raw = source.arena[source.expr_id]
+
+      if virtual = source.arena.as?(Adamas::Compiler::Frontend::VirtualArena)
+        if file_source = virtual.file_source_for(source.expr_id)
+          file_arena, file_expr_id = file_source
+          return false unless expr_id_matches_arena?(file_arena, file_expr_id)
+          file_raw = file_arena[file_expr_id]
+          # The global and file-local IDs must name the same stored AST node.
+          # Only unwrap visibility with file-local child IDs in the file arena.
+          return false unless raw.same?(file_raw)
+          candidate = if file_raw.is_a?(Adamas::Compiler::Frontend::VisibilityModifierNode)
+                        unwrap_visibility_member_in_arena(file_raw, file_arena)
+                      else
+                        file_raw
+                      end
+          return candidate.same?(node)
+        end
+      end
+
+      candidate = if raw.is_a?(Adamas::Compiler::Frontend::VisibilityModifierNode)
+                    unwrap_visibility_member_in_arena(raw, source.arena)
+                  else
+                    raw
+                  end
+      candidate.same?(node)
+    end
+
+    # Keep the supplied arena/ExprId as the receipt, but execute file-backed
+    # VirtualArena nodes in their exact AstArena because their child ExprIds
+    # remain file-local. Generated VirtualArena nodes have no file source and
+    # continue to execute in the VirtualArena.
+    private def class_declaration_execution_source(
+      node : Adamas::Compiler::Frontend::ClassNode,
+      source : ClassDeclarationSource,
+    ) : ClassDeclarationSource
+      unless class_declaration_source_matches_node?(node, source)
+        raise LoweringError.new("class declaration source no longer owns its ClassNode", node)
+      end
+
+      if virtual = source.arena.as?(Adamas::Compiler::Frontend::VirtualArena)
+        if file_source = virtual.file_source_for(source.expr_id)
+          file_arena, file_expr_id = file_source
+          execution_source = ClassDeclarationSource.new(file_expr_id, file_arena)
+          unless class_declaration_source_matches_node?(node, execution_source)
+            raise LoweringError.new("class file source does not own its ClassNode", node)
+          end
+          return execution_source
+        end
+      end
+
+      source
+    end
+
+    private def retain_class_declaration_source!(
+      node : Adamas::Compiler::Frontend::ClassNode,
+      source : ClassDeclarationSource,
+    ) : ClassDeclarationSource
+      unless class_declaration_source_matches_node?(node, source)
+        raise LoweringError.new("class declaration source does not own the supplied ClassNode", node)
+      end
+
+      key = node.object_id.to_u64
+      sources = @class_declaration_sources_by_node[key] ||= [] of RetainedClassDeclarationSource
+      unless sources.any? do |existing|
+               existing.node.same?(node) &&
+                 existing.source.arena.same?(source.arena) &&
+                 existing.source.expr_id.index == source.expr_id.index
+             end
+        sources << RetainedClassDeclarationSource.new(node, source)
+      end
+      source
+    end
+
+    # Resolve an explicit source or a previously retained exact view. If the
+    # same node has valid views in several arenas, an ambient-arena match is
+    # preferred. Without such a match, distinct arena views are ambiguous and
+    # must not fall back to a shape-based guess.
+    private def class_declaration_source_for(
+      node : Adamas::Compiler::Frontend::ClassNode,
+      supplied : ClassDeclarationSource?,
+      preferred_arena : Adamas::Compiler::Frontend::ArenaLike?,
+    ) : ClassDeclarationSource?
+      if source = supplied
+        return retain_class_declaration_source!(node, source)
+      end
+
+      sources = @class_declaration_sources_by_node[node.object_id.to_u64]?
+      return nil unless sources
+
+      valid = [] of ClassDeclarationSource
+      sources.each do |retained|
+        unless retained.node.same?(node)
+          raise LoweringError.new("class declaration source identity key changed", node)
+        end
+        source = retained.source
+        unless class_declaration_source_matches_node?(node, source)
+          raise LoweringError.new("retained class declaration source no longer owns its ClassNode", node)
+        end
+        valid << source
+      end
+      return nil if valid.empty?
+
+      if preferred = preferred_arena
+        preferred_sources = valid.select do |source|
+          source.arena.same?(preferred) ||
+            class_declaration_execution_source(node, source).arena.same?(preferred)
+        end
+        return preferred_sources.first unless preferred_sources.empty?
+      end
+
+      first_execution = class_declaration_execution_source(node, valid.first)
+      return valid.first if valid.all? do |source|
+        class_declaration_execution_source(node, source).arena.same?(first_execution.arena)
+      end
+
+      raise LoweringError.new("class declaration source is ambiguous across retained arenas", node)
+    end
+
+    # Use only a traversal's exact ExprId when it directly (or through the
+    # known visibility wrapper) owns the ClassNode. Traversal handles are
+    # strict: a known ExprId mismatch must not reopen structural recovery.
+    private def class_declaration_source_at(
+      node : Adamas::Compiler::Frontend::ClassNode,
+      expr_id : ExprId,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : ClassDeclarationSource
+      source = ClassDeclarationSource.new(expr_id, arena)
+      unless class_declaration_source_matches_node?(node, source)
+        raise LoweringError.new("class traversal ExprId does not own the visited ClassNode", node)
+      end
+      source
     end
 
     private def resolve_arena_for_class_node(
@@ -32845,7 +33011,7 @@ module Adamas::HIR
                 end
               end
               bootstrap_trace_puts "[CLASS_FRONTIER] module_before_nested_class_register #{module_name} -> #{full_nested_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
-              register_class_with_name(member, full_nested_name)
+              register_class_with_name(member, full_nested_name, ClassDeclarationSource.new(expr_id, @arena))
               bootstrap_trace_puts "[CLASS_FRONTIER] module_after_nested_class_register #{module_name} -> #{full_nested_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
             when Adamas::Compiler::Frontend::EnumNode
               nested_name = enum_name_from_node(member, source) || ""
@@ -32911,7 +33077,7 @@ module Adamas::HIR
               registered_self_class = true
             end
             bootstrap_trace_puts "[CLASS_FRONTIER] module_before_nested_class_register #{module_name} -> #{full_nested_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
-            register_class_with_name(member, full_nested_name)
+            register_class_with_name(member, full_nested_name, ClassDeclarationSource.new(expr_id, @arena))
             bootstrap_trace_puts "[CLASS_FRONTIER] module_after_nested_class_register #{module_name} -> #{full_nested_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
           when Adamas::Compiler::Frontend::EnumNode
             nested_name = enum_name_from_node(member, source) || ""
@@ -33506,7 +33672,7 @@ module Adamas::HIR
                   when Adamas::Compiler::Frontend::ClassNode
                     class_name = (safe_slice_to_string(expr_node.name) || "")
                     full_class_name = "#{module_name}::#{class_name}"
-                    register_class_with_name(expr_node, full_class_name)
+                    register_class_with_name(expr_node, full_class_name, ClassDeclarationSource.new(expr_id, @arena))
                   when Adamas::Compiler::Frontend::ModuleNode
                     nested_name = (safe_slice_to_string(expr_node.name) || "")
                     full_nested_name = "#{module_name}::#{nested_name}"
@@ -33599,7 +33765,7 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::ClassNode
         class_name = (safe_slice_to_string(body_node.name) || "")
         full_class_name = "#{module_name}::#{class_name}"
-        register_class_with_name(body_node, full_class_name)
+        register_class_with_name(body_node, full_class_name, ClassDeclarationSource.new(body_id, @arena))
       when Adamas::Compiler::Frontend::ExtendNode
         mark_module_extend_self(body_node, module_name)
       when Adamas::Compiler::Frontend::MacroIfNode
@@ -33695,7 +33861,7 @@ module Adamas::HIR
             when Adamas::Compiler::Frontend::ClassNode
               class_name = (safe_slice_to_string(expr_node.name) || "")
               full_class_name = "#{module_name}::#{class_name}"
-              register_class_with_name(expr_node, full_class_name)
+              register_class_with_name(expr_node, full_class_name, ClassDeclarationSource.new(expr_id, @arena))
             when Adamas::Compiler::Frontend::ModuleNode
               nested_name = (safe_slice_to_string(expr_node.name) || "")
               full_nested_name = "#{module_name}::#{nested_name}"
@@ -33769,7 +33935,7 @@ module Adamas::HIR
             when Adamas::Compiler::Frontend::ClassNode
               class_name = (safe_slice_to_string(expr_node.name) || "")
               full_class_name = "#{module_name}::#{class_name}"
-              register_class_with_name(expr_node, full_class_name)
+              register_class_with_name(expr_node, full_class_name, ClassDeclarationSource.new(expr_id, @arena))
             when Adamas::Compiler::Frontend::ModuleNode
               nested_name = (safe_slice_to_string(expr_node.name) || "")
               full_nested_name = "#{module_name}::#{nested_name}"
@@ -33811,7 +33977,7 @@ module Adamas::HIR
               when Adamas::Compiler::Frontend::ClassNode
                 class_name = (safe_slice_to_string(expr_node.name) || "")
                 full_class_name = "#{module_name}::#{class_name}"
-                register_class_with_name(expr_node, full_class_name)
+                register_class_with_name(expr_node, full_class_name, ClassDeclarationSource.new(expr_id, @arena))
               when Adamas::Compiler::Frontend::ModuleNode
                 nested_name = (safe_slice_to_string(expr_node.name) || "")
                 full_nested_name = "#{module_name}::#{nested_name}"
@@ -33874,7 +34040,7 @@ module Adamas::HIR
             when Adamas::Compiler::Frontend::ClassNode
               class_name = (safe_slice_to_string(expr_node.name) || "")
               full_class_name = "#{module_name}::#{class_name}"
-              register_class_with_name(expr_node, full_class_name)
+              register_class_with_name(expr_node, full_class_name, ClassDeclarationSource.new(expr_id, @arena))
             when Adamas::Compiler::Frontend::ModuleNode
               nested_name = (safe_slice_to_string(expr_node.name) || "")
               full_nested_name = "#{module_name}::#{nested_name}"
@@ -33934,7 +34100,7 @@ module Adamas::HIR
               when Adamas::Compiler::Frontend::ClassNode
                 class_name = (safe_slice_to_string(expr_node.name) || "")
                 full_class_name = "#{module_name}::#{class_name}"
-                register_class_with_name(expr_node, full_class_name)
+                register_class_with_name(expr_node, full_class_name, ClassDeclarationSource.new(expr_id, @arena))
               when Adamas::Compiler::Frontend::ModuleNode
                 nested_name = (safe_slice_to_string(expr_node.name) || "")
                 full_nested_name = "#{module_name}::#{nested_name}"
@@ -33986,7 +34152,7 @@ module Adamas::HIR
             when Adamas::Compiler::Frontend::ClassNode
               class_name = (safe_slice_to_string(expr_node.name) || "")
               full_class_name = "#{module_name}::#{class_name}"
-              register_class_with_name(expr_node, full_class_name)
+              register_class_with_name(expr_node, full_class_name, ClassDeclarationSource.new(expr_id, @arena))
             when Adamas::Compiler::Frontend::MacroIfNode
               process_macro_if_in_module(expr_node, module_name)
             when Adamas::Compiler::Frontend::MacroForNode
@@ -34462,7 +34628,7 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::ClassNode
         class_name = (safe_slice_to_string(member.name) || "")
         full_class_name = member.absolute ? "::#{class_name}" : "#{module_name}::#{class_name}"
-        register_class_with_name(member, full_class_name)
+        register_class_with_name(member, full_class_name, ClassDeclarationSource.new(expr_id, @arena))
       when Adamas::Compiler::Frontend::ModuleNode
         nested_name = (safe_slice_to_string(member.name) || "")
         full_nested_name = "#{module_name}::#{nested_name}"
@@ -36292,7 +36458,7 @@ module Adamas::HIR
                   when Adamas::Compiler::Frontend::ClassNode
                     nested_name = (safe_slice_to_string(expr_node.name) || "")
                     full_nested_name = "#{class_name}::#{nested_name}"
-                    register_class_with_name(expr_node, full_nested_name)
+                    register_class_with_name(expr_node, full_nested_name, ClassDeclarationSource.new(expr_id, @arena))
                   when Adamas::Compiler::Frontend::EnumNode
                     nested_name = (safe_slice_to_string(expr_node.name) || "")
                     full_nested_name = qualified_source_declaration_name(class_name, nested_name)
@@ -36541,7 +36707,7 @@ module Adamas::HIR
             when Adamas::Compiler::Frontend::ClassNode
               nested_name = (safe_slice_to_string(expr_node.name) || "")
               full_nested_name = "#{class_name}::#{nested_name}"
-              register_class_with_name(expr_node, full_nested_name)
+              register_class_with_name(expr_node, full_nested_name, ClassDeclarationSource.new(expr_id, @arena))
             when Adamas::Compiler::Frontend::EnumNode
               nested_name = (safe_slice_to_string(expr_node.name) || "")
               full_nested_name = qualified_source_declaration_name(class_name, nested_name)
@@ -36612,7 +36778,7 @@ module Adamas::HIR
               when Adamas::Compiler::Frontend::ClassNode
                 nested_name = (safe_slice_to_string(expr_node.name) || "")
                 full_nested_name = "#{class_name}::#{nested_name}"
-                register_class_with_name(expr_node, full_nested_name)
+                register_class_with_name(expr_node, full_nested_name, ClassDeclarationSource.new(expr_id, @arena))
               when Adamas::Compiler::Frontend::EnumNode
                 nested_name = (safe_slice_to_string(expr_node.name) || "")
                 full_nested_name = qualified_source_declaration_name(class_name, nested_name)
@@ -36807,7 +36973,7 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::ClassNode
         nested_name = (safe_slice_to_string(expr_node.name) || "")
         full_nested_name = "#{class_name}::#{nested_name}"
-        register_class_with_name(expr_node, full_nested_name)
+        register_class_with_name(expr_node, full_nested_name, ClassDeclarationSource.new(expr_id, @arena))
       when Adamas::Compiler::Frontend::EnumNode
         nested_name = (safe_slice_to_string(expr_node.name) || "")
         full_nested_name = qualified_source_declaration_name(class_name, nested_name)
@@ -37533,7 +37699,7 @@ module Adamas::HIR
           STDERR.puts "[BEGIN_MACRO_CLASS] class=#{class_name} phase=body_class idx=#{begin_idx}" if trace_begin_macro
           nested_name = (safe_slice_to_string(expr_node.name) || "")
           full_nested_name = "#{class_name}::#{nested_name}"
-          register_class_with_name(expr_node, full_nested_name)
+          register_class_with_name(expr_node, full_nested_name, ClassDeclarationSource.new(expr_id, @arena))
         when Adamas::Compiler::Frontend::EnumNode
           STDERR.puts "[BEGIN_MACRO_CLASS] class=#{class_name} phase=body_enum idx=#{begin_idx}" if trace_begin_macro
           nested_name = (safe_slice_to_string(expr_node.name) || "")
@@ -37671,7 +37837,7 @@ module Adamas::HIR
         when Adamas::Compiler::Frontend::ClassNode
           nested_name = (safe_slice_to_string(expr_node.name) || "")
           full_nested_name = "#{class_name}::#{nested_name}"
-          register_class_with_name(expr_node, full_nested_name)
+          register_class_with_name(expr_node, full_nested_name, ClassDeclarationSource.new(expr_id, @arena))
         when Adamas::Compiler::Frontend::EnumNode
           nested_name = (safe_slice_to_string(expr_node.name) || "")
           full_nested_name = qualified_source_declaration_name(class_name, nested_name)
@@ -38013,7 +38179,7 @@ module Adamas::HIR
           class_name = class_name_from_node(member) || ""
           full_class_name = qualified_nested_type_name(full_name, class_name)
           bootstrap_trace_puts "[CLASS_FRONTIER] nested_module_pass1_generic_before #{full_name} -> #{full_class_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
-          register_class_with_name(member, full_class_name)
+          register_class_with_name(member, full_class_name, ClassDeclarationSource.new(expr_id, @arena))
           bootstrap_trace_puts "[CLASS_FRONTIER] nested_module_pass1_generic_after #{full_name} -> #{full_class_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
         end
         # Scan for extend self before PASS 2
@@ -38399,7 +38565,7 @@ module Adamas::HIR
                 bootstrap_trace_puts "[CLASS_FRONTIER] nested_module_pass2_skip_registered_generic #{full_name} -> #{full_class_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
                 next
               end
-              register_class_with_name(member, full_class_name)
+              register_class_with_name(member, full_class_name, ClassDeclarationSource.new(expr_id, @arena))
             when Adamas::Compiler::Frontend::NodeKind::Enum
               member = member.unsafe_as(Adamas::Compiler::Frontend::EnumNode)
               enum_name = (safe_slice_to_string(member.name) || "")
@@ -38695,7 +38861,7 @@ module Adamas::HIR
               if debug_env_filter_match?("DEBUG_NESTED_CLASS", module_name, class_name, full_class_name)
                 STDERR.puts "[DEBUG_LOWER_MOD] lowering nested class: #{full_class_name}"
               end
-              lower_class_with_name(member, full_class_name)
+              lower_class_with_name(member, full_class_name, ClassDeclarationSource.new(expr_id, @arena))
             when Adamas::Compiler::Frontend::ModuleNode
               # Recursively lower nested module
               nested_name = (safe_slice_to_string(member.name) || "")
@@ -38796,8 +38962,8 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::ClassNode
         class_name = (safe_slice_to_string(member.name) || "")
         full_class_name = "#{module_name}::#{class_name}"
-        register_class_with_name(member, full_class_name)
-        lower_class_with_name(member, full_class_name)
+        register_class_with_name(member, full_class_name, ClassDeclarationSource.new(expr_id, @arena))
+        lower_class_with_name(member, full_class_name, ClassDeclarationSource.new(expr_id, @arena))
       when Adamas::Compiler::Frontend::ModuleNode
         nested_name = (safe_slice_to_string(member.name) || "")
         full_nested_name = "#{module_name}::#{nested_name}"
@@ -39609,12 +39775,16 @@ module Adamas::HIR
     end
 
     # Register a class type and its methods (pass 1)
-    def register_class(node : Adamas::Compiler::Frontend::ClassNode)
+    def register_class(
+      node : Adamas::Compiler::Frontend::ClassNode,
+      source : ClassDeclarationSource? = nil,
+    )
+      source = class_declaration_source_for(node, source, @arena)
       class_name = class_name_from_node(node) || ""
       if class_name.empty?
         if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
-          source = source_text_for_arena_or_file(@arena)
-          bootstrap_trace_puts "[CLASS_FRONTIER] empty_class_name path=#{source_path_for(@arena) || "(unknown)"} span=#{node.span.start_offset}:#{node.span.end_offset} source=#{source ? source.bytesize : -1} arena=#{@arena.class.name.split("::").last}@#{@arena.object_id}:size=#{@arena.size}"
+          source_text = source_text_for_arena_or_file(@arena)
+          bootstrap_trace_puts "[CLASS_FRONTIER] empty_class_name path=#{source_path_for(@arena) || "(unknown)"} span=#{node.span.start_offset}:#{node.span.end_offset} source=#{source_text ? source_text.bytesize : -1} arena=#{@arena.class.name.split("::").last}@#{@arena.object_id}:size=#{@arena.size}"
         end
         if reparsed = reparse_class_from_current_source(node)
           reparsed_arena, reparsed_node, reparsed_name = reparsed
@@ -39647,7 +39817,7 @@ module Adamas::HIR
       @current_class = nil
       @current_namespace_override = nil
       begin
-        register_class_with_name(node, class_name)
+        register_class_with_name(node, class_name, source)
       ensure
         @current_class = old_class
         @current_namespace_override = old_override
@@ -39655,7 +39825,23 @@ module Adamas::HIR
     end
 
     # Register a class with a specific name (for nested classes like Foo::Bar)
-    def register_class_with_name(node : Adamas::Compiler::Frontend::ClassNode, class_name : String)
+    def register_class_with_name(
+      node : Adamas::Compiler::Frontend::ClassNode,
+      class_name : String,
+      source : ClassDeclarationSource? = nil,
+    )
+      source = class_declaration_source_for(node, source, @arena)
+      if source
+        execution_source = class_declaration_execution_source(node, source)
+        unless @arena.same?(execution_source.arena)
+          return with_arena(execution_source.arena) do
+            register_class_with_name_in_current_arena(node, class_name)
+          end
+        end
+        register_class_with_name_in_current_arena(node, class_name)
+        return
+      end
+
       bootstrap_trace_puts "[CLASS_FRONTIER] class_with_name_enter #{class_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
       trace_with_name = debug_env_filter_match?("DEBUG_CLASS_WITH_NAME_PHASE", class_name, source_path_for(@arena) || "")
       STDERR.puts "[CLASS_WITH_NAME] class=#{class_name} phase=enter" if trace_with_name
@@ -39985,7 +40171,7 @@ module Adamas::HIR
                   nested_name = class_name_from_node(member, source) || ""
                   next if nested_name.empty?
                   full_nested_name = qualified_nested_type_name(class_name, nested_name)
-                  register_class_with_name(member, full_nested_name)
+                  register_class_with_name(member, full_nested_name, ClassDeclarationSource.new(expr_id, @arena))
                 when Adamas::Compiler::Frontend::EnumNode
                   next if member.span.start_offset == node.span.start_offset && member.span.end_offset == node.span.end_offset
                   next if source && !definition_header_text_from_source(member.span, source, ["enum "])
@@ -40589,7 +40775,7 @@ module Adamas::HIR
                                             @generic_templates.has_key?(full_nested_name)
             unless specialized_class && nested_generic_template_known
               trace_nested_registration LoweringBinaryTrace::Event::NestedRegisterStart, full_nested_name
-              register_class_with_name(member, full_nested_name)
+              register_class_with_name(member, full_nested_name, ClassDeclarationSource.new(expr_id, @arena))
               trace_nested_registration LoweringBinaryTrace::Event::NestedRegisterDone, full_nested_name
             end
             # When parent has active type substitutions and nested type is generic,
@@ -43429,19 +43615,34 @@ module Adamas::HIR
     end
 
     # Lower a class and all its methods (pass 3)
-    def lower_class(node : Adamas::Compiler::Frontend::ClassNode)
+    def lower_class(
+      node : Adamas::Compiler::Frontend::ClassNode,
+      source : ClassDeclarationSource? = nil,
+    )
       class_name = (safe_slice_to_string(node.name) || "")
-      lower_class_with_name(node, class_name)
+      lower_class_with_name(node, class_name, source)
     end
 
     # Lower a class with a specific name (for nested classes like Foo::Bar)
-    def lower_class_with_name(node : Adamas::Compiler::Frontend::ClassNode, class_name : String)
+    def lower_class_with_name(
+      node : Adamas::Compiler::Frontend::ClassNode,
+      class_name : String,
+      source : ClassDeclarationSource? = nil,
+    )
+      source = class_declaration_source_for(node, source, @arena)
+      execution_source = source.try { |owned| class_declaration_execution_source(node, owned) }
+      if execution_source && !@arena.same?(execution_source.arena)
+        return with_arena(execution_source.arena) do
+          lower_class_with_name(node, class_name, source)
+        end
+      end
+
       # Skip generic class templates - they're lowered on-demand during monomorphization
       if @generic_templates.has_key?(class_name)
         return
       end
 
-      unless arena_fits_class_node?(@arena, node)
+      unless source || arena_fits_class_node?(@arena, node)
         class_arena = resolve_arena_for_class_node(node, @arena)
         if class_arena != @arena && arena_fits_class_node?(class_arena, node)
           if debug_class_arena_enabled_for?(class_name)
@@ -43499,7 +43700,7 @@ module Adamas::HIR
             when Adamas::Compiler::Frontend::ClassNode
               safe_str_guard(member.name, "next")
               nested_name = (safe_slice_to_string(member.name) || "")
-              lower_class_with_name(member, "#{nested_prefix}::#{nested_name}")
+              lower_class_with_name(member, "#{nested_prefix}::#{nested_name}", ClassDeclarationSource.new(expr_id, @arena))
             when Adamas::Compiler::Frontend::ModuleNode
               safe_str_guard(member.name, "next")
               nested_name = (safe_slice_to_string(member.name) || "")
@@ -43864,8 +44065,8 @@ module Adamas::HIR
         safe_str_guard(member.name, "return")
         nested_name = (safe_slice_to_string(member.name) || "")
         full_name = "#{class_name}::#{nested_name}"
-        register_class_with_name(member, full_name)
-        lower_class_with_name(member, full_name)
+        register_class_with_name(member, full_name, ClassDeclarationSource.new(expr_id, @arena))
+        lower_class_with_name(member, full_name, ClassDeclarationSource.new(expr_id, @arena))
       when Adamas::Compiler::Frontend::ModuleNode
         safe_str_guard(member.name, "return")
         nested_name = (safe_slice_to_string(member.name) || "")
@@ -86023,7 +86224,8 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::NodeKind::Class,
            Adamas::Compiler::Frontend::NodeKind::Struct,
            Adamas::Compiler::Frontend::NodeKind::Union
-        lower_class(node.unsafe_as(Adamas::Compiler::Frontend::ClassNode))
+        declaration_source = expr_id.null_ptr? || expr_id.invalid? ? nil : ClassDeclarationSource.new(expr_id, @arena)
+        lower_class(node.unsafe_as(Adamas::Compiler::Frontend::ClassNode), declaration_source)
         return 0_u32
       when Adamas::Compiler::Frontend::NodeKind::Module
         lower_module(node.unsafe_as(Adamas::Compiler::Frontend::ModuleNode))
@@ -86853,8 +87055,8 @@ module Adamas::HIR
             full_struct_name = "#{lib_name}::#{struct_name}"
             @lib_structs.add(full_struct_name)
             @module.lib_structs.add(full_struct_name)
-            register_class_with_name(body_node, full_struct_name)
-            lower_class_with_name(body_node, full_struct_name)
+            register_class_with_name(body_node, full_struct_name, ClassDeclarationSource.new(expr_id, @arena))
+            lower_class_with_name(body_node, full_struct_name, ClassDeclarationSource.new(expr_id, @arena))
           end
         end
 

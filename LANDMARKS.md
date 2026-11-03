@@ -22782,3 +22782,34 @@ fit is not node ownership. Next discriminator is the ambient fit subpredicate
 and exact node membership (diagnostic-only 35q646); do not widen lexical lookup
 or weaken type checks to hide that failure. Metadata retention remains deferred
 and PROPOSED in docs/incremental_build_cache_sdd.md section 10.1.
+
+
+### 2026-11-03: Class body shape cannot authenticate an arena
+
+The options.cr LavinMQ::Config reopening arrived with its exact ClassNode and
+correct arena, but AnnotationDefNode bodies failed the structural-fit whitelist.
+Recovery then chose float/fast_float/bigint.cr with coincident body IDs/spans
+(35q655). Expanding that whitelist is insufficient: legal numeric class-body
+statements and classes nested in modules/classes reproduce the same wrong code.
+Stock Crystal prints A; old Adamas prints B with compile/native exit zero
+(35q657/35q662/35q675/35q678).
+
+ClassDeclarationSource retains an exact declaration ExprId and arena; the slot
+must contain the identical ClassNode, optionally through a visibility wrapper.
+Known source mismatches reject before registration instead of reopening shape
+recovery. A VirtualArena root can be global while the stored node's body IDs
+are file-local: derive the exact backing file view for execution and retain
+the supplied virtual view for stale-source revalidation. Strongly retain the
+node too; a mutable virtual arena alone does not keep a replaced node alive
+and cannot prevent object-id reuse from aliasing an old receipt.
+
+Qualified AST d5f3dae5194d2678c174c49eb8728757f80edb4295f93119bd5a77db2a9ad59b
+passes S1 35q692, 59 focused/neighbor examples 35q696, the five-positive/one-negative
+native oracle in lazy/eager modes 35q697, and stock-prelude hello 35q699. Core
+retains its same 77 failing examples and normalized failure details (35q698).
+Adversary verdict: ROBUST for normal CLI/AST traversal handoffs and the exercised
+identity/lifetime boundaries; static review is correlated, not independent.
+Refresh after parser/visibility, virtual file replacement, node lifetime or
+registration/generated-source transport changes. Compatibility no-handle and
+invalid-ID recovery, ModuleNode recovery, S2/bootstrap and LavinMQ parity remain
+open. These are compilation-local receipts, not persistent metadata identities.
