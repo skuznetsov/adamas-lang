@@ -23814,3 +23814,22 @@ integration, fresh bootstrap, or LavinMQ parity.
   fixture prints stock A versus B on both the original source and this fix
   (35js/35jt/35jw). Mixed runtime Class/instance predicates, bootstrap and
   unchanged LavinMQ parity remain separate frontiers.
+
+
+### 2026-11-03: Exception-safe method body publication
+
+- Root cause: lower_method restored ambient state only on normal completion,
+  while its dispatcher could mark an exception-interrupted partial body Completed.
+  The frame now retires only its exact still-current generation and restores
+  class/method, typeof, enum and closure maps on every exit. The dispatcher
+  preserves foreign replacement state and handles normal early returns.
+- Verification: anchored prior-source red (35lu), 51 HIR examples (35m3),
+  fresh S1 (35m5), stock Crystal 1.22.1 prelude hello (35m6), and seven examples
+  through the regression script (35m8). Same-name replacement and module
+  early-return adversaries exposed and rejected incomplete candidates.
+- DoD: bash regression_tests/hir_method_publication_unwind_repro.sh, using
+  the original Crystal compiler through scripts/run_safe.sh; expect 7/7 PASS.
+  Requalify after scope, retirement or function-state changes.
+- Open: other producer exception paths and pre-creation failures need their
+  own ownership evidence. Typed Atomic depth-refusal replay, bootstrap and
+  unchanged LavinMQ parity remain unqualified.

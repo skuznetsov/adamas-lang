@@ -47407,7 +47407,7 @@ module Adamas::HIR
       included_forall_virtual_body_demand : IncludedForallVirtualBodyDemand? = nil,
       initializer_replay_source : MaterializedInitializerSource? = nil,
       super_source_module : String? = nil,
-    )
+    ) : Bool?
       previous_source_yield_context = @source_yield_context
       previous_super_source_module = @current_super_source_module
       begin
@@ -47950,16 +47950,20 @@ module Adamas::HIR
       initializer_call_literals = is_initialize_method ? call_arg_literals.try(&.dup) : nil
       initializer_call_enum_names = is_initialize_method ? call_arg_enum_names.try(&.dup) : nil
       old_enum_value_types = @enum_value_types
-      @enum_value_types = nil
       saved_closure_ref_cells_lm = @closure_ref_cells.dup
       saved_closure_ref_prefer_lm = @closure_ref_prefer_cell.dup
+      old_class = @current_class
+      old_method = @current_method
+      old_method_is_class = @current_method_is_class
+      old_typeof_locals = @current_typeof_locals
+      old_typeof_local_names = @current_typeof_local_names
+      materializing_function = nil.as(Function?)
+      begin
+      @enum_value_types = nil
       @closure_ref_cells.clear
       @closure_ref_prefer_cell.clear
 
       # Track current method for super calls
-      old_class = @current_class
-      old_method = @current_method
-      old_method_is_class = @current_method_is_class
       @current_class = class_name
       @current_method = method_name
       @current_method_is_class = is_class_method
@@ -47986,8 +47990,6 @@ module Adamas::HIR
       has_block = false
       param_type_map = {} of String => TypeRef
       extra_type_params = {} of String => String
-      old_typeof_locals = @current_typeof_locals
-      old_typeof_local_names = @current_typeof_local_names
       @current_typeof_locals = param_type_map
       @current_typeof_local_names = {} of String => String
       call_types = call_arg_types || [] of TypeRef
@@ -48666,6 +48668,7 @@ module Adamas::HIR
                                    end
       return_type = TypeRef::VOID if abstract_return_constraint
       func = @module.create_function(full_name, return_type)
+      materializing_function = func
       stop_after_pending_target_lower_method_phase(
         "lower_method_function_created",
         "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_FUNCTION_CREATED",
@@ -49212,10 +49215,30 @@ module Adamas::HIR
         effective_full_name_override
       )
 
-      # Restore previous method context
+      # Preserve the normal return value while restoring the scope on every exit.
       @current_class = old_class
       @current_method = old_method
       @current_method_is_class = old_method_is_class || false
+      rescue error
+        # Retire only the body generation begun by this frame. A replacement
+        # under the same name belongs to its own lowering attempt.
+        if partial = materializing_function
+          if @module.function_by_name(partial.name).try(&.same?(partial)) == true
+            remove_hir_function(partial.name)
+            clear_function_state(partial.name)
+          end
+        end
+        raise error
+      ensure
+        @current_typeof_locals = old_typeof_locals
+        @current_typeof_local_names = old_typeof_local_names
+        @enum_value_types = old_enum_value_types
+        @closure_ref_cells = saved_closure_ref_cells_lm
+        @closure_ref_prefer_cell = saved_closure_ref_prefer_lm
+        @current_class = old_class
+        @current_method = old_method
+        @current_method_is_class = old_method_is_class
+      end
       ensure
         @source_yield_context = previous_source_yield_context
       end
@@ -109674,6 +109697,8 @@ module Adamas::HIR
       @lowering_binary_trace.try(&.materialization_start(materialized_name, @lowering_depth + 1))
       materialization_function_count_before = @module.functions.size
       materialization_producer_path = "not_entered"
+      materialization_outer_class = @current_class
+      materialization_failed = false
 
       # WORK QUEUE: Track that we're inside lowering to defer nested calls
       @lowering_depth += 1
@@ -110201,7 +110226,11 @@ module Adamas::HIR
             end
           end
         end
+      rescue error
+        materialization_failed = true
+        raise error
       ensure
+        @current_class = materialization_outer_class
         if pending_target_gate_enabled?
           stop_after_pending_target_phase(
             "lower_func_materialization_done",
@@ -110214,9 +110243,9 @@ module Adamas::HIR
         end
         # WORK QUEUE: Restore previous inside_lowering state
         @lowering_depth -= 1
-        if @module.has_function_with_body?(materialized_name)
+        if !materialization_failed && @module.has_function_with_body?(materialized_name)
           set_function_state(materialized_name, FunctionLoweringState::Completed)
-        else
+        elsif !materialization_failed
           clear_function_state(materialized_name)
         end
         log_materialization_completion_ledger(name, target_name, materialized_name, materialization_function_count_before, materialization_producer_path)

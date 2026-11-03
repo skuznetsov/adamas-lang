@@ -5295,3 +5295,29 @@ source and this fix (35js/35jt/35jw); these checks do not establish its repair,
 bootstrap closure or LavinMQ parity. Rollback removes the Copy traversal change
 and its two regressions together. Refresh after source-fact publication,
 semantic narrowing or value-transport changes.
+
+
+#### Exception-safe method body publication
+
+A physical source-method lowering frame owns its ambient method scope and the
+exact Function generation it creates. Every exit restores the caller's class,
+method, typeof locals, enum facts and closure-cell maps. An exception retires
+only that frame's still-current partial generation. It must preserve a
+completed sibling or a replacement generation registered under the same name.
+The materialization dispatcher publishes Completed only on non-exceptional
+exits, including ordinary early returns; bodyless normal exits clear InProgress.
+
+The bounded lower_method repair passes 51 HIR examples (35m3), a fresh S1 build
+(35m5), installed Crystal 1.22.1 stock-prelude hello (35m6), and the safe internal
+regression entry point (35m8). The exact prior source fails the anchored partial
+publication control (35lu). Adversarial same-name replacement and normal early
+return controls rejected two intermediate candidates (35lw/35m2); the qualified
+source preserves both. DoD: bash regression_tests/hir_method_publication_unwind_repro.sh;
+expect seven passing examples. Roll back the scope/publication changes and
+their two specs together. Refresh after producer scope, generation retirement,
+function-state or callsite-ownership changes.
+
+This does not qualify exception rollback in every other producer, failure
+before function creation, typed depth-refusal replay, bootstrap or unchanged
+LavinMQ parity. A depth-refused argument remains an obligation rather than an
+ordinary type mismatch; its exact-owner suspension/replay is still open.
