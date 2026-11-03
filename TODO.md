@@ -23869,3 +23869,25 @@ integration, fresh bootstrap, or LavinMQ parity.
 - Open: compose freshness with the WIP source-body witness, result-cache owner
   and dependency preflight gates. Virtual result certification, mixed Class/
   instance representation, bootstrap and unchanged LavinMQ parity remain open.
+
+
+### 2026-11-03: Retain defaulted call source selection; ordinary replay is next
+
+- Qualified concrete-receiver fix: retain the selected Def/arena through default
+  padding in ordinary and nilary runtime/static calls. Reject conflicting or
+  missing physical body ownership before inference. Five prior-HEAD HIR binding
+  controls fail (35q27); fresh S1 35q20, 26 native/negative/prelude controls
+  35q33 and 67 focused/neighbor HIR examples 35q36 pass with the isolated fix.
+- Open falsifier: fixtures/defaulted_call_target/union_receiver_pending.cr under
+  regression_tests expects AB. Crystal 1.22.1 emits AB; both prior HEAD and the
+  fix emit BB in lazy/eager mode (35q37/35q38). Diagnose per-receiver defaults
+  and union dispatch rather than generalizing the concrete-receiver claim.
+- Active WIP frontier: exact source-argument depth receipts unwind correctly,
+  but ordinary owner materialization lacks the recovery used by forced return
+  inference. Strengthened actual-entry tests fail both ordinary owner cases
+  while the two forced controls pass (35q39). The earlier four-green test was
+  invalid: lower_main had materialized the owner before the tested entry.
+  Recover only at the exact owner after unwinding; preserve source/generation,
+  yield-free and bounded-retry guards. Do not increase budgets or invent types.
+- Still open: raw callback scheduler qualification, virtual source results,
+  mixed class/instance facts, bootstrap and unchanged LavinMQ test parity.

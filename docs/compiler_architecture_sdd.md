@@ -5380,3 +5380,40 @@ specs, fixtures and script together. Refresh after primitive inheritance, nilary
 selection, Def/arena registration, cache admission or numeric layout changes.
 This does not qualify the WIP result-certificate cache, its canonical-source
 freshness composition, bootstrap or unchanged LavinMQ parity.
+
+
+#### Default expansion retains the selected source binding
+
+Default expansion owns the exact source Def and declaration arena selected for a
+call. Padding the physical argument vector, including keyword-only defaults,
+does not authorize a second overload lookup by mangled name or padded arity.
+Bind that receipt before return inference/materialization in ordinary calls and
+nilary runtime/static member access. A conflicting physical Def/arena or an
+already emitted body without complete binding is rejected; existing bindings
+are never silently overwritten.
+
+This bounded fix covers concrete receivers. DoD: run
+`bash regression_tests/defaulted_call_target_source_binding_repro.sh <fresh-S1>`
+and `spec/hir/defaulted_call_target_source_binding_spec.cr` with the neighboring
+primitive/include/arena specs. On the unchanged prior HEAD, five positive HIR
+binding checks fail (35q27); the same native controls already pass, so native
+output alone cannot certify this contract. The isolated fix passes a fresh S1
+build (35q20), all 26 stock/lazy/eager, rejection and unchanged stock-prelude
+controls (35q33), and 67 focused/neighbor HIR examples (35q36). Collision and
+missing-binding controls reject without overwriting source ownership.
+Adversary verdict: ROBUST within this concrete-receiver binding scope.
+
+The union receiver falsifier is still OPEN. The retained fixture
+`regression_tests/fixtures/defaulted_call_target/union_receiver_pending.cr`
+expects AB from Crystal 1.22.1; both prior HEAD (35q37) and this candidate
+(35q38) emit BB in lazy/eager mode. Per-receiver default selection and later
+union dispatch need their own root-cause repair. This pending fixture is not
+part of the passing regression loop and does not count as parity evidence.
+
+Roll back the binding change with its focused tests and fixtures. Refresh after
+default expansion, overload selection, source Def/arena registration, member or
+union dispatch changes. WIP source-result certificates, ordinary-owner depth
+replay, virtual result certification, bootstrap and unchanged LavinMQ parity
+remain unqualified. The metadata-retention design in
+`docs/incremental_build_cache_sdd.md` remains PROPOSED and deferred until
+stabilization; this change does not implement persistent caching.

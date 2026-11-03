@@ -22654,3 +22654,26 @@ and body survive. Evidence: fresh S1 35p22, 20 native/negative/prelude controls
 primitive-template source ownership, and the inherited_primitive_method_binding
 regression. Refresh after source selection/registration, cache or layout changes.
 WIP result-cache composition, bootstrap and unchanged LavinMQ remain unqualified.
+
+
+### 2026-11-03: Default padding does not re-own a source call
+
+Default expansion supplies the selected Def/arena; preserve it through padded
+ABI arguments before return inference. Reject conflicting physical registrations
+or an emitted body with missing source ownership. Prior HEAD fails five HIR
+binding controls (35q27); fresh S1 35q20, 26 native/rejection/stock-prelude
+controls 35q33 and 67 neighboring HIR examples 35q36 pass. The native positives
+alone were insufficient: they also passed before the binding repair.
+
+Scope is concrete receivers. The saved union_receiver_pending.cr fixture still
+emits BB versus stock AB on both baseline and candidate (35q37/35q38); union
+dispatch/default evaluation remains open. Refresh after selection, defaults,
+Def/arena or dispatch changes. See compiler_architecture_sdd.md for DoD/rollback.
+
+Continuation: metadata retention is saved in incremental_build_cache_sdd.md as
+PROPOSED/deferred; resume compiler stabilization, then unchanged LavinMQ parity.
+Current discriminating probe is ordinary-owner typed depth replay (35q39): two
+forced controls pass, both actual ordinary entry cases fail. The previous all-
+green probe pre-materialized its owner and was invalid. Exact owner recovery,
+current source/generation guards and safe serial execution remain required;
+stdlib/LavinMQ edits and weakened type checks remain outside scope.

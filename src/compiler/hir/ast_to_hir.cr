@@ -111450,6 +111450,42 @@ module Adamas::HIR
       LoweredCallSiteArguments.new(rewritten, values, positional_sources, source_values, terminal)
     end
 
+    # Default expansion selects the source before padding the physical ABI.
+    # Named-only defaults must retain that selection too: the padded vector
+    # cannot authorize a later lookup by symbol spelling alone.
+    private def bind_defaulted_source_call_target(
+      target : String,
+      selected_name : String,
+      selected_def : Adamas::Compiler::Frontend::DefNode,
+      selected_arena : Adamas::Compiler::Frontend::ArenaLike,
+      node : Adamas::Compiler::Frontend::Node? = nil,
+    ) : Nil
+      source_def = @function_defs[selected_name]?
+      source_arena = @function_def_arenas[selected_name]?
+      retained_arena = registered_arena_for_def(selected_def)
+      unless source_def && source_def.same?(selected_def) &&
+             source_arena && source_arena.same?(selected_arena) &&
+             retained_arena && retained_arena.same?(selected_arena) &&
+             arena_fits_def?(selected_arena, selected_def)
+        raise LoweringError.new("defaulted call lost its exact selected source binding: #{selected_name}", node)
+      end
+
+      existing_def = @function_defs[target]?
+      existing_arena = @function_def_arenas[target]?
+      if existing_def && !existing_def.same?(selected_def)
+        raise LoweringError.new("defaulted call target already has a different source definition: #{target}", node)
+      end
+      if existing_arena && !existing_arena.same?(selected_arena)
+        raise LoweringError.new("defaulted call target already has a different source arena: #{target}", node)
+      end
+      if @module.has_function_with_body?(target) && (!existing_def || !existing_arena)
+        raise LoweringError.new("defaulted call target body has no complete source binding: #{target}", node)
+      end
+
+      set_function_def_entry(target, selected_def, false)
+      set_function_def_arena(target, selected_arena)
+    end
+
     private def lower_call(
       ctx : LoweringContext,
       node : Adamas::Compiler::Frontend::CallNode,
@@ -118181,7 +118217,14 @@ module Adamas::HIR
       # exact call-site symbol; late materialization must not rediscover a
       # different included or inherited body from the serialized name alone.
       if selected_def = selected_call_entry_def
-        if (allocator_explicit_new_call && !has_block_call) ||
+        if (default_source = source_default_entry) && !has_block_call && !has_splat
+          unless default_source[1].same?(selected_def)
+            raise LoweringError.new("defaulted call changed its selected source definition", node)
+          end
+          bind_defaulted_source_call_target(
+            mangled_method_name, default_source[0], selected_def, default_source[2], node,
+          )
+        elsif (allocator_explicit_new_call && !has_block_call) ||
            (source_named_entry && !has_block_call && same_def_node?(source_named_entry[1], selected_def)) ||
            (!has_block_call && !has_splat && !has_named_args &&
            method_name_codec_exact_callsite_name?(
@@ -138685,7 +138728,12 @@ module Adamas::HIR
           receiver_is_self_call,
         ))
       end
-      args, _, _ = apply_default_args(ctx, [] of ValueId, member_name, base_method_name, false, false)
+      source_default_entries = [] of Tuple(String, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike)
+      args, defaulted_has_named_args, _ = apply_default_args(
+        ctx, [] of ValueId, member_name, base_method_name, false, false, object_id,
+        source_default_entries,
+      )
+      source_default_entry = source_default_entries.first?
       arg_types = args.map { |arg_id| ctx.type_of(arg_id) }
       admitted_member_self_dispatch_root : String? = nil
       if receiver_is_self_call
@@ -138717,7 +138765,9 @@ module Adamas::HIR
         end
       end
 
-      actual_name = if resolved_method_name
+      actual_name = if default_source = source_default_entry
+                      mangle_function_name(base_method_name || default_source[0], arg_types)
+                    elsif resolved_method_name
                       mangled_name = mangle_function_name(resolved_method_name, arg_types)
                       if @function_types.has_key?(mangled_name) || @module.has_function?(mangled_name)
                         mangled_name
@@ -138738,7 +138788,7 @@ module Adamas::HIR
                         receiver_is_self_call,
                       )
                     end
-      unless admitted_member_self_dispatch_root
+      unless admitted_member_self_dispatch_root || source_default_entry
         if entry = lookup_function_def_for_call(base_method_name, args.size, false, arg_types)
           actual_name = entry[0]
           if receiver_proc_owner
@@ -138782,6 +138832,12 @@ module Adamas::HIR
       # specialization and wrapper re-owning have settled the emitted key.
       # The late binding below remains as an idempotent guard for a distinct
       # primary name selected by later dispatch normalization.
+      if default_source = source_default_entry
+        bind_defaulted_source_call_target(
+          actual_name, default_source[0], default_source[1], default_source[2], node,
+        )
+        remember_callsite_arg_types(actual_name, arg_types, has_named_args: defaulted_has_named_args)
+      end
       if proc_owner = receiver_proc_owner
         if selected_target = selected_proc_member_target
           if concrete_proc_member_target_name?(actual_name, proc_owner, member_name)
@@ -140253,7 +140309,11 @@ module Adamas::HIR
 
       enum_name = resolve_enum_name(class_name_str) || resolve_enum_name(lookup_class_name)
 
-      args, _, _ = apply_default_args(ctx, [] of ValueId, member_name, full_method_name, false, false)
+      source_default_entry_out = [] of Tuple(String, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike)
+      args, _, _ = apply_default_args(
+        ctx, [] of ValueId, member_name, full_method_name, false, false, nil,
+        source_default_entry_out,
+      )
       if enum_name && member_name == "new"
         enum_type = enum_base_type(enum_name)
         if args.size == 1
@@ -140278,6 +140338,13 @@ module Adamas::HIR
       # Runtime mangling strips source arity suffixes. Keep the generated
       # zero-argument wrapper whose ABI differs from the bare allocator.
       mangled_name = generated_allocator_target || mangle_function_name(full_method_name, arg_types)
+      defaulted_source_target = false
+      if (default_source = source_default_entry_out.first?) && source_new_entry.nil? && member_name != "new"
+        selected_name, selected_def, selected_arena = default_source
+        bind_defaulted_source_call_target(mangled_name, selected_name, selected_def, selected_arena)
+        remember_callsite_arg_types(mangled_name, arg_types)
+        defaulted_source_target = true
+      end
       if selected = source_new_entry
         selected_name, selected_def = selected
         selected_params = function_param_infos(selected_name, selected_def)
@@ -140301,7 +140368,7 @@ module Adamas::HIR
          full_method_name.starts_with?("LoadCommand#") || full_method_name.starts_with?("LoadCommand."))
         STDERR.puts "[SHORT_NAME_CALL] full_method_name=#{full_method_name}, mangled=#{mangled_name}"
       end
-      actual_name = if source_new_entry || @function_types.has_key?(mangled_name) || @module.has_function?(mangled_name)
+      actual_name = if source_new_entry || defaulted_source_target || @function_types.has_key?(mangled_name) || @module.has_function?(mangled_name)
                       mangled_name
                     elsif has_function_base?(full_method_name)
                       full_method_name
