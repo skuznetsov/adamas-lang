@@ -8,9 +8,11 @@ class Adamas::HIR::AstToHir
     source_prefix : String,
     expected_definition : Adamas::Compiler::Frontend::DefNode,
     expected_arena : Adamas::Compiler::Frontend::ArenaLike,
+    caller_name : String? = nil,
   ) : Array({String, Bool, Bool, Bool, Bool})
     targets = [] of String
     @module.functions.each do |function|
+      next if caller_name && function.name != caller_name
       function.blocks.each do |block|
         block.instructions.each do |instruction|
           call = instruction.as?(Call) || next
@@ -175,6 +177,41 @@ private def lower_defaulted_target_source_case(kind : String)
                                                             CRYSTAL
                                                           false,
                                                         }
+                                                      when "constructor_explicit"
+                                                        {
+                                                          "DefaultedTargetConstructorExplicitHIR",
+                                                          "new",
+                                                          <<-CRYSTAL,
+                                                            class DefaultedTargetConstructorExplicitHIR
+                                                              def initialize(@pointer : Int64, @size : Int32, @read_only : Bool)
+                                                              end
+                                                              def self.new(size : Int32, *, read_only = false) : Int32
+                                                                read_only ? 66_i32 : 65_i32
+                                                              end
+                                                            end
+                                                            DefaultedTargetConstructorExplicitHIR.new(3_i32)
+                                                            DefaultedTargetConstructorExplicitHIR.new(3_i32, read_only: true)
+                                                            CRYSTAL
+                                                          false,
+                                                        }
+                                                      when "constructor_bare"
+                                                        {
+                                                          "DefaultedTargetConstructorBareHIR",
+                                                          "new",
+                                                          <<-CRYSTAL,
+                                                            class DefaultedTargetConstructorBareHIR
+                                                              def initialize(@pointer : Int64, @size : Int32, @read_only : Bool)
+                                                              end
+                                                              def self.new(size : Int32 = 3_i32, *, read_only = false) : Int32
+                                                                read_only ? 66_i32 : 65_i32
+                                                              end
+                                                            end
+                                                            DefaultedTargetConstructorBareHIR.new
+                                                            DefaultedTargetConstructorBareHIR.new()
+                                                            DefaultedTargetConstructorBareHIR.new(read_only: true)
+                                                            CRYSTAL
+                                                          false,
+                                                        }
                                                       else
                                                         raise "unknown defaulted target case #{kind}"
                                                       end
@@ -245,6 +282,22 @@ describe "defaulted call target source binding" do
       target[2].should be_true
       target[3].should be_true
       target[4].should be_true
+    end
+  end
+
+  {"constructor_explicit", "constructor_bare"}.each do |kind|
+    it "publishes the exact source Def, arena, and completed body for #{kind}" do
+      converter, prefix, definition, arena = lower_defaulted_target_source_case(kind)
+      # Check source call edges. The shared allocator's instance adapter calls
+      # a synthetic family target that is not the explicit source .new body.
+      targets = converter.__test_defaulted_source_targets(prefix, definition, arena, "__adamas_main")
+      targets.size.should eq(1)
+      targets.each do |target|
+        target[1].should be_true
+        target[2].should be_true
+        target[3].should be_true
+        target[4].should be_true
+      end
     end
   end
 

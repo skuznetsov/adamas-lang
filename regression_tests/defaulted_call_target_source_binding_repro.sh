@@ -68,6 +68,25 @@ for name in named_scalar named_tuple positional_tuple class_member instance_memb
     check_output "$key" "$expected"
   done
 done
+for name in ordinary inherited zero positional object_result generic proc proc_fields default_redispatch; do
+  case "$name" in
+    ordinary|inherited|positional|generic) expected=$'AB\n' ;;
+    zero) expected=$'AAB\n' ;;
+    object_result) expected=$'ACBC\n' ;;
+    proc) expected=$'I\n' ;;
+    proc_fields) expected=$'JKL\n' ;;
+    default_redispatch) expected=$'II\n' ;;
+  esac
+  source="$ROOT_DIR/regression_tests/fixtures/defaulted_call_target/defaulted_target_constructor_$name.cr"
+  for mode in "${modes[@]}"; do
+    key="constructor_$name.$mode"
+    if ! compile "$source" "$mode" "$WORK_DIR/$key.bin" empty >"$WORK_DIR/$key.compile.log" 2>&1; then
+      cat "$WORK_DIR/$key.compile.log" >&2
+      exit 1
+    fi
+    check_output "$key" "$expected"
+  done
+done
 for mode in "${modes[@]}"; do
   key="bad_type.$mode"
   status=0
@@ -78,6 +97,20 @@ for mode in "${modes[@]}"; do
       ! grep -Fq 'Int64' "$WORK_DIR/$key.compile.log"; then
     cat "$WORK_DIR/$key.compile.log" >&2
     printf 'FAIL: %s did not reject the Int64 argument as an overload mismatch\n' "$key" >&2
+    exit 1
+  fi
+  printf 'PASS: %s rejected\n' "$key"
+done
+for mode in "${modes[@]}"; do
+  key="constructor_bad_type.$mode"
+  status=0
+  compile "$ROOT_DIR/regression_tests/fixtures/defaulted_call_target/defaulted_target_constructor_bad_type.cr" \
+    "$mode" "$WORK_DIR/$key.bin" empty >"$WORK_DIR/$key.compile.log" 2>&1 || status=$?
+  if [[ "$status" != 1 ]] || ! grep -Fq 'no overload' "$WORK_DIR/$key.compile.log" || \
+      ! grep -Fq 'DefaultedConstructorRejectOwner.new' "$WORK_DIR/$key.compile.log" || \
+      ! grep -Fq 'Int64' "$WORK_DIR/$key.compile.log"; then
+    cat "$WORK_DIR/$key.compile.log" >&2
+    printf 'FAIL: %s did not reject the out-of-range Int64 constructor argument as an overload mismatch\n' "$key" >&2
     exit 1
   fi
   printf 'PASS: %s rejected\n' "$key"

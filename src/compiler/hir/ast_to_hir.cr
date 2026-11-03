@@ -45308,6 +45308,25 @@ module Adamas::HIR
         return
       end
 
+      # Early raw-shape demands must respect an explicit source .new before
+      # pre-lowering initialize or publishing the shared allocator. The late
+      # call binder owns default-expanded slots and must not have to undo an
+      # allocator body already emitted under its source target.
+      if !selected_initializer && (source_arg_types = call_arg_types)
+        source_name = allocator_new_name_for(class_name)
+        if selected_new = lookup_function_def_for_call(
+             source_name, source_arg_types.size, call_has_block, source_arg_types,
+             false, call_has_named_args, call_named_arg_names,
+           )
+          unless allocator_initializer_precedes_explicit_new?(
+                   class_name, source_arg_types, selected_new[0], selected_new[1],
+                   call_has_named_args, call_has_block, call_named_arg_names,
+                 )
+            return
+          end
+        end
+      end
+
       # Keep the legacy allocator body positional when this first call selects
       # a named-only initializer. The shape-specific overload emitted after
       # the base allocator remains responsible for the named call itself.
@@ -45826,7 +45845,7 @@ module Adamas::HIR
     # Keep this comparison
     # to one typed positional argument until broader constructor shapes have
     # matching falsifiers.
-    private def allocator_initializer_precedes_explicit_new?(
+    private def single_argument_initializer_precedes_explicit_new?(
       class_name : String,
       call_arg_types : Array(TypeRef),
       explicit_name : String,
@@ -45897,6 +45916,90 @@ module Adamas::HIR
       else
         same_arena && init_def.span.start_offset < explicit_def.span.start_offset
       end
+    end
+
+    # Constructor selection must finish before either a raw demand or the final
+    # call publishes an allocator body. Share the existing initializer preference
+    # policy so those phases cannot choose different owners for the same target.
+    private def allocator_initializer_precedes_explicit_new?(
+      class_name : String,
+      call_arg_types : Array(TypeRef),
+      explicit_name : String,
+      explicit_def : Adamas::Compiler::Frontend::DefNode,
+      call_has_named_args : Bool = false,
+      call_has_block : Bool = false,
+      call_named_arg_names : Array(String)? = nil,
+    ) : Bool
+      base_name = allocator_new_name_for(class_name)
+      allocator_named_arg_names = call_has_named_args ? canonical_named_arg_names(call_named_arg_names) : nil
+      allow_allocator_overload = single_argument_initializer_precedes_explicit_new?(
+        class_name, call_arg_types, explicit_name, explicit_def,
+        call_has_named_args, call_has_block, allocator_named_arg_names,
+      )
+
+      if !allow_allocator_overload && base_name.ends_with?(".new") && def_has_untyped_regular_param?(explicit_def)
+        has_proc_arg = call_arg_types.any? do |arg_type|
+          if arg_desc = @module.get_type_descriptor(arg_type)
+            arg_desc.kind == TypeKind::Proc ||
+              arg_desc.name == "Proc" ||
+              arg_desc.name.starts_with?("Proc(")
+          else
+            false
+          end
+        end
+
+        if has_proc_arg
+          if init_base = resolve_method_with_inheritance(class_name, "initialize")
+            init_match = lookup_function_def_for_call(init_base, call_arg_types.size, call_has_block, call_arg_types, false, true, allocator_named_arg_names)
+            init_match ||= lookup_function_def_for_call(init_base, call_arg_types.size, call_has_block, call_arg_types)
+            allow_allocator_overload = !!init_match
+          end
+        end
+      end
+
+      # File.new has broad untyped wrapper overloads that forward to
+      # File.new_internal(path, mode, ...). For constructor-shaped calls like
+      # File.new(path, fd, mode, ...) that wrapper is the wrong target and can
+      # reinterpret fd as a mode String. Allow allocator overload generation so
+      # we can call initialize(path, fd, mode, ...) directly.
+      if !allow_allocator_overload && class_name == "File" && base_name.ends_with?(".new")
+        non_void_call = call_arg_types.reject { |t| t == TypeRef::VOID }
+        if non_void_call.size >= 2 && non_void_call[0] == TypeRef::STRING
+          second = non_void_call[1]
+          second_desc = @module.get_type_descriptor(second)
+          second_name = second_desc ? second_desc.name : get_type_name_from_ref(second)
+          if second == TypeRef::INT32 || second_name == "File::FileDescriptor::Handle"
+            allow_allocator_overload = true
+          end
+        end
+      end
+      allow_allocator_overload
+    end
+
+    # A complete positional source call needs no ABI default expansion. Retain
+    # its exact initialize selection before a broad explicit .new can bind the
+    # same carrier shape. The bound-wrapper path owns layout discovery and does
+    # not lose this selection when the shared allocator is deferred.
+    private def complete_positional_constructor_initializer(
+      class_name : String,
+      call_arg_types : Array(TypeRef),
+    ) : SelectedCallTarget?
+      return nil if call_arg_types.empty? || call_arg_types.any? { |type| type == TypeRef::VOID }
+      source_name = allocator_new_name_for(class_name)
+      explicit_new = lookup_function_def_for_call(source_name, call_arg_types.size, false, call_arg_types)
+      return nil unless explicit_new
+      return nil unless allocator_initializer_precedes_explicit_new?(
+        class_name, call_arg_types, explicit_new[0], explicit_new[1],
+      )
+      init_base = resolve_method_with_inheritance(class_name, "initialize")
+      return nil unless init_base
+      requested_init_name = class_name.starts_with?("::") && !init_base.starts_with?("::") ? "::#{init_base}" : init_base
+      selected = allocator_initializer_def_for(init_base, requested_init_name, call_arg_types, false)
+      return nil unless selected
+      stats = function_param_stats(selected[0], selected[1])
+      return nil unless stats.param_count == call_arg_types.size && !stats.has_block &&
+                        !stats.has_splat && !stats.has_double_splat && !stats.has_named_only
+      SelectedCallTarget.new(selected[0], selected[1], selected[2])
     end
 
     private def generate_allocator_overload(
@@ -45973,44 +46076,6 @@ module Adamas::HIR
           class_name, call_arg_types, explicit_name, explicit_def,
           call_has_named_args, call_has_block, allocator_named_arg_names,
         )
-
-        if !allow_allocator_overload && base_name.ends_with?(".new") && def_has_untyped_regular_param?(explicit_def)
-          has_proc_arg = call_arg_types.any? do |arg_type|
-            if arg_desc = @module.get_type_descriptor(arg_type)
-              arg_desc.kind == TypeKind::Proc ||
-                arg_desc.name == "Proc" ||
-                arg_desc.name.starts_with?("Proc(")
-            else
-              false
-            end
-          end
-
-          if has_proc_arg
-            if init_base = resolve_method_with_inheritance(class_name, "initialize")
-              init_match = lookup_function_def_for_call(init_base, call_arg_types.size, call_has_block, call_arg_types, false, true, allocator_named_arg_names)
-              init_match ||= lookup_function_def_for_call(init_base, call_arg_types.size, call_has_block, call_arg_types)
-              allow_allocator_overload = !!init_match
-            end
-          end
-        end
-
-        # File.new has broad untyped wrapper overloads that forward to
-        # File.new_internal(path, mode, ...). For constructor-shaped calls like
-        # File.new(path, fd, mode, ...) that wrapper is the wrong target and can
-        # reinterpret fd as a mode String. Allow allocator overload generation so
-        # we can call initialize(path, fd, mode, ...) directly.
-        if !allow_allocator_overload && class_name == "File" && base_name.ends_with?(".new")
-          non_void_call = call_arg_types.reject { |t| t == TypeRef::VOID }
-          if non_void_call.size >= 2 && non_void_call[0] == TypeRef::STRING
-            second = non_void_call[1]
-            second_desc = @module.get_type_descriptor(second)
-            second_name = second_desc ? second_desc.name : get_type_name_from_ref(second)
-            if second == TypeRef::INT32 || second_name == "File::FileDescriptor::Handle"
-              allow_allocator_overload = true
-            end
-          end
-        end
-
         return unless allow_allocator_overload
       end
 
@@ -46788,6 +46853,9 @@ module Adamas::HIR
           class_name, call_arg_types.dup,
         }
       end
+      # The synthetic wrapper has no source Def of its own. Publish its finished
+      # state only after the body, layout recipe and initializer proof exist.
+      set_function_state(overload_name, FunctionLoweringState::Completed)
     end
 
     # Admit only the initializer selected when this exact positional wrapper
@@ -114814,6 +114882,18 @@ module Adamas::HIR
       end
       abi_guard_explicit_arg_count = args.size
       source_positional_values = args.map { |value| source_call_argument(ctx, value) }
+      if method_name == "new" && source_initializer_entry.nil? &&
+         !has_named_args && !has_splat && !has_block_call &&
+         (source_new_name = full_method_name) && (source_owner = method_owner(source_new_name)) &&
+         @class_info.has_key?(source_owner)
+        source_types = args.map { |arg_id| ctx.type_of(arg_id) }
+        if selected_initializer = complete_positional_constructor_initializer(source_owner, source_types)
+          source_initializer_entry = selected_initializer
+          prefer_allocator_new_call = true
+          constructor_arg_binding_name = strip_type_suffix(selected_initializer.symbol_name)
+          arg_binding_full_method_name = constructor_arg_binding_name
+        end
+      end
       # Positional auto-allocators are already synthesized as default-argument
       # wrappers around `#initialize`. Expanding their defaults at this callsite
       # would materialize an unused full-shape `.new` overload and then split its
@@ -117362,38 +117442,6 @@ module Adamas::HIR
             static_class_name = resolved_class_name
             class_name = resolved_class_name
           end
-          if class_info = @class_info[class_name]?
-            alloc_block = has_block_call ? allocator_call_block_contract(class_name, arg_types, !!allocator_has_named_args, block_expr, block_pass_expr) : nil
-            generate_allocator(
-              class_name,
-              class_info,
-              arg_types,
-              call_has_named_args: allocator_has_named_args,
-              call_has_block: !!has_block_call,
-              call_named_arg_names: call_named_arg_names,
-              call_block_node: alloc_block.try(&.[0]),
-              call_block_param_types: alloc_block.try(&.[1]),
-              call_block_return_name: alloc_block.try(&.[2]),
-              selected_initializer: prefer_allocator_new_call,
-              selected_init_target: source_initializer_entry,
-            )
-            allocator_call_shape_target = allocator_generated_target_name_for_call(
-              class_name,
-              arg_types,
-              allocator_has_named_args,
-              !!has_block_call,
-              call_named_arg_names,
-              source_initializer_entry,
-            )
-            if has_block_call && !has_unknown_arg_types
-              generated_block_name = mangle_function_name(full_method_name, arg_types, true)
-              if @module.has_function?(generated_block_name) ||
-                 @function_defs.has_key?(generated_block_name) ||
-                 @function_types.has_key?(generated_block_name)
-                mangled_method_name = generated_block_name
-              end
-            end
-          end
         end
         explicit_match = if prefer_allocator_new_call
                            nil
@@ -117422,8 +117470,8 @@ module Adamas::HIR
                            ) : nil
                            m3h_input ? resolve_call_input(m3h_input) : nil
                          end
-        if explicit_match && !prefer_allocator_new_call && allocator_call_shape_target && !source_named_entry
-          if class_name = method_owner(full_method_name)
+        if explicit_match && !prefer_allocator_new_call && !source_named_entry
+          if (class_name = method_owner(full_method_name)) && @class_info.has_key?(class_name)
             explicit_name, explicit_def = explicit_match.not_nil!
             if allocator_initializer_precedes_explicit_new?(
                  class_name, arg_types, explicit_name, explicit_def,
@@ -117433,6 +117481,46 @@ module Adamas::HIR
               # allocator is materialized from the better-matching initializer.
               explicit_match = nil
               prefer_allocator_new_call = true
+            end
+          end
+        end
+        # Default/named binding has already selected a source Def before ABI
+        # padding. Settle that choice before allocator materialization: looking
+        # up the padded vector can miss a named-only source overload and create
+        # a synthetic body under the source call's physical target.
+        unless explicit_match
+          if class_name = method_owner(full_method_name)
+            if class_info = @class_info[class_name]?
+              alloc_block = has_block_call ? allocator_call_block_contract(class_name, arg_types, !!allocator_has_named_args, block_expr, block_pass_expr) : nil
+              generate_allocator(
+                class_name,
+                class_info,
+                arg_types,
+                call_has_named_args: allocator_has_named_args,
+                call_has_block: !!has_block_call,
+                call_named_arg_names: call_named_arg_names,
+                call_block_node: alloc_block.try(&.[0]),
+                call_block_param_types: alloc_block.try(&.[1]),
+                call_block_return_name: alloc_block.try(&.[2]),
+                selected_initializer: prefer_allocator_new_call,
+                selected_init_target: source_initializer_entry,
+              )
+              allocator_call_shape_target = allocator_generated_target_name_for_call(
+                class_name,
+                arg_types,
+                allocator_has_named_args,
+                !!has_block_call,
+                call_named_arg_names,
+                source_initializer_entry,
+              )
+              if has_block_call && !has_unknown_arg_types
+                generated_block_name = mangle_function_name(full_method_name, arg_types, true)
+                if @module.has_function?(generated_block_name) ||
+                   @function_defs.has_key?(generated_block_name) ||
+                   @function_types.has_key?(generated_block_name)
+                  mangled_method_name = generated_block_name
+                end
+              end
             end
           end
         end
@@ -140750,7 +140838,7 @@ module Adamas::HIR
       if selected = source_new_entry
         selected_name, selected_def = selected
         selected_params = function_param_infos(selected_name, selected_def)
-        if selected_params.any? { |param| param.is_splat && !param.is_double_splat }
+        if selected_params.any? { |param| param.is_splat && !param.is_double_splat && !named_only_separator?(param) }
           mangled_name = "#{mangled_name}_splat" unless mangled_name.ends_with?("_splat")
         end
         if existing_def = @function_defs[mangled_name]?

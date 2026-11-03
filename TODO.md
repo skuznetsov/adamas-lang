@@ -23994,3 +23994,30 @@ integration, fresh bootstrap, or LavinMQ parity.
   outside this claim. hir_frontier_probe_host still uses the compatibility API;
   pass its available declaration ID before treating that probe as ownership
   evidence. No S2/bootstrap or unchanged LavinMQ runtime/test parity is claimed.
+
+
+### 2026-11-03: Constructor ownership survives default expansion and deferral
+
+- Source .new selection precedes early raw allocator publication and late ABI
+  default padding. Preserve exact source Def/arena validation; a synthetic body
+  cannot claim the source target. Named-only * does not select a splat alias.
+- Complete nonempty positional initialize selection retains its exact Def/arena
+  through the private bound allocator when the shared allocator is deferred.
+  Generated overload completion follows body/layout-recipe/proof publication;
+  owner invalidation clears both body and state. No broad ranking change.
+- DoD passed at AST 0a4ffdb9b9b07b5a38e45f357ceea4f79c4f876da05c30760f44a35b364d5452:
+  fresh S1 35q756; 29 focused HIR examples 35q755; 56 stock Crystal 1.22.1 versus
+  lazy/eager native/rejection/prelude checks 35q757; stock-prelude String(Bytes)
+  35q758; raw Proc pair 35q759; zero/default constructors 35q760; eight named-shape
+  controls 35q761. Core retains all 77 baseline failures with unchanged normalized
+  details (35q762 versus 35q698). All compiler and native runs use run_safe.sh.
+- Keep separate: source-result validation for bare allocate/return:self
+  (baseline 35q743/35q749), a default wrapper whose annotation disagrees with its
+  redispatched constructor result, and same-carrier class/instance argument
+  selection (baseline 35q764). A wrapper may redispatch after defaults; do not force every source
+  default entry to retain its body. The inferred-return control prints II in
+  stock/lazy/eager. Type checks, LavinMQ and stdlib remain unchanged.
+- LavinMQ passed the Slice(UInt8).new$Int32_Bool binding barrier at 35q741/35q765 and
+  stopped at Log.for(self) with AMQP::Client::Connection treated as an instance.
+  This remains an HIR frontier, not successful compilation or runtime evidence.
+  S2/bootstrap and unchanged LavinMQ functional/test parity remain open.

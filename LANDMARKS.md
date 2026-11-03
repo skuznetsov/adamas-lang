@@ -22813,3 +22813,36 @@ Refresh after parser/visibility, virtual file replacement, node lifetime or
 registration/generated-source transport changes. Compatibility no-handle and
 invalid-ID recovery, ModuleNode recovery, S2/bootstrap and LavinMQ parity remain
 open. These are compilation-local receipts, not persistent metadata identities.
+
+
+### 2026-11-03: Allocators cannot replace a selected source constructor
+
+Default-expanded constructor ABI vectors lost named-only source shape. Early
+raw demands and late .new lowering could publish a synthetic allocator under
+the physical target reserved for the selected source .new. Keep strict Def/arena
+binding and settle source ownership before allocator materialization instead.
+A bare * separator must not introduce a _splat alias. Complete positional Proc
+initializer selection also disappeared when an empty-field shared allocator was
+deferred: retain its exact SelectedCallTarget before default handling and use
+the existing private bound wrapper for layout and body materialization.
+
+Qualified AST 0a4ffdb9b9b07b5a38e45f357ceea4f79c4f876da05c30760f44a35b364d5452 passes S1
+35q756, 29 focused HIR examples 35q755, all 56 oracle records 35q757, stock-prelude
+String(Bytes) constructor identity 35q758, raw Proc pair 35q759, zero/default
+constructors 35q760 and eight named-shape controls 35q761. Core has the same 77
+baseline failures with identical normalized details (35q762 versus 35q698).
+Generated overload state becomes Completed after body/recipe/source-proof
+publication and is cleared by owner invalidation; this does not replace Def/arena
+proof. Adversary verdict: ROBUST within the complete positional and tested
+source/default corridors; static review is correlated, not independent.
+
+Rejected route: blanket source-default authority would suppress Crystal's legal
+redispatch after defaults. The inferred-return Proc default wrapper prints II
+in stock/lazy/eager (35q738, permanent fixture). Bare allocate / return:self
+construction and default-wrapper return annotations still expose pre-existing
+source-result validation gaps (35q743/35q749); do not loosen checks to hide them.
+Same-carrier class/instance constructor ranking remains outside this slice
+(baseline failure 35q764). Fresh unchanged LavinMQ HIR 35q765 reaches Log.for(self),
+after clearing the Slice(UInt8).new default-binding barrier.
+Refresh after constructor lookup, default expansion, layout invalidation or
+function-state changes. S2/bootstrap and unchanged LavinMQ parity remain open.

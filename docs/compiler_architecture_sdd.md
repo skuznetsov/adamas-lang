@@ -5538,3 +5538,50 @@ no-handle/invalid-ID recovery and ModuleNode recovery remain outside this claim.
 S2/bootstrap and unchanged LavinMQ runtime/test parity remain open. This receipt
 is not a persistent identity; metadata retention remains deferred in section
 10.1 of incremental_build_cache_sdd.md.
+
+
+#### Constructor source selection precedes allocator publication
+
+A source call selects its explicit class .new or initialize before raw demands
+or final ABI padding may publish an allocator. Named-only default expansion is
+not a new source signature: a padded [Int32, Bool] vector must not authorize a
+synthetic body under an explicit source .new target. The exact source Def and
+arena remain mandatory for default-target binding; synthetic wrappers do not
+borrow that Def merely because their physical names share a prefix. A bare *
+parameter separator is not a splat argument and must not select a _splat alias.
+
+For a complete nonempty positional constructor call selected for initialize,
+carry the exact SelectedCallTarget (Def plus arena) before default handling.
+The existing bound allocator wrapper owns layout discovery and initializer
+materialization even when the shared empty-field allocator is deferred. This
+corridor excludes unresolved VOID arguments, blocks, splats, double splats and
+named-only parameters. Share the existing initializer preference policy across
+early and late consumers; this is not a new general overload-ranking policy.
+Publish the generated overload as Completed only after its body, layout recipe
+and available initializer proof are recorded. Completed means HIR generation
+finished; it does not replace source ownership or source-result validation.
+Owner invalidation must clear both the generated body and its state.
+
+DoD: defaulted_call_target_source_binding_repro.sh <fresh-S1>, the focused
+constructor/default/materialization HIR specs, stock-prelude constructor
+identity, raw Proc, zero-default and named-shape native controls, all through
+run_safe.sh. Qualified production AST 0a4ffdb9b9b07b5a38e45f357ceea4f79c4f876da05c30760f44a35b364d5452:
+fresh S1 35q756; 29 focused examples 35q755; 16 positive programs against stock
+Crystal 1.22.1 in lazy/eager modes, six strict rejection records and stock/lazy
+prelude hello (56 checks, 35q757); String(Bytes) defaults 35q758; raw Proc pair
+35q759; zero/default constructors 35q760; eight named-shape controls 35q761.
+The 565-example core suite retains the same 77 failing examples and unchanged
+normalized failure blocks (35q762 versus 35q698); it is not green.
+
+Adversary verdict: ROBUST for the exercised source/default and complete
+positional receipt corridor; the static review is correlated. Roll back this
+slice with its specs and fixtures. Requalify after constructor selection,
+argument expansion, source binding, allocator deferral/layout invalidation or
+function-state changes. Default wrappers can legally redispatch after defaults
+(Crystal semantic/default_arguments.cr); do not freeze every wrapper to the
+initial source body. Its inferred-return control prints II in all three modes.
+Separate return-contract gaps remain for explicit new bodies ending in bare
+allocate, including return:self, and for a default wrapper annotated Int32 whose
+redispatched constructor returns an instance. Preserve the rejection contract;
+do not repair it by inventing a result type. Same-carrier class/instance
+argument-kind selection (baseline 35q764), S2/bootstrap and unchanged LavinMQ parity remain open.
