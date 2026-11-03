@@ -1528,6 +1528,9 @@ module Adamas::HIR
       getter call_types : Array(TypeRef)?
       getter call_literals : Array(Bool)?
       getter call_enum_names : Array(String?)?
+      # This is lifecycle state for the cached output only. Source Def, arena,
+      # call shape, and ABI remain the immutable replay authority.
+      getter return_result_invalidated : Bool
 
       def initialize(
         @function : Adamas::HIR::Function,
@@ -1549,7 +1552,20 @@ module Adamas::HIR
         @call_types : Array(TypeRef)?,
         @call_literals : Array(Bool)?,
         @call_enum_names : Array(String?)?,
+        @return_result_invalidated : Bool = false,
       )
+      end
+
+      def invalidate_return_result : MaterializedInitializerSource
+        return self if @return_result_invalidated
+
+        MaterializedInitializerSource.new(
+          @function, @source_name, @source_def, @source_arena, @namespace,
+          @bindings, @parameter_types, @block_parameters, @heap_block_param,
+          @callback_abi, @callback_source, @return_type, @owner, @owner_type,
+          @lowering_namespace, @lowering_bindings, @call_types, @call_literals,
+          @call_enum_names, true,
+        )
       end
     end
 
@@ -49147,7 +49163,8 @@ module Adamas::HIR
           initializer_call_literals, initializer_call_enum_names,
         )
         if prior = @materialized_initializer_sources[full_name]?
-          unless initializer_source_recipe_matches?(prior, source)
+          unless initializer_source_recipe_matches?(prior, source) &&
+                 initializer_source_return_update_admitted?(prior, source, initializer_replay_source)
             raise LoweringError.new("initializer source identity collision for #{full_name}", node)
           end
         end
@@ -71880,8 +71897,20 @@ module Adamas::HIR
     end
 
     private def remove_hir_function(name : String) : Bool
+      retired_function = @module.function_by_name(name)
       removed = @module.remove_function(name)
       if removed
+        # The exact initializer source remains valid across body retirement,
+        # but its previously inferred output no longer describes a live body.
+        # Mark that output stale only when the retired Function is the exact
+        # one that produced the stored materialization.
+        if retired_function
+          if source = @materialized_initializer_sources[name]?
+            if source.function.same?(retired_function)
+              @materialized_initializer_sources[name] = source.invalidate_return_result
+            end
+          end
+        end
         @module_virtual_fanout_body_epoch += 1
         # ValueIds are unique only within one Function lifetime. If a function
         # is removed and later rebuilt under the same name, its ids restart and
@@ -121823,7 +121852,8 @@ module Adamas::HIR
     end
 
     private def initializer_source_recipe_matches?(prior : MaterializedInitializerSource, current : MaterializedInitializerSource) : Bool
-      prior.source_name == current.source_name && prior.source_def.same?(current.source_def) &&
+      prior.function.name == current.function.name &&
+        prior.source_name == current.source_name && prior.source_def.same?(current.source_def) &&
         arena_map_key(prior.source_arena) == arena_map_key(current.source_arena) &&
         prior.namespace == current.namespace && prior.bindings == current.bindings &&
         prior.owner == current.owner && prior.owner_type == current.owner_type &&
@@ -121831,9 +121861,37 @@ module Adamas::HIR
         prior.call_types == current.call_types && prior.call_literals == current.call_literals &&
         prior.call_enum_names == current.call_enum_names &&
         prior.parameter_types == current.parameter_types && prior.block_parameters == current.block_parameters &&
-        prior.heap_block_param == current.heap_block_param && prior.return_type == current.return_type &&
+        prior.heap_block_param == current.heap_block_param &&
         initializer_callback_abi_matches?(prior.callback_abi, current.callback_abi) &&
         initializer_callback_source_matches?(prior.callback_source, current.callback_source)
+    end
+
+    # The return type is a cached output of lowering, not source identity. A
+    # body retirement invalidates that output while preserving the exact source
+    # recipe. A changed result is admitted only while replaying that exact
+    # retired recipe into a newly installed body; the rebuilt HIR Function and
+    # return registry then own the new result, including a concrete-to-concrete
+    # change. A same-generation mutation or an untracked replacement is not a
+    # replay certificate.
+    private def initializer_source_return_update_admitted?(
+      prior : MaterializedInitializerSource,
+      current : MaterializedInitializerSource,
+      replay_source : MaterializedInitializerSource? = nil,
+    ) : Bool
+      return true if prior.return_type == current.return_type
+      return false unless replay_source && replay_source.same?(prior)
+      return false unless prior.return_result_invalidated
+      return false if current.return_result_invalidated
+
+      name = current.function.name
+      return false unless prior.function.name == name
+      return false unless prior.function.return_type == prior.return_type && current.function.return_type == current.return_type
+      return false if prior.function.same?(current.function)
+      return false unless @module.function_by_name(name).try(&.same?(current.function))
+      return false if @module.function_by_name(name).try(&.same?(prior.function))
+      return false unless @function_types[name]? == current.return_type
+
+      @module.has_function_with_body?(name)
     end
 
     private def initializer_source_definition_current?(source : MaterializedInitializerSource) : Bool
@@ -121882,11 +121940,15 @@ module Adamas::HIR
             end
           end
           function = @module.function_by_name(name)
-          unless function && @module.has_function_with_body?(name) &&
+          refreshed_source = @materialized_initializer_sources[name]?
+          unless function && refreshed_source && @module.has_function_with_body?(name) &&
                  function.params.map(&.type) == source.parameter_types &&
                  function.params.map(&.is_block) == source.block_parameters &&
                  function.heap_block_param == source.heap_block_param &&
-                 function.return_type == source.return_type
+                 initializer_source_recipe_matches?(source, refreshed_source) &&
+                 initializer_source_return_update_admitted?(source, refreshed_source, source) &&
+                 function.same?(refreshed_source.function) &&
+                 function.return_type == refreshed_source.return_type
             raise LoweringError.new("initializer replay ABI changed for #{name}", source.source_def)
           end
         end
@@ -121902,6 +121964,7 @@ module Adamas::HIR
     private def materialized_initializer_source_current?(source : MaterializedInitializerSource) : Bool
       function = source.function
       name = function.name
+      return false if source.return_result_invalidated
       return false unless @module.function_by_name(name).try(&.same?(function)) &&
                           function_state(name).completed? && @module.has_function_with_body?(name)
       return false unless function.params.map(&.type) == source.parameter_types &&

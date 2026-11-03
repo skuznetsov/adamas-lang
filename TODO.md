@@ -23717,3 +23717,30 @@ integration, fresh bootstrap, or LavinMQ parity.
   closure, S2/bootstrap and unchanged LavinMQ separately. Class argument and
   typeof result contracts remain in progress. Refresh these facts after macro
   expansion, arena, source-order or enum publication changes.
+
+
+### 2026-11-02: Source-owned initializer replay invalidates cached results
+
+- Separate immutable constructor source/ABI identity from the inferred result of
+  one HIR Function generation. Removing that exact Function marks its cached
+  initializer result stale. Replay may update the result only from that exact
+  retired recipe into a new installed body whose return registry agrees.
+- Root cause: layout invalidation retired an initializer body but kept its old
+  inferred return as source identity. The rebuilt body correctly returned a
+  refined captured Proc, then failed the identity comparison. Preserve Def,
+  arena, owner, bindings, argument facts, parameter and callback ABI checks.
+- Verification: 37 focused HIR examples pass, including a natural captured-block
+  retirement/replay with allocator-call repair and adversarial same-generation,
+  untracked-replacement, Def/arena/call mismatch checks. Fresh S1 and unchanged
+  stock-prelude hello pass. A stock-qualified native constructor example fails
+  before the fix with an identity collision and produces A\n afterward in both
+  lazy and eager modes.
+- DoD: bash regression_tests/initializer_return_replay_repro.sh <fresh-S1>;
+  expect stock/lazy/eager PASS. HIR lifecycle and negative controls live in
+  spec/hir/initializer_return_refinement_spec.cr. Evidence under the oct29 root:
+  34uu, 34ud/34ue, 34vb RED, 34va/34vc green.
+- Open: two distinct captured-block constructor callsites fail the callback ABI
+  check both before and after this fix (34uy/34uw); investigate callback source
+  identity separately. Natural concrete-to-concrete replay, S2/bootstrap and
+  unchanged LavinMQ remain unqualified. Refresh after body retirement, callback
+  ABI or initializer replay changes.

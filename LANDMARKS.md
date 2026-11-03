@@ -22587,3 +22587,21 @@ lazy/eager native controls and stock-prelude hello. Evidence under the oct29 roo
 validation, Class/typeof consumption, bootstrap or LavinMQ. Refresh after macro
 source ownership, declaration order or enum registration changes. Declaration-
 dependent branch reflection still needs a separate probe.
+
+
+### 2026-11-02: Initializer return facts belong to one live body generation
+
+The exact initializer Def, arena and call/ABI recipe survive layout retirement;
+the inferred return does not. remove_hir_function invalidates only the output
+produced by the exact removed Function. A result change needs that retired recipe,
+a distinct current body, and matching Function/return-registry output. Equal names,
+a Void result or an arbitrary replacement are not an update certificate.
+
+Adversary: ROBUST for the executed lifecycle, same-generation mutation, untracked
+replacement and Def/arena/call mismatch controls. The natural source path proves
+retirement, replay and caller return repair without synthetic mutation. Evidence:
+37 HIR examples (34uu), fresh S1/prelude (34ud/34ue), native RED 34vb to stock/
+lazy/eager GREEN 34va/34vc. Concrete-to-concrete permission has a synthetic guard
+check only. Two separate captured-block callsites still fail an older callback ABI
+check (34uy/34uw); this does not close that bug, bootstrap or LavinMQ. Refresh on
+initializer source, retirement, return registration or callback representation edits.
