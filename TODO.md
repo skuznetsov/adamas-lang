@@ -23744,3 +23744,24 @@ integration, fresh bootstrap, or LavinMQ parity.
   identity separately. Natural concrete-to-concrete replay, S2/bootstrap and
   unchanged LavinMQ remain unqualified. Refresh after body retirement, callback
   ABI or initializer replay changes.
+
+
+### 2026-11-02: Retired initializer names still reserve their callback ABI
+
+- A materialized initializer recipe reserves its callback ABI even while layout
+  invalidation has removed the HIR body. Raw callback publication now creates
+  a checked source alias for both live and retired materializations, instead of
+  treating a temporarily absent body as an unused target name.
+- Root cause: a second constructor block could install its callback contract
+  under a retired first target. Exact replay then correctly rejected the changed
+  ABI. Preserve the recipe and its ABI; do not weaken the replay check.
+- Verification: 34 HIR examples, fresh unchanged-source S1 and stock-prelude
+  hello pass. Both one-block and distinct-block native fixtures match stock
+  Crystal 1.22.1 in lazy/eager mode. The distinct-block fixture failed on the
+  prior source state with initializer replay callback ABI changed (34uw/34uy).
+  DoD: bash regression_tests/initializer_return_replay_repro.sh <fresh-S1>;
+  expect both fixtures PASS in stock/lazy/eager. Evidence: 34vh/34vj/34vk/34vl.
+- This closes the distinct captured-block reservation bug recorded above;
+  Class/typeof contracts, Proc receiver materialization, bootstrap and unchanged
+  LavinMQ remain separate frontiers. Refresh after callback target allocation,
+  initializer retirement or source recipe lifetime changes.

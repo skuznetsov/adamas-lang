@@ -9685,10 +9685,11 @@ module Adamas::HIR
             source_callsite,
           )
         end
-      elsif @module.has_function_with_body?(target_name)
+      elsif @module.has_function_with_body?(target_name) || @materialized_initializer_sources.has_key?(target_name)
         # A target materialized before this callsite may already have POINTER
-        # block formals. Reusing that body would publish the new contract under
-        # an incompatible function signature, so lower a fresh source-def alias.
+        # block formals. Its source recipe also reserves that ABI while layout
+        # invalidation temporarily removes the body. Publish a fresh source-def
+        # alias instead of changing the contract of either live or retired HIR.
         chosen_name = register_raw_callback_contract_target(
           target_name,
           contract,

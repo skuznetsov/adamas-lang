@@ -22605,3 +22605,21 @@ lazy/eager GREEN 34va/34vc. Concrete-to-concrete permission has a synthetic guar
 check only. Two separate captured-block callsites still fail an older callback ABI
 check (34uy/34uw); this does not close that bug, bootstrap or LavinMQ. Refresh on
 initializer source, retirement, return registration or callback representation edits.
+
+
+### 2026-11-02: Body absence does not release an initializer ABI reservation
+
+A saved materialized initializer source survives temporary HIR retirement. Treat
+its target name as reserved when allocating a raw callback contract; use the
+existing checked source-alias path rather than changing the retired target ABI.
+The replay guard continues to reject changed source or callback identity.
+
+Evidence: distinct-block native RED on 34ud (34uw) to stock/lazy/eager GREEN on
+34vj (34vk), 34 HIR examples (34vh), and stock-prelude hello (34vl). This closes
+the callback-reservation defect noted in the preceding entry; it does not prove
+LavinMQ or bootstrap parity. Refresh after materialized-source lifetime, callback
+alias selection or body-retirement changes.
+
+Static adversary review found the recipe/retirement keys and exact Def/arena
+alias binding aligned. A stale reservation can conservatively create an extra
+alias; native evidence covers the two fixtures, not every reservation lifetime.
