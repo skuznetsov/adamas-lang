@@ -22640,3 +22640,17 @@ call-side splats, complete bootstrap or LavinMQ parity. A bool-only literal bit
 cannot represent a Phi of Owner and Owner.new; reuse rich source facts for any
 future tuple-rest binding. Refresh after owner, ABI, source arena or target
 publication changes.
+
+
+### 2026-11-03: Primitive source identity precedes nilary materialization
+
+Inherited Int/Float methods bind an exact source Def/arena to the concrete numeric
+receiver before inference. Construct numeric ClassInfo when only the builtin
+TypeRef exists. Specialize self without substituting lexical abstract Int/Float;
+that substitution broke stock-prelude Time::Span.new (35p08 -> 35p20). A changed
+canonical source invalidates cached return/body reuse even if the physical alias
+and body survive. Evidence: fresh S1 35p22, 20 native/negative/prelude controls
+35p23, 56 HIR examples 35p25. See `docs/compiler_architecture_sdd.md`, Exact
+primitive-template source ownership, and the inherited_primitive_method_binding
+regression. Refresh after source selection/registration, cache or layout changes.
+WIP result-cache composition, bootstrap and unchanged LavinMQ remain unqualified.

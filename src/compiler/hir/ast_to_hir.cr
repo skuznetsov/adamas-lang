@@ -1360,6 +1360,26 @@ module Adamas::HIR
       end
     end
 
+    # Exact source owner selected for a primitive-template specialization.
+    # The physical target is a distinct emitted function; this receipt keeps
+    # the source Def/arena and owner substitution that authorized its body.
+    private struct PrimitiveTemplateSourceBinding
+      getter source_name : String
+      getter source_def : Adamas::Compiler::Frontend::DefNode
+      getter source_arena : Adamas::Compiler::Frontend::ArenaLike
+      getter template_owner : String
+      getter physical_owner : String
+
+      def initialize(
+        @source_name : String,
+        @source_def : Adamas::Compiler::Frontend::DefNode,
+        @source_arena : Adamas::Compiler::Frontend::ArenaLike,
+        @template_owner : String,
+        @physical_owner : String,
+      )
+      end
+    end
+
     # Retain the exact source binding and ABI shape of a private synthesized
     # allocator so a later layout invalidation can recreate the same target.
     private class GeneratedAllocatorLayoutRecipe
@@ -3081,6 +3101,7 @@ module Adamas::HIR
 
     # AST of function definitions for inline expansion
     @function_defs : Hash(String, Adamas::Compiler::Frontend::DefNode)
+    @primitive_template_source_bindings : Hash(String, PrimitiveTemplateSourceBinding)
     # Source-backed parameter recovery is kept as a sidecar keyed by the
     # original DefNode identity.  Self-hosted stage2 can retain the DefNode
     # header/body while its @params_storage is empty; the recovered node uses
@@ -3692,10 +3713,11 @@ module Adamas::HIR
       if info = @class_info[owner]?
         return info
       end
-      base_owner = strip_generic_args(owner)
+      numeric_template_owner = primitive_template_owner(owner)
+      base_owner = numeric_template_owner || strip_generic_args(owner)
       concrete_tuple = base_owner == "Tuple" && owner.includes?('(')
       concrete_proc = base_owner == "Proc" && !proc_type_argument_names(owner).nil?
-      return nil unless concrete_tuple || concrete_proc
+      return nil unless concrete_tuple || concrete_proc || numeric_template_owner
 
       base_info = @class_info[base_owner]?
       return nil unless base_info
@@ -3706,6 +3728,10 @@ module Adamas::HIR
                    end
       return nil if owner_type == TypeRef::VOID
 
+      # Numeric builtins also have a concrete TypeRef before their optional
+      # source reopening creates a ClassInfo. An inherited Int/Float body still
+      # needs that exact receiver and builtin size, rather than an abstract
+      # template or an unmaterialized callable stub.
       # Tuple and Proc signatures do not receive ordinary generic-class
       # monomorphization/ClassInfo entries. Materialize inherited methods with
       # the shared base layout but the exact value TypeRef so `self` keeps its
@@ -3716,9 +3742,9 @@ module Adamas::HIR
         owner_type,
         base_info.ivars,
         base_info.class_vars,
-        base_info.size,
-        base_info.is_struct,
-        base_info.parent_name,
+        numeric_template_owner ? type_size(owner_type) : base_info.size,
+        numeric_template_owner ? true : base_info.is_struct,
+        numeric_template_owner || base_info.parent_name,
       )
     end
 
@@ -8501,6 +8527,7 @@ module Adamas::HIR
       @union_descriptors = {} of MIR::TypeRef => MIR::UnionDescriptor
       @union_descriptor_entries = [] of UnionDescriptorRegistration
       @function_defs = Hash(String, Adamas::Compiler::Frontend::DefNode).new(initial_capacity: 32768)
+      @primitive_template_source_bindings = {} of String => PrimitiveTemplateSourceBinding
       @source_recovered_defs = {} of UInt64 => {
         Adamas::Compiler::Frontend::DefNode,
         Adamas::Compiler::Frontend::ArenaLike,
@@ -49368,6 +49395,125 @@ module Adamas::HIR
       end
     end
 
+    private def bind_primitive_template_source_target!(
+      target_name : String,
+      selected_name : String,
+      selected_def : Adamas::Compiler::Frontend::DefNode,
+      selected_arena : Adamas::Compiler::Frontend::ArenaLike,
+      template_owner : String,
+      physical_owner : String,
+      node : Adamas::Compiler::Frontend::Node? = nil,
+    ) : Nil
+      selected_parts = parse_method_name(selected_name)
+      target_parts = parse_method_name(target_name)
+      unless selected_parts.is_instance && target_parts.is_instance &&
+             selected_parts.owner == template_owner && target_parts.owner == physical_owner &&
+             selected_parts.method == target_parts.method &&
+             primitive_template_owner(physical_owner) == template_owner
+        raise LoweringError.new("primitive-template source binding has mismatched owners or method", node)
+      end
+
+      registered_def = @function_defs[selected_name]?
+      unless registered_def && registered_def.same?(selected_def)
+        raise LoweringError.new("primitive-template selected source definition is no longer registered", node)
+      end
+      registered_arena = @function_def_arenas[selected_name]?
+      unless registered_arena && arena_map_key(registered_arena) == arena_map_key(selected_arena)
+        raise LoweringError.new("primitive-template selected source arena is no longer registered", node)
+      end
+      unless arena_fits_def?(selected_arena, selected_def) &&
+             registered_arena_for_def(selected_def).try { |arena| arena_map_key(arena) == arena_map_key(selected_arena) }
+        raise LoweringError.new("primitive-template source arena does not own the selected definition", node)
+      end
+
+      existing_binding = @primitive_template_source_bindings[target_name]?
+      if existing_binding
+        unless existing_binding.source_name == selected_name &&
+               existing_binding.source_def.same?(selected_def) &&
+               arena_map_key(existing_binding.source_arena) == arena_map_key(selected_arena) &&
+               existing_binding.template_owner == template_owner &&
+               existing_binding.physical_owner == physical_owner
+          raise LoweringError.new("primitive-template physical target already has a different source binding", node)
+        end
+      end
+
+      existing_def = @function_defs[target_name]?
+      if existing_def && !existing_def.same?(selected_def)
+        shadow_arena = @function_def_arenas[target_name]?
+        unless shadow_arena
+          raise LoweringError.new("primitive-template physical target shadow has no source arena", node)
+        end
+        # Reuse the existing narrowly-owned nilary redirect. It preserves a
+        # concrete required-argument sibling while moving only the cold bare
+        # family slot to the selected inherited source body.
+        bind_inherited_bare_redirect_physical_source!(
+          target_name,
+          selected_name,
+          selected_def,
+          selected_arena,
+          existing_def,
+          shadow_arena,
+          target_name,
+        )
+        existing_def = @function_defs[target_name]?
+        unless existing_def && existing_def.same?(selected_def)
+          raise LoweringError.new("primitive-template physical redirect did not retain its selected source", node)
+        end
+      end
+      existing_arena = @function_def_arenas[target_name]?
+      if existing_arena && arena_map_key(existing_arena) != arena_map_key(selected_arena)
+        raise LoweringError.new("primitive-template physical target has a different source arena", node)
+      end
+      if @module.has_function_with_body?(target_name) && !existing_binding
+        raise LoweringError.new("primitive-template physical body was materialized before source binding", node)
+      end
+
+      set_function_def_entry(target_name, selected_def, false) unless existing_def
+      set_function_def_arena(target_name, selected_arena)
+      @primitive_template_source_bindings[target_name] = PrimitiveTemplateSourceBinding.new(
+        selected_name, selected_def, selected_arena, template_owner, physical_owner,
+      )
+      store_function_namespace_override(
+        target_name, strip_type_suffix(target_name), template_owner, store_base: false,
+      )
+    end
+
+    private def primitive_template_source_binding_for(
+      target_name : String,
+    ) : PrimitiveTemplateSourceBinding?
+      binding = @primitive_template_source_bindings[target_name]?
+      return unless binding
+
+      current_def = @function_defs[target_name]?
+      current_arena = @function_def_arenas[target_name]?
+      return unless current_def && current_def.same?(binding.source_def)
+      return unless current_arena && arena_map_key(current_arena) == arena_map_key(binding.source_arena)
+
+      selected_def = @function_defs[binding.source_name]?
+      selected_arena = @function_def_arenas[binding.source_name]?
+      return unless selected_def && selected_def.same?(binding.source_def)
+      return unless selected_arena && arena_map_key(selected_arena) == arena_map_key(binding.source_arena)
+      return unless registered_arena_for_def(binding.source_def).try do |arena|
+        arena_map_key(arena) == arena_map_key(binding.source_arena)
+      end
+      return unless arena_fits_def?(binding.source_arena, binding.source_def)
+
+      target_parts = parse_method_name(target_name)
+      source_parts = parse_method_name(binding.source_name)
+      return unless target_parts.is_instance && source_parts.is_instance
+      return unless target_parts.owner == binding.physical_owner &&
+                    source_parts.owner == binding.template_owner &&
+                    target_parts.method == source_parts.method
+      binding
+    end
+
+    private def validate_current_primitive_template_source_binding!(target_name : String) : Nil
+      return unless @primitive_template_source_bindings.has_key?(target_name)
+      unless primitive_template_source_binding_for(target_name)
+        raise LoweringError.new("primitive-template source binding became stale: #{target_name}")
+      end
+    end
+
     private def builtin_parent_for(class_name : String, is_struct : Bool) : String?
       base = strip_generic_args(class_name)
       case base
@@ -66880,6 +67026,7 @@ module Adamas::HIR
       selected_def : Adamas::Compiler::Frontend::DefNode? = nil,
     ) : TypeRef
       return TypeRef::VOID unless v2_string_readable?(name)
+      validate_current_primitive_template_source_binding!(name)
       base_name = strip_type_suffix(name)
       if backend_return = backend_synthesized_method_return_contract(name)
         install_backend_synthesized_method_return_contract(
@@ -107226,6 +107373,8 @@ module Adamas::HIR
     private def lower_function_if_needed_impl(name : String, trace_site_line : Int32) : Nil
       return unless v2_string_readable?(name)
       return if name.empty?
+      # Existing bodies and completed states also consume the original source.
+      validate_current_primitive_template_source_binding!(name)
       included_forall_body_demand = active_included_forall_virtual_body_demand(name)
       if demand = included_forall_body_demand
         return unless included_forall_virtual_body_demand_matches?(demand, name, @function_defs[name]?)
@@ -107459,6 +107608,23 @@ module Adamas::HIR
         arena = demand.source_arena
         target_name = demand.target_name
       end
+      primitive_template_binding : PrimitiveTemplateSourceBinding? = nil
+      if @primitive_template_source_bindings.has_key?(name)
+        current_primitive_binding = primitive_template_source_binding_for(name)
+        unless current_primitive_binding
+          raise LoweringError.new("primitive-template source binding became stale before materialization: #{name}")
+        end
+        if func_def && !func_def.same?(current_primitive_binding.source_def)
+          raise LoweringError.new("primitive-template materialization selected a different source definition: #{name}", func_def)
+        end
+        if arena && arena_map_key(arena) != arena_map_key(current_primitive_binding.source_arena)
+          raise LoweringError.new("primitive-template materialization selected a different source arena: #{name}", current_primitive_binding.source_def)
+        end
+        primitive_template_binding = current_primitive_binding
+        func_def = current_primitive_binding.source_def
+        arena = current_primitive_binding.source_arena
+        target_name = name
+      end
       # Block shape specialization (variant 1): a concrete-shape `_block` name has
       # no registered def of its own; the shared yield def + arg ABI shape come from
       # its durable record. Keep target_name = name so the body emits as a DISTINCT
@@ -107543,6 +107709,9 @@ module Adamas::HIR
         # direct getter replaced that overlapping family.
         return if direct_getter_supersedes_def_candidate?(name, body_candidate)
       end
+      # Exact primitive receipts bind the receiver and source, not type
+      # variables. Their concrete ClassInfo specializes `self`; lexical Int
+      # and Float annotations must retain their abstract source meaning.
       primitive_template_map : Hash(String, String)? = nil
       debug_hook("function.lookup.start", name)
       if env_get("DEBUG_TRACE_FUNC") && name.includes?("trace")
@@ -107579,7 +107748,11 @@ module Adamas::HIR
           end
         end
       end
-      lookup_branch : String? = func_def ? "direct" : nil
+      lookup_branch : String? = if primitive_template_binding
+                                  "primitive_template_source_binding"
+                                else
+                                  func_def ? "direct" : nil
+                                end
       deferred_lookup_used = false
       if env_get("DEBUG_ENTRY_MATCHES") && name.includes?("entry_matches")
         param_count = func_def.try { |fd| fd.params.try(&.size) || 0 } || -1
@@ -136895,13 +137068,45 @@ module Adamas::HIR
       result_id
     end
 
-    # Resolve a source Def for zero-argument member access before return inference.
-    # Family/arity-only return lookup can choose a different overload or infer its body.
-    private def selected_member_access_return_type(name : String) : TypeRef
-      if selected = lookup_function_def_for_call(name, 0, false, [] of TypeRef)
-        get_function_return_type(name, 0, selected[1])
+    # Keep the concrete ABI owner and its exact numeric-template source together.
+    # A nilary lookup may return the shared Int/Float key even when inheritance
+    # resolved a concrete receiver. Bind before any return inference demands it.
+    private def selected_primitive_member_access_target(name : String, receiver_type : TypeRef) : String
+      physical_owner = normalize_method_owner_name(get_type_name_from_ref(receiver_type))
+      template_owner = primitive_template_owner(physical_owner)
+      return name unless template_owner
+      parts = parse_method_name(name)
+      return name unless parts.is_instance
+      method = parts.method
+      return name unless method
+      return name unless parts.owner == template_owner || parts.owner == physical_owner
+
+      physical_name = "#{physical_owner}##{method}"
+      if suffix = parts.suffix
+        physical_name = "#{physical_name}$#{suffix}"
+      end
+      selected = lookup_function_def_for_call(physical_name, 0, false, [] of TypeRef)
+      source = lookup_function_def_for_call("#{template_owner}##{method}", 0, false, [] of TypeRef)
+      return name unless source
+      source_parts = parse_method_name(source[0])
+      return name unless source_parts.is_instance && source_parts.owner == template_owner &&
+                         source_parts.method == method &&
+                         (selected.nil? || selected.not_nil![1].same?(source[1]))
+      source_arena = @function_def_arenas[source[0]]? ||
+                     raise LoweringError.new("selected primitive-template method has no source arena")
+      bind_primitive_template_source_target!(
+        physical_name, source[0], source[1], source_arena, template_owner, physical_owner,
+      )
+      physical_name
+    end
+
+    private def selected_member_access_return_type(name : String, receiver_type : TypeRef) : TypeRef
+      target_name = selected_primitive_member_access_target(name, receiver_type)
+      selected = lookup_function_def_for_call(target_name, 0, false, [] of TypeRef)
+      if selected
+        get_function_return_type(target_name, 0, selected[1])
       else
-        get_function_return_type(name, 0)
+        get_function_return_type(target_name, 0)
       end
     end
 
@@ -138294,13 +138499,13 @@ module Adamas::HIR
         if base_method = resolve_method_with_inheritance(receiver_owner_hint, member_name)
           if resolved = resolve_untyped_overload(base_method, 0, false)
             resolved_method_name = resolved
-            return_type = selected_member_access_return_type(resolved)
+            return_type = selected_member_access_return_type(resolved, receiver_type)
           elsif resolved = resolve_ancestor_overload(receiver_owner_hint, member_name, 0, false)
             resolved_method_name = resolved
-            return_type = selected_member_access_return_type(resolved)
+            return_type = selected_member_access_return_type(resolved, receiver_type)
           else
             resolved_method_name = base_method
-            return_type = selected_member_access_return_type(base_method)
+            return_type = selected_member_access_return_type(base_method, receiver_type)
           end
         end
       end
@@ -138342,13 +138547,13 @@ module Adamas::HIR
           if base_method = resolve_method_with_inheritance(info_name, member_name)
             if resolved = resolve_untyped_overload(base_method, 0, false)
               resolved_method_name = resolved
-              return_type = selected_member_access_return_type(resolved)
+              return_type = selected_member_access_return_type(resolved, receiver_type)
             elsif resolved = resolve_ancestor_overload(info_name, member_name, 0, false)
               resolved_method_name = resolved
-              return_type = selected_member_access_return_type(resolved)
+              return_type = selected_member_access_return_type(resolved, receiver_type)
             else
               resolved_method_name = base_method
-              return_type = selected_member_access_return_type(base_method)
+              return_type = selected_member_access_return_type(base_method, receiver_type)
             end
             # Per-class compilation for inherited methods: when the resolved method
             # belongs to a parent class but the receiver is a concrete subclass,
@@ -138377,13 +138582,13 @@ module Adamas::HIR
           if base_method = resolve_method_with_inheritance(ref_type_name, member_name)
             if resolved = resolve_untyped_overload(base_method, 0, false)
               resolved_method_name = resolved
-              return_type = selected_member_access_return_type(resolved)
+              return_type = selected_member_access_return_type(resolved, receiver_type)
             elsif resolved = resolve_ancestor_overload(ref_type_name, member_name, 0, false)
               resolved_method_name = resolved
-              return_type = selected_member_access_return_type(resolved)
+              return_type = selected_member_access_return_type(resolved, receiver_type)
             else
               resolved_method_name = base_method
-              return_type = selected_member_access_return_type(base_method)
+              return_type = selected_member_access_return_type(base_method, receiver_type)
             end
           end
         end
@@ -138398,13 +138603,13 @@ module Adamas::HIR
             if base_method = resolve_method_with_inheritance(type_name, member_name)
               if resolved = resolve_untyped_overload(base_method, 0, false)
                 resolved_method_name = resolved
-                return_type = selected_member_access_return_type(resolved)
+                return_type = selected_member_access_return_type(resolved, receiver_type)
               elsif resolved = resolve_ancestor_overload(type_name, member_name, 0, false)
                 resolved_method_name = resolved
-                return_type = selected_member_access_return_type(resolved)
+                return_type = selected_member_access_return_type(resolved, receiver_type)
               else
                 resolved_method_name = base_method
-                return_type = selected_member_access_return_type(base_method)
+                return_type = selected_member_access_return_type(base_method, receiver_type)
               end
             end
           else
@@ -138416,13 +138621,13 @@ module Adamas::HIR
                 if base_method = resolve_method_with_inheritance(candidate, member_name)
                   if resolved = resolve_untyped_overload(base_method, 0, false)
                     resolved_method_name = resolved
-                    return_type = selected_member_access_return_type(resolved)
+                    return_type = selected_member_access_return_type(resolved, receiver_type)
                   elsif resolved = resolve_ancestor_overload(candidate, member_name, 0, false)
                     resolved_method_name = resolved
-                    return_type = selected_member_access_return_type(resolved)
+                    return_type = selected_member_access_return_type(resolved, receiver_type)
                   else
                     resolved_method_name = base_method
-                    return_type = selected_member_access_return_type(base_method)
+                    return_type = selected_member_access_return_type(base_method, receiver_type)
                   end
                 end
               end
@@ -138445,7 +138650,7 @@ module Adamas::HIR
           end
           if matches.size == 1
             resolved_method_name = matches.first
-            return_type = selected_member_access_return_type(resolved_method_name)
+            return_type = selected_member_access_return_type(resolved_method_name, receiver_type)
           end
         end
       end
@@ -138499,7 +138704,7 @@ module Adamas::HIR
         # lowered includer cannot replace the specialized module root.
         base_method_name = self_root
         resolved_method_name = self_root
-        return_type = selected_member_access_return_type(self_root)
+        return_type = selected_member_access_return_type(self_root, receiver_type)
       end
 
       # Concrete Tuple#hash with no explicit parentheses reaches this
@@ -138559,6 +138764,17 @@ module Adamas::HIR
               resolved_method_name = reference_base
             end
           end
+        end
+      end
+      # The ordinary method index can return the shared Int/Float source key.
+      # Re-own that exact nilary selection before any body-result demand, even
+      # when no concrete ClassInfo exists (the no-prelude primitive case).
+      if args.empty? && !receiver_is_module_type && !ctx.type_literal?(object_id)
+        primitive_target = selected_primitive_member_access_target(actual_name, receiver_type)
+        if primitive_target != actual_name || @primitive_template_source_bindings.has_key?(primitive_target)
+          actual_name = primitive_target
+          base_method_name = strip_type_suffix(primitive_target)
+          resolved_method_name = base_method_name
         end
       end
       # Return inference below can force-lower `actual_name`. Publish the exact

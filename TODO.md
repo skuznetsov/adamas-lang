@@ -23851,3 +23851,21 @@ integration, fresh bootstrap, or LavinMQ parity.
   Refresh after case targets, union descriptors, literal kind or Copy lookup
   changes. The mixed class/instance formal path and separate Proc case result
   remain open, as do typed depth replay, bootstrap and unchanged LavinMQ parity.
+
+
+### 2026-11-03: Primitive source and concrete receiver remain distinct owners
+
+- Root cause: nilary Int/Float inheritance could infer through an abstract key
+  without binding the physical target's Def/arena or numeric ClassInfo, leaving
+  ABORT stubs. Bind source before inference and consume the exact receipt during
+  materialization; preserve concrete overrides and required-argument siblings.
+- Specialize self through the concrete receiver, without replacing lexical
+  Int/Float restrictions. The rejected Int -> Int32 candidate broke prelude.
+  Validate canonical Def and arena before cached return/body reuse.
+- Evidence: prior-HEAD native red (35n78), fresh S1 (35p22), 20 native/negative/
+  prelude controls (35p23), 56 focused/neighbor HIR examples (35p25), all safe-run.
+  DoD: bash regression_tests/inherited_primitive_method_binding_repro.sh <fresh-S1>
+  plus primitive_template_stale_source and neighboring include/arena specs.
+- Open: compose freshness with the WIP source-body witness, result-cache owner
+  and dependency preflight gates. Virtual result certification, mixed Class/
+  instance representation, bootstrap and unchanged LavinMQ parity remain open.

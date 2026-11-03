@@ -5351,3 +5351,32 @@ Roll back the case producer and its two specs together. Requalify after union
 descriptor, type-literal, Copy-fact lookup or case-target changes. This does not
 repair mixed class/instance facts lost before entering case, the separate Proc
 case discrepancy, virtual result certification, bootstrap or LavinMQ parity.
+
+
+#### Exact primitive-template source ownership
+
+A nilary inherited Int/Float method binds its exact canonical Def and declaration
+arena before return inference can materialize its concrete numeric target.
+Builtin numeric TypeRefs may precede their ClassInfo; inherited bodies need the
+concrete receiver and builtin size. Concrete overrides and required-argument
+siblings remain separate selections. Physical and canonical source registrations
+must still match before cached return-type lookup or body reuse.
+
+A receiver specialization is not a lexical type-variable substitution. ClassInfo
+specializes self; ordinary Int and Float restrictions remain abstract. An
+intermediate Int -> Int32 map passed small fixtures but broke unchanged
+stock-prelude hello at Time::Span.new from Int#milliseconds (35p08). Removing
+only that new map restored hello (35p20). The native regression retains this
+stdlib guard and explicit Int64-for-Int32 rejection. Stale-source controls replace
+the canonical Def or arena while preserving the physical alias and emitted body.
+
+DoD: bash regression_tests/inherited_primitive_method_binding_repro.sh <fresh-S1>;
+expect 20 stock/lazy/eager, negative and prelude controls. The prior HEAD aborts
+inherited-method fixtures (35n78). The isolated source passes fresh S1 (35p22),
+all 20 controls (35p23), and 56 HIR examples including stale-source and neighboring
+include/arena contracts (35p25). Adversary verdict: ROBUST within this bounded
+source-selection/materialization contract. Roll back the binding change and its
+specs, fixtures and script together. Refresh after primitive inheritance, nilary
+selection, Def/arena registration, cache admission or numeric layout changes.
+This does not qualify the WIP result-certificate cache, its canonical-source
+freshness composition, bootstrap or unchanged LavinMQ parity.
