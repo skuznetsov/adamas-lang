@@ -1,0 +1,32 @@
+lib LibC
+  fun putchar(value : Int32) : Int32
+end
+
+module Base
+  def value(x : Int32) : Int32
+    x
+  end
+end
+
+module Middle
+  include Base
+
+  def value(x : Int32)
+    super
+  end
+end
+
+class Probe
+  include Middle
+
+  def value(x : Int32)
+    super
+  end
+end
+
+def consume(value : Int32) : Int32
+  value
+end
+
+LibC.putchar(consume(Probe.new.value(65)))
+LibC.putchar(10)

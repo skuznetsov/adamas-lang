@@ -26337,6 +26337,29 @@ module Adamas::HIR
       ref == TypeRef::VOID ? nil : BoundAnnotationTypeContract.new(restriction, ref)
     end
 
+    # Relative names belong to the selected declaration. Every standalone
+    # `self` atom belongs to the concrete runtime receiver, also inside a
+    # nullable, union, tuple, generic or Proc result annotation. Bind those
+    # identities separately rather than resolving composite self lexically.
+    private def method_result_annotation_type_ref(
+      source_name : String,
+      lexical_owner : String?,
+      runtime_self_name : String?,
+    ) : TypeRef
+      unless contains_type_param_token?(source_name, "self")
+        return annotation_type_ref(source_name, lexical_owner)
+      end
+      unless runtime_self_name && !runtime_self_name.empty?
+        raise LoweringError.new("method result annotation lost its runtime self owner: #{source_name}")
+      end
+      bindings = annotation_type_bindings(lexical_owner).dup
+      bindings["self"] = runtime_self_name
+      if resolved = bound_annotation_type_ref(source_name, lexical_owner, bindings)
+        return resolved
+      end
+      raise LoweringError.new("unsupported runtime self result annotation: #{source_name}")
+    end
+
     private def annotation_type_ref(type_name : String, owner_name : String? = nil) : TypeRef
       cache_key = annotation_type_ref_cache_key(type_name, owner_name)
       if cached = @annotation_type_ref_cache[cache_key]?
@@ -48448,9 +48471,9 @@ module Adamas::HIR
                           class_info.type_ref
                         elsif module_like_type_name?(direct_return_name)
                           direct_inferred_return = infer_concrete_return_type_from_body(node, class_name)
-                          direct_inferred_return || annotation_type_ref(direct_return_name, signature_owner)
+                          direct_inferred_return || method_result_annotation_type_ref(direct_return_name, signature_owner, class_name)
                         else
-                          annotation_type_ref(direct_return_name, signature_owner)
+                          method_result_annotation_type_ref(direct_return_name, signature_owner, class_name)
                         end
                       elsif method_name.ends_with?('?')
                         provisional_query_return_type_for_registration(
@@ -48478,9 +48501,9 @@ module Adamas::HIR
                             class_info.type_ref
                           elsif module_like_type_name?(generic_return_name)
                             generic_inferred_return = infer_concrete_return_type_from_body(node, class_name)
-                            generic_inferred_return || annotation_type_ref(generic_return_name, signature_owner)
+                            generic_inferred_return || method_result_annotation_type_ref(generic_return_name, signature_owner, class_name)
                           else
-                            annotation_type_ref(generic_return_name, signature_owner)
+                            method_result_annotation_type_ref(generic_return_name, signature_owner, class_name)
                           end
                         elsif method_name.ends_with?('?')
                           provisional_query_return_type_for_registration(
@@ -48582,7 +48605,7 @@ module Adamas::HIR
             resolved_return = class_info.type_ref
           elsif module_like_type_name?(merged_return_name)
             merged_inferred_return = infer_concrete_return_type_from_body(node, class_name)
-            annotated = annotation_type_ref(merged_return_name, signature_owner)
+            annotated = method_result_annotation_type_ref(merged_return_name, signature_owner, class_name)
             if merged_inferred_return && merged_inferred_return != TypeRef::VOID && merged_inferred_return != TypeRef::NIL
               resolved_return = merged_inferred_return
             elsif annotated == TypeRef::VOID
@@ -48592,7 +48615,7 @@ module Adamas::HIR
             end
           else
             merged_return_name = substitute_forall_bindings(merged_return_name, node, extra_type_params)
-            resolved_return = annotation_type_ref(merged_return_name, signature_owner)
+            resolved_return = method_result_annotation_type_ref(merged_return_name, signature_owner, class_name)
           end
         end
         if resolved_return != TypeRef::VOID || return_type == TypeRef::VOID
@@ -74248,6 +74271,11 @@ module Adamas::HIR
       end
 
       owner_override = return_declaration_owner_for(normalized_mangled, normalized_base) || ""
+      runtime_self_name = if receiver_type && receiver_type != TypeRef::VOID
+                            get_type_name_from_ref(receiver_type)
+                          else
+                            method_owner(normalized_base)
+                          end
 
       if cached = @function_types[mangled_method_name]? || @function_types[base_method_name]? ||
                   @function_types[normalized_mangled]? || @function_types[normalized_base]?
@@ -74261,7 +74289,7 @@ module Adamas::HIR
            !return_type_name.ends_with?('?') &&
            !return_type_name.ends_with?('*') &&
            !(type_param_like?(return_type_name) && !@type_param_map.has_key?(return_type_name))
-          resolved = annotation_type_ref(return_type_name, owner_override.empty? ? nil : owner_override)
+          resolved = method_result_annotation_type_ref(return_type_name, owner_override.empty? ? nil : owner_override, runtime_self_name)
           if resolved != TypeRef::VOID && resolved != TypeRef::NIL && resolved != cached
             # A nested declaration may resolve after the signature was cached.
             # Refresh only entries owned by this exact annotated Def. Contextual
@@ -74342,7 +74370,7 @@ module Adamas::HIR
       end
 
       if merged.empty?
-        resolved = annotation_type_ref(return_type_name, owner_override.empty? ? nil : owner_override)
+        resolved = method_result_annotation_type_ref(return_type_name, owner_override.empty? ? nil : owner_override, runtime_self_name)
         if debug_env_filter_match?("DEBUG_RETURN_DEF", mangled_method_name, base_method_name)
           STDERR.puts "[RETURN_DEF] name=#{mangled_method_name} base=#{base_method_name} rt=#{return_type_name} map=none resolved=#{get_type_name_from_ref(resolved)}"
         end
@@ -74351,7 +74379,7 @@ module Adamas::HIR
 
       return_type_name = substitute_forall_bindings(return_type_name, func_def, merged)
       with_type_param_map(merged) do
-        resolved = annotation_type_ref(return_type_name, owner_override.empty? ? nil : owner_override)
+        resolved = method_result_annotation_type_ref(return_type_name, owner_override.empty? ? nil : owner_override, runtime_self_name)
         if debug_env_filter_match?("DEBUG_RETURN_DEF", mangled_method_name, base_method_name)
           params_str = merged.map { |k, v| "#{k}=#{v}" }.join(",")
           STDERR.puts "[RETURN_DEF] name=#{mangled_method_name} base=#{base_method_name} rt=#{return_type_name} map=#{params_str} resolved=#{get_type_name_from_ref(resolved)}"
@@ -77797,17 +77825,22 @@ module Adamas::HIR
     # A present source MRO with an unidentifiable current application is
     # authoritative-but-unknown: callers must not fall back to the sorted
     # flattened relation and silently choose another application.
-    private def source_super_module_applications_after_current(
-      owner : String,
-      current_module : String,
-      current_function_name : String,
-    ) : Tuple(Array(String), Int32?)?
+    private def source_super_module_applications(owner : String) : Array(String)?
       direct_includes = source_direct_class_includes(owner) || return nil
       applications = [] of String
       visited = Set(String).new
       direct_includes.reverse_each do |application|
         append_source_module_application_mro(application, applications, visited)
       end
+      applications
+    end
+
+    private def source_super_module_applications_after_current(
+      owner : String,
+      current_module : String,
+      current_function_name : String,
+    ) : Tuple(Array(String), Int32?)?
+      applications = source_super_module_applications(owner) || return nil
 
       current_base = strip_generic_args(resolve_module_alias_for_include(current_module))
       matching_indices = [] of Int32
@@ -93740,6 +93773,41 @@ module Adamas::HIR
       nil
     end
 
+    # A generated super symbol retains the selected source definition. Its
+    # runtime receiver and generated name cannot reconstruct the lexical owner
+    # or authorize result inference/publication for that body.
+    private def bind_generated_super_source_target!(
+      target_name : String,
+      selected_def : Adamas::Compiler::Frontend::DefNode,
+      selected_arena : Adamas::Compiler::Frontend::ArenaLike,
+      lexical_owner : String,
+    ) : Nil
+      retained_arena = registered_arena_for_def(selected_def)
+      unless retained_arena && retained_arena.same?(selected_arena) &&
+             arena_fits_def?(selected_arena, selected_def)
+        raise LoweringError.new("generated super lost its exact selected source arena: #{target_name}", selected_def)
+      end
+      existing_def = @function_defs[target_name]?
+      existing_arena = @function_def_arenas[target_name]?
+      if existing_def && !existing_def.same?(selected_def)
+        raise LoweringError.new("generated super target already has a different source definition: #{target_name}", selected_def)
+      end
+      if existing_arena && !existing_arena.same?(selected_arena)
+        raise LoweringError.new("generated super target already has a different source arena: #{target_name}", selected_def)
+      end
+      if @module.has_function_with_body?(target_name) && (!existing_def || !existing_arena)
+        raise LoweringError.new("generated super body has no complete source binding: #{target_name}", selected_def)
+      end
+      if existing_owner = function_namespace_override_for(target_name)
+        unless existing_owner == lexical_owner
+          raise LoweringError.new("generated super lexical owner changed: #{target_name}", selected_def)
+        end
+      end
+      set_function_def_entry(target_name, selected_def, false)
+      set_function_def_arena(target_name, selected_arena)
+      store_function_namespace_override(target_name, strip_type_suffix(target_name), lexical_owner)
+    end
+
     private def with_invocation_super_source(source_module : String?, &)
       old_super_source = @current_super_source_module
       @current_super_source_module = source_module
@@ -94308,6 +94376,11 @@ module Adamas::HIR
                                  source_module,
                                  invocation_context.function_name,
                                )
+                             elsif applications = source_super_module_applications(class_lookup)
+                               # A class body precedes every included application in
+                               # its source MRO; the flattened relation loses both
+                               # precedence and the selected generic arguments.
+                               {applications, -1}
                              end
         source_super_order_selected = !source_super_order.nil?
         source_module_applications = [] of String
@@ -94401,6 +94474,9 @@ module Adamas::HIR
             super_base = "#{class_name}##{method_name}_super_from_#{owner_fragment}"
             super_name = mangle_function_name(super_base, arg_types)
             selected_source_module_map = source_module_map if source_super_order_selected
+            resolved_def_arena = resolve_arena_for_def(actual_func_def, def_arena)
+            lexical_module_owner = source_super_order_selected ? module_name : actual_module_base
+            bind_generated_super_source_target!(super_name, actual_func_def, resolved_def_arena, lexical_module_owner)
             unless @module.has_function?(super_name)
               if source_super_order_selected
                 module_param_names = declared_module_type_param_names(actual_module_base)
@@ -94415,7 +94491,7 @@ module Adamas::HIR
                     )
                   end
                 end
-                store_function_namespace_override(super_name, super_base, actual_module_base)
+                store_function_namespace_override(super_name, super_base, lexical_module_owner)
               else
                 register_deferred_module_type_params(class_name, actual_module_base, super_name, super_base)
               end
@@ -94425,11 +94501,13 @@ module Adamas::HIR
               # own body expressions may live in a different arena (same file,
               # different parse pass). resolve_arena_for_def searches all known
               # arenas to find one where body ExprIds actually resolve correctly.
-              resolved_def_arena = resolve_arena_for_def(actual_func_def, def_arena)
+              selected_map = function_type_param_map_for(super_name) || EMPTY_DEFERRED_TYPE_PARAM_SNAPSHOT
               with_arena(resolved_def_arena) do
-                with_type_param_map(receiver_map) do
-                  lower_method(class_name, class_info, actual_func_def, arg_types, nil, nil, super_name,
-                    force_class_method: invocation_context.method_is_class, super_source_module: actual_module_base)
+                with_type_param_map(receiver_map.merge(selected_map)) do
+                  with_namespace_override(lexical_module_owner) do
+                    lower_method(class_name, class_info, actual_func_def, arg_types, nil, nil, super_name,
+                      force_class_method: invocation_context.method_is_class, super_source_module: actual_module_base)
+                  end
                 end
               end
             end
@@ -94484,14 +94562,18 @@ module Adamas::HIR
           owner_fragment = module_super_name_fragment(module_owner)
           super_base = "#{class_name}##{method_name}_super_from_#{owner_fragment}"
           super_name = mangle_function_name(super_base, arg_types)
+          resolved_def_arena = resolve_arena_for_def(actual_func_def, def_arena)
+          bind_generated_super_source_target!(super_name, actual_func_def, resolved_def_arena, module_owner)
           unless @module.has_function?(super_name)
             register_deferred_module_type_params(class_name, module_owner, super_name, super_base)
             receiver_map = type_param_map_for_receiver_name("#{class_name}##{method_name}")
-            resolved_def_arena = resolve_arena_for_def(actual_func_def, def_arena)
+            selected_map = function_type_param_map_for(super_name) || EMPTY_DEFERRED_TYPE_PARAM_SNAPSHOT
             with_arena(resolved_def_arena) do
-              with_type_param_map(receiver_map) do
-                lower_method(class_name, class_info_for_super, actual_func_def, arg_types, nil, nil, super_name,
-                  force_class_method: invocation_context.method_is_class, super_source_module: module_owner)
+              with_type_param_map(receiver_map.merge(selected_map)) do
+                with_namespace_override(module_owner) do
+                  lower_method(class_name, class_info_for_super, actual_func_def, arg_types, nil, nil, super_name,
+                    force_class_method: invocation_context.method_is_class, super_source_module: module_owner)
+                end
               end
             end
           end
@@ -94788,10 +94870,16 @@ module Adamas::HIR
           super_base = "#{class_name}.#{method_name}_super_from_#{module_super_name_fragment(target_owner)}"
           super_name = super_double_splat_layout_name(super_base, target_def, call_arg_types) ||
                        mangle_function_name(super_base, call_arg_types)
+          # The generated symbol belongs to the receiving class, while the
+          # selected declaration still owns relative signature names.
+          selected_arena = resolve_arena_for_def(target_def, def_arena)
+          bind_generated_super_source_target!(super_name, target_def, selected_arena, target_owner)
           unless @module.has_function?(super_name)
             @class_method_super_owners[super_name] = target_owner
-            with_arena(resolve_arena_for_def(target_def, def_arena)) do
-              lower_method(class_name, class_info, target_def, call_arg_types, nil, nil, super_name, force_class_method: true)
+            with_arena(selected_arena) do
+              with_namespace_override_or_clear(target_owner) do
+                lower_method(class_name, class_info, target_def, call_arg_types, nil, nil, super_name, force_class_method: true)
+              end
             end
           end
           return_type = @function_types[super_name]? || TypeRef::VOID

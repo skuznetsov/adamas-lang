@@ -22677,3 +22677,27 @@ forced controls pass, both actual ordinary entry cases fail. The previous all-
 green probe pre-materialized its owner and was invalid. Exact owner recovery,
 current source/generation guards and safe serial execution remain required;
 stdlib/LavinMQ edits and weakened type checks remain outside scope.
+
+
+### 2026-11-03: Generated super source is not its runtime receiver
+
+Bind exact selected Def/arena and source lexical owner before generated super
+body inference/publication. Preserve source include order and concrete generic
+applications. Resolve self atoms in result annotations through the receiver,
+while aliases and other names retain the source scope. A lexical-only self?
+repair rejected stock-prelude Enum.from_value; the separate binding passes it.
+
+Evidence: source binding red 35q221, nullable enum self red 35q241/35q244,
+71 HIR green 35q246, fresh S1 35q248, 35 native/rejection/prelude controls
+35q255. Tuple(self, lexical Result) and two enum receivers are adversary controls.
+Refresh after source MRO, arenas, publication or result-annotation/cache changes.
+Existing WIP was merged with explicit overlap resolution and exact inverse
+recovery of its original AST (35q251); only the qualified HEAD-relative slice
+was staged. The merged broad WIP is not thereby behaviorally qualified.
+
+Continuation: metadata retention remains PROPOSED/deferred in the incremental
+cache Frontier SDD. Resume unchanged LavinMQ after this clean slice. Retain
+actual_return_pending and class_nullable_self_pending as open falsifiers, not
+passing gates; both are baseline defects. Ordinary untyped class/instance keys,
+raw callback exact post-Proc demand, depth replay and virtual results remain
+active stabilization work. S2/bootstrap and LavinMQ runtime parity remain open.

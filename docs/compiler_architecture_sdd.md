@@ -5417,3 +5417,44 @@ replay, virtual result certification, bootstrap and unchanged LavinMQ parity
 remain unqualified. The metadata-retention design in
 `docs/incremental_build_cache_sdd.md` remains PROPOSED and deferred until
 stabilization; this change does not implement persistent caching.
+
+
+#### Generated super bodies retain three distinct owners
+
+A generated super symbol owns the concrete receiver specialization. The exact
+selected Def and retained declaration arena own the body; the source module or
+class owns relative signature names. Bind and validate these identities before
+return inference or body reuse. Reject conflicting Def/arena registrations,
+changed lexical owners, and bodies without a complete binding before changing
+any existing owner. Direct class super follows the source include MRO, retaining
+concrete generic module applications rather than flattened module ordering.
+
+Runtime self is a separate result-annotation binding. Resolve standalone self
+atoms through the concrete receiver inside nullable, union, tuple, generic and
+Proc syntax, while resolving other atoms and aliases in the declaration scope.
+Do not replace the lexical namespace to repair self: the stock-prelude enum
+from_value -> from_value? path needs both identities simultaneously. Unsupported
+self annotation syntax fails closed. Exact self keeps its existing enum carrier.
+
+DoD: bash regression_tests/generated_super_source_binding_repro.sh <fresh-S1>,
+plus generated_super_source_binding_spec and neighboring default/include/arena
+specs. Isolated source 35q245 passes 71 HIR examples (35q246), fresh S1 35q248,
+and 35 stock/lazy/eager, negative-argument and unchanged Crystal 1.22.1 prelude
+controls (35q255). Prior source fails two binding assertions (35q221); the
+nullable-enum self reproduction fails before the self binding repair (35q241 /
+35q244). Tuple(self, lexical Result) and consecutive distinct enum receivers
+pass; collision guards reject without overwriting their source registration.
+Adversary verdict: ROBUST within these source binding and annotation boundaries.
+
+Two retained falsifiers remain OPEN and are excluded from the passing loop:
+actual_return_pending.cr is wrongly accepted on both baseline and this slice;
+class_nullable_self_pending.cr is wrongly rejected on both (35q253 / 35q252).
+The former requires the separate actual-result contract; the latter loses the
+runtime receiver in an inherited ordinary class method. Source ownership does
+not by itself qualify either behavior. Untyped class/instance argument keys,
+ordinary depth replay, raw callback demand and virtual results also remain open.
+
+Roll back this source binding/annotation slice together with its fixtures and
+regression. Refresh after source MRO, declaration arenas, target publication,
+result annotation resolution or cache ownership changes. S2/bootstrap and
+unchanged LavinMQ compilation/runtime/test parity are still unqualified.

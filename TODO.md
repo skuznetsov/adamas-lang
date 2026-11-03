@@ -23891,3 +23891,23 @@ integration, fresh bootstrap, or LavinMQ parity.
   yield-free and bounded-retry guards. Do not increase budgets or invent types.
 - Still open: raw callback scheduler qualification, virtual source results,
   mixed class/instance facts, bootstrap and unchanged LavinMQ test parity.
+
+
+### 2026-11-03: Generated super source and runtime self ownership
+
+- Bound exact selected Def/arena and lexical owner before generating or reusing
+  super bodies; direct class super now retains source MRO and applied generics.
+  Composite result annotations bind runtime self separately from lexical aliases.
+- Evidence: prior binding controls fail (35q221), nullable enum self fails before
+  the annotation repair (35q241/35q244); fresh S1 35q248, 71 HIR examples 35q246
+  and all 35 native/rejection/stock-prelude controls 35q255 pass. No stdlib or
+  LavinMQ changes. See generated_super_source_binding_repro.sh and its fixtures.
+- Preserve open falsifiers: actual_return_pending.cr remains wrongly accepted;
+  class_nullable_self_pending.cr is wrongly rejected on both baseline and fix.
+  Keep the separate stricter result-contract WIP; diagnose inherited class-method
+  runtime receiver loss rather than changing declared return types.
+- Next source-kind boundary: ordinary untyped call targets still collapse a
+  class literal and an instance with the same carrier before generated super;
+  typed module-overload controls pass in the isolated source-kind candidate.
+  Raw callback post-Proc exact body demand and its receipt freshness need gates.
+  Ordinary depth replay, virtual results, bootstrap and LavinMQ parity stay open.
