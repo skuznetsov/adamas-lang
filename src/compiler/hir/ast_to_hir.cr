@@ -112590,13 +112590,29 @@ module Adamas::HIR
                 # them as instance receivers (not type/module receivers).
                 force_instance_receiver = true
               elsif mapped = @type_param_map[name]?
-                type_param_receiver_name = mapped
                 force_instance_receiver = true
+                if literal = literal_for_type_param_value(mapped)
+                  receiver_literal = Literal.new(ctx.next_id, literal[0], literal[1])
+                  ctx.emit(receiver_literal)
+                  receiver_id = receiver_literal.id
+                  receiver_type = literal[0]
+                else
+                  type_param_receiver_name = mapped
+                end
               elsif @type_param_map.empty?
                 if inferred_map = fallback_type_param_map_for_current
                   if mapped = inferred_map[name]?
-                    type_param_receiver_name = mapped
                     force_instance_receiver = true
+                    if literal = literal_for_type_param_value(mapped)
+                      # The fallback map is not consulted by lower_identifier,
+                      # so emit the proven literal directly and keep its width.
+                      receiver_literal = Literal.new(ctx.next_id, literal[0], literal[1])
+                      ctx.emit(receiver_literal)
+                      receiver_id = receiver_literal.id
+                      receiver_type = literal[0]
+                    else
+                      type_param_receiver_name = mapped
+                    end
                   end
                 end
               end

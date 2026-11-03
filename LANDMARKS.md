@@ -22701,3 +22701,25 @@ actual_return_pending and class_nullable_self_pending as open falsifiers, not
 passing gates; both are baseline defects. Ordinary untyped class/instance keys,
 raw callback exact post-Proc demand, depth replay and virtual results remain
 active stabilization work. S2/bootstrap and LavinMQ runtime parity remain open.
+
+
+### 2026-11-03: A generic numeric value is an instance receiver
+
+Classifying N.dispatch through the mapped text as a type loses both value and
+width. Decode a proven generic value binding with literal_for_type_param_value
+before the type-receiver route. Emit fallback-map literals directly because
+lower_identifier does not read that map. Preserve real type bindings unchanged.
+
+Source 35q459, fresh S1 35q461, 20 HIR cases 35q462 and all 15 stock/lazy/eager
+native and rejection controls 35q464 pass. Int64 callback input is checked for
+its value as well as width; the mismatched Int32 callback remains rejected.
+Adversary verdict: ROBUST for these receiver classification boundaries. Refresh
+when generic binding maps, literal decoding, receiver classification or callback
+contracts change. This does not qualify all generic values or bootstrap.
+
+Continuation: metadata retention stays PROPOSED/deferred in the Frontier SDD.
+Call target source-kind/default-padding ownership and inherited primitive
+consumption remain under separate gates. Composed hello compiles but crashes
+while CURRENT_DIR inlines INITIAL_PWD.try (35q444; caller trace 35q451).
+Inspect actual inline receiver/block-parameter identity before changing Path or
+String; stdlib/LavinMQ edits and relaxed checks remain outside authority.

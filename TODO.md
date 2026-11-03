@@ -23911,3 +23911,20 @@ integration, fresh bootstrap, or LavinMQ parity.
   typed module-overload controls pass in the isolated source-kind candidate.
   Raw callback post-Proc exact body demand and its receipt freshness need gates.
   Ordinary depth replay, virtual results, bootstrap and LavinMQ parity stay open.
+
+
+### 2026-11-03: Preserve numeric generic values at receiver classification
+
+- A generic value N used as N.dispatch was reinterpreted as a type name.
+  Decode the existing proven literal binding before receiver classification,
+  retaining its exact TypeRef and value; the fallback map needs direct emission
+  because lower_identifier does not consult it. Non-value type bindings retain
+  their class receiver path. No stdlib or LavinMQ changes or type relaxation.
+- Qualified isolated source 35q459: fresh S1 35q461, 20 HIR examples 35q462,
+  and 15 stock Crystal 1.22.1/lazy/eager native or rejection controls 35q464.
+  Run regression_tests/generic_value_receiver_self_repro.sh <fresh-S1>.
+  Guards include Int32 versus Int64 callback width, direct literals, a type
+  parameter bound to Int32.class, and rejection of an Int64/Int32 mismatch.
+- Broader composed source reaches native hello with stock prelude but still
+  crashes in CURRENT_DIR initialization (35q444/35q451); local numeric parity
+  does not close that defect, bootstrap, or unchanged LavinMQ test parity.
