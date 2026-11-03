@@ -23833,3 +23833,21 @@ integration, fresh bootstrap, or LavinMQ parity.
 - Open: other producer exception paths and pre-creation failures need their
   own ownership evidence. Typed Atomic depth-refusal replay, bootstrap and
   unchanged LavinMQ parity remain unqualified.
+
+
+### 2026-11-03: Case narrowing records its own semantic transformation
+
+- Root cause: a real parsed case branch emitted Copy<A|B> from A|B|C, while
+  source-call argument facts still included C. The producer now filters exact
+  registered alternatives with their literal kind and owns the explicit result.
+  Unknown subtype relations are retained; empty filtered results do not certify
+  arbitrary values as NoReturn. Static `.class` targets preserve Crystal case
+  semantics; `.metaclass` and runtime receiver calls remain ordinary expressions.
+- Evidence: same parsed HIR probe red on prior source (35mg), green with 60
+  neighboring examples (35mh); fresh S1 (35mb), stock-prelude hello (35md),
+  and stock/lazy/eager native class-target controls (35mc). Safe regression
+  entry point passes ten examples (35mk). Bounded adversary verdict: ROBUST.
+- DoD: bash regression_tests/case_type_set_source_facts_repro.sh; expect 10/10.
+  Refresh after case targets, union descriptors, literal kind or Copy lookup
+  changes. The mixed class/instance formal path and separate Proc case result
+  remain open, as do typed depth replay, bootstrap and unchanged LavinMQ parity.

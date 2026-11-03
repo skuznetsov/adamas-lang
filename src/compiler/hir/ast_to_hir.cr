@@ -79373,8 +79373,57 @@ module Adamas::HIR
       end
     end
 
+    private def case_type_literal_target_name(node) : String?
+      member_access = case node
+                      when Adamas::Compiler::Frontend::MemberAccessNode
+                        node
+                      when Adamas::Compiler::Frontend::CallNode
+                        return nil unless node.args.empty? && node.block.nil?
+                        callee = node_for_expr(node.callee, @arena)
+                        callee.as?(Adamas::Compiler::Frontend::MemberAccessNode)
+                      else
+                        nil
+                      end
+      return nil unless member_access
+
+      member = safe_slice_to_string(member_access.member) || ""
+      # Stock Crystal's case literal expander gives only `.class` static
+      # metaclass-pattern semantics. `.metaclass` is an ordinary method call.
+      return nil unless member == "class"
+
+      receiver = node_for_expr(member_access.object, @arena)
+      return nil unless receiver
+      # A local or arbitrary runtime expression followed by `.class` is a
+      # dynamic class query. Only a source type designator can become a
+      # static case target here. The parser represents a bare uppercase
+      # constant reference in expression position as an IdentifierNode; keep
+      # that admission limited to uppercase names so ordinary locals remain
+      # dynamic.
+      static_type_designator = case receiver
+                                when Adamas::Compiler::Frontend::ConstantNode,
+                                     Adamas::Compiler::Frontend::PathNode,
+                                     Adamas::Compiler::Frontend::GenericNode
+                                  true
+                                when Adamas::Compiler::Frontend::IdentifierNode
+                                  identifier_name = safe_slice_to_string(receiver.name) || ""
+                                  !identifier_name.empty? && identifier_name[0] >= 'A' && identifier_name[0] <= 'Z'
+                                else
+                                  false
+                                end
+      unless static_type_designator
+        return nil
+      end
+
+      base_name = extract_type_name_from_node(receiver)
+      return nil unless base_name
+      normalized_base = normalize_declared_type_name(base_name, specialize_bare_generics: false)
+      return nil unless resolved_case_condition_type_name?(normalized_base)
+
+      "#{normalized_base}.#{member}"
+    end
+
     private def case_condition_type_name(node) : String?
-      raw = extract_type_name_from_node(node)
+      raw = case_type_literal_target_name(node) || extract_type_name_from_node(node)
       return nil unless raw
 
       # A `when Array` type test matches every Array instantiation, so bare generic
@@ -79387,6 +79436,10 @@ module Adamas::HIR
     private def resolved_case_condition_type_name?(type_name : String) : Bool
       return false if type_name.empty?
       return true if type_name_exists?(type_name)
+
+      if type_name.ends_with?(".class")
+        return resolved_case_condition_type_name?(type_name[0, type_name.bytesize - 6])
+      end
 
       if split = split_generic_base_and_args(type_name)
         base_name = normalize_declared_type_name(split.base)
@@ -97160,36 +97213,121 @@ module Adamas::HIR
     private def apply_case_type_set_narrowing(
       ctx : LoweringContext,
       name : String,
-      target_types : Array(TypeRef),
+      targets : Array(IsANarrowingTarget),
     ) : Nil
-      return if target_types.size < 2
+      return if targets.size < 2
+
+      unique_targets = [] of IsANarrowingTarget
+      targets.each do |target|
+        unless unique_targets.any? { |entry| entry.type == target.type && entry.type_literal == target.type_literal }
+          unique_targets << target
+        end
+      end
 
       local_id = ctx.lookup_local(name)
       return unless local_id
 
-      unique_targets = target_types.uniq
       if unique_targets.size == 1
-        apply_is_a_narrowing(ctx, [IsANarrowingTarget.new(name, unique_targets.first)])
+        apply_is_a_narrowing(ctx, unique_targets)
         return
       end
 
+      unique_target_types = unique_targets.map(&.type).uniq
       source_type = ctx.type_of(local_id)
-      return if unique_targets.any? { |target| statically_is_a_type?(source_type, target) == true }
 
-      union_name = unique_targets.map { |type_ref| generic_param_type_name_from_ref(type_ref) }.join(" | ")
-      target_type = create_union_type(union_name)
+      union_name = unique_target_types.map { |type_ref| generic_param_type_name_from_ref(type_ref) }.join(" | ")
+      target_type = if unique_target_types.size == 1
+                      unique_target_types.first
+                    else
+                      create_union_type(union_name)
+                    end
       return if target_type == TypeRef::VOID
-
-      return if source_type == target_type
-      return unless all_ref_union_type_ref?(target_type)
 
       source_variants = Set(TypeRef).new
       return unless collect_runtime_header_return_variants(source_type, source_variants)
+      target_variants = Set(TypeRef).new
+      return unless collect_runtime_header_return_variants(target_type, target_variants)
+
+      # A case target may keep the same runtime carrier while removing semantic
+      # source alternatives (notably `A` instances from the `A.class` arm). The
+      # Copy is still needed to give that filtered fact set its own SSA identity.
+      narrowed_facts = case_type_set_narrowed_source_facts(ctx, local_id, unique_targets)
+      if source_type == target_type
+        return unless narrowed_facts
+        source_facts = ctx.source_value_facts(local_id) || source_block_result_value_facts(ctx, local_id)
+        return if narrowed_facts == source_facts
+      elsif unique_target_types.size > 1
+        return unless all_ref_union_type_ref?(target_type)
+      end
 
       copy = Copy.new(ctx.next_id, target_type, local_id)
       ctx.emit(copy)
       ctx.register_type(copy.id, target_type)
+      if facts = narrowed_facts
+        # An empty set is exact evidence that the branch admits no source
+        # alternatives. Store it explicitly so Copy fact lookup cannot follow
+        # the source and resurrect alternatives that this branch filtered out.
+        ctx.register_source_value_facts(copy.id, facts)
+        ctx.mark_type_literal(copy.id) if !facts.empty? && facts.all? { |(_, type_literal)| type_literal }
+      end
       ctx.register_local(name, copy.id)
+    end
+
+    # Expand only exact registered union descriptors. The source fact's literal
+    # bit is evidence about every member represented by that fact, so it is
+    # copied to each exact arm; a missing/poisoned descriptor leaves the result
+    # unrefined instead of deriving facts from the destination Copy carrier.
+    private def expand_case_type_set_source_facts(
+      facts : Array({TypeRef, Bool}),
+    ) : Array({TypeRef, Bool})?
+      pending = facts.dup
+      expanded = [] of {TypeRef, Bool}
+      visited_union_facts = Set({TypeRef, Bool}).new
+      until pending.empty?
+        type_ref, type_literal = pending.pop
+        unless is_union_type?(type_ref)
+          expanded << {type_ref, type_literal}
+          next
+        end
+
+        # Literal kind is part of the source fact: the same union carrier may
+        # legitimately appear once for instance values and once for class
+        # values. Revisit that carrier for each kind, but fail closed if the
+        # same union/kind pair recurs through a cyclic or poisoned descriptor.
+        return nil unless visited_union_facts.add?({type_ref, type_literal})
+
+        return nil unless ensure_union_descriptor_for_type_ref(type_ref)
+        descriptor = union_descriptor_from_sidecar(type_ref)
+        return nil unless descriptor
+        return nil if descriptor.variants.empty?
+
+        descriptor.variants.each do |variant|
+          # Void has no runtime value to admit. All other variants must resolve
+          # to the exact registered arm before the aggregate fact can be split.
+          next if variant.full_name == "Void"
+          exact_type = exact_hir_type_ref_for_union_variant(variant)
+          return nil if exact_type == TypeRef::VOID || exact_type == type_ref
+          pending << {exact_type, type_literal}
+        end
+      end
+      expanded.uniq.sort_by { |(type, literal)| {type.id, literal ? 1 : 0} }
+    end
+
+    private def case_type_set_narrowed_source_facts(
+      ctx : LoweringContext,
+      source_id : ValueId,
+      targets : Array(IsANarrowingTarget),
+    ) : Array({TypeRef, Bool})?
+      source_facts = ctx.source_value_facts(source_id) || source_block_result_value_facts(ctx, source_id)
+      expanded_facts = expand_case_type_set_source_facts(source_facts)
+      return nil unless expanded_facts
+
+      expanded_facts.select do |(source_type, source_literal)|
+        targets.any? do |target|
+          next false if !target.type_literal.nil? && source_literal != target.type_literal
+          statically_is_a_type?(source_type, target.type) != false
+        end
+      end.uniq.sort_by { |(type, literal)| {type.id, literal ? 1 : 0} }
     end
 
     # Inverse of apply_is_a_narrowing for the else branch of `if x.is_a?(T)`.
@@ -102990,7 +103128,7 @@ module Adamas::HIR
           subj_type = subj_local_id ? ctx.type_of(subj_local_id) : nil
           subj_is_union = subj_type && is_union_type?(subj_type)
           single_condition = when_branch.conditions.size == 1
-          type_set_targets = [] of TypeRef
+          type_set_targets = [] of IsANarrowingTarget
           all_conditions_are_type_checks = true
           if subj_type
             when_branch.conditions.each do |cond_expr|
@@ -103017,7 +103155,7 @@ module Adamas::HIR
                   apply_is_a_narrowing(ctx, [IsANarrowingTarget.new(svn, target_ref)])
                 end
                 if should_narrow && target_ref != TypeRef::VOID
-                  type_set_targets << target_ref
+                  type_set_targets << IsANarrowingTarget.new(svn, target_ref, is_a_target_type_literal?(type_name))
                 else
                   all_conditions_are_type_checks = false
                 end

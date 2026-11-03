@@ -5321,3 +5321,33 @@ This does not qualify exception rollback in every other producer, failure
 before function creation, typed depth-refusal replay, bootstrap or unchanged
 LavinMQ parity. A depth-refused argument remains an obligation rather than an
 ordinary type mismatch; its exact-owner suspension/replay is still open.
+
+
+#### Case type-set narrowing owns its filtered source facts
+
+A Copy transports the source value's semantic facts unless its producer records
+an explicit transformation. A parsed `case value; when A, B` previously changed
+the argument carrier from A|B|C to A|B but left its semantic facts at A|B|C.
+The narrowing producer now filters exact union alternatives and records the
+result on its own Copy. Literal kind participates in filtering, including
+same-carrier narrowing. Explicit empty results remain producer evidence; this
+is not a general certificate that an arbitrary empty fact array is NoReturn.
+Unknown subtype relations retain the source alternative conservatively.
+
+Static type-designator `.class` case targets follow Crystal's metaclass-pattern
+semantics. `.metaclass` and `.class` on arbitrary runtime expressions remain
+ordinary expressions. Qualified checks cover both syntax and retained kinds.
+
+DoD: bash regression_tests/case_type_set_source_facts_repro.sh; expect ten
+passing internal HIR examples through the original compiler and safe runner.
+The byte-identical parsed call-argument regression fails on the prior source
+with C still present (35mg), then passes with 60 neighboring examples (35mh).
+The exact production source also passed a fresh S1 build (35mb), stock Crystal
+1.22.1 prelude hello (35md), and `.class`/`.metaclass` native controls against
+Crystal in lazy and eager modes (35mc). The regression entry point passes
+10/10 (35mk). Adversary verdict: ROBUST for this local producer/consumer contract.
+
+Roll back the case producer and its two specs together. Requalify after union
+descriptor, type-literal, Copy-fact lookup or case-target changes. This does not
+repair mixed class/instance facts lost before entering case, the separate Proc
+case discrepancy, virtual result certification, bootstrap or LavinMQ parity.
