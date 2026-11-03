@@ -132371,6 +132371,12 @@ module Adamas::HIR
         recv_dbg = receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "nil"
         STDERR.puts "[WITH_BRACE_INLINE] stage=fallback_emit callee=#{inline_key} caller=#{ctx.function.name} recv=#{recv_dbg} args=#{call_args.size}"
       end
+      # Fallback exits happen before inline_yield_function installs its inline
+      # Block scope. Own the snapshot here so nested block conversion cannot
+      # consume an enclosing Closure scope, and so capture writeback runs after
+      # the caller's pre-callback locals have been restored.
+      fallback_scope = ctx.push_scope(ScopeKind::Block)
+      fallback_scope_pushed = true
       @suppress_force_lower_return_type_depth += 1
       writeback_args : Array(ValueId)? = nil
       result = begin
@@ -132559,7 +132565,13 @@ module Adamas::HIR
         call.id
       ensure
         @suppress_force_lower_return_type_depth -= 1
-        ctx.pop_scope
+        if fallback_scope_pushed
+          unless ctx.current_scope == fallback_scope
+            raise LoweringError.new("inline-yield fallback lost its owned Block scope", block)
+          end
+          ctx.pop_scope
+          fallback_scope_pushed = false
+        end
       end
       # The write-back rebinds caller locals, so it must run after pop_scope
       # restores the pre-block locals snapshot; otherwise the rebinding is lost.
@@ -132890,745 +132902,770 @@ module Adamas::HIR
       callee_arena : Adamas::Compiler::Frontend::ArenaLike,
       source_binding : SourceCallBinding? = nil,
     ) : ValueId
-      # Import and specialization aliases can overwrite a name-level arena
-      # hint without changing the selected Def. Consume its registered source
-      # owner before building contracts or choosing an inline/fallback path.
-      callee_arena = registered_arena_for_def(func_def) || resolve_arena_for_def(func_def, callee_arena)
-      if debug_env_filter_match?("DEBUG_INLINE_PICK", inline_key)
-        stats = function_param_stats(inline_key, func_def)
-        STDERR.puts "[INLINE_PICK] key=#{inline_key} named_required=#{stats.named_required} has_named_only=#{stats.has_named_only} params=#{stats.param_count} required=#{stats.required} caller=#{ctx.function.name}"
-      end
-      if tuple_result = inline_union_tuple_each(ctx, inline_key, func_def, receiver_id,
-           call_args, block, block_param_types, callee_arena, source_binding)
-        return tuple_result
-      end
-      if module_result = inline_union_shared_module_yield(ctx, inline_key, func_def, receiver_id,
-           call_args, block, block_param_types, callee_arena, source_binding)
-        return module_result
-      end
-      if instance_result = inline_union_instance_yield(ctx, inline_key, receiver_id,
-           call_args, block, block_param_types, source_binding)
-        return instance_result
-      end
-      source_result_contract = source_block_result_contract_for_call(
-        func_def, callee_arena, inline_key,
-        receiver_id.try { |receiver| ctx.type_of(receiver) },
-        call_args.map { |arg| enum_tracked_type(ctx, arg) }, source_binding,
-      )
-      block_arena = @block_node_arenas[block.object_id]? ||
-                    resolve_arena_for_block(block, @arena) ||
-                    @arena
-      block_contains_return = with_arena(block_arena) { contains_return?(block.body) }
-      # `break` inside a proc-materialized block lowers to Unreachable, so a
-      # block that breaks out of this call must be inlined like one that returns.
-      block_contains_break = with_arena(block_arena) { contains_block_local_break?(block.body) }
-      fallback_allowed = !block_requires_inline_nonlocal_exit?(block, block_arena)
-      force_inline_with_next = inline_key.includes?("with_brace_newlines_skipped") || inline_key.includes?("with_brace_newlines_as_separators")
-      debug_with_brace = env_get("DEBUG_WITH_BRACE_CALL") && force_inline_with_next
-      base_inline_name = strip_type_suffix(inline_key)
-      concrete_tuple_each_inline = concrete_tuple_each_inline?(ctx, base_inline_name, receiver_id)
-      if debug_with_brace
-        STDERR.puts "[WITH_BRACE_INLINE] stage=enter callee=#{inline_key} caller=#{ctx.function.name} block_contains_return=#{block_contains_return} fallback_allowed=#{fallback_allowed}"
-      end
-
-      if env_has?("ADAMAS_DISABLE_INLINE_YIELD") && fallback_allowed && !concrete_tuple_each_inline
-        STDERR.puts "[WITH_BRACE_INLINE] stage=disabled_inline callee=#{inline_key} caller=#{ctx.function.name}" if debug_with_brace
-        return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract)
-      end
-      ctx.push_scope(ScopeKind::Block)
-
-      # Prevent infinite recursion / runaway stack usage in aggressive yield inlining.
-      # This can happen in stdlib where yield is used deeply (or recursively).
-      # Keep inline expansion bounded to avoid runaway lowering on deep stdlib chains.
-      max_depth = (env_get("INLINE_YIELD_MAX_DEPTH") || "8").to_i
-      max_repeat = (env_get("INLINE_YIELD_MAX_REPEAT") || "2").to_i
-      caller_arena = @arena
-      repeat_count = @inline_yield_name_stack.count(inline_key)
-      if !concrete_tuple_each_inline && (@inline_yield_name_stack.size >= max_depth || repeat_count >= max_repeat)
-        STDERR.puts "[WITH_BRACE_INLINE] stage=depth_guard callee=#{inline_key} caller=#{ctx.function.name} depth=#{@inline_yield_name_stack.size} repeat=#{repeat_count}" if debug_with_brace
-        if env_has?("DEBUG_YIELD_INLINE")
-          STDERR.puts "[INLINE_YIELD] skipping inline: #{inline_key} (depth=#{@inline_yield_name_stack.size}, max=#{max_depth}, repeat=#{repeat_count}, max_repeat=#{max_repeat})"
+      entry_local_declaration_scopes = ctx.save_local_declaration_scopes
+      entry_arena = @arena
+      entry_inline_arenas = @inline_arenas
+      inline_scope = ctx.current_scope
+      inline_scope_pushed = false
+      begin
+        # Import and specialization aliases can overwrite a name-level arena
+        # hint without changing the selected Def. Consume its registered source
+        # owner before building contracts or choosing an inline/fallback path.
+        callee_arena = registered_arena_for_def(func_def) || resolve_arena_for_def(func_def, callee_arena)
+        if debug_env_filter_match?("DEBUG_INLINE_PICK", inline_key)
+          stats = function_param_stats(inline_key, func_def)
+          STDERR.puts "[INLINE_PICK] key=#{inline_key} named_required=#{stats.named_required} has_named_only=#{stats.has_named_only} params=#{stats.param_count} required=#{stats.required} caller=#{ctx.function.name}"
         end
-        if fallback_allowed
+        if tuple_result = inline_union_tuple_each(ctx, inline_key, func_def, receiver_id,
+             call_args, block, block_param_types, callee_arena, source_binding)
+          return tuple_result
+        end
+        if module_result = inline_union_shared_module_yield(ctx, inline_key, func_def, receiver_id,
+             call_args, block, block_param_types, callee_arena, source_binding)
+          return module_result
+        end
+        if instance_result = inline_union_instance_yield(ctx, inline_key, receiver_id,
+             call_args, block, block_param_types, source_binding)
+          return instance_result
+        end
+        source_result_contract = source_block_result_contract_for_call(
+          func_def, callee_arena, inline_key,
+          receiver_id.try { |receiver| ctx.type_of(receiver) },
+          call_args.map { |arg| enum_tracked_type(ctx, arg) }, source_binding,
+        )
+        block_arena = @block_node_arenas[block.object_id]? ||
+                      resolve_arena_for_block(block, @arena) ||
+                      @arena
+        block_contains_return = with_arena(block_arena) { contains_return?(block.body) }
+        # `break` inside a proc-materialized block lowers to Unreachable, so a
+        # block that breaks out of this call must be inlined like one that returns.
+        block_contains_break = with_arena(block_arena) { contains_block_local_break?(block.body) }
+        fallback_allowed = !block_requires_inline_nonlocal_exit?(block, block_arena)
+        force_inline_with_next = inline_key.includes?("with_brace_newlines_skipped") || inline_key.includes?("with_brace_newlines_as_separators")
+        debug_with_brace = env_get("DEBUG_WITH_BRACE_CALL") && force_inline_with_next
+        base_inline_name = strip_type_suffix(inline_key)
+        concrete_tuple_each_inline = concrete_tuple_each_inline?(ctx, base_inline_name, receiver_id)
+        if debug_with_brace
+          STDERR.puts "[WITH_BRACE_INLINE] stage=enter callee=#{inline_key} caller=#{ctx.function.name} block_contains_return=#{block_contains_return} fallback_allowed=#{fallback_allowed}"
+        end
+
+        if env_has?("ADAMAS_DISABLE_INLINE_YIELD") && fallback_allowed && !concrete_tuple_each_inline
+          STDERR.puts "[WITH_BRACE_INLINE] stage=disabled_inline callee=#{inline_key} caller=#{ctx.function.name}" if debug_with_brace
           return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract)
         end
-      end
-      # Nested inline-yield inside an inlined block body is the main source of
-      # runaway recursion in release builds (inline_yield -> inline_block_body -> lower_call -> ...).
-      # Allow one level of nesting (depth <= 1) since the MIR lowering doesn't
-      # support block callbacks via lower_call — the block parameter would be null.
-      # The existing depth (inline_yield_name_stack) and repeat limits still guard
-      # against runaway recursion.
-      max_block_body_depth = (env_get("INLINE_YIELD_MAX_BLOCK_BODY_DEPTH") || "1").to_i
-      if !concrete_tuple_each_inline && @inline_yield_block_body_depth > max_block_body_depth
-        STDERR.puts "[WITH_BRACE_INLINE] stage=block_body_depth_guard callee=#{inline_key} caller=#{ctx.function.name} depth=#{@inline_yield_block_body_depth}" if debug_with_brace
-        if env_has?("DEBUG_YIELD_INLINE")
-          STDERR.puts "[INLINE_YIELD] skipping nested block-body inline: #{inline_key} depth=#{@inline_yield_block_body_depth}"
+        # Prevent infinite recursion / runaway stack usage in aggressive yield inlining.
+        # This can happen in stdlib where yield is used deeply (or recursively).
+        # Keep inline expansion bounded to avoid runaway lowering on deep stdlib chains.
+        max_depth = (env_get("INLINE_YIELD_MAX_DEPTH") || "8").to_i
+        max_repeat = (env_get("INLINE_YIELD_MAX_REPEAT") || "2").to_i
+        caller_arena = @arena
+        repeat_count = @inline_yield_name_stack.count(inline_key)
+        if !concrete_tuple_each_inline && (@inline_yield_name_stack.size >= max_depth || repeat_count >= max_repeat)
+          STDERR.puts "[WITH_BRACE_INLINE] stage=depth_guard callee=#{inline_key} caller=#{ctx.function.name} depth=#{@inline_yield_name_stack.size} repeat=#{repeat_count}" if debug_with_brace
+          if env_has?("DEBUG_YIELD_INLINE")
+            STDERR.puts "[INLINE_YIELD] skipping inline: #{inline_key} (depth=#{@inline_yield_name_stack.size}, max=#{max_depth}, repeat=#{repeat_count}, max_repeat=#{max_repeat})"
+          end
+          if fallback_allowed
+            return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract)
+          end
         end
-        if fallback_allowed
-          return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract)
+        # Nested inline-yield inside an inlined block body is the main source of
+        # runaway recursion in release builds (inline_yield -> inline_block_body -> lower_call -> ...).
+        # Allow one level of nesting (depth <= 1) since the MIR lowering doesn't
+        # support block callbacks via lower_call — the block parameter would be null.
+        # The existing depth (inline_yield_name_stack) and repeat limits still guard
+        # against runaway recursion.
+        max_block_body_depth = (env_get("INLINE_YIELD_MAX_BLOCK_BODY_DEPTH") || "1").to_i
+        if !concrete_tuple_each_inline && @inline_yield_block_body_depth > max_block_body_depth
+          STDERR.puts "[WITH_BRACE_INLINE] stage=block_body_depth_guard callee=#{inline_key} caller=#{ctx.function.name} depth=#{@inline_yield_block_body_depth}" if debug_with_brace
+          if env_has?("DEBUG_YIELD_INLINE")
+            STDERR.puts "[INLINE_YIELD] skipping nested block-body inline: #{inline_key} depth=#{@inline_yield_block_body_depth}"
+          end
+          if fallback_allowed
+            return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract)
+          end
         end
-      end
-      namespace_override = function_namespace_override_for(inline_key, base_inline_name)
-      debug_inline_self = false
-      if filter = env_get("DEBUG_INLINE_SELF")
-        if filter.empty? || filter == "1" || inline_key.includes?(filter) || base_inline_name.includes?(filter)
-          debug_inline_self = true
-          recv_id = receiver_id ? receiver_id.to_s : "nil"
-          recv_type = receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "nil"
-          STDERR.puts(
-            "[INLINE_SELF] callee=#{inline_key} base=#{base_inline_name} recv_id=#{recv_id} recv_type=#{recv_type} depth=#{@inline_yield_block_body_depth} func=#{ctx.function.name}"
-          )
+        namespace_override = function_namespace_override_for(inline_key, base_inline_name)
+        debug_inline_self = false
+        if filter = env_get("DEBUG_INLINE_SELF")
+          if filter.empty? || filter == "1" || inline_key.includes?(filter) || base_inline_name.includes?(filter)
+            debug_inline_self = true
+            recv_id = receiver_id ? receiver_id.to_s : "nil"
+            recv_type = receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "nil"
+            STDERR.puts(
+              "[INLINE_SELF] callee=#{inline_key} base=#{base_inline_name} recv_id=#{recv_id} recv_type=#{recv_type} depth=#{@inline_yield_block_body_depth} func=#{ctx.function.name}"
+            )
+          end
         end
-      end
-      if receiver = receiver_name_from_method_name(base_inline_name)
-        if unresolved_generic_receiver?(receiver)
-          if receiver_id
-            receiver_type_map = type_param_map_for_receiver_type(ctx.type_of(receiver_id))
-            if receiver_type_map.empty?
-              STDERR.puts "[WITH_BRACE_INLINE] stage=unresolved_generic_receiver callee=#{inline_key} caller=#{ctx.function.name}" if debug_with_brace
+        if receiver = receiver_name_from_method_name(base_inline_name)
+          if unresolved_generic_receiver?(receiver)
+            if receiver_id
+              receiver_type_map = type_param_map_for_receiver_type(ctx.type_of(receiver_id))
+              if receiver_type_map.empty?
+                STDERR.puts "[WITH_BRACE_INLINE] stage=unresolved_generic_receiver callee=#{inline_key} caller=#{ctx.function.name}" if debug_with_brace
+                debug_hook("inline.yield.skip", "callee=#{inline_key} receiver=#{receiver} reason=unresolved_generic")
+                if fallback_allowed
+                  return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract)
+                end
+                # Block has non-local return — proc materialization cannot represent it.
+                # Force inline despite unresolved generic receiver.
+                debug_hook("inline.yield.force_inline_for_return", "callee=#{inline_key} reason=unresolved_generic_receiver_with_return")
+              end
+            else
+              STDERR.puts "[WITH_BRACE_INLINE] stage=missing_receiver_for_generic callee=#{inline_key} caller=#{ctx.function.name}" if debug_with_brace
               debug_hook("inline.yield.skip", "callee=#{inline_key} receiver=#{receiver} reason=unresolved_generic")
               if fallback_allowed
                 return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract)
               end
-              # Block has non-local return — proc materialization cannot represent it.
-              # Force inline despite unresolved generic receiver.
-              debug_hook("inline.yield.force_inline_for_return", "callee=#{inline_key} reason=unresolved_generic_receiver_with_return")
+              debug_hook("inline.yield.force_inline_for_return", "callee=#{inline_key} reason=missing_receiver_for_generic_with_return")
             end
-          else
-            STDERR.puts "[WITH_BRACE_INLINE] stage=missing_receiver_for_generic callee=#{inline_key} caller=#{ctx.function.name}" if debug_with_brace
-            debug_hook("inline.yield.skip", "callee=#{inline_key} receiver=#{receiver} reason=unresolved_generic")
-            if fallback_allowed
-              return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract)
-            end
-            debug_hook("inline.yield.force_inline_for_return", "callee=#{inline_key} reason=missing_receiver_for_generic_with_return")
           end
         end
-      end
-      if env_get("DEBUG_YIELD_INLINE_ALL")
-        STDERR.puts "[INLINE_YIELD] inline #{inline_key} in #{ctx.function.name}"
-      end
-      if env_get("DEBUG_YIELD_TRACE") && (inline_key.includes?("char_at") || inline_key.includes?("fetch") || inline_key.includes?("upto"))
-        STDERR.puts "[INLINE_YIELD] inline #{inline_key} in #{ctx.function.name}"
-      end
-
-      if env_get("DEBUG_INLINE_CRASH") && base_inline_name == "Char::Reader#decode_char_at"
-        STDERR.puts "[INLINE_CRASH] callee=#{inline_key} caller=#{ctx.function.name} arena=#{callee_arena.size}"
-      end
-
-      block_arena = resolve_arena_for_block(block, caller_arena)
-      unless block_arena
-        STDERR.puts "[WITH_BRACE_INLINE] stage=block_arena_missing callee=#{inline_key} caller=#{ctx.function.name}" if debug_with_brace
-        debug_hook("inline.yield.block_arena_missing", "callee=#{inline_key} caller=#{ctx.function.name}")
-        if fallback_allowed
-          return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract)
+        if env_get("DEBUG_YIELD_INLINE_ALL")
+          STDERR.puts "[INLINE_YIELD] inline #{inline_key} in #{ctx.function.name}"
         end
-        # Block has non-local return — proc materialization cannot represent it.
-        # Use caller_arena as a fallback to allow inline lowering.
-        block_arena = caller_arena
-        debug_hook("inline.yield.force_inline_for_return", "callee=#{inline_key} reason=block_arena_missing_with_return")
-      end
-      @block_node_arenas[block.object_id] = block_arena
-      unless block.body.empty?
-        max_index = max_expr_index(block.body)
-        if max_index < 0 || max_index >= block_arena.size
-          debug_hook(
-            "inline.yield.block_arena_mismatch",
-            "callee=#{inline_key} max=#{max_index} arena=#{block_arena.size}"
-          )
-          STDERR.puts "[WITH_BRACE_INLINE] stage=block_arena_mismatch callee=#{inline_key} caller=#{ctx.function.name} max=#{max_index} arena=#{block_arena.size}" if debug_with_brace
-          if fallback_allowed
-            return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract)
-          end
-          # Block has non-local return — proceed with inline despite arena mismatch.
-          debug_hook("inline.yield.force_inline_for_return", "callee=#{inline_key} reason=block_arena_mismatch_with_return")
+        if env_get("DEBUG_YIELD_TRACE") && (inline_key.includes?("char_at") || inline_key.includes?("fetch") || inline_key.includes?("upto"))
+          STDERR.puts "[INLINE_YIELD] inline #{inline_key} in #{ctx.function.name}"
         end
-      end
-      if !concrete_tuple_each_inline && with_arena(block_arena) { contains_next?(block.body) }
-        if !force_inline_with_next
-          STDERR.puts "[WITH_BRACE_INLINE] stage=block_contains_next callee=#{inline_key} caller=#{ctx.function.name}" if debug_with_brace
-          debug_hook("inline.yield.skip", "callee=#{inline_key} reason=block_contains_next")
+
+        if env_get("DEBUG_INLINE_CRASH") && base_inline_name == "Char::Reader#decode_char_at"
+          STDERR.puts "[INLINE_CRASH] callee=#{inline_key} caller=#{ctx.function.name} arena=#{callee_arena.size}"
+        end
+
+        block_arena = resolve_arena_for_block(block, caller_arena)
+        unless block_arena
+          STDERR.puts "[WITH_BRACE_INLINE] stage=block_arena_missing callee=#{inline_key} caller=#{ctx.function.name}" if debug_with_brace
+          debug_hook("inline.yield.block_arena_missing", "callee=#{inline_key} caller=#{ctx.function.name}")
           if fallback_allowed
             return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract)
           end
           # Block has non-local return — proc materialization cannot represent it.
-          # Force inline despite the next inside body.
-          debug_hook("inline.yield.force_inline_for_return", "callee=#{inline_key} reason=block_contains_next_with_return")
-        elsif debug_with_brace
-          STDERR.puts "[WITH_BRACE_INLINE] stage=block_contains_next_force_inline callee=#{inline_key} caller=#{ctx.function.name}"
+          # Use caller_arena as a fallback to allow inline lowering.
+          block_arena = caller_arena
+          debug_hook("inline.yield.force_inline_for_return", "callee=#{inline_key} reason=block_arena_missing_with_return")
         end
-      end
-
-      if func_body = func_def.body
-        unless func_body.empty?
-          max_index = max_expr_index(func_body)
-          if env_get("DEBUG_INLINE_CRASH") && base_inline_name == "Char::Reader#decode_char_at"
-            STDERR.puts "[INLINE_CRASH] callee=#{inline_key} body_size=#{func_body.size} max_index=#{max_index}"
-          end
-          if max_index < 0 || max_index >= callee_arena.size
-            STDERR.puts "[WITH_BRACE_INLINE] stage=callee_arena_mismatch callee=#{inline_key} caller=#{ctx.function.name} max=#{max_index} arena=#{callee_arena.size}" if debug_with_brace
-            debug_hook("inline.yield.arena_mismatch", "callee=#{inline_key} max=#{max_index} arena=#{callee_arena.size}")
+        @block_node_arenas[block.object_id] = block_arena
+        unless block.body.empty?
+          max_index = max_expr_index(block.body)
+          if max_index < 0 || max_index >= block_arena.size
+            debug_hook(
+              "inline.yield.block_arena_mismatch",
+              "callee=#{inline_key} max=#{max_index} arena=#{block_arena.size}"
+            )
+            STDERR.puts "[WITH_BRACE_INLINE] stage=block_arena_mismatch callee=#{inline_key} caller=#{ctx.function.name} max=#{max_index} arena=#{block_arena.size}" if debug_with_brace
             if fallback_allowed
               return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract)
             end
-            # Block has non-local return — proceed with inline despite callee arena mismatch.
-            debug_hook("inline.yield.force_inline_for_return", "callee=#{inline_key} reason=callee_arena_mismatch_with_return")
+            # Block has non-local return — proceed with inline despite arena mismatch.
+            debug_hook("inline.yield.force_inline_for_return", "callee=#{inline_key} reason=block_arena_mismatch_with_return")
           end
         end
-      end
-
-      old_inline_arenas = @inline_arenas
-      if old_inline_arenas
-        combined = old_inline_arenas.dup
-        combined << caller_arena unless combined.includes?(caller_arena)
-        combined << callee_arena unless combined.includes?(callee_arena)
-        combined << block_arena unless combined.includes?(block_arena)
-        @inline_arenas = combined
-      else
-        @inline_arenas = [caller_arena, callee_arena, block_arena]
-      end
-      @arena = callee_arena
-
-      # Isolate callee locals from caller locals, but keep caller locals available for block bodies.
-      caller_locals = ctx.save_locals.locals
-      caller_local_declaration_scopes = ctx.save_local_declaration_scopes
-      callee_local_names = inline_callee_local_names(func_def, callee_arena)
-      @inline_caller_locals_stack << caller_locals
-      @inline_caller_local_declaration_scopes_stack << caller_local_declaration_scopes
-      ctx.reset_local_declaration_scopes
-      @inline_caller_function_id_stack << ctx.function.id
-      @inline_callee_local_names_stack << callee_local_names
-      @inline_callee_local_names_frame_stack << (@inline_caller_locals_stack.size - 1)
-      preserved_locals = {} of String => ValueId
-      ctx.restore_locals(preserved_locals)
-      @inline_yield_function_depth += 1
-
-      pushed_name = false
-      pushed_tuple_each_next = false
-      pushed_block = false
-      pushed_override = false
-      pushed_block_owner_frame_index = false
-      prev_block_owner_frame_index : Int32? = nil
-      previous_block_owner = @block_owner[block.object_id]?
-      previous_block_owner_function_id = @block_owner_function_ids[block.object_id]?
-      previous_block_owner_self_id = @block_owner_self_ids[block.object_id]?
-      # Capture the caller's logical method before the callee pushes its own
-      # inline return context. Several logical methods share one HIR function.
-      caller_return_target = InlineReturnOverride.new(true, current_inline_return_context(ctx))
-
-      @inline_yield_name_stack << inline_key
-      pushed_name = true
-      @inline_tuple_each_next_stack << concrete_tuple_each_inline
-      @inline_tuple_each_loop_exit_depth_stack << (concrete_tuple_each_inline ? @loop_exit_stack.size : -1)
-      pushed_tuple_each_next = true
-      if @inline_yield_block_body_depth > 0
-        @inline_yield_return_override_stack << InlineReturnOverride.new(false, nil)
-        pushed_override = true
-      end
-      @inline_yield_block_stack << block
-      @inline_yield_block_arena_stack << block_arena
-      @inline_yield_block_param_types_stack << block_param_types
-      @inline_yield_block_return_stack << nil
-      pushed_block = true
-      if debug_with_brace
-        STDERR.puts "[WITH_BRACE_INLINE] stage=after_push callee=#{inline_key} caller=#{ctx.function.name} stack=#{@inline_yield_block_stack.size}"
-      end
-      inline_return = InlineReturnContext.new(ctx.create_block, [] of {BlockId, ValueId}, ctx.function.id)
-      @inline_yield_return_stack << inline_return
-      @inline_yield_return_caller_locals_stack << ([] of {BlockId, Hash(String, ValueId)})
-
-      old_current_class = @current_class
-      old_current_method = @current_method
-      old_current_method_is_class = @current_method_is_class
-      @inline_caller_class_stack << old_current_class
-      @inline_caller_method_stack << old_current_method
-      @inline_caller_method_is_class_stack << old_current_method_is_class
-      @inline_caller_type_param_map_stack << @type_param_map.dup
-      old_inline_def_frame = @current_inline_def_frame
-      @inline_caller_def_frame_stack << old_inline_def_frame
-      @current_inline_def_frame = InlineDefFrame.new(func_def, callee_arena, ctx.function.id, @current_super_source_module)
-      # MUST use `=` not `||=` — the same stdlib block AST node is reused across
-      # different generic instantiations. Each instantiation compiles into a different
-      # function, so the owner must always be updated to the current function context.
-      # Using `||=` caused stale function_ids from the first instantiation to persist,
-      # making `block_owned_by_current_fn` false for subsequent instantiations, which
-      # broke non-local returns (return inside block jumped to inline exit instead of
-      # doing a real method return).
-      @block_owner[block.object_id] = BlockOwner.new(old_current_class, old_current_method, old_current_method_is_class || false, @current_namespace_override, caller_return_target)
-      @block_owner_function_ids[block.object_id] = ctx.function.id
-      prev_block_owner_frame_index = @block_owner_caller_frame_index[block.object_id]?
-      @block_owner_caller_frame_index[block.object_id] = @inline_caller_locals_stack.size - 1
-      pushed_block_owner_frame_index = true
-      if self_id = caller_locals["self"]?
-        @block_owner_self_ids[block.object_id] = self_id
-      end
-      inferred_block_return = inline_block_return_type_name(block, block_param_types, old_current_class)
-      if inferred_block_return
-        @inline_yield_block_return_stack[-1] = inferred_block_return
-      end
-      if debug_env_filter_match?("DEBUG_BLOCK_RETURN", inline_key, base_inline_name)
-        param_str = block_param_types ? block_param_types.map { |t| get_type_name_from_ref(t) }.join(",") : "nil"
-        STDERR.puts "[INLINE_BLOCK_RETURN] callee=#{inline_key} params=#{param_str} return=#{inferred_block_return || "nil"}"
-        if inferred_block_return.nil?
-          if last_expr = block.body.last?
-            node = @arena[last_expr]
-            detail = case node
-                     when Adamas::Compiler::Frontend::IdentifierNode
-                       "Identifier(#{(safe_slice_to_string(node.name) || "")})"
-                     when Adamas::Compiler::Frontend::MemberAccessNode
-                       "MemberAccess(#{(safe_slice_to_string(node.member) || "")})"
-                     when Adamas::Compiler::Frontend::CallNode
-                       callee = @arena[node.callee]
-                       "Call(#{callee.class.name})"
-                     else
-                       node.class.name
-                     end
-            STDERR.puts "[INLINE_BLOCK_RETURN_EXPR] callee=#{inline_key} node=#{detail}"
+        if !concrete_tuple_each_inline && with_arena(block_arena) { contains_next?(block.body) }
+          if !force_inline_with_next
+            STDERR.puts "[WITH_BRACE_INLINE] stage=block_contains_next callee=#{inline_key} caller=#{ctx.function.name}" if debug_with_brace
+            debug_hook("inline.yield.skip", "callee=#{inline_key} reason=block_contains_next")
+            if fallback_allowed
+              return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract)
+            end
+            # Block has non-local return — proc materialization cannot represent it.
+            # Force inline despite the next inside body.
+            debug_hook("inline.yield.force_inline_for_return", "callee=#{inline_key} reason=block_contains_next_with_return")
+          elsif debug_with_brace
+            STDERR.puts "[WITH_BRACE_INLINE] stage=block_contains_next_force_inline callee=#{inline_key} caller=#{ctx.function.name}"
           end
         end
-      end
-      parts = parse_method_name(base_inline_name)
-      if method_name = parts.method
-        unless parts.owner.empty?
-          @current_class = parts.owner
-          @current_method = method_name unless method_name.empty?
-          @current_method_is_class = parts.is_class
-        end
-      end
-      if recv = func_def.receiver
-        recv_name = (safe_slice_to_string(recv) || "")
-        if class_method_receiver_text?(recv_name)
-          @current_method_is_class = true
-        end
-      end
-      # A class method inherited from an ancestor runs with `self` = the type
-      # literal receiver, and its macros see that receiver as `@type`
-      # (`Sig.each` -> `Enum.each` expands `@type.constants` over Sig). Keep the
-      # lexical owner otherwise, as for non-inline inherited class methods.
-      if pending_receiver = @pending_inline_class_receiver
-        @pending_inline_class_receiver = nil
-        if parts.is_class && pending_receiver[0] == parts.owner &&
-           def_macro_references_type_ivar?(func_def, callee_arena)
-          @current_class = pending_receiver[1]
-        end
-      end
-      # When inlining a module method (e.g. Indexable#last), override @current_class
-      # with the receiver's actual type (e.g. Array(Int32)). Without this, method
-      # lookups for implicit self calls (like `size`) resolve to the module's abstract
-      # stubs instead of the concrete implementation on the receiver type.
-      #
-      # Do NOT apply this to concrete classes/structs. Their ivar lowering relies on
-      # the lexical owner (for example Set#each needs @current_class = "Set" so @hash
-      # stays an ivar field access instead of degrading into the inherited hash() method
-      # on a specialized receiver like Set(String)).
-      inline_owner_module_like = false
-      if !parts.owner.empty?
-        if owner_ref = type_ref_for_name(parts.owner)
-          if owner_desc = @module.get_type_descriptor(owner_ref)
-            inline_owner_module_like = owner_desc.kind == TypeKind::Module
-            if !inline_owner_module_like && owner_desc.kind == TypeKind::Generic
-              inline_owner_module_like = module_like_type_name?(owner_desc.name) || module_includers_match?(owner_desc.name)
+
+        if func_body = func_def.body
+          unless func_body.empty?
+            max_index = max_expr_index(func_body)
+            if env_get("DEBUG_INLINE_CRASH") && base_inline_name == "Char::Reader#decode_char_at"
+              STDERR.puts "[INLINE_CRASH] callee=#{inline_key} body_size=#{func_body.size} max_index=#{max_index}"
+            end
+            if max_index < 0 || max_index >= callee_arena.size
+              STDERR.puts "[WITH_BRACE_INLINE] stage=callee_arena_mismatch callee=#{inline_key} caller=#{ctx.function.name} max=#{max_index} arena=#{callee_arena.size}" if debug_with_brace
+              debug_hook("inline.yield.arena_mismatch", "callee=#{inline_key} max=#{max_index} arena=#{callee_arena.size}")
+              if fallback_allowed
+                return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract)
+              end
+              # Block has non-local return — proceed with inline despite callee arena mismatch.
+              debug_hook("inline.yield.force_inline_for_return", "callee=#{inline_key} reason=callee_arena_mismatch_with_return")
             end
           end
         end
-        if !inline_owner_module_like
-          inline_owner_module_like = @module_defs.has_key?(parts.owner) ||
-                                     module_like_type_name?(parts.owner) ||
-                                     module_includers_match?(parts.owner)
-        end
-      end
-      if receiver_id && !parts.is_class && inline_owner_module_like
-        receiver_type_name = get_type_name_from_ref(ctx.type_of(receiver_id))
-        # Keep lexical owner when receiver type is unresolved.
-        # Overriding @current_class with "Void"/"Unknown" breaks ivar lookup
-        # in inlined methods like Hash#each_entry_with_index (@first.upto ...),
-        # which then resolves calls against unrelated owners.
-        if !receiver_type_name.empty? &&
-           receiver_type_name != "Nil" &&
-           receiver_type_name != "Void" &&
-           receiver_type_name != "Unknown"
-          @current_class = receiver_type_name
-        end
-      end
-      inline_param_map = type_param_map_for_receiver_name(base_inline_name)
-      # DEBUG PROBE (remove before commit): trace inline type-param map stages.
-      if dbg_itpm = env_get("DEBUG_INLINE_TPM")
-        if base_inline_name.includes?(dbg_itpm)
-          STDERR.puts "[INLINE_TPM] stage=recv_name key=#{inline_key} base=#{base_inline_name} recv=#{receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "-"} cur=#{@current_class} map=#{inline_param_map.map { |k, v| "#{k}=>#{v}" }.join(";")}"
-          STDERR.flush
-        end
-      end
-      if receiver_id
-        receiver_type_map = type_param_map_for_receiver_type(ctx.type_of(receiver_id))
-        if !receiver_type_map.empty?
-          inline_param_map = inline_param_map.merge(receiver_type_map)
-        end
-      end
-      # DEBUG PROBE (remove before commit): trace inline type-param map stages.
-      if dbg_itpm = env_get("DEBUG_INLINE_TPM")
-        if base_inline_name.includes?(dbg_itpm)
-          STDERR.puts "[INLINE_TPM] stage=recv_type key=#{inline_key} base=#{base_inline_name} recv=#{receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "-"} cur=#{@current_class} map=#{inline_param_map.map { |k, v| "#{k}=>#{v}" }.join(";")}"
-          STDERR.flush
-        end
-      end
-      if registered = function_type_param_map_for(inline_key, base_inline_name)
-        inline_param_map = inline_param_map.merge(registered)
-      end
-      # DEBUG PROBE (remove before commit): trace inline type-param map stages.
-      if dbg_itpm = env_get("DEBUG_INLINE_TPM")
-        if base_inline_name.includes?(dbg_itpm)
-          STDERR.puts "[INLINE_TPM] stage=registered key=#{inline_key} base=#{base_inline_name} recv=#{receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "-"} cur=#{@current_class} map=#{inline_param_map.map { |k, v| "#{k}=>#{v}" }.join(";")}"
-          STDERR.flush
-        end
-      end
-      if pending = consume_pending_type_param_map(inline_key)
-        inline_param_map = inline_param_map.merge(pending)
-        store_function_type_param_map(inline_key, base_inline_name, pending)
-      elsif pending = consume_pending_type_param_map(base_inline_name)
-        inline_param_map = inline_param_map.merge(pending)
-        store_function_type_param_map(inline_key, base_inline_name, pending)
-      end
-      # Method-forall variables are bound by this call's arguments (`type :
-      # F.class`, `x : F`) and shadow owner/cached maps, as in lower_method;
-      # without them the inlined body sees `F` as an undefined constant.
-      unless call_args.empty?
-        forall_bindings = method_forall_call_bindings(func_def, call_args.map { |arg| ctx.type_of(arg) })
-        inline_param_map = inline_param_map.merge(forall_bindings) unless forall_bindings.empty?
-      end
-      # DEBUG PROBE (remove before commit): trace inline type-param map stages.
-      if dbg_itpm = env_get("DEBUG_INLINE_TPM")
-        if base_inline_name.includes?(dbg_itpm)
-          STDERR.puts "[INLINE_TPM] stage=pending key=#{inline_key} base=#{base_inline_name} recv=#{receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "-"} cur=#{@current_class} map=#{inline_param_map.map { |k, v| "#{k}=>#{v}" }.join(";")}"
-          STDERR.flush
-        end
-      end
-      if concrete_tuple_each_inline && receiver_id
-        # Cached maps cannot replace the concrete branch's tuple macro arity.
-        inline_param_map = inline_param_map.merge(type_param_map_for_receiver_type(ctx.type_of(receiver_id)))
-      end
-      # DEBUG PROBE (remove before commit): trace inline type-param map stages.
-      if dbg_itpm = env_get("DEBUG_INLINE_TPM")
-        if base_inline_name.includes?(dbg_itpm)
-          STDERR.puts "[INLINE_TPM] stage=tuple key=#{inline_key} base=#{base_inline_name} recv=#{receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "-"} cur=#{@current_class} map=#{inline_param_map.map { |k, v| "#{k}=>#{v}" }.join(";")}"
-          STDERR.flush
-        end
-      end
-      if contract = source_result_contract
-        # Defaults and family caches are ABI inputs, not source evidence for
-        # this invocation's forall variables. Rebuild their bindings from the
-        # selected source call before consulting the current callback output.
-        forall_type_param_names(func_def).each { |formal| inline_param_map.delete(formal) }
-        inline_param_map.merge!(contract.type_bindings)
-        if inferred = inferred_block_return || inline_block_return_type_name(block, block_param_types, old_current_class)
-          output_bindings = with_arena(callee_arena) do
-            source_block_output_type_bindings(func_def,
-              return_declaration_owner_for(inline_key, base_inline_name), inferred, contract.type_bindings)
-          end
-          if output_bindings
-            inline_param_map.merge!(output_bindings)
-            record_pending_type_param_map(inline_key, output_bindings)
-          end
-        end
-      end
-      # DEBUG PROBE (remove before commit): trace inline type-param map stages.
-      if dbg_itpm = env_get("DEBUG_INLINE_TPM")
-        if base_inline_name.includes?(dbg_itpm)
-          STDERR.puts "[INLINE_TPM] stage=final key=#{inline_key} base=#{base_inline_name} recv=#{receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "-"} cur=#{@current_class} map=#{inline_param_map.map { |k, v| "#{k}=>#{v}" }.join(";")}"
-          STDERR.flush
-        end
-      end
-      result_value = nil_value(ctx)
-      callee_is_class = class_method?(base_inline_name)
-      inline_self_class_name : String? = nil
-      if !receiver_id && callee_is_class
-        owner_name = method_owner(base_inline_name)
-        if owner_name.empty?
-          owner_name = @current_class || ""
-        end
-        inline_self_class_name = owner_name unless owner_name.empty?
-      end
-      apply_inline = -> do
-        inline_return.block_result_contract = source_result_contract
-        if return_annotation = func_def.return_type
-          # A source method's own Nil return contract adapts its ordinary
-          # completion and return edges. A block's break edge belongs to the
-          # call expression instead, so route_break_to_tuple_inline_return
-          # deliberately does not apply this adaptation.
-          return_name = safe_slice_to_string(return_annotation) || ""
-          inline_return.discards_method_result = annotation_type_ref(return_name, namespace_override) == TypeRef::NIL
-        end
-        # Bind `self` for inlined callee.
-        if receiver_id
-          ctx.register_local("self", receiver_id)
-          ctx.register_type(receiver_id, ctx.type_of(receiver_id))
-        elsif callee_is_class
-          if class_name = inline_self_class_name
-            class_self = lower_type_literal_from_name(ctx, class_name)
-            ctx.register_local("self", class_self)
-            ctx.register_type(class_self, ctx.type_of(class_self))
-          end
-        end
-        if debug_inline_self
-          bound_id = ctx.lookup_local("self")
-          bound_str = bound_id ? bound_id.to_s : "nil"
-          bound_type = bound_id ? get_type_name_from_ref(ctx.type_of(bound_id)) : "nil"
-          expected_str = receiver_id ? receiver_id.to_s : "nil"
-          expected_type = receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "nil"
-          STDERR.puts(
-            "[INLINE_SELF_BOUND] callee=#{inline_key} bound_id=#{bound_str} bound_type=#{bound_type} expected_id=#{expected_str} expected_type=#{expected_type} depth=#{@inline_yield_block_body_depth} func=#{ctx.function.name}"
-          )
-        end
 
-        # Bind function parameters to call arguments
-        if params = func_def.params
-          inline_func_context = function_context_from_name(inline_key)
-          # Track call_args index separately from param index: a bare `*`
-          # named-only separator is a Parameter slot but does NOT correspond
-          # to a call arg (reorder_named_args/apply_default_args skip it),
-          # so indexing call_args by raw param idx mis-maps every param
-          # appearing after the separator. Likewise, `&block` is bound from
-          # the block argument, not from call_args.
-          arg_idx = 0
-          param_buf = params.to_unsafe
-          param_idx = 0
-          while param_idx < params.size
-            if param_buf.unsafe_as(UInt64) == 0_u64
-              break
+        # All routes that fall back must run before this inline-owned scope is
+        # acquired. The fallback helper owns and restores its own Block scope.
+        inline_scope = ctx.push_scope(ScopeKind::Block)
+        inline_scope_pushed = true
+
+        old_inline_arenas = @inline_arenas
+        if old_inline_arenas
+          combined = old_inline_arenas.dup
+          combined << caller_arena unless combined.includes?(caller_arena)
+          combined << callee_arena unless combined.includes?(callee_arena)
+          combined << block_arena unless combined.includes?(block_arena)
+          @inline_arenas = combined
+        else
+          @inline_arenas = [caller_arena, callee_arena, block_arena]
+        end
+        @arena = callee_arena
+
+        # Isolate callee locals from caller locals, but keep caller locals available for block bodies.
+        caller_locals = ctx.save_locals.locals
+        caller_local_declaration_scopes = ctx.save_local_declaration_scopes
+        callee_local_names = inline_callee_local_names(func_def, callee_arena)
+        @inline_caller_locals_stack << caller_locals
+        @inline_caller_local_declaration_scopes_stack << caller_local_declaration_scopes
+        ctx.reset_local_declaration_scopes
+        @inline_caller_function_id_stack << ctx.function.id
+        @inline_callee_local_names_stack << callee_local_names
+        @inline_callee_local_names_frame_stack << (@inline_caller_locals_stack.size - 1)
+        preserved_locals = {} of String => ValueId
+        ctx.restore_locals(preserved_locals)
+        @inline_yield_function_depth += 1
+
+        pushed_name = false
+        pushed_tuple_each_next = false
+        pushed_block = false
+        pushed_override = false
+        pushed_block_owner_frame_index = false
+        prev_block_owner_frame_index : Int32? = nil
+        previous_block_owner = @block_owner[block.object_id]?
+        previous_block_owner_function_id = @block_owner_function_ids[block.object_id]?
+        previous_block_owner_self_id = @block_owner_self_ids[block.object_id]?
+        # Capture the caller's logical method before the callee pushes its own
+        # inline return context. Several logical methods share one HIR function.
+        caller_return_target = InlineReturnOverride.new(true, current_inline_return_context(ctx))
+
+        @inline_yield_name_stack << inline_key
+        pushed_name = true
+        @inline_tuple_each_next_stack << concrete_tuple_each_inline
+        @inline_tuple_each_loop_exit_depth_stack << (concrete_tuple_each_inline ? @loop_exit_stack.size : -1)
+        pushed_tuple_each_next = true
+        if @inline_yield_block_body_depth > 0
+          @inline_yield_return_override_stack << InlineReturnOverride.new(false, nil)
+          pushed_override = true
+        end
+        @inline_yield_block_stack << block
+        @inline_yield_block_arena_stack << block_arena
+        @inline_yield_block_param_types_stack << block_param_types
+        @inline_yield_block_return_stack << nil
+        pushed_block = true
+        if debug_with_brace
+          STDERR.puts "[WITH_BRACE_INLINE] stage=after_push callee=#{inline_key} caller=#{ctx.function.name} stack=#{@inline_yield_block_stack.size}"
+        end
+        inline_return = InlineReturnContext.new(ctx.create_block, [] of {BlockId, ValueId}, ctx.function.id)
+        @inline_yield_return_stack << inline_return
+        @inline_yield_return_caller_locals_stack << ([] of {BlockId, Hash(String, ValueId)})
+
+        old_current_class = @current_class
+        old_current_method = @current_method
+        old_current_method_is_class = @current_method_is_class
+        @inline_caller_class_stack << old_current_class
+        @inline_caller_method_stack << old_current_method
+        @inline_caller_method_is_class_stack << old_current_method_is_class
+        @inline_caller_type_param_map_stack << @type_param_map.dup
+        old_inline_def_frame = @current_inline_def_frame
+        @inline_caller_def_frame_stack << old_inline_def_frame
+        @current_inline_def_frame = InlineDefFrame.new(func_def, callee_arena, ctx.function.id, @current_super_source_module)
+        # MUST use `=` not `||=` — the same stdlib block AST node is reused across
+        # different generic instantiations. Each instantiation compiles into a different
+        # function, so the owner must always be updated to the current function context.
+        # Using `||=` caused stale function_ids from the first instantiation to persist,
+        # making `block_owned_by_current_fn` false for subsequent instantiations, which
+        # broke non-local returns (return inside block jumped to inline exit instead of
+        # doing a real method return).
+        @block_owner[block.object_id] = BlockOwner.new(old_current_class, old_current_method, old_current_method_is_class || false, @current_namespace_override, caller_return_target)
+        @block_owner_function_ids[block.object_id] = ctx.function.id
+        prev_block_owner_frame_index = @block_owner_caller_frame_index[block.object_id]?
+        @block_owner_caller_frame_index[block.object_id] = @inline_caller_locals_stack.size - 1
+        pushed_block_owner_frame_index = true
+        if self_id = caller_locals["self"]?
+          @block_owner_self_ids[block.object_id] = self_id
+        end
+        inferred_block_return = inline_block_return_type_name(block, block_param_types, old_current_class)
+        if inferred_block_return
+          @inline_yield_block_return_stack[-1] = inferred_block_return
+        end
+        if debug_env_filter_match?("DEBUG_BLOCK_RETURN", inline_key, base_inline_name)
+          param_str = block_param_types ? block_param_types.map { |t| get_type_name_from_ref(t) }.join(",") : "nil"
+          STDERR.puts "[INLINE_BLOCK_RETURN] callee=#{inline_key} params=#{param_str} return=#{inferred_block_return || "nil"}"
+          if inferred_block_return.nil?
+            if last_expr = block.body.last?
+              node = @arena[last_expr]
+              detail = case node
+                       when Adamas::Compiler::Frontend::IdentifierNode
+                         "Identifier(#{(safe_slice_to_string(node.name) || "")})"
+                       when Adamas::Compiler::Frontend::MemberAccessNode
+                         "MemberAccess(#{(safe_slice_to_string(node.member) || "")})"
+                       when Adamas::Compiler::Frontend::CallNode
+                         callee = @arena[node.callee]
+                         "Call(#{callee.class.name})"
+                       else
+                         node.class.name
+                       end
+              STDERR.puts "[INLINE_BLOCK_RETURN_EXPR] callee=#{inline_key} node=#{detail}"
             end
-            if sizeof(Adamas::Compiler::Frontend::Parameter) <= 8
-              raw_param_slot = param_buf.unsafe_as(Pointer(UInt64))[param_idx]
-              if raw_param_slot == 0_u64
-                param_idx += 1
-                next
+          end
+        end
+        parts = parse_method_name(base_inline_name)
+        if method_name = parts.method
+          unless parts.owner.empty?
+            @current_class = parts.owner
+            @current_method = method_name unless method_name.empty?
+            @current_method_is_class = parts.is_class
+          end
+        end
+        if recv = func_def.receiver
+          recv_name = (safe_slice_to_string(recv) || "")
+          if class_method_receiver_text?(recv_name)
+            @current_method_is_class = true
+          end
+        end
+        # A class method inherited from an ancestor runs with `self` = the type
+        # literal receiver, and its macros see that receiver as `@type`
+        # (`Sig.each` -> `Enum.each` expands `@type.constants` over Sig). Keep the
+        # lexical owner otherwise, as for non-inline inherited class methods.
+        if pending_receiver = @pending_inline_class_receiver
+          @pending_inline_class_receiver = nil
+          if parts.is_class && pending_receiver[0] == parts.owner &&
+             def_macro_references_type_ivar?(func_def, callee_arena)
+            @current_class = pending_receiver[1]
+          end
+        end
+        # When inlining a module method (e.g. Indexable#last), override @current_class
+        # with the receiver's actual type (e.g. Array(Int32)). Without this, method
+        # lookups for implicit self calls (like `size`) resolve to the module's abstract
+        # stubs instead of the concrete implementation on the receiver type.
+        #
+        # Do NOT apply this to concrete classes/structs. Their ivar lowering relies on
+        # the lexical owner (for example Set#each needs @current_class = "Set" so @hash
+        # stays an ivar field access instead of degrading into the inherited hash() method
+        # on a specialized receiver like Set(String)).
+        inline_owner_module_like = false
+        if !parts.owner.empty?
+          if owner_ref = type_ref_for_name(parts.owner)
+            if owner_desc = @module.get_type_descriptor(owner_ref)
+              inline_owner_module_like = owner_desc.kind == TypeKind::Module
+              if !inline_owner_module_like && owner_desc.kind == TypeKind::Generic
+                inline_owner_module_like = module_like_type_name?(owner_desc.name) || module_includers_match?(owner_desc.name)
               end
             end
-            param = params.unsafe_fetch(param_idx)
-            idx = param_idx
-            param_idx += 1
-            next if named_only_separator?(param)
-            if pname = param.name
-              param_name = (safe_slice_to_string(pname) || "")
-              if param.is_block
-                if block_contains_return
-                  # Block has a non-local return. A Proc cannot represent
-                  # non-local return semantics — once materialized and widened
-                  # by RTA into a vdispatch union, the captured continuation is
-                  # erased and downstream callers get a null block (root of the
-                  # Array#fetch s3b crash). apply_inline only fires in the
-                  # inline-yield path, where the callee's `yield` is rewritten
-                  # to the block body directly, so leaving the named &block
-                  # parameter unbound is safe for yield-only callees.
-                  debug_hook(
-                    "inline.yield.skip_proc_materialize_with_return",
-                    "callee=#{inline_key} param=#{param_name}"
-                  )
-                else
-                  # &block parameter: convert the caller's block to a Proc and bind it.
-                  # Without this, methods that store blocks as Procs (e.g., OptionParser#on)
-                  # would receive null instead of a valid function pointer.
-                  block_arena_for_proc : Adamas::Compiler::Frontend::ArenaLike = @block_node_arenas[block.object_id]? || resolve_arena_for_block(block, caller_arena) || caller_arena
-                  # Block literals capture the caller's lexical environment, not the
-                  # temporary inline callee locals. Restore the full caller snapshot
-                  # while materializing the Proc so capture detection sees outer writes.
-                  saved_inline_locals = ctx.save_locals
-                  ctx.restore_locals(caller_locals)
-                  heap_block_proc = block_arg_requires_heap_proc?(inline_key, func_def, callee_arena)
-                  # Hint: when the proc body is a yield-forwarding shape, its yields
-                  # delegate through a captured POINTER whose original Proc type was
-                  # erased. The forwarder typically returns whatever the enclosing
-                  # function returns (e.g., Array#fetch's inner block forwards the
-                  # caller's default to `check_index_out_of_bounds`).
-                  hint_return_type = expected_nil_block_return_type_for_param(param, callee_arena) ||
-                                     proc_materialize_hint_return_type(ctx)
-                  proc_id = lower_block_to_proc(ctx, block, block_param_types, block_arena_for_proc, heap_block_proc, hint_return_type,
-                    source_result_contract: inline_return.block_result_contract)
-                  ctx.restore_locals(saved_inline_locals)
-                  ctx.register_local(param_name, proc_id)
-                  ctx.register_type(proc_id, ctx.type_of(proc_id))
+          end
+          if !inline_owner_module_like
+            inline_owner_module_like = @module_defs.has_key?(parts.owner) ||
+                                       module_like_type_name?(parts.owner) ||
+                                       module_includers_match?(parts.owner)
+          end
+        end
+        if receiver_id && !parts.is_class && inline_owner_module_like
+          receiver_type_name = get_type_name_from_ref(ctx.type_of(receiver_id))
+          # Keep lexical owner when receiver type is unresolved.
+          # Overriding @current_class with "Void"/"Unknown" breaks ivar lookup
+          # in inlined methods like Hash#each_entry_with_index (@first.upto ...),
+          # which then resolves calls against unrelated owners.
+          if !receiver_type_name.empty? &&
+             receiver_type_name != "Nil" &&
+             receiver_type_name != "Void" &&
+             receiver_type_name != "Unknown"
+            @current_class = receiver_type_name
+          end
+        end
+        inline_param_map = type_param_map_for_receiver_name(base_inline_name)
+        # DEBUG PROBE (remove before commit): trace inline type-param map stages.
+        if dbg_itpm = env_get("DEBUG_INLINE_TPM")
+          if base_inline_name.includes?(dbg_itpm)
+            STDERR.puts "[INLINE_TPM] stage=recv_name key=#{inline_key} base=#{base_inline_name} recv=#{receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "-"} cur=#{@current_class} map=#{inline_param_map.map { |k, v| "#{k}=>#{v}" }.join(";")}"
+            STDERR.flush
+          end
+        end
+        if receiver_id
+          receiver_type_map = type_param_map_for_receiver_type(ctx.type_of(receiver_id))
+          if !receiver_type_map.empty?
+            inline_param_map = inline_param_map.merge(receiver_type_map)
+          end
+        end
+        # DEBUG PROBE (remove before commit): trace inline type-param map stages.
+        if dbg_itpm = env_get("DEBUG_INLINE_TPM")
+          if base_inline_name.includes?(dbg_itpm)
+            STDERR.puts "[INLINE_TPM] stage=recv_type key=#{inline_key} base=#{base_inline_name} recv=#{receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "-"} cur=#{@current_class} map=#{inline_param_map.map { |k, v| "#{k}=>#{v}" }.join(";")}"
+            STDERR.flush
+          end
+        end
+        if registered = function_type_param_map_for(inline_key, base_inline_name)
+          inline_param_map = inline_param_map.merge(registered)
+        end
+        # DEBUG PROBE (remove before commit): trace inline type-param map stages.
+        if dbg_itpm = env_get("DEBUG_INLINE_TPM")
+          if base_inline_name.includes?(dbg_itpm)
+            STDERR.puts "[INLINE_TPM] stage=registered key=#{inline_key} base=#{base_inline_name} recv=#{receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "-"} cur=#{@current_class} map=#{inline_param_map.map { |k, v| "#{k}=>#{v}" }.join(";")}"
+            STDERR.flush
+          end
+        end
+        if pending = consume_pending_type_param_map(inline_key)
+          inline_param_map = inline_param_map.merge(pending)
+          store_function_type_param_map(inline_key, base_inline_name, pending)
+        elsif pending = consume_pending_type_param_map(base_inline_name)
+          inline_param_map = inline_param_map.merge(pending)
+          store_function_type_param_map(inline_key, base_inline_name, pending)
+        end
+        # Method-forall variables are bound by this call's arguments (`type :
+        # F.class`, `x : F`) and shadow owner/cached maps, as in lower_method;
+        # without them the inlined body sees `F` as an undefined constant.
+        unless call_args.empty?
+          forall_bindings = method_forall_call_bindings(func_def, call_args.map { |arg| ctx.type_of(arg) })
+          inline_param_map = inline_param_map.merge(forall_bindings) unless forall_bindings.empty?
+        end
+        # DEBUG PROBE (remove before commit): trace inline type-param map stages.
+        if dbg_itpm = env_get("DEBUG_INLINE_TPM")
+          if base_inline_name.includes?(dbg_itpm)
+            STDERR.puts "[INLINE_TPM] stage=pending key=#{inline_key} base=#{base_inline_name} recv=#{receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "-"} cur=#{@current_class} map=#{inline_param_map.map { |k, v| "#{k}=>#{v}" }.join(";")}"
+            STDERR.flush
+          end
+        end
+        if concrete_tuple_each_inline && receiver_id
+          # Cached maps cannot replace the concrete branch's tuple macro arity.
+          inline_param_map = inline_param_map.merge(type_param_map_for_receiver_type(ctx.type_of(receiver_id)))
+        end
+        # DEBUG PROBE (remove before commit): trace inline type-param map stages.
+        if dbg_itpm = env_get("DEBUG_INLINE_TPM")
+          if base_inline_name.includes?(dbg_itpm)
+            STDERR.puts "[INLINE_TPM] stage=tuple key=#{inline_key} base=#{base_inline_name} recv=#{receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "-"} cur=#{@current_class} map=#{inline_param_map.map { |k, v| "#{k}=>#{v}" }.join(";")}"
+            STDERR.flush
+          end
+        end
+        if contract = source_result_contract
+          # Defaults and family caches are ABI inputs, not source evidence for
+          # this invocation's forall variables. Rebuild their bindings from the
+          # selected source call before consulting the current callback output.
+          forall_type_param_names(func_def).each { |formal| inline_param_map.delete(formal) }
+          inline_param_map.merge!(contract.type_bindings)
+          if inferred = inferred_block_return || inline_block_return_type_name(block, block_param_types, old_current_class)
+            output_bindings = with_arena(callee_arena) do
+              source_block_output_type_bindings(func_def,
+                return_declaration_owner_for(inline_key, base_inline_name), inferred, contract.type_bindings)
+            end
+            if output_bindings
+              inline_param_map.merge!(output_bindings)
+              record_pending_type_param_map(inline_key, output_bindings)
+            end
+          end
+        end
+        # DEBUG PROBE (remove before commit): trace inline type-param map stages.
+        if dbg_itpm = env_get("DEBUG_INLINE_TPM")
+          if base_inline_name.includes?(dbg_itpm)
+            STDERR.puts "[INLINE_TPM] stage=final key=#{inline_key} base=#{base_inline_name} recv=#{receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "-"} cur=#{@current_class} map=#{inline_param_map.map { |k, v| "#{k}=>#{v}" }.join(";")}"
+            STDERR.flush
+          end
+        end
+        result_value = nil_value(ctx)
+        callee_is_class = class_method?(base_inline_name)
+        inline_self_class_name : String? = nil
+        if !receiver_id && callee_is_class
+          owner_name = method_owner(base_inline_name)
+          if owner_name.empty?
+            owner_name = @current_class || ""
+          end
+          inline_self_class_name = owner_name unless owner_name.empty?
+        end
+        apply_inline = -> do
+          inline_return.block_result_contract = source_result_contract
+          if return_annotation = func_def.return_type
+            # A source method's own Nil return contract adapts its ordinary
+            # completion and return edges. A block's break edge belongs to the
+            # call expression instead, so route_break_to_tuple_inline_return
+            # deliberately does not apply this adaptation.
+            return_name = safe_slice_to_string(return_annotation) || ""
+            inline_return.discards_method_result = annotation_type_ref(return_name, namespace_override) == TypeRef::NIL
+          end
+          # Bind `self` for inlined callee.
+          if receiver_id
+            ctx.register_local("self", receiver_id)
+            ctx.register_type(receiver_id, ctx.type_of(receiver_id))
+          elsif callee_is_class
+            if class_name = inline_self_class_name
+              class_self = lower_type_literal_from_name(ctx, class_name)
+              ctx.register_local("self", class_self)
+              ctx.register_type(class_self, ctx.type_of(class_self))
+            end
+          end
+          if debug_inline_self
+            bound_id = ctx.lookup_local("self")
+            bound_str = bound_id ? bound_id.to_s : "nil"
+            bound_type = bound_id ? get_type_name_from_ref(ctx.type_of(bound_id)) : "nil"
+            expected_str = receiver_id ? receiver_id.to_s : "nil"
+            expected_type = receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "nil"
+            STDERR.puts(
+              "[INLINE_SELF_BOUND] callee=#{inline_key} bound_id=#{bound_str} bound_type=#{bound_type} expected_id=#{expected_str} expected_type=#{expected_type} depth=#{@inline_yield_block_body_depth} func=#{ctx.function.name}"
+            )
+          end
+
+          # Bind function parameters to call arguments
+          if params = func_def.params
+            inline_func_context = function_context_from_name(inline_key)
+            # Track call_args index separately from param index: a bare `*`
+            # named-only separator is a Parameter slot but does NOT correspond
+            # to a call arg (reorder_named_args/apply_default_args skip it),
+            # so indexing call_args by raw param idx mis-maps every param
+            # appearing after the separator. Likewise, `&block` is bound from
+            # the block argument, not from call_args.
+            arg_idx = 0
+            param_buf = params.to_unsafe
+            param_idx = 0
+            while param_idx < params.size
+              if param_buf.unsafe_as(UInt64) == 0_u64
+                break
+              end
+              if sizeof(Adamas::Compiler::Frontend::Parameter) <= 8
+                raw_param_slot = param_buf.unsafe_as(Pointer(UInt64))[param_idx]
+                if raw_param_slot == 0_u64
+                  param_idx += 1
+                  next
                 end
-              elsif arg_idx < call_args.size
-                arg_id = call_args[arg_idx]
-                ctx.register_local(param_name, arg_id)
-                # Also register the type so it's available when the parameter is accessed
-                ctx.register_type(arg_id, ctx.type_of(arg_id))
-                arg_idx += 1
-              elsif default_expr = param.default_value
-                default_id = with_arena(callee_arena) do
+              end
+              param = params.unsafe_fetch(param_idx)
+              idx = param_idx
+              param_idx += 1
+              next if named_only_separator?(param)
+              if pname = param.name
+                param_name = (safe_slice_to_string(pname) || "")
+                if param.is_block
+                  if block_contains_return
+                    # Block has a non-local return. A Proc cannot represent
+                    # non-local return semantics — once materialized and widened
+                    # by RTA into a vdispatch union, the captured continuation is
+                    # erased and downstream callers get a null block (root of the
+                    # Array#fetch s3b crash). apply_inline only fires in the
+                    # inline-yield path, where the callee's `yield` is rewritten
+                    # to the block body directly, so leaving the named &block
+                    # parameter unbound is safe for yield-only callees.
+                    debug_hook(
+                      "inline.yield.skip_proc_materialize_with_return",
+                      "callee=#{inline_key} param=#{param_name}"
+                    )
+                  else
+                    # &block parameter: convert the caller's block to a Proc and bind it.
+                    # Without this, methods that store blocks as Procs (e.g., OptionParser#on)
+                    # would receive null instead of a valid function pointer.
+                    block_arena_for_proc : Adamas::Compiler::Frontend::ArenaLike = @block_node_arenas[block.object_id]? || resolve_arena_for_block(block, caller_arena) || caller_arena
+                    # Block literals capture the caller's lexical environment, not the
+                    # temporary inline callee locals. Restore the full caller snapshot
+                    # while materializing the Proc so capture detection sees outer writes.
+                    saved_inline_locals = ctx.save_locals
+                    ctx.restore_locals(caller_locals)
+                    heap_block_proc = block_arg_requires_heap_proc?(inline_key, func_def, callee_arena)
+                    # Hint: when the proc body is a yield-forwarding shape, its yields
+                    # delegate through a captured POINTER whose original Proc type was
+                    # erased. The forwarder typically returns whatever the enclosing
+                    # function returns (e.g., Array#fetch's inner block forwards the
+                    # caller's default to `check_index_out_of_bounds`).
+                    hint_return_type = expected_nil_block_return_type_for_param(param, callee_arena) ||
+                                       proc_materialize_hint_return_type(ctx)
+                    proc_id = lower_block_to_proc(ctx, block, block_param_types, block_arena_for_proc, heap_block_proc, hint_return_type,
+                      source_result_contract: inline_return.block_result_contract)
+                    ctx.restore_locals(saved_inline_locals)
+                    ctx.register_local(param_name, proc_id)
+                    ctx.register_type(proc_id, ctx.type_of(proc_id))
+                  end
+                elsif arg_idx < call_args.size
+                  arg_id = call_args[arg_idx]
+                  ctx.register_local(param_name, arg_id)
+                  # Also register the type so it's available when the parameter is accessed
+                  ctx.register_type(arg_id, ctx.type_of(arg_id))
+                  arg_idx += 1
+                elsif default_expr = param.default_value
+                  default_id = with_arena(callee_arena) do
+                    if ta = param.type_annotation
+                      type_name = normalize_declared_type_name((safe_slice_to_string(ta) || ""), inline_func_context)
+                      type_ref = type_ref_for_name(type_name)
+                      lower_arg_with_expected_type(ctx, default_expr, type_ref, type_name, inline_func_context, callee_arena)
+                    else
+                      lower_expr(ctx, default_expr)
+                    end
+                  end
+                  ctx.register_local(param_name, default_id)
                   if ta = param.type_annotation
                     type_name = normalize_declared_type_name((safe_slice_to_string(ta) || ""), inline_func_context)
                     type_ref = type_ref_for_name(type_name)
-                    lower_arg_with_expected_type(ctx, default_expr, type_ref, type_name, inline_func_context, callee_arena)
+                    ctx.register_type(default_id, type_ref) unless type_ref == TypeRef::VOID
                   else
-                    lower_expr(ctx, default_expr)
+                    ctx.register_type(default_id, ctx.type_of(default_id))
                   end
                 end
-                ctx.register_local(param_name, default_id)
-                if ta = param.type_annotation
-                  type_name = normalize_declared_type_name((safe_slice_to_string(ta) || ""), inline_func_context)
-                  type_ref = type_ref_for_name(type_name)
-                  ctx.register_type(default_id, type_ref) unless type_ref == TypeRef::VOID
-                else
-                  ctx.register_type(default_id, ctx.type_of(default_id))
-                end
               end
             end
           end
-        end
 
-        # Lower function body with yield substitution
-        if inline_body = func_def.body
-          saved_inline_callee_return_owner = @captured_block_return_owner
-          @captured_block_return_owner = false
-          begin
-            result_value = lower_body(ctx, inline_body)
-          ensure
-            @captured_block_return_owner = saved_inline_callee_return_owner
+          # Lower function body with yield substitution
+          if inline_body = func_def.body
+            saved_inline_callee_return_owner = @captured_block_return_owner
+            @captured_block_return_owner = false
+            begin
+              result_value = lower_body(ctx, inline_body)
+            ensure
+              @captured_block_return_owner = saved_inline_callee_return_owner
+            end
           end
         end
-      end
-      @inline_yield_caller_return_owner_stack << @captured_block_return_owner
-      @inline_active_caller_locals_index_stack << (@inline_caller_locals_stack.size - 1)
-      begin
-        # The selected callee owns its lexical namespace, including no override.
-        # Inheriting a caller mixin override changes constant and visibility
-        # lookup inside the callee. Yielded blocks restore their own BlockOwner.
-        with_namespace_override_or_clear(namespace_override) do
-          if inline_param_map.empty?
-            apply_inline.call
-          else
-            with_type_param_map(inline_param_map) { apply_inline.call }
-          end
-        end
-      ensure
-        @inline_active_caller_locals_index_stack.pop?
-        @inline_yield_caller_return_owner_stack.pop?
-      end
-
-      unless should_stop_sequential_lowering?(ctx)
-        result_value = nil_value(ctx) if inline_return.discards_method_result
-        ctx.terminate(Jump.new(inline_return.exit_block))
-        inline_return.incoming << {ctx.current_block, result_value}
-        if return_locals = @inline_yield_return_caller_locals_stack.last?
-          if current_caller_locals = @inline_caller_locals_stack.last?
-            return_locals << {ctx.current_block, snapshot_inline_caller_locals_for_return(current_caller_locals)}
-          end
-        end
-      end
-
-      ctx.switch_to_block(inline_return.exit_block)
-      if return_locals = @inline_yield_return_caller_locals_stack.last?
-        merge_inline_caller_locals_for_inline_return(ctx, caller_locals, return_locals)
-      end
-
-      begin
-        if inline_return.incoming.empty?
-          @control_flow_dead_blocks.add({ctx.function.id, inline_return.exit_block})
-          nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
-          ctx.emit(nil_lit)
-          nil_lit.id
-        elsif inline_return.incoming.size == 1
-          inline_return.incoming.first[1]
-        else
-          return_ids = inline_return.incoming.map { |entry| entry[1] }
-          value_types = merge_incoming_types(ctx, return_ids, return_ids.map { |val| ctx.type_of(val) }).reject { |t| t == TypeRef::VOID }.uniq
-          phi_type = union_type_for_value_set(value_types) || TypeRef::VOID
-          if value_types.size > 1 && env_has?("DEBUG_INLINE_RETURN")
-            value_names = value_types.map { |t| get_type_name_from_ref(t) }.uniq
-            STDERR.puts "[INLINE_RETURN] callee=#{inline_key} types=#{value_names.join(",")}"
-          end
-
-          coerced_incoming = inline_return.incoming.map do |(blk, val)|
-            val_type = ctx.type_of(val)
-            if val_type == phi_type
-              {blk, val}
-            elsif is_union_type?(phi_type)
-              variant_id = merge_union_variant_id(ctx, phi_type, val, val_type)
-              if variant_id >= 0
-                wrap = UnionWrap.new(ctx.next_id, phi_type, val, variant_id)
-                ctx.emit_to_block(blk, wrap)
-                {blk, wrap.id}
-              else
-                {blk, val}
-              end
-            elsif numeric_primitive?(val_type) && numeric_primitive?(phi_type)
-              cast = Cast.new(ctx.next_id, phi_type, val, phi_type, safe: false)
-              ctx.emit_to_block(blk, cast)
-              {blk, cast.id}
+        @inline_yield_caller_return_owner_stack << @captured_block_return_owner
+        @inline_active_caller_locals_index_stack << (@inline_caller_locals_stack.size - 1)
+        begin
+          # The selected callee owns its lexical namespace, including no override.
+          # Inheriting a caller mixin override changes constant and visibility
+          # lookup inside the callee. Yielded blocks restore their own BlockOwner.
+          with_namespace_override_or_clear(namespace_override) do
+            if inline_param_map.empty?
+              apply_inline.call
             else
-              {blk, val}
+              with_type_param_map(inline_param_map) { apply_inline.call }
             end
           end
+        ensure
+          @inline_active_caller_locals_index_stack.pop?
+          @inline_yield_caller_return_owner_stack.pop?
+        end
 
-          if phi_type == TypeRef::VOID || phi_type == TypeRef::NIL
+        unless should_stop_sequential_lowering?(ctx)
+          result_value = nil_value(ctx) if inline_return.discards_method_result
+          ctx.terminate(Jump.new(inline_return.exit_block))
+          inline_return.incoming << {ctx.current_block, result_value}
+          if return_locals = @inline_yield_return_caller_locals_stack.last?
+            if current_caller_locals = @inline_caller_locals_stack.last?
+              return_locals << {ctx.current_block, snapshot_inline_caller_locals_for_return(current_caller_locals)}
+            end
+          end
+        end
+
+        ctx.switch_to_block(inline_return.exit_block)
+        if return_locals = @inline_yield_return_caller_locals_stack.last?
+          merge_inline_caller_locals_for_inline_return(ctx, caller_locals, return_locals)
+        end
+
+        begin
+          if inline_return.incoming.empty?
+            @control_flow_dead_blocks.add({ctx.function.id, inline_return.exit_block})
             nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
             ctx.emit(nil_lit)
             nil_lit.id
+          elsif inline_return.incoming.size == 1
+            inline_return.incoming.first[1]
           else
-            phi = Phi.new(ctx.next_id, phi_type)
-            coerced_incoming.each { |(blk, val)| phi.add_incoming(blk, val) }
-            ctx.emit(phi)
-            phi.id
+            return_ids = inline_return.incoming.map { |entry| entry[1] }
+            value_types = merge_incoming_types(ctx, return_ids, return_ids.map { |val| ctx.type_of(val) }).reject { |t| t == TypeRef::VOID }.uniq
+            phi_type = union_type_for_value_set(value_types) || TypeRef::VOID
+            if value_types.size > 1 && env_has?("DEBUG_INLINE_RETURN")
+              value_names = value_types.map { |t| get_type_name_from_ref(t) }.uniq
+              STDERR.puts "[INLINE_RETURN] callee=#{inline_key} types=#{value_names.join(",")}"
+            end
+
+            coerced_incoming = inline_return.incoming.map do |(blk, val)|
+              val_type = ctx.type_of(val)
+              if val_type == phi_type
+                {blk, val}
+              elsif is_union_type?(phi_type)
+                variant_id = merge_union_variant_id(ctx, phi_type, val, val_type)
+                if variant_id >= 0
+                  wrap = UnionWrap.new(ctx.next_id, phi_type, val, variant_id)
+                  ctx.emit_to_block(blk, wrap)
+                  {blk, wrap.id}
+                else
+                  {blk, val}
+                end
+              elsif numeric_primitive?(val_type) && numeric_primitive?(phi_type)
+                cast = Cast.new(ctx.next_id, phi_type, val, phi_type, safe: false)
+                ctx.emit_to_block(blk, cast)
+                {blk, cast.id}
+              else
+                {blk, val}
+              end
+            end
+
+            if phi_type == TypeRef::VOID || phi_type == TypeRef::NIL
+              nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+              ctx.emit(nil_lit)
+              nil_lit.id
+            else
+              phi = Phi.new(ctx.next_id, phi_type)
+              coerced_incoming.each { |(blk, val)| phi.add_incoming(blk, val) }
+              ctx.emit(phi)
+              phi.id
+            end
+          end
+        ensure
+          @current_class = old_current_class
+          @current_method = old_current_method
+          @current_method_is_class = old_current_method_is_class || false
+          @inline_caller_class_stack.pop?
+          @inline_caller_method_stack.pop?
+          @inline_caller_method_is_class_stack.pop?
+          @inline_caller_type_param_map_stack.pop?
+          @current_inline_def_frame = old_inline_def_frame
+          @inline_caller_def_frame_stack.pop?
+          @inline_yield_block_stack.pop? if pushed_block
+          @inline_yield_block_arena_stack.pop? if pushed_block
+          @inline_yield_block_param_types_stack.pop? if pushed_block
+          @inline_yield_block_return_stack.pop? if pushed_block
+          @inline_yield_name_stack.pop? if pushed_name
+          @inline_tuple_each_next_stack.pop? if pushed_tuple_each_next
+          @inline_tuple_each_loop_exit_depth_stack.pop? if pushed_tuple_each_next
+          @inline_yield_return_stack.pop?
+          @inline_yield_return_caller_locals_stack.pop?
+          @inline_yield_return_override_stack.pop? if pushed_override
+          if pushed_block_owner_frame_index
+            if prev_block_owner_frame_index
+              @block_owner_caller_frame_index[block.object_id] = prev_block_owner_frame_index
+            else
+              @block_owner_caller_frame_index.delete(block.object_id)
+            end
+            if previous_block_owner
+              @block_owner[block.object_id] = previous_block_owner
+            else
+              @block_owner.delete(block.object_id)
+            end
+            if previous_block_owner_function_id
+              @block_owner_function_ids[block.object_id] = previous_block_owner_function_id
+            else
+              @block_owner_function_ids.delete(block.object_id)
+            end
+            if previous_block_owner_self_id
+              @block_owner_self_ids[block.object_id] = previous_block_owner_self_id
+            else
+              @block_owner_self_ids.delete(block.object_id)
+            end
+          end
+          restored_caller_locals = @inline_caller_locals_stack.pop?
+          restored_caller_local_declaration_scopes = @inline_caller_local_declaration_scopes_stack.pop?
+          @inline_caller_function_id_stack.pop?
+          @inline_callee_local_names_stack.pop?
+          @inline_callee_local_names_frame_stack.pop?
+          @arena = caller_arena
+          @inline_arenas = old_inline_arenas
+          @inline_yield_function_depth -= 1
+          unless ctx.current_scope == inline_scope
+            inline_scope_pushed = false
+            raise LoweringError.new("inline-yield lost its owned Block scope", block)
+          end
+          ctx.pop_scope
+          inline_scope_pushed = false
+          # `pop_scope` restores the stale pre-inline snapshot for the caller block scope.
+          # Re-apply the merged caller locals after leaving the inline scope so the
+          # continuation sees values produced by the inlined yield body/return merge.
+          if restored_caller_locals
+            ctx.restore_locals(restored_caller_locals)
+          end
+          if restored_caller_local_declaration_scopes
+            ctx.restore_local_declaration_scopes(restored_caller_local_declaration_scopes)
           end
         end
       ensure
-        @current_class = old_current_class
-        @current_method = old_current_method
-        @current_method_is_class = old_current_method_is_class || false
-        @inline_caller_class_stack.pop?
-        @inline_caller_method_stack.pop?
-        @inline_caller_method_is_class_stack.pop?
-        @inline_caller_type_param_map_stack.pop?
-        @current_inline_def_frame = old_inline_def_frame
-        @inline_caller_def_frame_stack.pop?
-        @inline_yield_block_stack.pop? if pushed_block
-        @inline_yield_block_arena_stack.pop? if pushed_block
-        @inline_yield_block_param_types_stack.pop? if pushed_block
-        @inline_yield_block_return_stack.pop? if pushed_block
-        @inline_yield_name_stack.pop? if pushed_name
-        @inline_tuple_each_next_stack.pop? if pushed_tuple_each_next
-        @inline_tuple_each_loop_exit_depth_stack.pop? if pushed_tuple_each_next
-        @inline_yield_return_stack.pop?
-        @inline_yield_return_caller_locals_stack.pop?
-        @inline_yield_return_override_stack.pop? if pushed_override
-        if pushed_block_owner_frame_index
-          if prev_block_owner_frame_index
-            @block_owner_caller_frame_index[block.object_id] = prev_block_owner_frame_index
-          else
-            @block_owner_caller_frame_index.delete(block.object_id)
+        if inline_scope_pushed
+          unless ctx.current_scope == inline_scope
+            raise LoweringError.new("inline-yield lost its owned Block scope", block)
           end
-          if previous_block_owner
-            @block_owner[block.object_id] = previous_block_owner
-          else
-            @block_owner.delete(block.object_id)
-          end
-          if previous_block_owner_function_id
-            @block_owner_function_ids[block.object_id] = previous_block_owner_function_id
-          else
-            @block_owner_function_ids.delete(block.object_id)
-          end
-          if previous_block_owner_self_id
-            @block_owner_self_ids[block.object_id] = previous_block_owner_self_id
-          else
-            @block_owner_self_ids.delete(block.object_id)
-          end
-        end
-        restored_caller_locals = @inline_caller_locals_stack.pop?
-        restored_caller_local_declaration_scopes = @inline_caller_local_declaration_scopes_stack.pop?
-        @inline_caller_function_id_stack.pop?
-        @inline_callee_local_names_stack.pop?
-        @inline_callee_local_names_frame_stack.pop?
-        @arena = caller_arena
-        @inline_arenas = old_inline_arenas
-        @inline_yield_function_depth -= 1
-        ctx.pop_scope
-        # `pop_scope` restores the stale pre-inline snapshot for the caller block scope.
-        # Re-apply the merged caller locals after leaving the inline scope so the
-        # continuation sees values produced by the inlined yield body/return merge.
-        if restored_caller_locals
-          ctx.restore_locals(restored_caller_locals)
-        end
-        if restored_caller_local_declaration_scopes
-          ctx.restore_local_declaration_scopes(restored_caller_local_declaration_scopes)
+          ctx.pop_scope
+          ctx.restore_local_declaration_scopes(entry_local_declaration_scopes)
+          @arena = entry_arena
+          @inline_arenas = entry_inline_arenas
         end
       end
     end
@@ -140128,7 +140165,6 @@ module Adamas::HIR
       node : Adamas::Compiler::Frontend::BlockNode,
       param_types : Array(TypeRef)? = nil,
     ) : BlockId
-      local_declaration_scope_pushed = false
       cache_key = block_lowering_key_for(ctx.function.id, node, param_types)
       if cached = @block_lowering_cache[cache_key]?
         return cached
@@ -140137,50 +140173,21 @@ module Adamas::HIR
         return in_progress
       end
 
+      closure_scope_pushed = false
+      lowering_completed = false
+      in_progress_registered = false
+      partial_body_block = nil.as(BlockId?)
+      closure_scope = ctx.current_scope
       saved_block = ctx.current_block
       saved_arena_for_block = @arena
-      block_arena = @block_node_arenas[node.object_id]? ||
-                    resolve_arena_for_block(node, saved_arena_for_block) ||
-                    saved_arena_for_block
-      @arena = block_arena
-      store_block_arena(node.object_id, block_arena)
-      @block_owner[node.object_id] = BlockOwner.new(@current_class, @current_method, @current_method_is_class, @current_namespace_override)
-      @block_owner_function_ids[node.object_id] = ctx.function.id
-      if ctx.lookup_local("self").nil?
-        param = find_self_param(ctx.function)
-        if param.nil? && ctx.function.name.includes?('#')
-          param = ctx.function.params.first?
-        end
-        if param
-          ctx.register_local("self", param.id)
-          ctx.register_type(param.id, param.type)
-        end
-      end
-      # Save locals before lowering block body - block-local vars shouldn't leak
-      saved_locals = ctx.save_locals
-      if self_id = saved_locals.locals["self"]?
-        @block_owner_self_ids[node.object_id] = self_id
-      end
-      assigned_vars = collect_assigned_var_set(node.body)
-      assigned_vars.concat(block_unpack_leaf_names(node).to_a)
-      if params = node.params
-        each_param(params) do |param|
-          next unless param_name = param.name
-          assigned_vars.delete((safe_slice_to_string(param_name) || ""))
-        end
-      end
+      entry_locals = ctx.save_locals
+      saved_locals = entry_locals
+      entry_local_declaration_scopes = ctx.save_local_declaration_scopes
+      saved_local_declaration_scopes = entry_local_declaration_scopes
       old_typeof_locals = @current_typeof_locals
       old_typeof_local_names = @current_typeof_local_names
-      @current_typeof_locals = old_typeof_locals ? old_typeof_locals.dup : old_typeof_locals
-      @current_typeof_local_names = old_typeof_local_names ? old_typeof_local_names.dup : old_typeof_local_names
-
-      # The body is lowered into a DETACHED block (proc/closure representation):
-      # the caller's loop and inline-yield machinery must not see it. Without
-      # this isolation, `next`/`break` inside the block body wire edges into the
-      # ENCLOSING loop's cond/exit blocks — dead blocks that become real CFG
-      # predecessors whose loop phis then get fabricated null incomings
-      # (L10-β stale post-loop binding family). With empty stacks, `next`
-      # lowers as Return (proc semantics) and `break` as Unreachable.
+      old_typeof_local_names_hash = @current_typeof_local_names_hash
+      old_typeof_local_names_hash_owner = @current_typeof_local_names_hash_owner
       saved_loop_exit_stack = @loop_exit_stack
       saved_loop_cond_stack = @loop_cond_stack
       saved_loop_inline_next_depth_stack = @loop_inline_next_depth_stack
@@ -140193,103 +140200,229 @@ module Adamas::HIR
       saved_tuple_each_loop_exit_depth_stack = @inline_tuple_each_loop_exit_depth_stack
       saved_inline_yield_return_stack = @inline_yield_return_stack
       saved_inline_yield_return_override_stack = @inline_yield_return_override_stack
-      @loop_exit_stack = [] of BlockId
-      @loop_cond_stack = [] of BlockId
-      @loop_inline_next_depth_stack = [] of Int32
-      @loop_phi_stack = [] of Hash(String, Phi)
-      @loop_break_info_stack = [] of Array({BlockId, Hash(String, ValueId)})
-      @loop_break_value_stack = [] of {BlockId, Array({BlockId, ValueId})}
-      @loop_break_inline_locals_stack = [] of {BlockId, Array({BlockId, Array(Hash(String, ValueId))})}
-      @inline_next_stack = [] of InlineNextContext
-      @inline_tuple_each_next_stack = [] of Bool
-      @inline_tuple_each_loop_exit_depth_stack = [] of Int32
-      @inline_yield_return_stack = [] of InlineReturnContext
-      @inline_yield_return_override_stack = [] of InlineReturnOverride
+      previous_block_node_arena = @block_node_arenas[node.object_id]?
+      previous_block_owner = @block_owner[node.object_id]?
+      previous_block_owner_function_id = @block_owner_function_ids[node.object_id]?
+      previous_block_owner_self_id = @block_owner_self_ids[node.object_id]?
+      previous_last_block_arena_id = @last_block_arena_id
+      previous_last_block_arena = @last_block_arena
 
-      ctx.push_scope(ScopeKind::Closure)
-      ctx.push_local_declaration_scope
-      local_declaration_scope_pushed = true
-      closure_scope = ctx.current_scope
-      body_block = ctx.create_block
-      @block_lowering_in_progress[cache_key] = body_block
-      ctx.current_block = body_block
+      begin
+        block_arena = @block_node_arenas[node.object_id]? ||
+                      resolve_arena_for_block(node, saved_arena_for_block) ||
+                      saved_arena_for_block
+        @arena = block_arena
+        store_block_arena(node.object_id, block_arena)
+        @block_owner[node.object_id] = BlockOwner.new(@current_class, @current_method, @current_method_is_class, @current_namespace_override)
+        @block_owner_function_ids[node.object_id] = ctx.function.id
+        if ctx.lookup_local("self").nil?
+          param = find_self_param(ctx.function)
+          if param.nil? && ctx.function.name.includes?('#')
+            param = ctx.function.params.first?
+          end
+          if param
+            ctx.register_local("self", param.id)
+            ctx.register_type(param.id, param.type)
+          end
+        end
+        # Save locals before lowering block body - block-local vars shouldn't leak
+        saved_locals = ctx.save_locals
+        saved_local_declaration_scopes = ctx.save_local_declaration_scopes
+        if self_id = saved_locals.locals["self"]?
+          @block_owner_self_ids[node.object_id] = self_id
+        end
+        assigned_vars = collect_assigned_var_set(node.body)
+        assigned_vars.concat(block_unpack_leaf_names(node).to_a)
+        if params = node.params
+          each_param(params) do |param|
+            next unless param_name = param.name
+            assigned_vars.delete((safe_slice_to_string(param_name) || ""))
+          end
+        end
+        @current_typeof_locals = old_typeof_locals ? old_typeof_locals.dup : old_typeof_locals
+        @current_typeof_local_names = old_typeof_local_names ? old_typeof_local_names.dup : old_typeof_local_names
 
-      # Add block parameters (params can be nil)
-      # Default to POINTER type since block parameters are typically objects (IO, etc.)
-      if params = node.params
-        effective_param_types = node.unpacks ? param_types : expand_flat_block_param_types(params, param_types)
-        each_param_with_index(params) do |param, idx|
-          if param_name = param.name
-            unpack_pattern = block_unpack_pattern_for_slot(node, idx)
-            name = unpack_pattern ? "__arg#{idx}" : (safe_slice_to_string(param_name) || "")
-            param_type = if ta = param.type_annotation
-                           type_ref_for_name((safe_slice_to_string(ta) || ""))
-                         elsif effective_param_types && (resolved = effective_param_types[idx]?)
-                           resolved
-                         else
-                           TypeRef::POINTER # Default to pointer for block params
-                         end
-            param_type = TypeRef::POINTER if param_type == TypeRef::VOID
-            if env_get("DEBUG_BLOCK_PARAMS") && param_types
-              STDERR.puts "[BLOCK_PARAMS] block_param name=#{name} type=#{get_type_name_from_ref(param_type)}"
+        # The body is lowered into a DETACHED block (proc/closure representation):
+        # the caller's loop and inline-yield machinery must not see it. Without
+        # this isolation, `next`/`break` inside the block body wire edges into the
+        # ENCLOSING loop's cond/exit blocks — dead blocks that become real CFG
+        # predecessors whose loop phis then get fabricated null incomings
+        # (L10-β stale post-loop binding family). With empty stacks, `next`
+        # lowers as Return (proc semantics) and `break` as Unreachable.
+        @loop_exit_stack = [] of BlockId
+        @loop_cond_stack = [] of BlockId
+        @loop_inline_next_depth_stack = [] of Int32
+        @loop_phi_stack = [] of Hash(String, Phi)
+        @loop_break_info_stack = [] of Array({BlockId, Hash(String, ValueId)})
+        @loop_break_value_stack = [] of {BlockId, Array({BlockId, ValueId})}
+        @loop_break_inline_locals_stack = [] of {BlockId, Array({BlockId, Array(Hash(String, ValueId))})}
+        @inline_next_stack = [] of InlineNextContext
+        @inline_tuple_each_next_stack = [] of Bool
+        @inline_tuple_each_loop_exit_depth_stack = [] of Int32
+        @inline_yield_return_stack = [] of InlineReturnContext
+        @inline_yield_return_override_stack = [] of InlineReturnOverride
+
+        closure_scope = ctx.push_scope(ScopeKind::Closure)
+        closure_scope_pushed = true
+        ctx.push_local_declaration_scope
+        body_block = ctx.create_block
+        partial_body_block = body_block
+        @block_lowering_in_progress[cache_key] = body_block
+        in_progress_registered = true
+        ctx.current_block = body_block
+
+        # Add block parameters (params can be nil)
+        # Default to POINTER type since block parameters are typically objects (IO, etc.)
+        if params = node.params
+          effective_param_types = node.unpacks ? param_types : expand_flat_block_param_types(params, param_types)
+          each_param_with_index(params) do |param, idx|
+            if param_name = param.name
+              unpack_pattern = block_unpack_pattern_for_slot(node, idx)
+              name = unpack_pattern ? "__arg#{idx}" : (safe_slice_to_string(param_name) || "")
+              param_type = if ta = param.type_annotation
+                             type_ref_for_name((safe_slice_to_string(ta) || ""))
+                           elsif effective_param_types && (resolved = effective_param_types[idx]?)
+                             resolved
+                           else
+                             TypeRef::POINTER # Default to pointer for block params
+                           end
+              param_type = TypeRef::POINTER if param_type == TypeRef::VOID
+              if env_get("DEBUG_BLOCK_PARAMS") && param_types
+                STDERR.puts "[BLOCK_PARAMS] block_param name=#{name} type=#{get_type_name_from_ref(param_type)}"
+              end
+              param_val = Parameter.new(ctx.next_id, param_type, idx, name)
+              ctx.emit(param_val)
+              ctx.register_local(name, param_val.id)
+              ctx.mark_block_parameter_binding(name, param_val.id)
+              ctx.register_type(param_val.id, param_type)
+              update_typeof_local(name, param_type)
+              if ta = param.type_annotation
+                update_typeof_local_name(name, (safe_slice_to_string(ta) || ""))
+              elsif param_type != TypeRef::VOID
+                update_typeof_local_name(name, get_type_name_from_ref(param_type))
+              end
+              if param_type != TypeRef::VOID
+                track_enum_value(param_val.id, get_type_name_from_ref(param_type))
+              end
+              bind_block_unpack_pattern_for_node(ctx, node, idx, param_val.id) if unpack_pattern
             end
-            param_val = Parameter.new(ctx.next_id, param_type, idx, name)
-            ctx.emit(param_val)
-            ctx.register_local(name, param_val.id)
-            ctx.mark_block_parameter_binding(name, param_val.id)
-            ctx.register_type(param_val.id, param_type)
-            update_typeof_local(name, param_type)
-            if ta = param.type_annotation
-              update_typeof_local_name(name, (safe_slice_to_string(ta) || ""))
-            elsif param_type != TypeRef::VOID
-              update_typeof_local_name(name, get_type_name_from_ref(param_type))
+          end
+        end
+
+        # Lower body
+        last_value = lower_closure_block_body(ctx, node)
+        unless ctx.current_scope == closure_scope
+          raise LoweringError.new("block lowering lost its owned Closure scope", node)
+        end
+        ctx.pop_scope
+        closure_scope_pushed = false
+        ctx.restore_local_declaration_scopes(saved_local_declaration_scopes)
+
+        @block_captures[body_block] = compute_block_captures(ctx, closure_scope, saved_locals.locals, assigned_vars)
+
+        # Implicit return from block
+        if ctx.get_block(ctx.current_block).terminator.is_a?(Unreachable)
+          ctx.terminate(Return.new(last_value))
+        end
+
+        # Restore the caller's loop / inline-yield machinery.
+        @loop_exit_stack = saved_loop_exit_stack
+        @loop_cond_stack = saved_loop_cond_stack
+        @loop_inline_next_depth_stack = saved_loop_inline_next_depth_stack
+        @loop_phi_stack = saved_loop_phi_stack
+        @loop_break_info_stack = saved_loop_break_info_stack
+        @loop_break_value_stack = saved_loop_break_value_stack
+        @loop_break_inline_locals_stack = saved_loop_break_inline_locals_stack
+        @inline_next_stack = saved_inline_next_stack
+        @inline_tuple_each_next_stack = saved_tuple_each_next_stack
+        @inline_tuple_each_loop_exit_depth_stack = saved_tuple_each_loop_exit_depth_stack
+        @inline_yield_return_stack = saved_inline_yield_return_stack
+        @inline_yield_return_override_stack = saved_inline_yield_return_override_stack
+
+        ctx.current_block = saved_block
+        # Restore locals - block-local vars shouldn't pollute outer scope
+        ctx.restore_locals(saved_locals)
+        @current_typeof_locals = old_typeof_locals
+        @current_typeof_local_names = old_typeof_local_names
+        @current_typeof_local_names_hash = old_typeof_local_names_hash
+        @current_typeof_local_names_hash_owner = old_typeof_local_names_hash_owner
+        @block_lowering_cache[cache_key] = body_block
+        lowering_completed = true
+        body_block
+      ensure
+        begin
+          if closure_scope_pushed
+            unless ctx.current_scope == closure_scope
+              raise LoweringError.new("block lowering lost its owned Closure scope", node)
             end
-            if param_type != TypeRef::VOID
-              track_enum_value(param_val.id, get_type_name_from_ref(param_type))
+            ctx.pop_scope
+            closure_scope_pushed = false
+          end
+        ensure
+          begin
+            # Restore this helper's declaration environment from its exact caller
+            # snapshot. A nested failure must not make cleanup pop a declaration
+            # frame owned by another lowering helper.
+            ctx.restore_local_declaration_scopes(
+              lowering_completed ? saved_local_declaration_scopes : entry_local_declaration_scopes)
+            ctx.current_block = saved_block
+            ctx.restore_locals(lowering_completed ? saved_locals : entry_locals)
+            @loop_exit_stack = saved_loop_exit_stack
+            @loop_cond_stack = saved_loop_cond_stack
+            @loop_inline_next_depth_stack = saved_loop_inline_next_depth_stack
+            @loop_phi_stack = saved_loop_phi_stack
+            @loop_break_info_stack = saved_loop_break_info_stack
+            @loop_break_value_stack = saved_loop_break_value_stack
+            @loop_break_inline_locals_stack = saved_loop_break_inline_locals_stack
+            @inline_next_stack = saved_inline_next_stack
+            @inline_tuple_each_next_stack = saved_tuple_each_next_stack
+            @inline_tuple_each_loop_exit_depth_stack = saved_tuple_each_loop_exit_depth_stack
+            @inline_yield_return_stack = saved_inline_yield_return_stack
+            @inline_yield_return_override_stack = saved_inline_yield_return_override_stack
+            @current_typeof_locals = old_typeof_locals
+            @current_typeof_local_names = old_typeof_local_names
+            @current_typeof_local_names_hash = old_typeof_local_names_hash
+            @current_typeof_local_names_hash_owner = old_typeof_local_names_hash_owner
+          ensure
+            unless lowering_completed
+              @block_lowering_cache.delete(cache_key)
+              if partial = partial_body_block
+                @block_captures.delete(partial)
+              end
+              if previous_block_node_arena
+                @block_node_arenas[node.object_id] = previous_block_node_arena
+              else
+                @block_node_arenas.delete(node.object_id)
+              end
+              if previous_block_owner
+                @block_owner[node.object_id] = previous_block_owner
+              else
+                @block_owner.delete(node.object_id)
+              end
+              if previous_block_owner_function_id
+                @block_owner_function_ids[node.object_id] = previous_block_owner_function_id
+              else
+                @block_owner_function_ids.delete(node.object_id)
+              end
+              if previous_block_owner_self_id
+                @block_owner_self_ids[node.object_id] = previous_block_owner_self_id
+              else
+                @block_owner_self_ids.delete(node.object_id)
+              end
+              @last_block_arena_id = previous_last_block_arena_id
+              @last_block_arena = previous_last_block_arena
             end
-            bind_block_unpack_pattern_for_node(ctx, node, idx, param_val.id) if unpack_pattern
+            @arena = saved_arena_for_block
+            if in_progress_registered
+              if registered_block = @block_lowering_in_progress[cache_key]?
+                if registered_block == partial_body_block
+                  @block_lowering_in_progress.delete(cache_key)
+                end
+              end
+            end
           end
         end
       end
-
-      # Lower body
-      last_value = lower_closure_block_body(ctx, node)
-      ctx.pop_scope
-      ctx.pop_local_declaration_scope
-      local_declaration_scope_pushed = false
-
-      @block_captures[body_block] = compute_block_captures(ctx, closure_scope, saved_locals.locals, assigned_vars)
-
-      # Implicit return from block
-      if ctx.get_block(ctx.current_block).terminator.is_a?(Unreachable)
-        ctx.terminate(Return.new(last_value))
-      end
-
-      # Restore the caller's loop / inline-yield machinery.
-      @loop_exit_stack = saved_loop_exit_stack
-      @loop_cond_stack = saved_loop_cond_stack
-      @loop_inline_next_depth_stack = saved_loop_inline_next_depth_stack
-      @loop_phi_stack = saved_loop_phi_stack
-      @loop_break_info_stack = saved_loop_break_info_stack
-      @loop_break_value_stack = saved_loop_break_value_stack
-      @loop_break_inline_locals_stack = saved_loop_break_inline_locals_stack
-      @inline_next_stack = saved_inline_next_stack
-      @inline_tuple_each_next_stack = saved_tuple_each_next_stack
-      @inline_tuple_each_loop_exit_depth_stack = saved_tuple_each_loop_exit_depth_stack
-      @inline_yield_return_stack = saved_inline_yield_return_stack
-      @inline_yield_return_override_stack = saved_inline_yield_return_override_stack
-
-      ctx.current_block = saved_block
-      # Restore locals - block-local vars shouldn't pollute outer scope
-      ctx.restore_locals(saved_locals)
-      @current_typeof_locals = old_typeof_locals
-      @current_typeof_local_names = old_typeof_local_names
-      @block_lowering_cache[cache_key] = body_block
-      body_block
-    ensure
-      ctx.pop_local_declaration_scope if local_declaration_scope_pushed
-      @arena = saved_arena_for_block if saved_arena_for_block
-      @block_lowering_in_progress.delete(cache_key)
     end
 
     private def lower_block_pass_proc(

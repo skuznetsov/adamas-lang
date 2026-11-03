@@ -23621,3 +23621,23 @@ integration, fresh bootstrap, or LavinMQ parity.
 - Scope: if lowering and the shared static-branch cleanup. Other scope-owning
   constructs, fallback ownership, prelude closure and LavinMQ parity remain
   separate obligations. No stdlib changes or relaxed type checks.
+
+
+### 2026-11-02: Own inline-yield fallback scopes and closure conversion cleanup
+
+- Root cause: fallback consumed a caller scope without acquiring its own.
+  Depth-limited and disabled-inline paths entered with different scope state;
+  adding a local push alone exposed the caller's earlier speculative push.
+- All fallback decisions now precede inline scope acquisition. Fallback and
+  block-to-block conversion unwind only their exact scopes on errors, preserve
+  the original diagnostic, and restore declaration/arena state. Successful
+  capture writeback remains after the fallback scope is closed.
+- Qualification: the independent HEAD restoration case fails before the fix;
+  the candidate passes 40 focused HIR checks and a fresh source-matched S1.
+  The regression passes 10 HIR checks plus stock/lazy/eager mutable-capture
+  output checks for depth zero and disabled inlining (34ix, 34iz, 34jd).
+  Compiler source SHA: a5abbaeac5e4e2e8.
+- Scope is these owned scope/declaration/arena boundaries. Other inline frame
+  stacks, captured callback ABI, stock-prelude dependency closure, bootstrap
+  and LavinMQ parity remain separate obligations. No stdlib edits or weaker
+  type checks. Refresh after fallback or block-conversion ownership changes.
