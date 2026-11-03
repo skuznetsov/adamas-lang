@@ -142015,13 +142015,87 @@ module Adamas::HIR
         param_name = param.name
         if param.is_block && yield_callback_type?(param.type)
           value_id = parent_locals[param_name]? || param.id
-          carrier = ctx.function.heap_block_param ? ProcCarrier::HeapProcObject : ProcCarrier::RawFnptrCallback
+          unless ctx.type_of(value_id) == param.type
+            raise "captured yield target lost its selected callback signature"
+          end
+
+          # Storage follows the selected local's actual producer, not the
+          # enclosing function's incoming block ABI. Raw Proc callbacks are
+          # boxed here before their value is recorded in the capture tuple.
+          carrier = if param.type == TypeRef::POINTER
+                      ProcCarrier::RawFnptrCallback
+                    else
+                      if !raw_proc_callback_source(ctx, value_id).nil?
+                        value_id = coerce_value_to_type(ctx, value_id, param.type)
+                        unless ctx.value_for(value_id).is_a?(MakeProc)
+                          raise "captured raw Proc callback was not materialized as a heap Proc"
+                        end
+                      end
+
+                      unless proc_carrier_for_captured_yield_value(ctx, value_id) == ProcCarrier::HeapProcObject
+                        raise "captured Proc callback has no proven heap storage carrier"
+                      end
+                      ProcCarrier::HeapProcObject
+                    end
+
+          unless ctx.type_of(value_id) == param.type
+            raise "captured yield target lost its selected callback signature"
+          end
           return CapturedYieldTarget.new(param_name, YieldTarget.new(value_id, param.type, carrier))
         end
         idx -= 1
       end
 
       nil
+    end
+
+    private def proc_carrier_for_captured_yield_value(
+      ctx : LoweringContext,
+      value_id : ValueId,
+      depth : Int32 = 0,
+    ) : ProcCarrier?
+      return nil if depth >= 16
+      if param = ctx.function.params.find { |candidate| candidate.id == value_id }
+        return nil unless param.is_block
+        return ProcCarrier::RawFnptrCallback if param.type == TypeRef::POINTER
+        return nil unless proc_type_ref?(param.type)
+        return ctx.function.heap_block_param ? ProcCarrier::HeapProcObject : ProcCarrier::RawFnptrCallback
+      end
+
+      case value = ctx.value_for(value_id)
+      when MakeProc
+        ProcCarrier::HeapProcObject
+      when FuncPointer
+        ProcCarrier::RawFnptrCallback
+      when ExternCall
+        proc_type_ref?(value.type) ? ProcCarrier::RawFnptrCallback : nil
+      when Copy
+        proc_carrier_for_captured_yield_value(ctx, value.source, depth + 1)
+      when Cast
+        proc_carrier_for_captured_yield_value(ctx, value.value, depth + 1)
+      when UnionWrap
+        proc_carrier_for_captured_yield_value(ctx, value.value, depth + 1)
+      when UnionUnwrap
+        proc_carrier_for_captured_yield_value(ctx, value.union_value, depth + 1)
+      else
+        nil
+      end
+    end
+
+    private def install_captured_yield_target(
+      captures : Array({String, ValueId, TypeRef}),
+      target : CapturedYieldTarget,
+    ) : Nil
+      index = 0
+      found = false
+      while index < captures.size
+        if captures.unsafe_fetch(index)[0] == target.name
+          captures[index] = target.capture
+          found = true
+        end
+        index += 1
+      end
+      captures << target.capture unless found
     end
 
     private def rebind_captured_yield_target(
@@ -142715,9 +142789,7 @@ module Adamas::HIR
           if env_get("DEBUG_EXPLICIT_YIELD_TARGET")
             STDERR.puts "[EXPLICIT_YIELD_TARGET] proc_literal parent=#{ctx.function.name} capture=#{candidate.name} vid=#{candidate.target.value_id} type=#{get_type_name_from_ref(candidate.target.type)}"
           end
-          unless captures.any? { |name, _, _| name == candidate.name }
-            captures << candidate.capture
-          end
+          install_captured_yield_target(captures, candidate)
         end
       end
 
@@ -144050,9 +144122,7 @@ module Adamas::HIR
         end
         explicit_yield_target ||= find_enclosing_yield_target(ctx, parent_locals)
         if candidate = explicit_yield_target
-          unless captures.any? { |name, _, _| name == candidate.name }
-            captures << candidate.capture
-          end
+          install_captured_yield_target(captures, candidate)
         end
       end
 

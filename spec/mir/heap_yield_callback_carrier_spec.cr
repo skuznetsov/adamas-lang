@@ -1,5 +1,6 @@
 require "../spec_helper"
 require "../../src/compiler/hir/hir"
+require "../../src/compiler/hir/ast_to_hir"
 require "../../src/compiler/mir/mir"
 require "../../src/compiler/mir/hir_to_mir"
 

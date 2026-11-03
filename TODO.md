@@ -23641,3 +23641,22 @@ integration, fresh bootstrap, or LavinMQ parity.
   stacks, captured callback ABI, stock-prelude dependency closure, bootstrap
   and LavinMQ parity remain separate obligations. No stdlib edits or weaker
   type checks. Refresh after fallback or block-conversion ownership changes.
+
+
+## Captured yield producer storage contract (2026-11-02)
+
+- [x] Materialize raw typed Proc callbacks before recording their capture tuple,
+  and derive the yield carrier from that same stored producer. Replace an
+  existing named capture when normalization changes its ValueId.
+- Root cause: the enclosing function's block ABI was used as the captured
+  value's representation, although capture coercion could turn a raw callback
+  into a heap Proc. A nested forwarded yield then called the Proc object as
+  code. A heap ABI flag also failed to describe a locally substituted FuncPointer.
+- Verification: the unchanged baseline fails two producer assertions and both
+  lazy/eager native nested-capture runs with Bus error; Crystal prints A.
+  A fresh S1 passes regression_tests/captured_yield_producer_repro.sh: 20 focused
+  HIR/MIR checks and ten byte-exact native cases, including both eager flags
+  and inline-yield-disabled controls. Unknown Proc storage remains rejected.
+- Scope: no-prelude callback storage and carrier contracts. This does not
+  establish prelude, bootstrap, or LavinMQ parity; refresh after capture,
+  producer coercion, or callback ABI changes.
