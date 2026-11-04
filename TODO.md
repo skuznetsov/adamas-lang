@@ -24193,3 +24193,11 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Reduce the nested `Array(Proc)` admission failure independently.
   The nullable Proc source regression fails at the same overload on the
   parent and candidate (35q1231, 35q1252).
+
+- [x] Project an active Proc local's full signature into type-position
+  `typeof`. Verify native generic round trips, both nullable result arms,
+  and metaclass argument admission against Crystal 1.22.1 (35q1260).
+- [ ] Unify the remaining type-position `typeof` producers with semantic
+  result and value-kind ownership. The receiver-call oracle still falls
+  back to Pointer(Void) on both 35q1252 and 35q1260. Audit ivars and
+  synthetic Proc descriptors separately.

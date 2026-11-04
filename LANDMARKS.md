@@ -23079,3 +23079,20 @@ and installed-prelude hello pass. Nested `Array(Proc)` overload admission
 still fails with the same diagnostic on both compiler revisions. Refresh
 on changes to body-parameter specialization, Proc descriptor slots, or
 late callback signature reconstruction.
+
+### Keep the local Proc signature in type-position typeof
+
+When type-position `typeof(callback)` reads an active local TypeRef, its
+display name can omit the entire Proc signature. Preserve the signature
+from that descriptor before passing through the textual fallback. This
+carries input and output value kinds and nested unions through generic
+arguments such as `Box(typeof(callback))`.
+
+The parent loses the signature in the installed stdlib Box probe and
+returns the wrong native result in the empty-prelude Identity control
+(35q1252). Crystal 1.22.1 and the candidate agree on the nested Proc.new,
+nullable output, and metaclass input and rejection oracles (35q1260).
+Installed-prelude hello passes. The older receiver-call typeof oracle
+still fails on both revisions, so general expression result ownership
+remains open. Refresh on changes to the active local TypeRef map, Proc
+slot metadata, or type-position generic argument construction.

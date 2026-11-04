@@ -18997,6 +18997,11 @@ module Adamas::HIR
 
       if locals = @current_typeof_locals
         if type_ref = locals[expr]?
+          if descriptor = @module.get_type_descriptor(type_ref)
+            if descriptor.kind == TypeKind::Proc && !descriptor.type_params.empty?
+              return proc_source_signature_name(descriptor)
+            end
+          end
           resolved = get_type_name_from_ref(type_ref)
           return normalize_typeof_type_name(resolved) unless resolved == "Void"
         end
