@@ -140449,6 +140449,20 @@ module Adamas::HIR
       store.id
     end
 
+    private def lower_enum_field_symbol_assignment(
+      ctx : LoweringContext,
+      owner : String,
+      field_type : TypeRef,
+      value_node : Adamas::Compiler::Frontend::Node,
+    ) : ValueId?
+      return nil unless value_node.is_a?(Adamas::Compiler::Frontend::SymbolNode)
+      enum_name = get_type_name_from_ref(field_type)
+      return nil unless @enum_info.try(&.has_key?(enum_name))
+
+      try_lower_enum_symbol_for_ivar(ctx, owner, field_type, value_node) ||
+        raise LoweringError.new("can't autocast #{safe_slice_to_string(value_node.name)} to #{enum_name}: no matching enum member", value_node)
+    end
+
     private def lower_assign(
       ctx : LoweringContext,
       node : Adamas::Compiler::Frontend::AssignNode,
@@ -140456,18 +140470,14 @@ module Adamas::HIR
     ) : ValueId
       target_node = @arena[node.target]
       target_kind = Adamas::Compiler::Frontend.node_kind(target_node)
-      value_id = if target_node.is_a?(Adamas::Compiler::Frontend::InstanceVarNode) &&
-                    (value_node = @arena[node.value]).is_a?(Adamas::Compiler::Frontend::SymbolNode) &&
-                    (owner = @current_class) &&
-                    (ivar_type = get_ivar_type(safe_slice_to_string(target_node.name) || "")) &&
-                    @enum_info.try(&.has_key?(get_type_name_from_ref(ivar_type)))
-                   # The field supplies the contextual enum type. Lower the
-                   # source literal before it becomes an ordinary Symbol ID.
-                   try_lower_enum_symbol_for_ivar(ctx, owner, ivar_type, value_node) ||
-                     raise LoweringError.new("can't autocast #{safe_slice_to_string(value_node.name)} to #{get_type_name_from_ref(ivar_type)}: no matching enum member", value_node)
-                 else
-                   lower_expr(ctx, node.value)
-                 end
+      value_node = @arena[node.value]
+      contextual_value = if target_node.is_a?(Adamas::Compiler::Frontend::InstanceVarNode) &&
+                            value_node.is_a?(Adamas::Compiler::Frontend::SymbolNode) &&
+                            (owner = @current_class) &&
+                            (ivar_type = get_ivar_type(safe_slice_to_string(target_node.name) || ""))
+                           lower_enum_field_symbol_assignment(ctx, owner, ivar_type, value_node)
+                         end
+      value_id = contextual_value || lower_expr(ctx, node.value)
 
       case target_kind
       when Adamas::Compiler::Frontend::NodeKind::Identifier
@@ -141044,6 +141054,12 @@ module Adamas::HIR
           if ivar_info = find_ivar_info(class_info.ivars, ivar_name)
             # Check if ivar is a union type - need to wrap the value
             ivar_type = ivar_info.type
+            if ctx.type_of(value_id) == TypeRef::SYMBOL && @enum_info.try(&.has_key?(get_type_name_from_ref(ivar_type)))
+              # The generated setter has the field's restriction. An explicit
+              # setter above still binds its own arguments through resolution.
+              value_id = lower_enum_field_symbol_assignment(ctx, class_name, ivar_type, value_node) ||
+                         raise LoweringError.new("property '#{field_name}' must be #{get_type_name_from_ref(ivar_type)}, not Symbol", node)
+            end
             store_val = value_id
             if is_union_type?(ivar_type)
               value_type = ctx.type_of(value_id)

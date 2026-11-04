@@ -23328,3 +23328,19 @@ A combined HIR experiment advances to the ViewsController route's
 `call_next` error with the same non-compiler inputs (35q1352).
 Refresh the constructor evidence after changes to source include order,
 named binding, or the initializer target carried by the allocator.
+
+### Bind symbol literals in generated enum setters
+
+The generated property setter stored the global Symbol ID directly into
+the enum field and returned the Symbol as the assignment value. The
+field and property assignment paths now share the contextual enum
+member resolver. Explicit setter overloads still bind their own
+arguments.
+
+Crystal 1.22.1 and exact lazy and eager Adamas agree on nine checks
+covering field and expression values, an explicit Symbol setter, and
+strict rejection of missing members and nonliteral symbols (35q1354).
+Installed-prelude hello and the JSON lexer and pull-parser reducer pass.
+The lexer now returns `Int` for the second token in `[3,4]`, and
+`read_int` returns 3. This gate covers the first integer only. Refresh
+after changes to generated setters, enum identity, or contextual autocast.

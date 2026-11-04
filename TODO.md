@@ -24284,9 +24284,10 @@ integration, fresh bootstrap, or LavinMQ parity.
   literal assignment. The installed-prelude JSON first-token probe now
   passes `read_begin_array`, and both Adamas modes match Crystal on
   valid assignments and strict Symbol rejection (35q1338).
-- [ ] Trace the next token after `read_begin_array`. The extended
-  installed-prelude JSON array probe reaches `read_int` and fails
-  (35q1336).
+- [x] Bind a symbol literal to the declared enum type of a generated
+  property setter. The installed-prelude JSON lexer emits an integer
+  token after the opening bracket, and the pull parser reads its value
+  (35q1354). Qualify the rest of the array and the File input separately.
 - [ ] Preserve the declared enum base width from HIR through MIR layout
   and LLVM integer representation. Stock Crystal preserves a UInt64
   member above 32 bits. The parent truncates it even with qualified enum
