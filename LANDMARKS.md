@@ -22937,3 +22937,17 @@ eager HIR. The cross-file fixture also asserts the reflected proc-pointer kind
 and the rooted source spelling before interpolation. Installed-prelude `hello`
 compiled and ran on the same compiler build. Changes to annotation registration,
 AST arena lifetime, or macro source rendering require re-running these checks.
+
+### Qualified enum member paths preserve alias identity
+
+After lexical path binding, HIR resolves aliases on the owner of a qualified
+member and looks up the member in that enum's exact table. Source inference,
+value classification, and lowering share the lookup. Lowering retains the
+nominal enum identity and uses its registered integer carrier.
+
+The regression compares Crystal 1.22.1 and lazy/eager HIR on an alias chain
+to a wide enum, a shadowed relative owner, a rooted owner, and two missing
+members. The parent rejects the valid alias path. The candidate passes all
+twelve checks, the nominal enum and qualified declaration suites, and
+installed-prelude hello. Refresh after changes to lexical path binding, alias
+resolution, or the enum registry.

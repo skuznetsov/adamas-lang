@@ -24107,3 +24107,12 @@ integration, fresh bootstrap, or LavinMQ parity.
   in the lexical class. The same wrong target occurs in both a
   reflected argument and a handwritten call, so this belongs in lexical path
   resolution. Keep separate rooted and relative controls.
+
+### Resolve qualified enum constants through aliases
+- [x] Share the owner/member lookup after lexical binding across HIR inference,
+  value classification, and lowering. The alias-chain regression checks
+  nominal dispatch and a wide member, with rooted and negative controls.
+- [ ] Trace the width of the enum argument to LibSSL.ssl_ctx_clear_options.
+  LavinMQ HIR reaches this check with the qualified member fix and a
+  separate deferred-self candidate (35q1091). Preserve the declared FFI
+  type check and compare against the installed Crystal stdlib.

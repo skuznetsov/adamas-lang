@@ -29775,19 +29775,10 @@ module Adamas::HIR
           # which would incorrectly treat the constant name as a type name
           return nil
         end
-        parts = full_name.split("::")
-        if parts.size >= 2
-          member = parts.last
-          enum_candidate = parts[0...-1].join("::")
-          enum_name = absolute ? (@enum_info.try(&.has_key?(enum_candidate)) ? enum_candidate : nil) : resolve_enum_name(enum_candidate)
-          if enum_name
-            if enum_info = @enum_info
-              if enum_info[enum_name]?.try(&.has_key?(member))
-                enum_ref = enum_type_ref(enum_name)
-                return enum_ref == TypeRef::VOID ? enum_base_type(enum_name) : enum_ref
-              end
-            end
-          end
+        if enum_member = enum_constant_path(full_name)
+          enum_name = enum_member[0]
+          enum_ref = enum_type_ref(enum_name)
+          return enum_ref == TypeRef::VOID ? enum_base_type(enum_name) : enum_ref
         end
         if type_name_exists?(full_name)
           return absolute ? canonical_bound_type_ref(full_name) : type_ref_for_name(full_name)
@@ -68077,16 +68068,23 @@ module Adamas::HIR
       safe_set_includes?(@constant_defs, name) || safe_set_includes?(@pre_scan_constant_defs, name)
     end
 
-    # True when *full_path* names a member of a known enum (`Sig::A`), i.e. a
-    # value, not a nested type of that enum.
+    # The path's namespace has already been bound. Follow aliases on the
+    # enum owner and consult its exact member table. A suffix match cannot
+    # establish the identity of a qualified constant.
+    private def enum_constant_path(full_path : String) : Tuple(String, Int64)?
+      return nil unless @enum_info
+      index = full_path.rindex("::") || return nil
+      return nil if index == 0
+      member = full_path[(index + 2)..]
+      return nil unless member[0]?.try(&.uppercase?)
+      enum_name = resolve_path_type_alias_chain(full_path[0, index], true)
+      if value = enum_constant_member_value(enum_name, member)
+        {enum_name, value}
+      end
+    end
+
     private def enum_member_path?(full_path : String) : Bool
-      return false unless enum_info = @enum_info
-      return false unless idx = full_path.rindex("::")
-      member = full_path[(idx + 2)..]
-      return false unless member[0]?.try(&.uppercase?)
-      return false unless members = enum_info[full_path[0, idx]]?
-      return false if type_name_exists?(full_path)
-      members.has_key?(member) || (@flags_enum_names.includes?(full_path[0, idx]) && (member == "None" || member == "All"))
+      !enum_constant_path(full_path).nil? && !type_name_exists?(full_path)
     end
 
     private def constant_full_name(owner_name : String?, name : String) : String
@@ -95512,82 +95510,27 @@ module Adamas::HIR
 
     # Lower path expression (e.g., Color::Green for enums, or Module::Constant)
     private def lower_path(ctx : LoweringContext, node : Adamas::Compiler::Frontend::PathNode) : ValueId
-      # Extract left and right parts
-      # For Color::Green: left = Color (IdentifierNode), right = Green (IdentifierNode)
-      left_name : String? = nil
-      if left_id = node.left
-        left_node = @arena[left_id]
-        left_name = case left_node
-                    when Adamas::Compiler::Frontend::IdentifierNode
-                      (safe_slice_to_string(left_node.name) || "")
-                    when Adamas::Compiler::Frontend::ConstantNode
-                      (safe_slice_to_string(left_node.name) || "")
-                    when Adamas::Compiler::Frontend::PathNode
-                      collect_path_string(left_node)
-                    else
-                      nil
-                    end
-      end
-
-      right_node = @arena[node.right]
-      right_name = case right_node
-                   when Adamas::Compiler::Frontend::IdentifierNode
-                     (safe_slice_to_string(right_node.name) || "")
-                   when Adamas::Compiler::Frontend::ConstantNode
-                     (safe_slice_to_string(right_node.name) || "")
-                   else
-                     nil
-                   end
-
       raw_path = collect_path_string(node)
+      substituted_path = substitute_type_params_in_type_name(raw_path)
+      full_path = resolve_path_string_in_context(substituted_path)
 
-      # Check if this is an enum value access
-      if left_name && right_name
-        resolved_left = resolve_path_string_in_context(left_name)
-        if enum_info = @enum_info
-          if members = enum_info[resolved_left]?
-            if right_name[0]?.try(&.uppercase?) && (value = enum_constant_member_value(resolved_left, right_name))
-              # Found enum value - emit as base literal but remember enum type.
-              enum_type = enum_base_type(resolved_left)
-              lit = Literal.new(ctx.next_id, enum_type, value)
-              ctx.emit(lit)
-              (@enum_value_types ||= {} of ValueId => String)[lit.id] = resolved_left
-              return lit.id
-            end
-          end
-        end
-      end
-      # Fallback: resolve enum value by full path prefix (handles nested paths).
-      if right_name && raw_path.includes?("::")
-        if idx = raw_path.rindex("::")
-          prefix = raw_path[0, idx]
-          resolved_prefix = resolve_path_string_in_context(prefix)
-          if enum_info = @enum_info
-            if members = enum_info[resolved_prefix]?
-              if right_name[0]?.try(&.uppercase?) && (value = enum_constant_member_value(resolved_prefix, right_name))
-                enum_type = enum_base_type(resolved_prefix)
-                lit = Literal.new(ctx.next_id, enum_type, value)
-                ctx.emit(lit)
-                (@enum_value_types ||= {} of ValueId => String)[lit.id] = resolved_prefix
-                return lit.id
-              end
-            end
-          end
-        end
+      if enum_member = enum_constant_path(full_path)
+        enum_name, value = enum_member
+        # Keep the nominal enum identity even though its value uses the base
+        # integer representation.
+        lit = Literal.new(ctx.next_id, enum_base_type(enum_name), value)
+        ctx.emit(lit)
+        (@enum_value_types ||= {} of ValueId => String)[lit.id] = enum_name
+        return lit.id
       end
 
-      # Unqualified sibling enum member (bare `A` inside the enum's own method,
-      # parsed as a single-segment path). Resolve before the constant/type
-      # fallbacks, which would degrade it to null/zero.
-      if right_name && !raw_path.includes?("::")
-        if enum_member = emit_enum_sibling_member?(ctx, right_name)
+      # A single-segment path can name a sibling member in an enum method.
+      unless raw_path.includes?("::")
+        if enum_member = emit_enum_sibling_member?(ctx, raw_path)
           return enum_member
         end
       end
 
-      # Substitute type params in path prefix (e.g., D::CACHE -> ImplInfo_Float32::CACHE)
-      substituted_path = substitute_type_params_in_type_name(raw_path)
-      full_path = resolve_path_string_in_context(substituted_path)
       if mapped = @type_param_map[full_path]?
         if literal = literal_for_type_param_value(mapped)
           lit = Literal.new(ctx.next_id, literal[0], literal[1])
