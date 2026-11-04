@@ -24021,3 +24021,28 @@ integration, fresh bootstrap, or LavinMQ parity.
   stopped at Log.for(self) with AMQP::Client::Connection treated as an instance.
   This remains an HIR frontier, not successful compilation or runtime evidence.
   S2/bootstrap and unchanged LavinMQ functional/test parity remain open.
+
+
+### 2026-11-03: Bind source rest and keyword slots before defaults
+
+- Bind positional rest and keyword-only formals from the actual source shape.
+  Preserve the empty keyword list during lookup, keep the exact selected Def
+  and arena for allocator handoff, and require missing keyword-only arguments
+  even when the rest segment contains values.
+- Both named binders visit every explicit actual before handling runtime
+  NoReturn. Class literals keep their ordinary value kind. Capture extra
+  keywords in written order and use those values for the NamedTuple ABI.
+- DoD passed at AST ffad8e4bfcc06a806a35e60fa088f939dc1e8835fb0cd23f53968768d1fea8d7.
+  Fresh S1 35q953, fixed_defaults_before_rest_repro.sh with 22 positive cases
+  and seven strict rejections across stock Crystal 1.22.1, lazy and eager
+  (87 checks, 35q959), stock-prelude hello 35q961 and 29 focused examples
+  35q962. Core retains its 77 baseline failures (35q963 versus 35q762).
+  Two printed HIR failure blocks differ only in literal and unused Nil
+  placeholder order (35q967).
+- Legacy contextual-symbol calls still need source type admission. Stock
+  rejects consume(true, mode: :fast) for an Int32 formal, while baseline and
+  candidate compile and abort (35q957/35q955). Keep this separate from
+  terminal argument flow and preserve legal symbol-to-enum conversion.
+- Unchanged LavinMQ HIR 35q964 still stops at Log.for(self). Investigate the
+  class value produced by the deferred constant initializer. S2, bootstrap
+  and LavinMQ runtime/test parity remain open.

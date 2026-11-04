@@ -1353,6 +1353,10 @@ module Adamas::HIR
       values : Hash(Int32, ValueId),
       terminal_value : ValueId?
 
+    # Explicit source actuals have been visited, but their NoReturn value means
+    # no callee can run. This outcome owns no selected Def or normalized ABI.
+    private record TerminatedCallArguments, value : ValueId
+
     # Produced before default expressions fill ABI slots. Each ordinary formal
     # owns a source type or an explicit omission; later callback inference must
     # not infer caller-supplied forall bindings from a default's value.
@@ -29241,6 +29245,12 @@ module Adamas::HIR
       get_type_name_from_ref(type) == "NoReturn"
     end
 
+    # Class literals share the represented instance's TypeRef. Only a runtime
+    # bottom value can terminate argument evaluation; `NoReturn` itself cannot.
+    private def runtime_noreturn_value?(ctx : LoweringContext, value : ValueId) : Bool
+      !ctx.type_literal?(value) && noreturn_type?(ctx.type_of(value))
+    end
+
     private def def_declared_noreturn?(def_node : Adamas::Compiler::Frontend::DefNode) : Bool
       return_type = def_node.return_type
       return false unless return_type
@@ -54749,7 +54759,8 @@ module Adamas::HIR
           accepted << label
         end
 
-        if positional_arg_count && positional_index >= positional_arg_count.not_nil! &&
+        # Positionals consumed by rest never supply a following keyword slot.
+        if (in_named_only || (positional_arg_count && positional_index >= positional_arg_count.not_nil!)) &&
            !param.is_splat && param.default_value.nil?
           label = named_parameter_label(param)
           return false unless label && named_arg_names.includes?(label)
@@ -114829,6 +114840,7 @@ module Adamas::HIR
         end
         args_result = if named_args = node.named_args
                         reordered = reorder_named_args(ctx, call_args, named_args, method_name, arg_binding_full_method_name, has_block_call, receiver_id, call_arena, lowered_call_arguments, source_binding_out)
+                        return reordered.value if reordered.is_a?(TerminatedCallArguments)
                         # An allocator consumes the selected initializer's
                         # slots, but its physical target remains the allocator.
                         if selected_binding = reordered[1]
@@ -114847,6 +114859,25 @@ module Adamas::HIR
                         end
                         source_named_rest_packed = reordered[2]
                         reordered[0]
+                      elsif positional_binding = lower_positional_rest_keyword_args(
+                              ctx, call_args, method_name, arg_binding_full_method_name,
+                              has_block_call, receiver_id, call_arena, lowered_call_arguments, source_binding_out)
+                        return positional_binding.value if positional_binding.is_a?(TerminatedCallArguments)
+                        selected_binding = positional_binding[1]
+                        if method_name == "new" && method_short_from_name(selected_binding[0]) == "initialize"
+                          prefer_allocator_new_call = true
+                          constructor_arg_binding_name = strip_type_suffix(selected_binding[0])
+                          arg_binding_full_method_name = constructor_arg_binding_name
+                          source_arena = @function_def_arenas[selected_binding[0]]? ||
+                                         resolve_arena_for_def(selected_binding[1], call_arena)
+                          source_initializer_entry = SelectedCallTarget.new(
+                            selected_binding[0], selected_binding[1], source_arena,
+                          )
+                        else
+                          source_named_entry = selected_binding unless constructor_arg_binding_name
+                        end
+                        source_named_rest_packed = positional_binding[2]
+                        positional_binding[0]
                       elsif lowered_call_arguments
                         lowered_call_arguments.positional_values
                       elsif has_splat
@@ -125988,7 +126019,12 @@ module Adamas::HIR
       source_named_types : Bool = false,
     ) : Tuple(String, Adamas::Compiler::Frontend::DefNode)?
       return nil unless v2_string_readable?(func_name)
+      # Source argument lookup needs an explicit (possibly empty) keyword list.
+      # Nil means the source shape is unavailable; an empty list proves that no
+      # keyword was supplied. Preserve that distinction through canonicalization.
+      source_names_present = source_named_types && !named_arg_names.nil?
       named_arg_names = canonical_named_arg_names(named_arg_names)
+      named_arg_names ||= [] of String if source_names_present
       resolve_call_input(CallResolutionInput.new(
         func_name: func_name,
         arg_count: arg_count,
@@ -128383,6 +128419,38 @@ module Adamas::HIR
     # Bind the source rest segment before adding named/default suffix slots.
     # Every source expression is lowered once in source order. The selected Def
     # and the normalized ABI vector then travel together through call lowering.
+    # A positional call still has named-only source slots after a rest formal.
+    # Bind the selected source slots before defaults and Tuple packing can
+    # reinterpret a rest element as a keyword value or a Tuple ABI pointer.
+    private def lower_positional_rest_keyword_args(
+      ctx : LoweringContext,
+      positional_args : Array(ExprId),
+      method_name : String,
+      full_method_name : String?,
+      has_block_call : Bool,
+      receiver_id : ValueId?,
+      call_arena : Adamas::Compiler::Frontend::ArenaLike,
+      lowered_arguments : LoweredCallSiteArguments?,
+      source_binding_out : Array(SourceCallBinding),
+    ) : Tuple(Array(ValueId), Tuple(String, Adamas::Compiler::Frontend::DefNode), Bool) | TerminatedCallArguments | Nil
+      func_name = full_method_name || method_name
+      needs_source_slots = function_def_overload_keys(func_name).any? do |key|
+        if definition = @function_defs[key]?
+          stats = function_param_stats(key, definition)
+          stats.positional_has_splat && stats.has_named_only && !stats.has_double_splat
+        else
+          false
+        end
+      end
+      return nil unless needs_source_slots
+
+      initial_entry = lookup_function_def_for_call(func_name, positional_args.size, has_block_call)
+      lower_source_named_args(ctx, positional_args,
+        [] of Adamas::Compiler::Frontend::NamedArgument, func_name, initial_entry,
+        has_block_call, receiver_id, call_arena, lowered_arguments, source_binding_out,
+        allow_empty_named: true)
+    end
+
     private def lower_source_named_args(
       ctx : LoweringContext,
       positional_args : Array(ExprId),
@@ -128394,8 +128462,9 @@ module Adamas::HIR
       call_arena : Adamas::Compiler::Frontend::ArenaLike,
       lowered_arguments : LoweredCallSiteArguments? = nil,
       source_binding_out : Array(SourceCallBinding)? = nil,
-    ) : Tuple(Array(ValueId), Tuple(String, Adamas::Compiler::Frontend::DefNode), Bool)?
-      return nil if named_args.empty?
+      allow_empty_named : Bool = false,
+    ) : Tuple(Array(ValueId), Tuple(String, Adamas::Compiler::Frontend::DefNode), Bool) | TerminatedCallArguments | Nil
+      return nil if named_args.empty? && !allow_empty_named
       # Source argument types must select the declaration before its named
       # values and defaults are rearranged into ABI slots. The rest-only path
       # already establishes this contract; ordinary named calls need it too.
@@ -128429,6 +128498,13 @@ module Adamas::HIR
                                 with_arena(call_arena) { lower_expr(ctx, arg.value) }
                               end
       end
+      # Crystal visits explicit actuals even when an earlier one is NoReturn,
+      # but then skips callee selection and default expansion (semantic/call.cr).
+      # Return the actual bottom value rather than an unrelated later argument.
+      terminal = positional_values.find { |value| runtime_noreturn_value?(ctx, value) } ||
+                 named_values.each_value.find { |value| runtime_noreturn_value?(ctx, value) }
+      return TerminatedCallArguments.new(terminal) if terminal
+
       names = named_values.keys.sort
       # Enum arguments use an integer carrier in HIR, but source overload
       # selection must retain the proven nominal enum identity. The helper
@@ -128436,9 +128512,12 @@ module Adamas::HIR
       # Int32 value or change the emitted value representation.
       source_types = positional_values.map { |id| enum_tracked_type(ctx, id) }
       names.each { |name| source_types << enum_tracked_type(ctx, named_values[name]) }
+      # The source shape carries positional values and an explicit keyword
+      # list even when it is empty. Keep overload policy tied to the actual
+      # presence of keywords, independently of that source-shape contract.
       selected = lookup_function_def_for_call(
         func_name, source_types.size, has_block_call, source_types,
-        false, true, names, positional_values.size, true,
+        false, !names.empty?, names, positional_values.size, true,
       )
       # Integer literals autocast to named restrictions exactly as they do to
       # positional ones (`AdjustedMantissa.new(power2: 0, mantissa: 0)`).
@@ -128674,7 +128753,7 @@ module Adamas::HIR
       call_arena : Adamas::Compiler::Frontend::ArenaLike,
       lowered_arguments : LoweredCallSiteArguments? = nil,
       source_binding_out : Array(SourceCallBinding)? = nil,
-    ) : Tuple(Array(ValueId), Tuple(String, Adamas::Compiler::Frontend::DefNode)?, Bool)
+    ) : Tuple(Array(ValueId), Tuple(String, Adamas::Compiler::Frontend::DefNode)?, Bool) | TerminatedCallArguments
       # Get parameter names from function definition
       func_name = full_method_name || method_name
       named_arg_names = named_arg_names_for(named_args)
@@ -128692,6 +128771,7 @@ module Adamas::HIR
       end
       func_entry = lookup_function_def_for_call(func_name, positional_args.size + named_args.size, has_block_call, nil, false, !named_args.empty?, named_arg_names, raw_positional_count)
       if bound = lower_source_named_args(ctx, positional_args, named_args, func_name, func_entry, has_block_call, receiver_id, call_arena, lowered_arguments, source_binding_out)
+        return bound if bound.is_a?(TerminatedCallArguments)
         return {bound[0], bound[1], bound[2]}
       end
       func_def = func_entry ? func_entry[1] : nil
@@ -128836,8 +128916,11 @@ module Adamas::HIR
           end
 
           extra_named = [] of Adamas::Compiler::Frontend::NamedArgument
+          extra_named_values = [] of ValueId
+          terminal_argument = result.find { |value| runtime_noreturn_value?(ctx, value) }
 
-          # Process named args
+          # Visit every explicit actual before deciding whether a callee can
+          # run. Unknown labels are still source actuals, not deferred defaults.
           named_args.each do |named_arg|
             arg_name = (safe_slice_to_string(named_arg.name) || "")
 
@@ -128853,12 +128936,18 @@ module Adamas::HIR
                 provided << false
               end
               @arena = call_arena
-              result[idx] = lower_arg_with_expected_type(ctx, named_arg.value, param_types[idx], param_type_names[idx], func_context, call_arena, lowered_arguments)
+              value = lower_arg_with_expected_type(ctx, named_arg.value, param_types[idx], param_type_names[idx], func_context, call_arena, lowered_arguments)
+              result[idx] = value
               provided[idx] = true
             else
               extra_named << named_arg
+              @arena = call_arena
+              value = lowered_arguments ? lowered_arguments.source_values[named_arg.value] : lower_expr(ctx, named_arg.value)
+              extra_named_values << value
             end
+            terminal_argument ||= value if runtime_noreturn_value?(ctx, value)
           end
+          return TerminatedCallArguments.new(terminal_argument) if terminal_argument
 
           if double_splat_index
             while result.size <= double_splat_index
@@ -128869,10 +128958,7 @@ module Adamas::HIR
             end
 
             unless provided[double_splat_index]
-              tuple_values = extra_named.map do |arg|
-                @arena = call_arena
-                lowered_arguments ? lowered_arguments.source_values[arg.value] : lower_expr(ctx, arg.value)
-              end
+              tuple_values = extra_named_values
               source_rest_values[double_splat_index] = tuple_values.map do |value|
                 source_call_argument(ctx, value)
               end
@@ -128892,9 +128978,8 @@ module Adamas::HIR
             source_rest_values[splat_slot] = [] of SourceCallArgument
           end
 
-          extra_named.each do |named_arg|
-            @arena = call_arena
-            result << (lowered_arguments ? lowered_arguments.source_values[named_arg.value] : lower_expr(ctx, named_arg.value))
+          extra_named.each_with_index do |named_arg, index|
+            result << extra_named_values[index]
             provided << true
           end
 
@@ -128968,6 +129053,9 @@ module Adamas::HIR
         end
       end
 
+      if terminal_argument = result.find { |value| runtime_noreturn_value?(ctx, value) }
+        return TerminatedCallArguments.new(terminal_argument)
+      end
       {result, nil, false}
     end
 
@@ -129103,6 +129191,7 @@ module Adamas::HIR
 
       param_local_names = [] of String
       param_defaults = [] of ExprId?
+      param_requires_argument = [] of Bool
       param_types = [] of TypeRef
       param_type_names = [] of String?
 
@@ -129114,6 +129203,7 @@ module Adamas::HIR
         local_name = p.name || ""
         param_local_names << local_name
         param_defaults << p.default_value
+        param_requires_argument << (p.default_value.nil? && !p.is_splat)
         if ta = p.type_annotation
           param_type_name = normalize_declared_type_name(ta, func_context)
           param_types << type_ref_for_name(param_type_name)
@@ -129132,7 +129222,8 @@ module Adamas::HIR
       # and selecting an arity-incompatible overload.
       idx = args.size
       while idx < param_defaults.size
-        return {args, call_has_named_args, nil} if param_defaults[idx].nil?
+        # A rest formal accepts zero values; it must not suppress fixed defaults.
+        return {args, call_has_named_args, nil} if param_requires_argument[idx]
         idx += 1
       end
 

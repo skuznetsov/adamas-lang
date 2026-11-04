@@ -22846,3 +22846,34 @@ Same-carrier class/instance constructor ranking remains outside this slice
 after clearing the Slice(UInt8).new default-binding barrier.
 Refresh after constructor lookup, default expansion, layout invalidation or
 function-state changes. S2/bootstrap and unchanged LavinMQ parity remain open.
+
+
+### 2026-11-03: Source argument shape and terminal values precede ABI slots
+
+A nil default field on a rest formal means zero or more arguments. Treating
+it as required suppressed an earlier default. The ABI binder also put a
+scalar rest element into a Tuple pointer slot and let a positional satisfy
+a following keyword-only formal (35q904/35q910/35q911). Select the source Def
+from the positional prefix and explicit keyword list, then construct its
+slots. An empty keyword list carries source evidence through lookup. Nil
+means the keyword shape was unavailable.
+
+After visiting all explicit actuals, runtime NoReturn ends the call before
+selection, defaults or packing. It returns the actual terminal ValueId and
+owns no Def or ABI. The TypeRef alone also denotes the NoReturn class literal.
+The literal must continue through normal checks (35q951). Legacy named
+binding now captures extra keyword values in source order before packing.
+
+Qualified AST ffad8e4bfcc06a806a35e60fa088f939dc1e8835fb0cd23f53968768d1fea8d7
+passes fresh S1 35q953, 87 native or rejection checks 35q959, stock-prelude
+hello 35q961 and 29 focused HIR examples 35q962. The core suite retains all
+77 baseline failures. Two HIR excerpts show the changed order of a literal
+and an unused Nil placeholder, with the same failure assertions (35q967).
+Adversary verdict ROBUST for these source shapes and terminal paths. The
+static review is correlated. Refresh after lookup key, argument order,
+value kind, default scope, or allocator publication changes.
+
+The legacy contextual-symbol type admission gap predates the change
+(35q957/35q955). Call-site ** operand hoisting and positional paths that do
+not enter the source binder remain separate. Unchanged LavinMQ HIR 35q964
+stops at Log.for(self). Bootstrap and LavinMQ test parity remain open.

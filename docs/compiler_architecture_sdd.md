@@ -5585,3 +5585,35 @@ allocate, including return:self, and for a default wrapper annotated Int32 whose
 redispatched constructor returns an instance. Preserve the rejection contract;
 do not repair it by inventing a result type. Same-carrier class/instance
 argument-kind selection (baseline 35q764), S2/bootstrap and unchanged LavinMQ parity remain open.
+
+
+#### Source argument slots precede ABI packing
+
+Source lookup carries the positional count and the keyword list, including
+an empty list when the call supplies zero keywords. Keep that shape separate
+from the overload preference for calls that actually supply named arguments.
+A rest segment can be empty and consumes only positionals. A required
+keyword-only formal needs its label. Select the Def and its arena before
+expanding defaults or packing rest values into a Tuple, and keep that
+selection when a constructor hands the initializer's slots to its allocator.
+
+Both named binders visit explicit actuals before defaults. The result of a
+runtime NoReturn argument is a terminal call outcome that carries the
+original ValueId. It has no selected body or packed arguments. Check value
+kind as well as nominal type, since the NoReturn class value can flow and
+must satisfy normal restrictions. Capture explicit extra keywords once in
+written order, then reuse them in the legacy NamedTuple formal.
+
+DoD is fixed_defaults_before_rest_repro.sh with a fresh S1, the focused
+constructor/default HIR specs and stock-prelude hello. AST
+ffad8e4bfcc06a806a35e60fa088f939dc1e8835fb0cd23f53968768d1fea8d7 passes S1
+35q953, 87 Crystal 1.22.1/lazy/eager checks 35q959, prelude hello 35q961 and
+29 focused examples 35q962. The 565-example core retains the same 77 failing
+examples. The two changed HIR excerpts account for literal and unused Nil
+placeholder order (35q967). Scoped adversary verdict ROBUST.
+
+Roll back this binding change with its regressions. Requalify after source
+lookup, value kind, argument expansion, default scope or allocator handoff
+changes. Legacy contextual-symbol type admission (35q957), call-site **
+operand hoisting and untouched positional paths remain open. Unchanged
+LavinMQ 35q964 reaches Log.for(self) during HIR lowering.
