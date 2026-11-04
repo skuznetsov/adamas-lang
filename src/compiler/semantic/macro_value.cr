@@ -32,6 +32,23 @@ module Adamas
           to_macro_output
         end
 
+        protected def splat_elements(elements : Array(MacroValue), args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : MacroValue
+          if args.size > 1 || (named_args && !named_args.empty?)
+            raise ArgumentError.new("splat expects at most one positional argument")
+          end
+          suffix = args.first?
+          if suffix && !suffix.is_a?(MacroStringValue)
+            raise ArgumentError.new("argument to splat must be a StringLiteral, not #{suffix.class_name}")
+          end
+          return MacroIdValue.new("") if elements.empty?
+
+          # Interpolate argument expressions with their literal syntax intact.
+          # Only the optional suffix is inserted as unquoted text.
+          source = elements.join(", ", &.to_macro_output)
+          source += suffix.value if suffix.is_a?(MacroStringValue)
+          MacroIdValue.new(source)
+        end
+
         # Call a method on this value
         def call_method(name : String, args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : MacroValue
           macro_node_call_method(name, args, named_args)
@@ -1309,15 +1326,7 @@ module Adamas
           when "empty?"
             MacroBoolValue.new(@elements.empty?)
           when "splat"
-            # Expand array elements as comma-separated identifiers. A string
-            # argument is appended unless the array is empty, so
-            # `{{args.splat(", ")}}x` stays a valid argument list either way.
-            splatted = @elements.map(&.to_id).join(", ")
-            trailing = args[0]?
-            if trailing.is_a?(MacroStringValue) && !@elements.empty?
-              splatted += trailing.value
-            end
-            MacroIdValue.new(splatted)
+            splat_elements(@elements, args, named_args)
           when "first"
             @elements.first? || MacroNilValue.new
           when "last"
@@ -1877,6 +1886,8 @@ module Adamas
             MacroNumberValue.new(@elements.size.to_i64)
           when "empty?"
             MacroBoolValue.new(@elements.empty?)
+          when "splat"
+            splat_elements(@elements, args, named_args)
           when "[]"
             if arg = args[0]?
               if arg.is_a?(MacroNumberValue)

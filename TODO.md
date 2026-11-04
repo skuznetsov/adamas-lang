@@ -24046,3 +24046,22 @@ integration, fresh bootstrap, or LavinMQ parity.
 - Unchanged LavinMQ HIR 35q964 still stops at Log.for(self). Investigate the
   class value produced by the deferred constant initializer. S2, bootstrap
   and LavinMQ runtime/test parity remain open.
+
+### 2026-11-03: Preserve source expressions in macro collection splats
+
+- ArrayLiteral and TupleLiteral use the same splat rendering and suffix
+  validation. Tuple expressions evaluate to macro tuples. Annotation#args
+  stays a tuple; string and symbol elements keep their literal syntax.
+- Verified with Crystal 1.22.1 and fresh S1 35q999. Twelve native or rejection
+  checks passed in 35q1006, 100 macro specs in 35q1005, and stock-prelude
+  hello in 35q1001.
+- [ ] Implement macro multiple assignment with prefix/middle/suffix rest.
+  The two-annotation control produces ABCDEF in Crystal and ABC in both
+  Adamas modes with this change (35q1003).
+- [ ] Preserve the declaring AST of annotation arguments, including the
+  Proc literal used as LavinMQ's fourth CliOpt argument. The annotation
+  value converter currently drops complex AST nodes to empty text.
+- [ ] Reconcile standalone macro begin expansion with the named macro path.
+  In 35q1000, a mixed statement and interpolation begin emits calls missing
+  their collection arguments and aborts. The same body works in a named
+  macro in 35q1003. Keep this separate from the collection rendering check.

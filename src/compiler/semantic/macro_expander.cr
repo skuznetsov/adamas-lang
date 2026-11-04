@@ -1003,6 +1003,9 @@ module Adamas
             elsif node.is_a?(Frontend::ArrayLiteralNode)
               values = node.elements.map { |elem| evaluate_to_macro_value(elem, context) }
               return MacroArrayValue.new(values)
+            elsif node.is_a?(Frontend::TupleLiteralNode)
+              values = node.elements.map { |elem| evaluate_to_macro_value(elem, context) }
+              return MacroTupleValue.new(values)
             elsif node.is_a?(Frontend::HashLiteralNode)
               entries = node.entries.map do |entry|
                 {
@@ -1739,6 +1742,10 @@ module Adamas
         ) : MacroValue
           if member == "to_i" && (receiver.class_name == "StringLiteral" || receiver.class_name == "MacroId")
             raise ArgumentError.new("StringLiteral#to_i is not expected to be invoked with a block")
+          end
+
+          if member == "splat" && (receiver.is_a?(MacroArrayValue) || receiver.is_a?(MacroTupleValue))
+            raise ArgumentError.new("#{receiver.class_name}#splat is not expected to be invoked with a block")
           end
 
           case member

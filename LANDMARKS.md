@@ -22877,3 +22877,19 @@ The legacy contextual-symbol type admission gap predates the change
 (35q957/35q955). Call-site ** operand hoisting and positional paths that do
 not enter the source binder remain separate. Unchanged LavinMQ HIR 35q964
 stops at Log.for(self). Bootstrap and LavinMQ test parity remain open.
+
+### 2026-11-03: Macro collection splats preserve literal source
+
+Splat joins ArrayLiteral and TupleLiteral element source, with an optional
+string suffix only when the collection has elements. Annotation#args stays
+a tuple. Previously that tuple emitted no arguments, and arrays emitted
+identifier text that removed string quotes and symbol colons. Fresh S1
+35q999 passes macro_collection_splat_repro.sh in stock Crystal 1.22.1,
+lazy, and eager modes (35q1006), 100 macro specs (35q1005), and stock-prelude
+hello (35q1001). Refresh after changes to macro value rendering, annotation
+arg ownership, or macro expansion routing.
+
+The four-argument CliOpt path needs both macro multiple assignment and
+preservation of the fourth argument's source AST (35q1003). Standalone
+macro begin loses arguments separately (35q1000). These checks do not
+establish unchanged LavinMQ compilation or bootstrap.
