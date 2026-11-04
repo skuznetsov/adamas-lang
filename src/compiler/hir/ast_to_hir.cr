@@ -6561,11 +6561,10 @@ module Adamas::HIR
     # callee_is_yield_free? guard and could recurse through yield-bearing
     # callees. This flag keeps the guard active for the whole subtree.
     @force_lower_yield_free_only_depth : Int32 = 0
-    # Callees refused by the force-lower depth limit while the current forced
-    # body was lowered, and the yield-free bodies already re-lowered once after
-    # such a refusal (see force_lower_function_for_return_type).
+    # Exact callees refused by the depth limit during the current forced body.
     @force_lower_depth_refused = [] of String
-    @force_lower_depth_retried = Set(String).new
+    # Prevent repeated replay of the same edge within one retry driver.
+    @force_lower_discharged_edges = Set({String, String}).new
     # Exact unannotated callees whose depth refusal left a caller body with
     # provisional return evidence. A guessed non-Void carrier is not a settled
     # result merely because it can be stored in the return-type cache.
@@ -9128,7 +9127,7 @@ module Adamas::HIR
       @suppress_force_lower_return_type_depth = 0
       @force_lower_yield_free_only_depth = 0
       @force_lower_depth_refused.clear
-      @force_lower_depth_retried.clear
+      @force_lower_discharged_edges.clear
       @force_lower_provisional_dependencies.clear
       @force_lower_retry_driver_active = false
       @force_lower_retry_work.clear
@@ -108318,16 +108317,14 @@ module Adamas::HIR
     # `name` was lowered left a Void call result in its body, and an
     # unannotated `name` then settles on Void (`def self.rand(x)` forwarding to
     # `rand(max : Int) : Int`). Back at this frame's depth the refused callees
-    # fit under the limit, so lower them in sequence and rebuild `name` once,
-    # before its caller reads the result. Only a Void result is rebuilt:
-    # replacing a settled body re-lowers it against state the first body
-    # already recorded, which is not safe in general.
+    # fit under the limit. Settle them before replaying a provisional consumer,
+    # which can discover new producers after argument and receiver types change.
+    # Replaying the same consumer against the same producer cannot make progress.
     private def retry_force_lower_after_depth_refusal(
       name : String,
       refused : Array(String),
       bypass_inline_yield : Bool,
     ) : Bool
-      return false if @force_lower_depth_retried.includes?(name)
       request = {name, refused, bypass_inline_yield}
       if @force_lower_retry_driver_active
         @force_lower_retry_work << request
@@ -108336,7 +108333,7 @@ module Adamas::HIR
 
       # A child forced during replay can itself hit the nesting limit. Drain
       # those obligations before rebuilding its caller, without nesting retry
-      # drivers on the native stack. Each body is still rebuilt at most once.
+      # drivers on the native stack.
       @force_lower_retry_driver_active = true
       @force_lower_retry_work << request
       progress = false
@@ -108348,6 +108345,7 @@ module Adamas::HIR
       ensure
         @force_lower_retry_driver_active = false
         @force_lower_retry_work.clear
+        @force_lower_discharged_edges.clear
       end
       progress && @module.has_function_with_body?(name) && !@force_lower_provisional_dependencies.has_key?(name)
     end
@@ -108357,41 +108355,38 @@ module Adamas::HIR
       current = @function_types[name]?
       dependencies = @force_lower_provisional_dependencies[name]?
       if env_has?("DEBUG_FORCE_LOWER_DEPTH")
-        STDERR.puts "[FORCE_LOWER_RETRY] name=#{name} type=#{current.try(&.id)} body=#{@module.has_function_with_body?(name)} retried=#{@force_lower_depth_retried.includes?(name)} deps=#{dependencies.try(&.join(","))} refused=#{refused.join(",")}"
+        STDERR.puts "[FORCE_LOWER_RETRY] name=#{name} type=#{current.try(&.id)} body=#{@module.has_function_with_body?(name)} deps=#{dependencies.try(&.join(","))} refused=#{refused.join(",")}"
       end
       provisional = dependencies && refused.any? { |callee| dependencies.includes?(callee) }
       return false unless current.nil? || current == TypeRef::VOID || provisional
       return false if provisional && function_has_explicit_return_annotation?(name)
-      return false if @force_lower_depth_retried.includes?(name)
       return false unless callee_is_yield_free?(name)
       return false unless @module.has_function_with_body?(name)
       return false if function_state(name).in_progress?
 
-      resolved_any = false
       work_mark = @force_lower_retry_work.size
-      refused.each do |callee|
-        next if callee == name
-        next if provisional && !dependencies.not_nil!.includes?(callee)
+      candidates = refused.reject { |callee| callee == name || (provisional && !dependencies.not_nil!.includes?(callee)) }
+      candidates.each do |callee|
         force_lower_function_for_return_type(callee, bypass_inline_yield: bypass_inline_yield)
-        callee_type = @function_types[callee]? || @module.function_by_name(callee).try(&.return_type)
-        resolved_any = true if callee_type && callee_type != TypeRef::VOID
       end
       if @force_lower_retry_work.size > work_mark
         # New child requests are on top of this continuation in the worklist.
         @force_lower_retry_work.insert(work_mark, request)
         return false
       end
-      return false unless resolved_any
       if provisional
-        return false unless dependencies.not_nil!.all? do |callee|
-          type = @module.function_by_name(callee).try(&.return_type)
-          @module.has_function_with_body?(callee) && type && type != TypeRef::VOID &&
-            !unresolved_generic_return_type?(type) && !@force_lower_provisional_dependencies.has_key?(callee)
-        end
+        return false unless dependencies.not_nil!.all? { |callee| settled_force_lower_result?(callee) }
       end
 
-      @force_lower_depth_retried << name
+      discharged = candidates.select do |callee|
+        !@force_lower_discharged_edges.includes?({name, callee}) && settled_force_lower_result?(callee)
+      end
+      return false if discharged.empty?
       return false unless remove_hir_function(name)
+      discharged.each { |callee| @force_lower_discharged_edges.add({name, callee}) }
+      if env_has?("DEBUG_FORCE_LOWER_DEPTH")
+        STDERR.puts "[FORCE_LOWER_DISCHARGED] consumer=#{name} producers=#{discharged.join(",")}"
+      end
       if provisional
         # Removing the HIR body does not invalidate the exact type cache. Do
         # not let the old guess answer the replay or overwrite sibling shapes.
@@ -108405,6 +108400,12 @@ module Adamas::HIR
       clear_function_state(name)
       replayed = force_lower_function_for_return_type(name, bypass_inline_yield: bypass_inline_yield)
       replayed && @module.has_function_with_body?(name) && !@force_lower_provisional_dependencies.has_key?(name)
+    end
+
+    private def settled_force_lower_result?(name : String) : Bool
+      function_state(name).completed? &&
+        exact_callsite_return_contract_materialized?(name) &&
+        !@force_lower_provisional_dependencies.has_key?(name)
     end
 
     # Returns true if the function is provably yield-free: no explicit &-param
@@ -112396,7 +112397,7 @@ module Adamas::HIR
       dependencies = @force_lower_provisional_dependencies[ctx.function.name] ||= Set(String).new
       dependencies << target
       if env_has?("DEBUG_FORCE_LOWER_DEPTH")
-        STDERR.puts "[FORCE_LOWER_PROVISIONAL] caller=#{ctx.function.name} callee=#{target} retried=#{@force_lower_depth_retried.includes?(ctx.function.name)}"
+        STDERR.puts "[FORCE_LOWER_PROVISIONAL] caller=#{ctx.function.name} callee=#{target}"
       end
     end
 
@@ -141016,6 +141017,18 @@ module Adamas::HIR
         lower_function_if_needed(actual_name)
       end
 
+      # An exact nilary member is an ordinary call, including inside an
+      # inline block. Use the existing yield-free force guard and record any
+      # refused result on the consumer before it can be embedded in a value.
+      member_return_def = @function_defs[actual_name]?
+      refused_before_member_force = @force_lower_depth_refused.size
+      if !call_virtual && !forced_return_type && resolved_method_name && actual_name == primary_name &&
+         (return_type == TypeRef::VOID || unresolved_generic_return_type?(return_type)) &&
+         selected_source_result_pending?(actual_name, member_return_def)
+        if force_lower_function_for_return_type(actual_name, bypass_inline_yield: true, pending_call_target_context: "member_access_exact")
+          return_type = get_function_return_type(actual_name, 0, member_return_def)
+        end
+      end
       if (return_type == TypeRef::VOID || is_union_type?(return_type) ||
           unresolved_generic_return_type?(return_type) ||
           !abstract_numeric_return_constraint_for_function(actual_name).nil?) &&
@@ -141028,6 +141041,8 @@ module Adamas::HIR
           return_type = refreshed
         end
       end
+
+      record_force_lower_result_dependency(ctx, actual_name, member_return_def, refused_before_member_force)
 
       if return_type == TypeRef::VOID
         return_type = get_function_return_type(actual_name, 0)

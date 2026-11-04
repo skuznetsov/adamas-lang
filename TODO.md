@@ -24695,3 +24695,24 @@ integration, fresh bootstrap, or LavinMQ parity.
   diagnostics separate from incomplete result discovery. Exercise both
   virtual and concrete consumers across sequential depth refusals before
   treating all call spellings as having one result owner.
+
+### 2026-11-04: Replay exact member-result dependencies
+
+- [x] Demand the exact unannotated result of a selected nilary member
+  from inline block lowering. When a depth refusal leaves the consumer
+  provisional, replay only after the recorded producers have completed
+  and published concrete return contracts. A replay can select a new
+  overload, so suppress repeated edges within the current retry driver
+  instead of suppressing the consumer for the whole compilation.
+- DoD: run `bash regression_tests/force_depth_return_dependency_repro.sh`
+  and `bash regression_tests/nilary_class_virtual_result_repro.sh` with
+  exact S1 35q1624 and the installed Crystal 1.22.1 stdlib. All 27
+  force-depth and 33 virtual-result cases passed. The parent rejects the
+  new NamedTuple consumer with a Pointer result. The trace for the
+  capture control confirms two successive dependencies of `View#details`
+  and Crystal-equivalent native output `CAU`.
+- [ ] Exercise same-symbol producer retirement within one retry driver
+  and longer dependency cycles before extending replay to other callers.
+  The repeat guard is symbolic and scoped to one worklist drain. It is
+  not evidence that a producer has completed or that any future drain
+  terminates with an unbounded set of specialization names.

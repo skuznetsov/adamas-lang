@@ -49,7 +49,8 @@ if [[ "$ORIGINAL_ONLY" != 1 && ! -x "$ADAMAS_BIN" ]]; then
   exit 2
 fi
 
-ALL_CASES=(payload int32 pointer nilable_payload sibling_shapes captured_provisional)
+ALL_CASES=(payload int32 pointer nilable_payload sibling_shapes captured_provisional
+  member_new_dependency member_new_dependency_parens member_direct_result)
 if [[ "$ONLY_CASES" == all ]]; then
   SELECTED_CASES=("${ALL_CASES[@]}")
 else
@@ -125,6 +126,73 @@ CRYSTAL
 write_source() {
   local name="$1"
   local path="$WORK_DIR/$name.cr"
+  case "$name" in
+    member_*)
+      # The first replay discovers the concrete merge overload only after
+      # measurements settles. Its result is a second exact dependency.
+      cat >"$path" <<'CRYSTAL'
+require "named_tuple"
+@[Link("gc")]
+lib LibC
+  fun putchar(value : Int32) : Int32
+end
+
+class Stats
+  @code : Int32
+
+  def initialize(@code : Int32)
+  end
+
+  def details
+    {code: @code}
+  end
+
+  def sample(&)
+    yield @code
+  end
+
+  def measurements
+    count = 0_u64
+    sample { |x| count = x.to_u64! }
+    {measurements: {count: count}}
+  end
+end
+
+struct View
+  def initialize(@stats : Stats)
+  end
+
+  def details
+    @stats.details.merge(@stats.measurements)
+  end
+end
+
+def show_stats(tuple : NamedTuple)
+  LibC.putchar(tuple[:code])
+  LibC.putchar(tuple[:measurements][:count] == 65_u64 ? 85 : 88)
+end
+
+def once(&)
+  yield
+end
+
+def show(view : View)
+  once { show_stats(view.details) }
+end
+
+show(View.new(Stats.new(65)))
+LibC.putchar(10)
+CRYSTAL
+      if [[ "$name" == member_new_dependency_parens ]]; then
+        sed 's/show_stats(view.details)/show_stats(view.details())/' "$path" >"$path.expanded"
+        mv -- "$path.expanded" "$path"
+      elif [[ "$name" == member_direct_result ]]; then
+        sed 's/once { show_stats(view.details) }/show_stats(view.details)/' "$path" >"$path.expanded"
+        mv -- "$path.expanded" "$path"
+      fi
+      return
+      ;;
+  esac
   cat >"$path" <<'CRYSTAL'
 @[Link("c")]
 lib ForceDepthNative
@@ -325,6 +393,7 @@ for name in "${SELECTED_CASES[@]}"; do
     nilable_payload) expected=NpNn ;;
     sibling_shapes) expected=IABC ;;
     captured_provisional) expected=BPp ;;
+    member_*) expected=AU ;;
   esac
 
   binary="$(compile_one original "$name" "$ORIGINAL_CRYSTAL_BIN")"
