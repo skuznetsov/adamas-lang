@@ -11841,11 +11841,21 @@ module Adamas::HIR
       same_protected_namespace?(current_base, owner_base)
     end
 
-    private alias CallVisibilitySite = {LoweringContext, Adamas::Compiler::Frontend::CallNode, Adamas::Compiler::Frontend::Node, ValueId, String, Bool, Int32}
+    private record CallVisibilitySite,
+      context : LoweringContext,
+      call : Adamas::Compiler::Frontend::CallNode,
+      callee : Adamas::Compiler::Frontend::Node,
+      receiver : ValueId?,
+      method_name : String,
+      explicit_self : Bool,
+      arg_count : Int32,
+      static_receiver : String? = nil
 
     private def validate_call_visibility!(site : CallVisibilitySite, target_name : String, source_def : Adamas::Compiler::Frontend::DefNode) : Nil
-      ctx, node, callee_node, receiver_id, method_name, explicit_self, arg_count = site
-      validate_call_visibility!(ctx, node, callee_node, receiver_id, method_name, target_name, explicit_self, arg_count, source_def: source_def)
+      validate_call_visibility!(
+        site.context, site.call, site.callee, site.receiver, site.method_name, target_name,
+        site.explicit_self, site.arg_count, source_def: source_def, static_receiver: site.static_receiver,
+      )
     end
 
     private def validate_call_visibility!(
@@ -11858,8 +11868,9 @@ module Adamas::HIR
       explicit_self_receiver : Bool,
       call_arg_count : Int32,
       source_def : Adamas::Compiler::Frontend::DefNode? = nil,
+      static_receiver : String? = nil,
     ) : Nil
-      return unless receiver_id
+      return unless receiver_id || static_receiver
       return unless callee_node.is_a?(Adamas::Compiler::Frontend::MemberAccessNode)
       return if explicit_self_receiver
 
@@ -11872,7 +11883,7 @@ module Adamas::HIR
 
       case visibility
       when Adamas::Compiler::Frontend::Visibility::Private
-        receiver_type = get_type_name_from_ref(ctx.type_of(receiver_id.not_nil!))
+        receiver_type = receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "#{static_receiver}.class"
         STDERR.puts "[VIS_RAISE] target=#{target_name} recv=#{receiver_type} func=#{ctx.function.name} cur_class=#{@current_class || ""} cur_method=#{@current_method || ""} span=#{node.span.start_offset}:#{node.span.end_offset}" if env_get("DEBUG_VIS_RAISE")
         raise LoweringError.new("private method '#{method_name}' called for #{receiver_type}", node)
       when Adamas::Compiler::Frontend::Visibility::Protected
@@ -11881,7 +11892,7 @@ module Adamas::HIR
         if current = @current_namespace_override || @current_class
           return if has_protected_access_to?(current, owner_name)
         end
-        receiver_type = get_type_name_from_ref(ctx.type_of(receiver_id.not_nil!))
+        receiver_type = receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "#{static_receiver}.class"
         STDERR.puts "[VIS_RAISE] target=#{target_name} recv=#{receiver_type} func=#{ctx.function.name} cur_class=#{@current_class || ""} cur_method=#{@current_method || ""} owner=#{owner_name} span=#{node.span.start_offset}:#{node.span.end_offset}" if env_get("DEBUG_VIS_RAISE")
         raise LoweringError.new("protected method '#{method_name}' called for #{receiver_type}", node)
       end
@@ -39722,6 +39733,7 @@ module Adamas::HIR
                                        elsif use_specialized_runtime_param_types &&
                                           !param.is_block && !param.is_splat && !param.is_double_splat &&
                                           (should_use_exact_call_type_for_local_inference?(param_type, call_type_for_param) ||
+                                           exact_bound_reference_callsite_type?(full_name_override, node, call_types, param_type, call_type_for_param) ||
                                           should_use_exact_call_type_for_annotation?(raw_type_ann_str || type_ann_str, call_type_for_param))
                                          call_type_for_param
                                        else
@@ -49048,6 +49060,7 @@ module Adamas::HIR
                                        elsif use_specialized_runtime_param_types &&
                                           !param.is_block && !param.is_splat && !param.is_double_splat &&
                                           (should_use_exact_call_type_for_local_inference?(param_type, call_type_for_param) ||
+                                           exact_bound_reference_callsite_type?(effective_full_name_override, node, call_types, param_type, call_type_for_param) ||
                                           should_use_exact_call_type_for_annotation?(raw_type_ann_str || type_ann_str, call_type_for_param) ||
                                           (@string_builder_formatting_corridor_depth > 0 &&
                                           string_builder_formatting_shape?(method_name, raw_type_ann_str || type_ann_str, call_type_for_param)))
@@ -82321,6 +82334,7 @@ module Adamas::HIR
             exact_runtime_param_type = if use_specialized_runtime_param_types &&
                                           !param.is_block && !param.is_splat && !param.is_double_splat &&
                                           (should_use_exact_call_type_for_local_inference?(param_type, call_type_for_param) ||
+                                           exact_bound_reference_callsite_type?(full_name_override, node, call_types, param_type, call_type_for_param) ||
                                            should_use_exact_call_type_for_annotation?(has_type_ann_str ? type_ann_str : nil, call_type_for_param))
                                          call_type_for_param
                                        else
@@ -117507,7 +117521,7 @@ module Adamas::HIR
                          ctx, receiver_id, "#{receiver_name}##{method_name}", nil,
                          args, explicit_arg_types, TypeRef::VOID, false, false, false, false,
                          require_source_compatible_variants: true,
-                         visibility_site: {ctx, node, callee_node, receiver_id, method_name, explicit_self_receiver, args.size},
+                         visibility_site: CallVisibilitySite.new(ctx, node, callee_node, receiver_id, method_name, explicit_self_receiver, args.size),
                        )
                       return dispatched
                     end
@@ -119552,6 +119566,10 @@ module Adamas::HIR
                  ctx, receiver_id, base_method_name, mangled_method_name,
                  args, arg_types, TypeRef::VOID, false, false, false, false,
                  require_source_compatible_variants: true,
+                 visibility_site: CallVisibilitySite.new(
+                   ctx, node, callee_node, receiver_id, method_name, explicit_self_receiver,
+                   args.size, class_literal_receiver_name || static_class_name,
+                 ),
                )
               return dispatched
             end
@@ -121693,7 +121711,7 @@ module Adamas::HIR
               type_desc.name, method_name, arg_types, has_block_call, has_splat,
               include_nil: strict_nilary,
               strict_nilary_site: strict_nilary ? node : nil,
-              visibility_site: strict_nilary ? {ctx, node, callee_node, receiver_id, method_name, explicit_self_receiver, args.size} : nil,
+              visibility_site: strict_nilary ? CallVisibilitySite.new(ctx, node, callee_node, receiver_id, method_name, explicit_self_receiver, args.size) : nil,
             )
             if inferred_virtual_return != TypeRef::VOID
               return_type = inferred_virtual_return
@@ -122691,7 +122709,11 @@ module Adamas::HIR
       if (!call_virtual || class_union_receiver) && block_id.nil? && block_expr.nil?
         if uad = try_emit_union_arg_dispatch(ctx, receiver_id, base_method_name,
              mangled_method_name, args, arg_types, return_type, has_block_call,
-             has_splat, splat_packed, has_named_args)
+             has_splat, splat_packed, has_named_args,
+             visibility_site: CallVisibilitySite.new(
+               ctx, node, callee_node, receiver_id, method_name, explicit_self_receiver,
+               args.size, class_literal_receiver_name || static_class_name,
+             ))
           return uad
         end
         unless call_virtual
@@ -123556,31 +123578,81 @@ module Adamas::HIR
       end
     end
 
-    # Source admission and body scheduling are separate. For a full positional
-    # call whose annotations exactly describe the scalar ABI, infer its result
-    # in the selected declaration's environment without recursive body lowering.
-    # Broader restrictions, omitted/default slots, blocks, and splats still need
-    # a materialized target; they do not acquire an ABI by this fallback.
+    # Only a fully bound positional declaration may supply a deferred arm's
+    # ABI. A nominal reference restriction admits the concrete subtype but
+    # does not determine the type of that parameter in the specialized body.
+    private def union_variant_positional_parameter_types(
+      name : String,
+      source_def : Adamas::Compiler::Frontend::DefNode,
+      argument_types : Array(TypeRef),
+    ) : Array(TypeRef)?
+      return nil unless @function_defs[name]?.try(&.same?(source_def))
+      stats = function_param_stats(name, source_def)
+      return nil if stats.has_block || stats.has_splat || stats.has_double_splat || stats.has_named_only
+      params = function_param_infos(source_def)
+      return nil unless params.size == argument_types.size
+
+      with_union_variant_declaration_context(name, function_context_from_name(name)) do |declaration_context|
+        params.map_with_index do |param, index|
+          annotation_name = param.type_annotation
+          return nil unless annotation_name && !annotation_name.empty?
+          declared_type = annotation_type_ref(annotation_name, declaration_context)
+          return nil if declared_type == TypeRef::VOID || declared_type.null_ptr?
+          actual_type = argument_types[index]
+          return nil unless actual_type == declared_type || receiver_repair_class_upcast?(actual_type, declared_type)
+          declared_type
+        end
+      end
+    end
+
+    private def specialize_union_variant_reference_arguments(
+      source_name : String,
+      source_def : Adamas::Compiler::Frontend::DefNode,
+      argument_types : Array(TypeRef),
+    ) : String?
+      declared_types = union_variant_positional_parameter_types(source_name, source_def, argument_types)
+      return nil unless declared_types && declared_types != argument_types
+      source_arena = @function_def_arenas[source_name]?
+      return nil unless source_arena
+
+      base = strip_type_suffix(source_name)
+      target = mangle_function_name(base, argument_types)
+      return target if target == source_name
+
+      bind_exact_source_call_target(target, source_name, source_def, source_arena, binding_context: "union argument")
+      if namespace = function_namespace_override_for(source_name, base)
+        store_function_namespace_override(target, base, namespace, store_base: false)
+      end
+      if bindings = function_type_param_map_for_name(source_name)
+        record_pending_type_param_map(target, bindings)
+      end
+      target
+    end
+
+    # Prove that the physical name and selected source both own this exact
+    # call-site type. A shared or parent-typed body keeps its declared ABI.
+    private def exact_bound_reference_callsite_type?(
+      name : String?,
+      source_def : Adamas::Compiler::Frontend::DefNode,
+      call_types : Array(TypeRef),
+      declared_type : TypeRef,
+      actual_type : TypeRef,
+    ) : Bool
+      return false unless name && actual_type != declared_type && actual_type != TypeRef::VOID
+      return false unless receiver_repair_class_upcast?(actual_type, declared_type)
+      return false unless @function_defs[name]?.try(&.same?(source_def))
+      name == mangle_function_name(strip_type_suffix(name), call_types)
+    end
+
     private def deferred_union_variant_return_type(
       name : String,
       source_def : Adamas::Compiler::Frontend::DefNode,
       argument_types : Array(TypeRef),
       receiver_type : TypeRef?,
     ) : TypeRef?
-      return nil unless @function_defs[name]?.try(&.same?(source_def))
       return nil unless name == mangle_function_name(strip_type_suffix(name), argument_types)
-      stats = function_param_stats(name, source_def)
-      return nil if stats.has_block || stats.has_splat || stats.has_double_splat || stats.has_named_only
-      params = function_param_infos(source_def)
-      return nil unless params.size == argument_types.size
+      return nil unless union_variant_positional_parameter_types(name, source_def, argument_types)
       with_union_variant_declaration_context(name, function_context_from_name(name)) do |declaration_context|
-        params.each_with_index do |param, index|
-          annotation_name = param.type_annotation
-          return nil unless annotation_name
-          return nil if annotation_name.empty?
-          declared_type = annotation_type_ref(annotation_name, declaration_context)
-          return nil if declared_type == TypeRef::VOID || declared_type != argument_types[index]
-        end
         result = resolve_return_type_from_def(name, strip_type_suffix(name), receiver_type, argument_types.size, source_def)
         result ||= infer_return_type_from_callsite_inner(
           source_def, declaration_context, argument_types, nil,
@@ -123900,7 +123972,13 @@ module Adamas::HIR
       {name, selected}
     end
 
-    # Union arg dispatch: when an arg is union with distinct typed overloads
+    private record UnionCallArgument,
+      index : Int32,
+      type : TypeRef,
+      variants : Array(Tuple(TypeRef, Int32))
+
+    # Prove the whole product of union argument arms before emitting any
+    # branches. Every leaf calls the overload selected for its scalar types.
     private def try_emit_union_arg_dispatch(
       ctx : LoweringContext, receiver_id : ValueId?, base_method_name : String,
       mangled_method_name : String?, args : Array(ValueId), arg_types : Array(TypeRef),
@@ -123909,41 +123987,40 @@ module Adamas::HIR
       require_source_compatible_variants : Bool = false,
       visibility_site : CallVisibilitySite? = nil,
     ) : ValueId?
-      ui = -1
-      ut = TypeRef::VOID
-      args.each_with_index do |_, idx|
-        next if idx >= arg_types.size
-        at = arg_types[idx]
-        next if at == TypeRef::VOID
-        if is_union_type?(at)
-          d = @module.get_type_descriptor(at)
-          next unless d
-          # Dispatch over every member in the declared union. Dropping Nil
-          # from larger unions makes the fallback arm unreachable for Nil and
-          # sends it to the last non-Nil overload.
-          raw_vs = split_union_type_name(d.name)
-          vs = raw_vs
-          if vs.size >= 2
-            ui = idx; ut = at; break
+      # The arm resolver lacks the source-name list for keyword binding.
+      return nil if call_has_named_args || has_block_call
+      union_arguments = [] of UnionCallArgument
+      args.each_with_index do |arg, index|
+        next unless (type = arg_types[index]?) && type != TypeRef::VOID && is_union_type?(type)
+        next unless desc = @module.get_type_descriptor(type)
+        names = split_union_type_name(desc.name)
+        next if names.size < 2
+        # Earlier argument coercion can change the carrier and its tags.
+        return nil unless ctx.type_of(arg) == type
+        variants = names.map do |name|
+          variant = type_ref_for_name(name)
+          return nil if variant == TypeRef::VOID
+          tag = get_union_variant_id(type, variant)
+          return nil if tag < 0
+          {variant, tag}
+        end
+        union_arguments << UnionCallArgument.new(index, type, variants)
+      end
+      return nil if union_arguments.empty?
+      if union_arguments.size > 1
+        return nil if call_has_splat || call_splat_packed
+        require_source_compatible_variants = true
+      end
+      rows = [{arg_types, [] of Int32}]
+      union_arguments.each do |argument|
+        rows = rows.flat_map do |(types, tags)|
+          argument.variants.map do |(variant, tag)|
+            scalar_types = types.dup
+            scalar_types[argument.index] = variant
+            {scalar_types, tags + [tag]}
           end
         end
       end
-      return nil if ui < 0
-      # `arg_types` is captured before lower_call coerces arguments to the
-      # initially selected overload. If that coercion widened this value to a
-      # different union, the discriminator ids below belong to the stale type.
-      # Leave such calls to ordinary lowering instead of testing/unwrapping
-      # with a descriptor that no longer matches the HIR value.
-      return nil if ui >= args.size || ctx.type_of(args[ui]) != ut
-      # The arm resolver below lacks the source-name list needed to preserve
-      # named-argument binding, and a block is not part of this fanout call.
-      # Let the ordinary call path handle those shapes.
-      return nil if call_has_named_args || has_block_call
-      d = @module.get_type_descriptor(ut)
-      return nil unless d
-      raw_vs = split_union_type_name(d.name)
-      vs = raw_vs
-      return nil if vs.size < 2
       bfm = strip_type_suffix(base_method_name)
       class_receiver_virtual = false
       # The whole-union lookup may have selected an inherited fallback whose
@@ -123963,7 +124040,7 @@ module Adamas::HIR
           end
         end
       end
-      vo = [] of {String, TypeRef, Int32}
+      vo = [] of {String, Array(TypeRef), Array(Int32)}
       # If the last arg is an empty Tuple() coming from empty-splat padding,
       # also try a variant lookup that drops it. The actual call site had no
       # extra args, so the right per-variant overload is the non-splat one
@@ -123988,15 +124065,10 @@ module Adamas::HIR
       # checking the target, so the normal dispatch below can call concrete
       # `Owner.new$Variant` functions. Keep this special allocator synthesis
       # limited to the exact Nil|T constructor shape.
-      synthetic_nilable_allocator = bfm.ends_with?(".new") &&
-                                    raw_vs.size == 2 && raw_vs.includes?("Nil")
-      vs.each do |vn|
-        vr = type_ref_for_name(vn)
-        next if vr == TypeRef::VOID
-        vid = get_union_variant_id(ut, vr)
-        next if vid < 0
-        vat = arg_types.dup
-        vat[ui] = vr
+      synthetic_nilable_allocator = bfm.ends_with?(".new") && union_arguments.size == 1 &&
+                                    union_arguments.first.variants.size == 2 &&
+                                    union_arguments.first.variants.any? { |(type, _)| type == TypeRef::NIL }
+      rows.each do |(vat, tags)|
         vm = mangle_function_name(bfm, vat, has_block_call)
         variant_source_name = vm
         variant_source_def = @function_defs[vm]?
@@ -124077,6 +124149,13 @@ module Adamas::HIR
           end
         end
 
+        if require_source_compatible_variants && !class_receiver_virtual &&
+           !call_has_splat && !call_splat_packed && !drop_for_this && variant_source_def
+          if exact_target = specialize_union_variant_reference_arguments(variant_source_name, variant_source_def, vat)
+            vm = exact_target
+          end
+        end
+
         has_unresolved_variant_target ||= !(@function_types.has_key?(vm) ||
                                              @function_defs.has_key?(vm) ||
                                              @module.has_function?(vm))
@@ -124092,13 +124171,12 @@ module Adamas::HIR
           end
           variant_source_defs << {variant_source_name, variant_source_def}
         end
-        vo << {vm, vr, vid}
+        vo << {vm, vat, tags}
         vo_drop << drop_for_this
       end
       # Do not emit a partial dispatch if any declared union arm has no
       # resolvable concrete target/type id. The final branch is the checked
       # fallback only after every arm has been represented here.
-      return nil if vo.size != vs.size
       return nil if vo.size < 2
       return nil if vo.map { |i| i[0] }.uniq.size < 2
       if has_unresolved_variant_target
@@ -124127,18 +124205,14 @@ module Adamas::HIR
           validate_call_visibility!(visibility_site, source_name, source_def)
         end
       end
-      vo.each do |method_name, variant_type, _|
+      vo.each do |method_name, arm_types, _|
         if class_receiver_virtual && (receiver = receiver_id)
-          arm_types = arg_types.dup
-          arm_types[ui] = variant_type
           ensure_virtual_call_targets_lowered(
             ctx, receiver, method_short_from_name(bfm) || bfm, arm_types,
             has_block_call, call_has_splat, call_has_named_args, call_splat_packed,
           )
         end
         if require_source_compatible_variants
-          arm_types = arg_types.dup
-          arm_types[ui] = variant_type
           with_union_variant_declaration_context(method_name, function_context_from_name(method_name)) do
             remember_callsite_arg_types(method_name, arm_types)
             lower_function_if_needed(method_name)
@@ -124156,17 +124230,14 @@ module Adamas::HIR
       end
       variant_return_types = [] of TypeRef
       deferred_variant_defs = [] of Adamas::Compiler::Frontend::DefNode?
-      vo.each_with_index do |(method_name, variant_type, _), index|
+      vo.each_with_index do |(method_name, arm_types, _), index|
         target = @module.function_by_name(method_name)
         deferred_def = nil.as(Adamas::Compiler::Frontend::DefNode?)
         target_return = TypeRef::VOID
         if target && @module.has_function_with_body?(method_name)
           target_return = target.return_type
         elsif require_source_compatible_variants && !class_receiver_virtual && !call_has_splat && !vo_drop[index]
-          arm_types = arg_types.dup
-          arm_types[ui] = variant_type
-          source_name, source_def = variant_source_defs[index]
-          return nil unless source_name == method_name
+          _, source_def = variant_source_defs[index]
           inferred = deferred_union_variant_return_type(
             method_name, source_def, arm_types,
             receiver_id ? ctx.type_of(receiver_id.not_nil!) : nil,
@@ -124178,8 +124249,6 @@ module Adamas::HIR
           return nil
         end
         if class_receiver_virtual && (receiver = receiver_id)
-          arm_types = arg_types.dup
-          arm_types[ui] = variant_type
           receiver_name = get_type_name_from_ref(ctx.type_of(receiver))
           virtual_return = infer_virtual_return_type_from_class_targets(
             receiver_name, method_short_from_name(bfm) || bfm, arm_types,
@@ -124210,42 +124279,51 @@ module Adamas::HIR
           return nil
         end
       end
-      ua = args[ui]
       pb = ctx.save_locals
       entry_cell_proofs = ctx.closure_cell_write_proofs_on(ctx.current_block)
       merge = ctx.create_block
       phi_inputs = [] of {BlockId, ValueId}
 
-      # Each test selects one union discriminator. The final arm is the
-      # fallback after all earlier variants have failed; union values are
-      # guaranteed to carry one of the descriptor's variant ids. `ua` is an
-      # already-lowered ValueId, so branching never reevaluates the source
-      # argument expression.
-      vo.each_with_index do |(method_name, variant_type, variant_id), idx|
+      # The last tuple is the fallback after all other tuples failed.
+      # Discriminators read the existing operands, so argument expressions
+      # are evaluated only once.
+      vo.each_with_index do |(method_name, arm_types, tags), idx|
         next_block : BlockId? = nil
         if idx < vo.size - 1
-          test = UnionIs.new(ctx.next_id, ua, variant_id, ut)
-          ctx.emit(test); ctx.register_type(test.id, TypeRef::BOOL)
+          condition = nil.as(ValueId?)
+          union_arguments.each_with_index do |argument, tag_index|
+            test = UnionIs.new(ctx.next_id, args[argument.index], tags[tag_index], argument.type)
+            ctx.emit(test)
+            ctx.register_type(test.id, TypeRef::BOOL)
+            if prior = condition
+              combined = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::And, prior, test.id)
+              ctx.emit(combined)
+              ctx.register_type(combined.id, TypeRef::BOOL)
+              condition = combined.id
+            else
+              condition = test.id
+            end
+          end
           arm_block = ctx.create_block
           next_block = ctx.create_block
-          ctx.terminate(Branch.new(test.id, arm_block, next_block))
+          ctx.terminate(Branch.new(condition.not_nil!, arm_block, next_block))
           ctx.current_block = arm_block
           ctx.restore_locals(pb)
         end
 
-        variant_arg = if variant_type == TypeRef::NIL
-                        # Nil has no payload in the Nilable ABI. Pass a literal
-                        # Nil so the selected overload receives its scalar ABI.
-                        nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
-                        ctx.emit(nil_lit); ctx.register_type(nil_lit.id, TypeRef::NIL)
-                        nil_lit.id
-                      else
-                        unwrapped = UnionUnwrap.new(ctx.next_id, variant_type, ua, variant_id, false)
-                        ctx.emit(unwrapped); ctx.register_type(unwrapped.id, variant_type)
-                        unwrapped.id
-                      end
         branch_args = args.dup
-        branch_args[ui] = variant_arg
+        union_arguments.each_with_index do |argument, tag_index|
+          index = argument.index
+          variant = arm_types[index]
+          value = if variant == TypeRef::NIL
+                    Literal.new(ctx.next_id, TypeRef::NIL, nil)
+                  else
+                    UnionUnwrap.new(ctx.next_id, variant, args[index], tags[tag_index], false)
+                  end
+          ctx.emit(value)
+          ctx.register_type(value.id, variant)
+          branch_args[index] = value.id
+        end
         branch_args = branch_args[0, branch_args.size - 1] if vo_drop[idx] && branch_args.size > 1
         if call_has_splat && !call_splat_packed
           packed = pack_splat_args_for_call(

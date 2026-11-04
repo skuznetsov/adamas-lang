@@ -23125,11 +23125,20 @@ integration, fresh bootstrap, or LavinMQ parity.
   inactive macro branches, and the source order of explicit superclasses.
   The combined q1589 LavinMQ HIR run passes the AMQP frame call and stops at
   `LavinMQ::Policy.merge_definitions` with two nullable arguments.
-- [ ] Resolve overloads for every tuple of union argument variants. A
-  no-prelude reduction of `Policy.merge_definitions` covers all four
-  `Policy?` and `OperatorPolicy?` combinations in Crystal. Exact q1588
-  rejects the complete family for both class and instance methods. Preserve
-  the rejection when one combination has no source overload.
+- [x] Resolve source overloads for the complete product of positional union
+  arguments. Keep each arm's exact declaration and concrete reference
+  argument types through deferred body lowering and validate the result ABI
+  before MIR. Exact q1598 matches Crystal 1.22.1 on all 20 native and
+  diagnostic checks in both lazy and eager lowering. The same selected declaration sees distinct `typeof`
+  results for parent and subtype arguments. The parent rejects the complete
+  family, and the intermediate q1596 parent-ABI variant changes the result.
+  The combined q1599 LavinMQ HIR run passes `Policy.merge_definitions`.
+- [ ] Extend union argument dispatch evidence to named and yielding calls.
+  Probe exact argument binding and closure effects separately. Measure the
+  generated CFG on wide union products before changing its shape.
+- [ ] Trace the nilary virtual result for `Exchange#details_tuple`. Combined
+  q1599 publishes Void for this call, then the `compact_map` result retains
+  `Array(Exchange)` and its consumer rejects the element at `dig`.
 
 ## 2026-11-04 — Respect the source owner of nested next
 
