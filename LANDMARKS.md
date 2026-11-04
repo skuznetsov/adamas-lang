@@ -23236,3 +23236,19 @@ an Unknown context argument. Included default selection, method-returned
 class values, named and splatted calls, and native LavinMQ remain open.
 Refresh after changes to source value production, resolver memo identity,
 overload ranking, default binding, or declaration keys.
+
+### Own the integer iterator body frame
+
+An error in an inline `upto` or `downto` body left its lexical Block
+and break records active. The outer inline-yield scope check then
+replaced the incompatible call diagnostic. Both iterators now share the
+`times` ownership boundary for the body, break records, and loop stacks.
+Backedge values are sampled before the body scope restores its locals.
+
+The parent loses the diagnostic in the no-prelude `upto` reducer.
+Crystal 1.22.1 and exact lazy and eager Adamas agree on all six loop
+forms in the loop body frame gate (35q1316). Installed-prelude hello
+and the native integer boundary iterator probe pass. A separate
+`unless` branch scope remains open in the broader exact-result replay
+experiment (35q1317). Refresh after changes to intrinsic loop scopes,
+non-local exits, or inline backedge state.

@@ -11,17 +11,21 @@ trap 'rm -rf -- "$WORK"' EXIT
 export CRYSTAL_CACHE_DIR="$WORK/cache"
 unset ADAMAS_EAGER_HIR ADAMAS_EAGER_MONO
 
-forms=(loop while until times)
+forms=(loop while until times upto downto)
 for form in "${forms[@]}"; do
   case "$form" in
     loop) header="loop do" ;;
     while) header="while true" ;;
     until) header="until false" ;;
     times) header="2.times do |index|" ;;
+    upto) header="0.upto(1) do |index|" ;;
+    downto) header="1.downto(0) do |index|" ;;
   esac
   for kind in valid invalid; do
     argument=0
-    if [[ "$form" == times ]]; then argument=index; fi
+    case "$form" in
+      times|upto|downto) argument=index ;;
+    esac
     if [[ "$kind" == invalid ]]; then argument=false; fi
     sed -e "s/LOOP_HEADER/$header/" -e "s/CALL_ARGUMENT/$argument/" \
       "$ROOT/regression_tests/fixtures/loop_body_frame.cr" >"$WORK/$form.$kind.cr"

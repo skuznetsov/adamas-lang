@@ -17,6 +17,24 @@ struct Int32
     end
     self
   end
+
+  def upto(limit : Int32, &)
+    index = self
+    while index <= limit
+      yield index
+      index &+= 1
+    end
+    self
+  end
+
+  def downto(limit : Int32, &)
+    index = self
+    while index >= limit
+      yield index
+      index &-= 1
+    end
+    self
+  end
 end
 
 module Accept(T)

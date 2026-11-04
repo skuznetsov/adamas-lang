@@ -24248,6 +24248,12 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [x] Unwind the intrinsic `Int#times` body scope and break bookkeeping
   on the same rejected-call path. The extended gate passes on Crystal
   1.22.1 and exact lazy and eager Adamas (35q1282).
+- [x] Give `times`, `upto`, and `downto` the same owned body frame.
+  A failed callback now retains its source type error in all three
+  iterators (35q1316).
+- [ ] Audit other iterator intrinsics whose Block scopes are popped
+  only on success, including array iteration. Qualify each exposed
+  unwind path with a rejected call nested inside inline lowering.
 - [x] Capture the lexical yield target when an inlined callback is
   materialized while its own substitution slot is active. The generic Box
   and installed StaticArray union map oracles match Crystal (35q1286).

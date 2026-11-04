@@ -129725,40 +129725,11 @@ module Adamas::HIR
 
         # Body block
         ctx.current_block = body_block
-        body_scope = ctx.push_scope(ScopeKind::Block)
-        break_info = [] of {BlockId, Hash(String, ValueId)}
-        begin
+        body_exit_block, body_exit_outer_vals, break_info = with_integer_loop_body_frame(
+          ctx, block, incr_block, exit_block, incr_phi_nodes, assigned_vars, phi_nodes, inline_vars,
+        ) do
           register_inline_block_parameter(ctx, param_name, counter_phi.id, block)
-
-          # Restore the loop bookkeeping before reading the backedge snapshot.
-          pushed_inline = false
-          unless inline_vars.empty?
-            @inline_loop_vars_stack << inline_vars
-            pushed_inline = true
-            reset_inline_loop_backedge_values(inline_vars)
-          end
-          @loop_exit_stack << exit_block
-          @loop_cond_stack << incr_block
-          @loop_inline_next_depth_stack << @inline_next_stack.size
-          @loop_phi_stack << incr_phi_nodes
-          @loop_break_info_stack << break_info
-          begin
-            lower_body(ctx, block.body)
-          ensure
-            @inline_loop_vars_stack.pop if pushed_inline
-            @loop_exit_stack.pop
-            @loop_cond_stack.pop
-            @loop_inline_next_depth_stack.pop
-            @loop_phi_stack.pop
-            @loop_break_info_stack.pop
-          end
-          body_exit_outer_vals = snapshot_block_scope_phi_values(ctx, assigned_vars, phi_nodes)
-          body_exit_block = ctx.current_block
-        ensure
-          unless ctx.current_scope == body_scope
-            raise LoweringError.new("times body lost its owned Block scope", block)
-          end
-          ctx.pop_scope
+          lower_body(ctx, block.body)
         end
 
         # Jump to increment block
@@ -129830,6 +129801,48 @@ module Adamas::HIR
         nil_lit.id
       ensure
         @arena = old_arena
+      end
+    end
+
+    # An integer iterator owns its body scope and control-flow stacks.
+    private def with_integer_loop_body_frame(
+      ctx : LoweringContext,
+      block : Adamas::Compiler::Frontend::BlockNode,
+      next_block : BlockId,
+      exit_block : BlockId,
+      next_phi_nodes : Hash(String, Phi),
+      assigned_vars : Array(String),
+      header_phi_nodes : Hash(String, Phi),
+      inline_vars : Set(String),
+      &
+    )
+      body_scope = ctx.push_scope(ScopeKind::Block)
+      break_info = [] of {BlockId, Hash(String, ValueId)}
+      begin
+        has_inline_vars = !inline_vars.empty?
+        @inline_loop_vars_stack << inline_vars if has_inline_vars
+        @loop_exit_stack << exit_block
+        @loop_cond_stack << next_block
+        @loop_inline_next_depth_stack << @inline_next_stack.size
+        @loop_phi_stack << next_phi_nodes
+        @loop_break_info_stack << break_info
+        begin
+          reset_inline_loop_backedge_values(inline_vars) if has_inline_vars
+          yield
+        ensure
+          @loop_break_info_stack.pop
+          @loop_phi_stack.pop
+          @loop_inline_next_depth_stack.pop
+          @loop_cond_stack.pop
+          @loop_exit_stack.pop
+          @inline_loop_vars_stack.pop if has_inline_vars
+        end
+        {ctx.current_block, snapshot_block_scope_phi_values(ctx, assigned_vars, header_phi_nodes), break_info}
+      ensure
+        unless ctx.current_scope == body_scope
+          raise LoweringError.new("integer iterator body lost its owned Block scope", block)
+        end
+        ctx.pop_scope
       end
     end
 
@@ -129910,32 +129923,12 @@ module Adamas::HIR
       ctx.terminate(Branch.new(cmp.id, body_block, exit_block))
 
       ctx.current_block = body_block
-      ctx.push_scope(ScopeKind::Block)
-      register_inline_block_parameter(ctx, param_name, iter_phi.id, block)
-      pushed_inline = false
-      if !inline_vars.empty?
-        @inline_loop_vars_stack << inline_vars
-        pushed_inline = true
-        reset_inline_loop_backedge_values(inline_vars)
-      end
-      @loop_exit_stack << exit_block
-      @loop_cond_stack << incr_block
-      @loop_inline_next_depth_stack << @inline_next_stack.size
-      @loop_phi_stack << incr_phi_nodes
-      @loop_break_info_stack << [] of {BlockId, Hash(String, ValueId)}
-      begin
+      body_exit_block, body_exit_outer_vals, break_info = with_integer_loop_body_frame(
+        ctx, block, incr_block, exit_block, incr_phi_nodes, assigned_vars, phi_nodes, inline_vars,
+      ) do
+        register_inline_block_parameter(ctx, param_name, iter_phi.id, block)
         lower_body(ctx, block.body)
-      ensure
-        @inline_loop_vars_stack.pop? if pushed_inline
-        @loop_exit_stack.pop?
-        @loop_cond_stack.pop?
-        @loop_inline_next_depth_stack.pop?
-        @loop_phi_stack.pop?
       end
-      break_info = @loop_break_info_stack.pop
-      body_exit_outer_vals = snapshot_block_scope_phi_values(ctx, assigned_vars, phi_nodes)
-      body_exit_block = ctx.current_block
-      ctx.pop_scope
       ctx.terminate_if_open(Jump.new(incr_block))
 
       ctx.current_block = incr_block
