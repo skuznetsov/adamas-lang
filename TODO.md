@@ -22612,10 +22612,19 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   and this candidate. Keep that resolver producer separate from the selected
   callback contract. Array literal child kinds and terminal ensure control-flow
   remain separate falsifiers, not claims closed by these tests.
-- [ ] LavinMQ currently reaches Log.for(self) in a deferred constant initializer.
-  The initializer records its namespace name but does not bind lexical self as
-  a class/module value. Keep this next producer fix separate from source callback
-  closure. Process.new, bootstrap and LavinMQ test parity remain open.
+- [x] Lower explicit self as the lexical class or module value of a deferred
+  constant initializer. Crystal 1.22.1 and exact lazy and eager Adamas agree
+  on class, module, nested owner, and ordinary instance receivers (35q1308).
+- [ ] Preserve the producer's value kind through ordinary overload selection.
+  LavinMQ still rejects Log.for(self). A class value forwarded through an
+  untyped helper can lose its method owner, and default argument replay
+  needs the same class versus instance distinction (35q1292, 35q1308).
+- [ ] Resolve inherited methods on the Class metaclass for explicit and
+  infix calls. Stock Crystal selects Class.| for Int32 and UInt8. Adamas
+  treats the infix call as integer arithmetic and rejects the explicit call.
+  An ivar reflection macro expands to a class-value union and instead emits
+  an abort stub for String#|(Nil) (35q1301, 35q1307). Keep ordinary instance
+  operators and user-defined class overloads covered.
 
 ### Virtual implementation bodies retain concrete actuals (2026-10-30)
 

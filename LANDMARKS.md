@@ -23197,3 +23197,19 @@ incompatible argument diagnostic (35q1302). The installed-prelude
 hello and adjacent case, loop, and lexical callback gates pass.
 Refresh after changes to case arm lowering, branch merges, or
 inline scope ownership.
+
+### Lower explicit self in a deferred constant's lexical owner
+
+Deferred constants execute in the generated main. A self expression in a
+class or module constant belongs to its lexical owner. Emitting the ordinary
+main self produced a Void receiver and selected an unrelated instance method.
+Use the current deferred owner to emit the existing class-literal value.
+
+The exact parent emits Owner#tag for both Owner and Namespace constants.
+The initializer lexical self gate compares class, module, nested same-name
+owner and instance calls against Crystal 1.22.1 in lazy and eager modes
+(35q1308). The installed-prelude hello runs on stock and exact lazy Adamas.
+Untyped forwarding still loses the module method owner. Unchanged LavinMQ
+HIR stops at Log.for(self), where overload lookup consumes the carrier type.
+Refresh after changes to deferred constant scope, class value production,
+or class and instance overload selection.

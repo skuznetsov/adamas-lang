@@ -94220,6 +94220,13 @@ module Adamas::HIR
     # ═══════════════════════════════════════════════════════════════════════
 
     private def lower_self(ctx : LoweringContext, node : Adamas::Compiler::Frontend::SelfNode) : ValueId
+      # Deferred constant initializers run in the generated main, but retain
+      # the lexical self of their owning class or module.
+      if ctx.function.name == "__adamas_main" && @current_method.nil?
+        if (owner = @deferred_constant_owner) && owner == @current_class
+          return lower_type_literal_from_name(ctx, "::#{owner}")
+        end
+      end
       emit_self(ctx)
     end
 
