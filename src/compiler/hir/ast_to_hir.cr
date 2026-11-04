@@ -20049,6 +20049,7 @@ module Adamas::HIR
       # Preserve exact call-site specializations for typeof/local inference when the
       # runtime parameter type intentionally stays broader (for example `args : Array | Tuple`).
       return true if param_name.includes?('|') && exact_union_call_type_subset?(call_type, param_type)
+      return true if source_generic_union_admits_class_argument?(param_type, call_type)
       return true if module_type_ref?(param_type) && !module_type_ref?(call_type)
       return true if param_name.includes?('|') && union_module_arm_admits_concrete_call?(param_type, call_type)
       if param_name == "Number"
@@ -20372,6 +20373,19 @@ module Adamas::HIR
         variant_type = type_ref_for_name(variant_name.strip)
         variant_type != TypeRef::VOID && module_type_ref?(variant_type)
       end
+    end
+
+    # An applied generic class can satisfy a source union restriction without
+    # being one of its physical carrier's tags. Keep the admitted argument in
+    # specialized parameters and leave runtime union membership unchanged.
+    private def source_generic_union_admits_class_argument?(restriction : TypeRef, argument : TypeRef) : Bool
+      restriction_desc = @module.get_type_descriptor(restriction)
+      argument_desc = @module.get_type_descriptor(argument)
+      return false unless restriction_desc && restriction_desc.kind == TypeKind::Union &&
+                          argument_desc && argument_desc.kind == TypeKind::Class
+      argument_name = generic_param_type_name_from_ref(argument)
+      return false unless split_generic_base_and_args(argument_name)
+      source_generic_restriction_match?(argument_name, restriction_desc.name) == true
     end
 
     private def exact_union_call_type_subset?(call_type : TypeRef, param_type : TypeRef) : Bool
@@ -47365,7 +47379,9 @@ module Adamas::HIR
     # Bare generic arms are source restrictions with no concrete layout.
     # Only use this after selecting the initializer with the source arguments.
     private def allocator_union_template_admits_call_variant?(decl_type : TypeRef, call_type : TypeRef) : Bool
-      !is_union_or_nilable_type?(call_type) && exact_union_call_type_subset?(call_type, decl_type)
+      !is_union_or_nilable_type?(call_type) &&
+        (exact_union_call_type_subset?(call_type, decl_type) ||
+         source_generic_union_admits_class_argument?(decl_type, call_type))
     end
 
     # A concrete call variant specializes a declared union initializer param

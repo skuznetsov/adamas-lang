@@ -23459,3 +23459,19 @@ all six method source arena checks pass. The convergence bound is
 unchanged. The File/JSON evidence ends at HIR. Refresh after changes
 to Def identity, visibility, parameter cache ownership, or final missing
 lowering.
+
+### Retain the admitted applied class in a constructor specialization
+
+A source restriction such as `SourceMap(Int32, Token | Other) | NamedTuple`
+admits a `SourceMap(Int32, Token)` argument. Its applied class instance
+has a different physical type from any tag in the declared union.
+After source overload selection, use that concrete type for specialized
+local inference and allocator parameters. Source admission does not
+create a runtime tag in the declared union.
+
+Crystal 1.22.1 and exact 35q1676 agree on runtime output and rejection in
+`allocator_applied_generic_union_repro.sh`. Parent 35q1674 loses the
+concrete argument inside the selected initializer. All 12 existing
+bare-generic allocator checks pass. Refresh after changes to source
+restriction matching, concrete parameter inference, or allocator shape.
+Recursive Hash restrictions need separate declaration-scope evidence.

@@ -24894,3 +24894,24 @@ integration, fresh bootstrap, or LavinMQ parity.
   `peek.index(delimiter_byte)` in `IO#gets_peek` (installed
   `io.cr:703`) with an erroneous Nil receiver. Original Crystal runs
   the same program and prints the first line.
+
+### 2026-11-04 Applied generic constructor arguments
+
+- [x] Preserve a source-admitted applied class argument through selection
+  of an initializer with an applied generic union restriction. Keep the
+  concrete parameter in local inference and the allocator ABI, with the
+  declared union tags intact.
+- DoD runs `bash regression_tests/allocator_applied_generic_union_repro.sh <fresh-S1>`
+  with Crystal 1.22.1 as oracle. Exact S1 35q1676 matches the three
+  runtime inputs and rejects the unrelated application in lazy and eager
+  modes. Parent S1 35q1674 fails the valid overload inside the selected
+  initializer. The 12 bare-generic allocator checks also pass.
+- [ ] Preserve the selected declaration's restriction when its bound
+  carrier has lost a recursive generic arm. In the installed-prelude
+  reducer, `Hash(String, Wire::Field) | NamedTuple` must specialize to
+  the admitted `Hash(String, Int32)`. 35q1682 advances the shard's
+  outer Table constructor but still fails the recursive Hash reducer.
+- [ ] Trace implicit receiver candidate selection for a global overload
+  and a same-name nilary instance method. A one-argument call in the
+  constructor reducer selected the nilary method in 35q1676 before the
+  fixture used a distinct helper name.
