@@ -92177,7 +92177,12 @@ module Adamas::HIR
       branches.each_with_index do |(condition_expr, branch_pieces), branch_idx|
         take_branch = false
         if condition_expr
-          result = macro_control_condition_result(condition_expr)
+          condition = @arena[condition_expr]
+          if condition.is_a?(Adamas::Compiler::Frontend::MacroIfNode)
+            condition_expr = condition.condition
+          end
+          result = evaluate_macro_condition_in_context(condition_expr, vars, owner_type, expander)
+          result = try_evaluate_macro_condition(condition_expr) if result.nil?
           next if result.nil?
           take_branch = if branch_idx == 0 && is_unless
                           !result.not_nil!
@@ -92194,15 +92199,6 @@ module Adamas::HIR
           builder << body_text
         end
         break
-      end
-    end
-
-    private def macro_control_condition_result(expr_id : ExprId) : Bool?
-      expr_node = @arena[expr_id]
-      if expr_node.is_a?(Adamas::Compiler::Frontend::MacroIfNode)
-        try_evaluate_macro_condition(expr_node.condition)
-      else
-        try_evaluate_macro_condition(expr_id)
       end
     end
 

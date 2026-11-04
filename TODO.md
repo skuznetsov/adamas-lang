@@ -23100,6 +23100,16 @@ integration, fresh bootstrap, or LavinMQ parity.
   now has a visible source overload, but `U` and its packed slot still need
   to survive concrete materialization. Check empty packs and constraints from
   other formals separately.
+- [x] Keep nested macro conditions in the expansion's lexical context and
+  expose NamedTuple TypeNode keys from the same entries used for iteration.
+  Crystal 1.22.1 and q1561 agree on a loop with if, elsif, and else, and on a
+  conditional that combines key reflection with a loop variable. The parent
+  emits `CCC` for the first fixture instead of `ABC`. The q1562 prototype
+  restores the missing left-hand fields in the expanded stdlib merge body.
+- [ ] Verify that the selected NamedTuple constructor publishes its actual
+  keyword layout through the return ABI. The q1562 expansion builds the right
+  fields, but the shared `NamedTuple.new$**T_double_splat` result still loses
+  the concrete shape and the native virtual merge fixture prints `XX`.
 
 ## 2026-11-04 — Respect the source owner of nested next
 

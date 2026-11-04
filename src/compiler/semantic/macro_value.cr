@@ -1872,6 +1872,8 @@ module Adamas
       # Internal iteration entry. A mapping binds key, optional value, and
       # optional index. A tuple value remains one element of a sequence.
       class MacroForEntry < MacroValue
+        getter key : MacroValue
+
         def initialize(@key : MacroValue, @value : MacroValue)
         end
 
@@ -2160,7 +2162,7 @@ module Adamas
 
         def call_method(name : String, args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : MacroValue
           case name
-          when "nilable?", "union?", "union_types", "type_vars", "resolve", "resolve?"
+          when "nilable?", "union?", "union_types", "type_vars", "resolve", "resolve?", "keys"
             unless args.empty?
               raise ArgumentError.new("wrong number of arguments for macro 'TypeNode##{name}' (given #{args.size}, expected 0)")
             end
@@ -2227,6 +2229,10 @@ module Adamas
             else
               MacroArrayValue.new
             end
+          when "keys"
+            entries = named_tuple_iteration_entries ||
+                      raise ArgumentError.new("undefined method 'keys' for TypeNode of type #{@name} (must be a named tuple type)")
+            MacroArrayValue.new(entries.map(&.key))
           when "size"
             # For tuples/named tuples this would return element count
             # For types, return type_vars count
@@ -2325,23 +2331,28 @@ module Adamas
         # are not iterable (Crystal raises for them).
         def tuple_iteration_values : Array(MacroValue)?
           base = @name.lchop("::")
-          tuple = base.starts_with?("Tuple(")
-          named = base.starts_with?("NamedTuple(")
-          return nil unless tuple || named
+          if base.starts_with?("NamedTuple(")
+            return named_tuple_iteration_entries.try(&.map(&.as(MacroValue)))
+          end
+          return nil unless base.starts_with?("Tuple(")
           vars = @type_vars
           return nil unless vars
           values = @type_var_values
           values = nil unless values && values.size == vars.size
           vars.map_with_index do |var, index|
-            if tuple
-              values ? values[index] : MacroTypeValue.new(var).as(MacroValue)
-            else
-              colon = var.index(':')
-              return nil unless colon
-              key = MacroIdValue.new(var.byte_slice(0, colon).strip.strip('"')).as(MacroValue)
-              type_name = var.byte_slice(colon + 1, var.bytesize - colon - 1).strip
-              MacroForEntry.new(key, MacroTypeValue.new(type_name)).as(MacroValue)
-            end
+            values ? values[index] : MacroTypeValue.new(var).as(MacroValue)
+          end
+        end
+
+        private def named_tuple_iteration_entries : Array(MacroForEntry)?
+          return nil unless @name.lchop("::").starts_with?("NamedTuple(")
+          vars = @type_vars || return nil
+          vars.map do |var|
+            colon = var.index(':')
+            return nil unless colon
+            key = MacroIdValue.new(var.byte_slice(0, colon).strip.strip('"'))
+            type_name = var.byte_slice(colon + 1, var.bytesize - colon - 1).strip
+            MacroForEntry.new(key, MacroTypeValue.new(type_name))
           end
         end
 
