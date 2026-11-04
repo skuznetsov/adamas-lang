@@ -24656,11 +24656,37 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Exercise named, splatted, block-taking, and inherited constructor
   shapes with runtime union arguments. The positional fanout only proves
   scalar source selection and the concrete wrapper ABI for each arm.
-- [ ] Trace the first strict rejection after the unchanged LavinMQ server
-  properties constant. Exact 35q1635 loads the installed prelude and
-  rejects `AMQ::Protocol::Table.new(String)` in a `case` body. Find the
-  actual argument producer and prove branch reachability before changing
-  constructor admission or type-test folding.
+- [x] Trace the strict rejection after the unchanged LavinMQ server
+  properties constant. Exact 35q1635 lowers the `Hash, NamedTuple` branch
+  of `Table#write_field` for a `String` value, then correctly rejects the
+  impossible `Table.new(String)` call. See the nominal branch gate below.
+
+### 2026-11-04: Nominal source relations for concrete String values
+
+- [x] Give the fixed String HIR carrier access to the registered source
+  hierarchy for class, struct and container guards. Require source
+  instance-kind evidence on both sides. Preserve the runtime test when
+  a String carrier may hold a descendant or include a module dynamically.
+- DoD: run `bash regression_tests/string_nominal_type_relation_repro.sh <fresh-S1>`.
+  Exact 35q1639 passes all 12 Crystal 1.22.1, lazy and eager checks for
+  disjoint container arms, ancestry, inclusion, a reachable descendant,
+  a class-object control, and a reachable undefined method. It also passes
+  the builtin container, unreachable case, source type-set, and self
+  narrowing gates. The parent rejects the disjoint container fixture.
+  The unguarded prototype prints `XX` instead of `AB` for the class object.
+- [ ] Preserve nominal descendants of the fixed String carrier inside
+  runtime unions. A no-prelude union of an explicitly widened String and
+  Int32 loses a String subclass in the parent and 35q1637. Also resolve
+  predeclared type designators in no-prelude case guards without requiring
+  the fixtures to redeclare Hash, NamedTuple or String.
+- [ ] Trace the unannotated `Crystal::System.printf` yield producer.
+  Unchanged LavinMQ on 35q1639 passes the Table case and reaches
+  `IO::Memory#write(Pointer)` in `Crystal.buffered_message`. The first
+  yield supplies Slice(UInt8); the second is Pointer before block
+  binding. A reduced formatter reproduces this with a correct
+  Slice(UInt8) block hint. A separate whole-body hint on the application
+  includes Slice(Int32 | Pointer(UInt8)). Keep the sink restriction and
+  determine which producer or inference pass introduces each type.
 
 ### 2026-11-04: Source coordinates for macro-generated methods
 

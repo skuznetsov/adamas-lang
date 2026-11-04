@@ -97911,12 +97911,11 @@ module Adamas::HIR
         return nil unless expr_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
         local_id = ctx.lookup_local(identifier_name_text(expr_node))
         return nil unless local_id
-        value_type = ctx.type_of(local_id)
         target_name = resolve_typeof_in_type_string((safe_slice_to_string(node.target_type) || ""))
         target_name = resolve_type_name_in_context(target_name)
         target_name = resolve_type_alias_chain(target_name)
         target_type = type_ref_for_name(target_name)
-        statically_is_a_type?(value_type, target_type)
+        statically_is_a_value_type?(ctx, local_id, target_type, target_name)
       when Adamas::Compiler::Frontend::CallNode
         callee_node = @arena[node.callee]
         if callee_node.is_a?(Adamas::Compiler::Frontend::MemberAccessNode) &&
@@ -97926,13 +97925,12 @@ module Adamas::HIR
           return nil unless obj_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
           local_id = ctx.lookup_local(identifier_name_text(obj_node))
           return nil unless local_id
-          value_type = ctx.type_of(local_id)
           if type_str = stringify_type_expr(node.args.first)
             type_str = resolve_typeof_in_type_string(type_str)
             type_str = resolve_type_name_in_context(type_str)
             type_str = resolve_type_alias_chain(type_str)
             target_type = type_ref_for_name(type_str)
-            return statically_is_a_type?(value_type, target_type)
+            return statically_is_a_value_type?(ctx, local_id, target_type, type_str)
           end
         end
         nil
@@ -98671,7 +98669,7 @@ module Adamas::HIR
     private def emit_is_a_check(ctx : LoweringContext, value_id : ValueId, type_name : String) : ValueId
       resolved = resolve_typeof_in_type_string(type_name)
       if resolved.includes?('|')
-        emit_is_a_check_for_type(ctx, value_id, type_ref_for_name(resolved))
+        emit_is_a_check_for_type(ctx, value_id, type_ref_for_name(resolved), resolved)
       else
         resolved = resolve_type_name_in_context(resolved)
         resolved = resolve_type_alias_chain(resolved)
@@ -98687,7 +98685,7 @@ module Adamas::HIR
             return lit.id
           end
         end
-        emit_is_a_check_for_type(ctx, value_id, type_ref_for_name(resolved))
+        emit_is_a_check_for_type(ctx, value_id, type_ref_for_name(resolved), resolved)
       end
     end
 
@@ -98826,7 +98824,12 @@ module Adamas::HIR
       combine_boolean_checks(ctx, checks)
     end
 
-    private def emit_is_a_check_for_type(ctx : LoweringContext, value_id : ValueId, check_type : TypeRef) : ValueId
+    private def emit_is_a_check_for_type(
+      ctx : LoweringContext,
+      value_id : ValueId,
+      check_type : TypeRef,
+      check_name : String? = nil,
+    ) : ValueId
       if is_union_type?(check_type)
         if is_union_type?(ctx.type_of(value_id))
           if expanded = emit_union_value_is_a_union_check(ctx, value_id, ctx.type_of(value_id), check_type)
@@ -98842,7 +98845,7 @@ module Adamas::HIR
         if descriptor = @union_descriptors[mir_check_ref]?
           checks = descriptor.variants.map do |variant|
             hir_variant = mir_to_hir_type_ref(variant.type_ref)
-            emit_is_a_check_for_type(ctx, value_id, hir_variant)
+            emit_is_a_check_for_type(ctx, value_id, hir_variant, check_name)
           end
           return combine_boolean_checks(ctx, checks)
         end
@@ -98862,7 +98865,7 @@ module Adamas::HIR
         end
       end
 
-      static = statically_is_a_type?(value_type, check_type)
+      static = statically_is_a_value_type?(ctx, value_id, check_type, check_name)
       unless static.nil?
         lit = Literal.new(ctx.next_id, TypeRef::BOOL, static)
         ctx.emit(lit)
@@ -98874,7 +98877,30 @@ module Adamas::HIR
       is_a.id
     end
 
-    private def statically_is_a_type?(value_type : TypeRef, check_type : TypeRef) : Bool?
+    private def statically_is_a_value_type?(
+      ctx : LoweringContext,
+      value_id : ValueId,
+      check_type : TypeRef,
+      check_name : String?,
+    ) : Bool?
+      value_type = ctx.type_of(value_id)
+      # Instance and class-object values can share the same fixed String ID.
+      # The nominal instance proof needs source-kind evidence on both sides.
+      string_instance_check = false
+      if value_type == TypeRef::STRING && check_name &&
+         !ctx.type_literal?(value_id) && is_a_target_type_literal?(check_name) == false
+        facts = source_block_result_value_facts(ctx, value_id)
+        string_instance_check = !facts.empty? && facts.none? { |_, literal| literal }
+      end
+      statically_is_a_type?(value_type, check_type, string_instance_check: string_instance_check)
+    end
+
+    private def statically_is_a_type?(
+      value_type : TypeRef,
+      check_type : TypeRef,
+      *,
+      string_instance_check : Bool = false,
+    ) : Bool?
       return true if value_type == check_type
       return nil if value_type == TypeRef::VOID || check_type == TypeRef::VOID
 
@@ -98937,14 +98963,39 @@ module Adamas::HIR
         end
       end
 
-      return nil unless value_desc && check_desc
-      return nil if value_desc.kind == TypeKind::Union || check_desc.kind == TypeKind::Union
-      return false if value_desc.kind == TypeKind::Primitive && check_desc.kind == TypeKind::Primitive
+      return nil unless check_desc
+      value_kind = value_desc.try(&.kind)
+      value_name = value_desc.try(&.name)
+      check_name = check_desc.name
+
+      # String has a fixed HIR ID and no descriptor, but its source type is
+      # nominal. Use the same hierarchy relation as descriptor-backed classes
+      # for known class/struct targets. A String carrier may hold a subclass.
+      if string_instance_check
+        case check_desc.kind
+        when TypeKind::Class, TypeKind::Struct
+          return nil if @module_defs.has_key?(check_name)
+          return true if check_name == "Reference" || check_name == "Object"
+          base = strip_generic_args(check_name)
+          return nil unless @class_info.has_key?(check_name) || @generic_templates.has_key?(base)
+        when TypeKind::Array, TypeKind::Hash, TypeKind::Tuple, TypeKind::NamedTuple
+          # These descriptors carry the source container kind.
+        when TypeKind::Module
+          return true if class_includes_module?("String", check_name)
+          return nil
+        else
+          return nil
+        end
+        value_name = "String"
+      end
+      return nil unless value_name
+      return nil if value_kind == TypeKind::Union || check_desc.kind == TypeKind::Union
+      return false if value_kind == TypeKind::Primitive && check_desc.kind == TypeKind::Primitive
 
       # Proc display names are deliberately erased to "Proc". Concrete
       # signatures match only when every input and the result agree; otherwise
       # unrelated callbacks would satisfy is_a? and collapse during union joins.
-      if value_desc.kind == TypeKind::Proc
+      if value_desc && value_kind == TypeKind::Proc
         if check_desc.kind == TypeKind::Proc
           return check_desc.type_params.empty? ||
                  (value_desc.type_params == check_desc.type_params && proc_source_contracts_match?(value_desc, check_desc))
@@ -98953,8 +99004,6 @@ module Adamas::HIR
         return true if check_desc.name == "Proc" && check_desc.type_params.empty?
       end
 
-      value_name = value_desc.name
-      check_name = check_desc.name
       return true if value_name == check_name
 
       # Generic base class matching: Array(Int32).is_a?(Array) → true
@@ -149664,7 +149713,7 @@ module Adamas::HIR
         end
       end
       # Also try statically_is_a_type? for non-primitive types
-      static = statically_is_a_type?(value_type, check_type)
+      static = statically_is_a_value_type?(ctx, value_id, check_type, target_name)
       unless static.nil?
         lit = Literal.new(ctx.next_id, TypeRef::BOOL, static)
         ctx.emit(lit)
