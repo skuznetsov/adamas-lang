@@ -24361,6 +24361,22 @@ integration, fresh bootstrap, or LavinMQ parity.
   result for another call with the same input type. Crystal 1.22.1 and lazy
   and eager Adamas agree on alternating result types and zero callback
   executions in `typeof_yield_compiletime_side_effect_repro.sh` (35q1453).
+- [x] Publish the exact source-bound target for a wildcard block result after
+  materializing its Proc. Keep each input's type and class/instance kind from
+  the selected declaration, including aliases and method `forall` bindings.
+  Bind inline yield inputs in their lexical method before forwarded blocks
+  enter a different generic context. The installed-prelude smoke test runs
+  through the nested `Slice#map` and `Pointer#fill` specialization. Crystal,
+  default Adamas and forced-raw Adamas agree on ten source cases each
+  (35q1476).
+- [ ] Preserve metaclass and instance alternatives of the same carrier when
+  one callback result joins both at runtime. Stock Crystal dispatches each
+  branch of the mixed-kind result correctly. Both the parent and the wildcard
+  callback candidate select the wrong result in the holdout (35q1472).
+- [ ] Trace the selected source binding for a named `forall` argument after
+  filling an earlier positional default. Stock Crystal runs the wildcard
+  named callback with a metaclass input. The parent and candidate still
+  diagnose `Proc(T, Void)#call` in this combined shape (35q1476).
 - [ ] Preserve the result type and value kind when `typeof` consumes a nested
   yielding call. A direct metaclass result currently collapses to its instance
   carrier and falsely admits `.new`. Array element type annotations also need
