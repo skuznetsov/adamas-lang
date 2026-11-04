@@ -23068,6 +23068,21 @@ integration, fresh bootstrap, or LavinMQ parity.
   same selected arm results. The focused regression certifies the early
   member-access result, with one parenthesized call as a control.
 
+## 2026-11-04 — Preserve the actual argument of an applied class restriction
+
+- Root cause: matching Rows(Channel) against Rows(Sortable) succeeded, but
+  specialization treated the restriction as the parameter's runtime type.
+  The block received Sortable, and another includer's String result widened
+  a call that should accept the Channel's Int32 alone.
+- Keep the actual applied class, Array or Hash type in the specialized body
+  when the existing source restriction proof admits it. The same test drives
+  specialization and executable parameter inference.
+- Verification: q1531 rejects the positive class and Array cases with an
+  Int32 | String argument. q1535 matches Crystal 1.22.1 on seven cases in lazy
+  and eager lowering, including Hash key restrictions and an invalid result.
+- [ ] Audit applied generic carriers outside this reference-type path and
+  ensure callers reuse the same concrete signature during deferred repair.
+
 ## 2026-10-31 — Preserve the selected method's forall annotation bindings
 
 - Root cause: deferring a callee copied ambient owner bindings over same-spelled method-forall variables. Executable parameter annotations then restored the receiver's map, and lexical aliases could independently replace bound formals in module return annotations.

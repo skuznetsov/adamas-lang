@@ -20013,7 +20013,16 @@ module Adamas::HIR
       end
 
       if info = split_generic_base_and_args(call_name)
-        return info[:base] == param_name
+        return true if info.base == param_name
+
+        # A matching applied class restriction admits the concrete instance.
+        # Its element types and layout still belong to that actual instance.
+        if (info.base == "Array" || info.base == "Hash" ||
+           @module.get_type_descriptor(call_type).try(&.kind) == TypeKind::Class) &&
+           (param_generic = split_generic_base_and_args(param_name)) &&
+           param_generic.base == info.base
+          return source_generic_restriction_match?(call_name, param_name) == true
+        end
       end
 
       false
