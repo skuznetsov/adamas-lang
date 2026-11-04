@@ -98884,6 +98884,10 @@ module Adamas::HIR
       check_name : String?,
     ) : Bool?
       value_type = ctx.type_of(value_id)
+      if check_name && (value_type == TypeRef::BOOL || value_type == TypeRef::CHAR || value_type == TypeRef::SYMBOL)
+        relation = fixed_scalar_nominal_guard(ctx, value_id, value_type, check_name)
+        return relation unless relation.nil?
+      end
       # Instance and class-object values can share the same fixed String ID.
       # The nominal instance proof needs source-kind evidence on both sides.
       string_instance_check = false
@@ -98893,6 +98897,33 @@ module Adamas::HIR
         string_instance_check = !facts.empty? && facts.none? { |_, literal| literal }
       end
       statically_is_a_type?(value_type, check_type, string_instance_check: string_instance_check)
+    end
+
+    # A concrete scalar has a source class even when its fixed ABI type has
+    # no descriptor. A nominal class target can only match that class or one
+    # of its ancestors. Modules and metaclasses need their own source proof.
+    private def fixed_scalar_nominal_guard(
+      ctx : LoweringContext,
+      value_id : ValueId,
+      value_type : TypeRef,
+      check_name : String,
+    ) : Bool?
+      return nil if ctx.type_literal?(value_id) || is_a_target_type_literal?(check_name) != false
+      return nil if has_top_level_union_separator?(check_name)
+      facts = source_block_result_value_facts(ctx, value_id)
+      return nil if facts.empty? || facts.any? { |type, literal| type != value_type || literal }
+      name = check_name.starts_with?("::") ? strip_absolute_name_prefix(check_name) : check_name
+      base = strip_generic_args(name)
+      return nil if @module_defs.has_key?(base)
+      target_info = @class_info[name]?
+      return nil unless target_info || @generic_templates.has_key?(base)
+      ancestor = primitive_class_name(value_type)
+      seen = Set(String).new
+      while ancestor && seen.add?(ancestor)
+        return true if ancestor == name
+        ancestor = parent_name_for_hierarchy_lookup(ancestor) || builtin_parent_for(ancestor, true)
+      end
+      false
     end
 
     private def statically_is_a_type?(

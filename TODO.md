@@ -24742,6 +24742,30 @@ integration, fresh bootstrap, or LavinMQ parity.
   overload for `yield` on both 35q1648 and 35q1658 (`AXBC`); Crystal
   routes both through the captured Proc and prints `ACBC`. The same
   named annotation used with `yield` alone prints `AX` on all three.
+- [ ] Resolve the inherited callback alias before inline `super { ... }`
+  parameter materialization. An included declaration's `Proc(Int32, Nil)`
+  alias and a conflicting receiver alias are accepted by Crystal and print
+  `A`. Both 35q1648 and 35q1658 reject the callback argument because the
+  inline path represents the alias as `Proc(Pointer, Pointer)`.
+
+### 2026-11-04: Fixed scalar nominal type predicates
+
+- [x] Recover the nominal ancestor chain of a concrete Bool, Char, or
+  Symbol from source instance facts when its fixed HIR type lacks a
+  descriptor. A known unrelated class or generic family makes that
+  predicate false before its case body is instantiated. Keep mixed
+  instance and metaclass facts, modules, and ambiguous targets outside
+  this proof.
+- DoD: run `bash regression_tests/fixed_scalar_nominal_case_repro.sh <fresh-S1>`.
+  Exact S1 35q1662 and Crystal 1.22.1 agree for disjoint and matching
+  branches and both reject the bad constructor in the reachable branch.
+  The parent tries the unrelated branch with a Bool argument. With the
+  installed stdlib the Hash and NamedTuple reproducer also prints `B`.
+- [ ] Validate generic type arguments in case predicates before testing
+  reachability. Crystal rejects `when Pair(Missing)` and both 35q1658
+  and 35q1662 accept it. Separately, a no-prelude Bool that includes a
+  user module falls through `is_a?(IncludedModule)` on both revisions.
+  Qualify those source contracts independently of scalar disjointness.
 
 ### 2026-11-04: Source coordinates for macro-generated methods
 
