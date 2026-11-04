@@ -1297,6 +1297,18 @@ module Adamas
         end
       end
 
+      # Keep the source range and its arena until a consumer asks for bounds.
+      # Crystal evaluates endpoint expressions in the consuming macro scope.
+      class MacroRangeValue < MacroNodeValue
+        def class_name : String
+          "RangeLiteral"
+        end
+
+        def range : Frontend::RangeNode
+          @arena[@node_id].as(Frontend::RangeNode)
+        end
+      end
+
       # Array value
       class MacroArrayValue < MacroValue
         getter elements : Array(MacroValue)

@@ -922,6 +922,8 @@ module Adamas
                 entries[intern_name(entry.key)] = expr_to_macro_value(entry.value)
               end
               MacroNamedTupleValue.new(entries)
+            elsif node.is_a?(Frontend::RangeNode)
+              MacroRangeValue.new(expr_id, @arena, @string_pool)
             elsif node.is_a?(Frontend::TypeDeclarationNode) || node.is_a?(Frontend::AssignNode) || node.is_a?(Frontend::GenericNode)
               MacroNodeValue.new(expr_id, @arena, @string_pool)
             elsif node.is_a?(Frontend::PathNode)
@@ -1028,13 +1030,7 @@ module Adamas
               end
               return MacroNamedTupleValue.new(entries)
             elsif node.is_a?(Frontend::RangeNode)
-              # A range used as a value (e.g. `(0...256).map { ... }`) materializes
-              # to an array of its integer elements so Array-style block methods
-              # (map/select/reject/each) and indexing work.
-              if values = expand_range_to_macro_values(node, context)
-                return MacroArrayValue.new(values)
-              end
-              return macro_nil_value
+              return MacroRangeValue.new(expr_id, @arena, @string_pool)
             elsif node.is_a?(Frontend::BinaryNode)
               return evaluate_binary_to_macro_value(node, context)
             elsif node.is_a?(Frontend::UnaryNode)
@@ -1252,7 +1248,7 @@ module Adamas
           end
 
           if base_value
-            result = base_value.call_method(member, [] of MacroValue, nil)
+            result = call_macro_value_method(base_value, member, [] of MacroValue, nil, context)
             return result
           end
 
@@ -1388,7 +1384,7 @@ module Adamas
             if block
               return evaluate_blocked_macro_call(receiver, member, args, named_arg_values, block, context)
             end
-            result = receiver.call_method(member, args, named_arg_values)
+            result = call_macro_value_method(receiver, member, args, named_arg_values, context)
             return result unless result.is_a?(MacroNilValue)
           end
 
@@ -1426,7 +1422,7 @@ module Adamas
                 return evaluate_blocked_macro_call(receiver, member, args, named_arg_values, blk_node, context)
               end
 
-              result = receiver.call_method(member, args, named_arg_values)
+              result = call_macro_value_method(receiver, member, args, named_arg_values, context)
               return result unless result.is_a?(MacroNilValue)
             end
           end
@@ -1751,13 +1747,27 @@ module Adamas
             raise ArgumentError.new("#{receiver.class_name}#splat is not expected to be invoked with a block")
           end
 
+          if receiver.is_a?(MacroRangeValue)
+            if member.in?("begin", "end", "excludes_end?", "to_a")
+              raise MacroEvaluationError.new("RangeLiteral##{member} does not accept a block")
+            end
+            if member.in?("map", "each")
+              check_macro_range_arguments(member, args, named_args)
+            end
+            if member.in?("map", "each", "select", "reject", "each_with_index")
+              elements = expand_macro_range(receiver, context)
+              return macro_nil_value unless elements
+              receiver = MacroArrayValue.new(elements)
+            end
+          end
+
           case member
           when "map", "select", "reject"
             return evaluate_macro_block_map(receiver, member, block, context)
           when "each", "each_with_index"
             return evaluate_macro_block_each(receiver, block, context)
           else
-            receiver.call_method(member, args, named_args)
+            call_macro_value_method(receiver, member, args, named_args, context)
           end
         end
 
@@ -2696,6 +2706,8 @@ module Adamas
             elsif node.is_a?(Frontend::PathNode)
               name = path_to_string(node)
               resolve_scoped_macro_value(name, context).try(&.to_macro_output) || name
+            elsif node.is_a?(Frontend::RangeNode)
+              evaluate_to_macro_value(expr_id, context).to_macro_output
             elsif node.is_a?(Frontend::IndexNode)
               # Handle ann[:key] index access
               evaluate_index_expression(node, context)
@@ -2743,7 +2755,102 @@ module Adamas
           return macro_nil_value unless index_expr_id
 
           index_value = evaluate_to_macro_value(index_expr_id, context)
-          base_value.call_method("[]", [index_value], nil)
+          if index_value.is_a?(MacroRangeValue) && node.indexes.size != 1
+            raise MacroEvaluationError.new("macro range indexing expects one index")
+          end
+          call_macro_value_method(base_value, "[]", [index_value], nil, context)
+        end
+
+        private def call_macro_value_method(
+          receiver : MacroValue,
+          member : String,
+          args : Array(MacroValue),
+          named_args : Hash(String, MacroValue)?,
+          context : Context,
+        ) : MacroValue
+          if receiver.is_a?(MacroRangeValue)
+            if member.in?("begin", "end", "excludes_end?", "to_a")
+              check_macro_range_arguments(member, args, named_args)
+            end
+            case member
+            when "map", "each"
+              raise MacroEvaluationError.new("RangeLiteral##{member} expects a block")
+            when "begin", "end"
+              range = receiver.range
+              endpoint = member == "begin" ? range.begin_expr : range.end_expr
+              return with_macro_range_arena(receiver) { expr_to_macro_value(endpoint) }
+            when "excludes_end?"
+              return MacroBoolValue.new(receiver.range.exclusive)
+            when "to_a"
+              if elements = expand_macro_range(receiver, context)
+                return MacroArrayValue.new(elements)
+              end
+              return macro_nil_value
+            end
+          elsif member == "[]" && (range = args.first?).is_a?(MacroRangeValue)
+            if args.size != 1 || named_args.try(&.empty?) == false
+              raise MacroEvaluationError.new("macro range indexing expects one index")
+            end
+            case receiver
+            when MacroCharValue
+              raise MacroEvaluationError.new("undefined macro method 'CharLiteral#[]'")
+            when MacroStringValue, MacroIdValue, MacroSymbolValue
+              text = receiver.value[macro_index_range(range, context)]
+              case receiver
+              when MacroIdValue
+                return MacroIdValue.new(text)
+              when MacroSymbolValue
+                return MacroSymbolValue.new(text)
+              else
+                return MacroStringValue.new(text)
+              end
+            when MacroArrayValue, MacroTupleValue
+              slice = macro_index_range(range, context)
+              elements = receiver.elements[slice]?
+              return MacroNilLiteralValue.new unless elements
+              return receiver.is_a?(MacroArrayValue) ? MacroArrayValue.new(elements) : MacroTupleValue.new(elements)
+            end
+          end
+          receiver.call_method(member, args, named_args)
+        end
+
+        private def check_macro_range_arguments(member : String, args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : Nil
+          unless args.empty? && named_args.try(&.empty?) != false
+            raise MacroEvaluationError.new("RangeLiteral##{member} expects no arguments")
+          end
+        end
+
+        private def with_macro_range_arena(range : MacroRangeValue, &)
+          old_arena = @arena
+          begin
+            @arena = range.arena
+            yield
+          ensure
+            @arena = old_arena
+          end
+        end
+
+        private def macro_range_bounds(range : MacroRangeValue, context : Context) : Tuple(MacroValue, MacroValue)
+          with_macro_range_arena(range) do
+            node = range.range
+            {evaluate_to_macro_value(node.begin_expr, context), evaluate_to_macro_value(node.end_expr, context)}
+          end
+        end
+
+        private def macro_index_range(range : MacroRangeValue, context : Context) : Range(Int64?, Int64?)
+          start, finish = macro_range_bounds(range, context)
+          Range.new(macro_index_range_bound(start, "begin"), macro_index_range_bound(finish, "end"), range.range.exclusive)
+        end
+
+        private def macro_index_range_bound(value : MacroValue, endpoint : String) : Int64?
+          case value
+          when MacroNumberValue
+            value.to_i
+          when MacroNilLiteralValue
+            nil
+          else
+            raise MacroEvaluationError.new("range #{endpoint} must be a NumberLiteral or NilLiteral, not #{value.class_name}")
+          end
         end
 
         private def apply_macro_index_assignment(
@@ -2864,7 +2971,7 @@ module Adamas
                                          when Frontend::StringInterpolationNode
                                            mv = evaluate_to_macro_value(node.object, context)
                                            {mv.to_macro_output, mv.is_a?(MacroNilValue) ? nil : mv}
-                                         when Frontend::StringNode
+                                         when Frontend::StringNode, Frontend::RangeNode
                                            mv = evaluate_to_macro_value(node.object, context)
                                            {mv.to_macro_output, mv}
                                          when Frontend::CallNode
@@ -2885,7 +2992,7 @@ module Adamas
           end
 
           if base_macro_value
-            result = base_macro_value.call_method(member, [] of MacroValue, nil)
+            result = call_macro_value_method(base_macro_value, member, [] of MacroValue, nil, context)
             unless result.is_a?(MacroNilValue)
               return result.to_macro_output
             end
@@ -3956,18 +4063,20 @@ module Adamas
         end
 
         # Evaluate an iterable expression to an array of MacroValue
-        private def evaluate_iterable_to_macro_values(iterable_node, context : Context, location : ExprId? = nil) : Array(MacroValue)?
+        private def evaluate_iterable_to_macro_values(iterable_node, context : Context, location : ExprId) : Array(MacroValue)?
           case iterable_node
           when Frontend::ArrayLiteralNode
             # Array literal: [1, 2, 3]
             iterable_node.elements.map { |elem_id| evaluate_to_macro_value(elem_id, context) }
           when Frontend::RangeNode
-            # Range: 1..10
-            expand_range_to_macro_values(iterable_node, context)
+            range = MacroRangeValue.new(location, @arena, @string_pool)
+            expand_macro_range(range, context)
           when Frontend::IdentifierNode
             name = Frontend.node_literal_string(iterable_node)
             if name && (macro_val = context.variables[name]?)
-              if macro_val.is_a?(MacroArrayValue)
+              if macro_val.is_a?(MacroRangeValue)
+                expand_macro_range(macro_val, context)
+              elsif macro_val.is_a?(MacroArrayValue)
                 macro_val.elements
               elsif macro_val.is_a?(MacroHashValue)
                 macro_val.entries.map do |key, value|
@@ -4009,14 +4118,14 @@ module Adamas
               MacroTupleValue.new([key.as(MacroValue), value]).as(MacroValue)
             end
           when Frontend::MemberAccessNode
-            if values = macro_value_to_iterable(evaluate_member_access_to_macro_value(iterable_node, context))
+            if values = macro_value_to_iterable(evaluate_member_access_to_macro_value(iterable_node, context), context)
               values
             else
               emit_error("For loop requires ArrayLiteral, Range, or @type.instance_vars/@type.methods", location)
               nil
             end
           when Frontend::CallNode
-            if values = macro_value_to_iterable(evaluate_call_to_macro_value(iterable_node, context))
+            if values = macro_value_to_iterable(evaluate_call_to_macro_value(iterable_node, context), context)
               values
             else
               emit_error("For loop requires ArrayLiteral, Range, or @type.instance_vars/@type.methods", location)
@@ -4028,8 +4137,10 @@ module Adamas
           end
         end
 
-        private def macro_value_to_iterable(value : MacroValue) : Array(MacroValue)?
+        private def macro_value_to_iterable(value : MacroValue, context : Context) : Array(MacroValue)?
           case value
+          when MacroRangeValue
+            expand_macro_range(value, context)
           when MacroArrayValue
             value.elements
           when MacroTupleValue
@@ -4318,47 +4429,26 @@ module Adamas
           end
         end
 
-        # Expand range to array of MacroNumberValue
-        private def expand_range_to_macro_values(range_node : Frontend::RangeNode, context : Context? = nil) : Array(MacroValue)?
-          range_begin = range_node.begin_expr
-          range_end = range_node.end_expr
-
-          # Evaluate bounds in the caller's context when available so that
-          # variable bounds (e.g. `(0...n)`) resolve; fall back to an empty
-          # context for the legacy literal-only callers.
-          eval_context = context || Context.new(flags: @flags)
-          start_str = evaluate_expression(range_begin, eval_context)
-          end_str = evaluate_expression(range_end, eval_context)
-
-          start_val = start_str.to_i?
-          end_val = end_str.to_i?
-
-          unless start_val && end_val
-            emit_error("Range bounds must be integers (got: #{start_str}..#{end_str})")
+        # Materialize bounded integer iteration only when requested.
+        private def expand_macro_range(range : MacroRangeValue, context : Context) : Array(MacroValue)?
+          start, finish = macro_range_bounds(range, context)
+          unless start.is_a?(MacroNumberValue) && finish.is_a?(MacroNumberValue) &&
+                 start.value.is_a?(Int64) && finish.value.is_a?(Int64)
+            emit_error("Range bounds must be integers (got: #{start.to_macro_output}..#{finish.to_macro_output})")
             return nil
           end
 
-          # Handle reverse ranges (Crystal behavior: empty)
-          if start_val > end_val
-            return [] of MacroValue
-          end
-
-          exclusive = range_node.exclusive
-          size = exclusive ? (end_val - start_val) : (end_val - start_val + 1)
-
+          first = start.to_i
+          last = finish.to_i
+          exclusive = range.range.exclusive
+          size = last.to_i128 - first + (exclusive ? 0 : 1)
           if size > MAX_RANGE_SIZE
             emit_error("Range too large: #{size} elements (max #{MAX_RANGE_SIZE})")
             return nil
           end
+          return [] of MacroValue if size <= 0
 
-          result = [] of MacroValue
-          current = start_val
-          while current < end_val || (!exclusive && current == end_val)
-            result << MacroNumberValue.new(current.to_i64)
-            current += 1
-          end
-
-          result
+          Array(MacroValue).new(size.to_i32) { |offset| MacroNumberValue.new(first + offset) }
         end
 
         # Phase 87B-4A: Expand range to array of string values

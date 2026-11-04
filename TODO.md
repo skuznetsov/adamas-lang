@@ -24112,7 +24112,24 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [x] Share the owner/member lookup after lexical binding across HIR inference,
   value classification, and lowering. The alias-chain regression checks
   nominal dispatch and a wide member, with rooted and negative controls.
-- [ ] Trace the width of the enum argument to LibSSL.ssl_ctx_clear_options.
-  LavinMQ HIR reaches this check with the qualified member fix and a
-  separate deferred-self candidate (35q1091). Preserve the declared FFI
-  type check and compare against the installed Crystal stdlib.
+- [x] Preserve the macro range in Enum's generated conversion names. The
+  installed stdlib's `name[1..-1]` now gives `to_u64!` its UInt64 return
+  annotation. The native FFI control checks a UInt32-backed enum conversion
+  against an external UInt64 parameter (35q1122).
+- [ ] Reduce the next unchanged LavinMQ HIR failure, `raise(LZ4Error)`
+  (35q1116, experimental stack with deferred-self). The Exception overload
+  is present but rejects this subclass (35q1123). Compare its registered
+  ancestry to a sibling exception accepted in the same compilation.
+
+### Remaining macro range and expansion contracts
+- [x] Share RangeLiteral indexing for StringLiteral, MacroId, SymbolLiteral,
+  ArrayLiteral, and TupleLiteral. Regression coverage includes negative and
+  exclusive endpoints, omitted endpoints, and required-file macro bounds.
+- [ ] Check HashLiteral RangeLiteral keys and non-integer range iteration
+  against the original macro API. Keep these separate from sequence slicing.
+- [ ] Reduce bare top-level macro expansion diagnostics and emission. Named
+  macro fixtures report invalid bounds, but bare expansion can silently
+  discard diagnostics or generated statements (35q1107 and 35q1108).
+- [ ] Reduce authority revision churn in the macro slice table regression.
+  The parent and range candidate both hit the final missing-lowering bound
+  (35q1124 and 35q1118).

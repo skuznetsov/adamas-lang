@@ -22951,3 +22951,20 @@ members. The parent rejects the valid alias path. The candidate passes all
 twelve checks, the nominal enum and qualified declaration suites, and
 installed-prelude hello. Refresh after changes to lexical path binding, alias
 resolution, or the enum registry.
+
+### Macro range values retain their bounds until consumption
+
+The macro evaluator keeps a RangeLiteral with its declaring arena. Indexing
+evaluates the endpoints in the consuming macro scope and keeps the receiver
+kind in the result. Integer iteration is a separate bounded projection.
+Previously `1..-1` became an empty array before StringLiteral could slice
+it. The installed stdlib's Enum macro consequently generated a `UInt`
+annotation for `to_u64!` and FFI correctly rejected the UInt32 result.
+
+`regression_tests/macro_range_identity_repro.sh` checks 27 Crystal 1.22.1
+and lazy/eager cases. The prior compiler fails the first Adamas string
+slice. The candidate also passed neighboring macro regressions, 21 macro
+specs, installed-prelude hello, and a native FFI control with an LLVM i64
+argument. Refresh on changes to macro indexing, arena switching, or Enum's
+conversion macro. A separate LavinMQ candidate including deferred-self
+passed the prior SSL check and stopped at LZ4 exception dispatch.
