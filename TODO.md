@@ -24400,6 +24400,15 @@ integration, fresh bootstrap, or LavinMQ parity.
   specialization finishes. The scalar calls select distinct yielding overloads,
   and the installed-prelude String index probe preserves hit and miss results
   (35q1480).
+- [x] Preserve quoted symbol literals through macro source rendering, lexing,
+  and lowering. The installed-prelude fixtures compare native output and
+  interned identities for dotted keys, escapes, and literal interpolation
+  text against Crystal 1.22.1. Lexer checks cover adjacent unary operators
+  and named argument suffixes (35q1489).
+- [ ] Compare Symbol operator literals and runtime dispatch against Crystal.
+  The unquoted `:+` fixture reaches an invalid expression ID, `Symbol#to_s`
+  calls a stub, and a same-ID `Symbol#==` probe selects a Bool argument ABI
+  (35q1487). Keep these paths separate from the quoted literal gate.
 - [ ] Dispatch actual union arguments to yielding overloads. The scalar
   NamedTuple regression passes after 35q1480, but a runtime `Int32 | Int64`
   argument still misses the right block body. Check exact arm binding,

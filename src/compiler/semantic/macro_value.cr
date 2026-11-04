@@ -712,7 +712,7 @@ module Adamas
         end
 
         def to_macro_output : String
-          ":#{@value}"
+          ":#{::Symbol.needs_quotes?(@value) ? @value.inspect : @value}"
         end
 
         def to_id : String
@@ -1167,8 +1167,7 @@ module Adamas
             literal = Frontend.node_literal_string(node) || ""
             literal.empty? ? "" : "'#{literal}'"
           when Frontend::SymbolNode
-            literal = Frontend.node_literal_string(node) || ""
-            literal.starts_with?(":") ? literal : ":#{literal}"
+            MacroSymbolValue.from_literal(Frontend.node_literal_string(node) || "").to_macro_output
           when Frontend::IdentifierNode
             intern_name(node.name)
           when Frontend::ConstantNode

@@ -747,6 +747,16 @@ module Adamas
         private def lex_symbol_or_colon
           start_offset, start_line, start_column = capture_position
           from = @offset
+          if from + 1 < @byte_size && @bytes_ptr[from + 1] == DOUBLE_QUOTE
+            # Keep the colon separate from the value in a named argument such
+            # as f(key:"value"), where the name is adjacent to the colon.
+            previous = from > 0 ? @bytes_ptr[from - 1] : 0_u8
+            name_suffix = identifier_suffix?(previous) &&
+                          !@last_token_kind.in?(Token::Kind::Not, Token::Kind::Question)
+            unless identifier_char?(previous) || name_suffix || previous == DOUBLE_QUOTE
+              return lex_string(quoted_symbol: true)
+            end
+          end
 
           # Consume first :
           advance(1)
@@ -1375,24 +1385,26 @@ module Adamas
           end
         end
 
-        private def lex_string
+        private def lex_string(*, quoted_symbol : Bool = false)
           start_offset, start_line, start_column = capture_position
+          advance if quoted_symbol
           @offset += 1
           @column += 1
           from = @offset
           has_interpolation = false
-          allow_macro_interpolation = macro_string_context?
+          allow_macro_interpolation = !quoted_symbol && macro_string_context?
           heredoc_inside_interpolation = false
 
           # Phase 54: Process escape sequences
           buffer = IO::Memory.new
+          buffer.write_byte(COLON) if quoted_symbol
           interpolation_mode_processed = 0_i8
           interpolation_depth_processed = 0
 
           while @offset < @byte_size
             break if interpolation_mode_processed == 0 && current_byte == DOUBLE_QUOTE
 
-            if interpolation_mode_processed == 0 && current_byte == HASH && @offset + 1 < @byte_size && @bytes_ptr[@offset + 1] == LEFT_BRACE
+            if !quoted_symbol && interpolation_mode_processed == 0 && current_byte == HASH && @offset + 1 < @byte_size && @bytes_ptr[@offset + 1] == LEFT_BRACE
               has_interpolation = true
               buffer.write_byte(current_byte)
               advance(1)
@@ -1472,6 +1484,16 @@ module Adamas
                 buffer.write_byte '\t'.ord.to_u8
               when 'r'.ord.to_u8
                 buffer.write_byte '\r'.ord.to_u8
+              when 'a'.ord.to_u8
+                buffer.write_byte '\a'.ord.to_u8
+              when 'b'.ord.to_u8
+                buffer.write_byte '\b'.ord.to_u8
+              when 'v'.ord.to_u8
+                buffer.write_byte '\v'.ord.to_u8
+              when 'f'.ord.to_u8
+                buffer.write_byte '\f'.ord.to_u8
+              when 'e'.ord.to_u8
+                buffer.write_byte 27_u8
               when '\\'.ord.to_u8
                 buffer.write_byte '\\'.ord.to_u8
               when '"'.ord.to_u8
@@ -1531,8 +1553,7 @@ module Adamas
                   end
                   next # Don't advance again, parse_octal_fixed already did
                 else
-                  # Unknown escape - keep as is
-                  buffer.write_byte '\\'.ord.to_u8
+                  buffer.write_byte '\\'.ord.to_u8 unless quoted_symbol
                   buffer.write_byte current_byte
                 end
               end
@@ -1543,13 +1564,23 @@ module Adamas
             end
           end
 
-          advance(1) if @offset < @byte_size # closing quote
+          if @offset < @byte_size
+            advance(1) # closing quote
+          elsif quoted_symbol
+            emit_diagnostic("unterminated quoted symbol", build_span(start_offset, start_line, start_column))
+          end
 
           # Store processed string
           processed_bytes = retain_processed_slice(buffer.to_slice)
 
           # Return token with processed string
-          kind = has_interpolation ? Token::Kind::StringInterpolation : Token::Kind::String
+          kind = if quoted_symbol
+                   Token::Kind::Symbol
+                 elsif has_interpolation
+                   Token::Kind::StringInterpolation
+                 else
+                   Token::Kind::String
+                 end
           if heredoc_inside_interpolation
             emit_diagnostic("heredoc cannot be used inside interpolation", build_span(start_offset, start_line, start_column))
           end

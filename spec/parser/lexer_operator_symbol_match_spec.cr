@@ -1,6 +1,8 @@
 require "spec"
 require "../../src/compiler/frontend/parser"
 
+alias OperatorSymbolTokenKind = Adamas::Compiler::Frontend::Token::Kind
+
 def operator_symbol_tokens(source : String) : Array(Adamas::Compiler::Frontend::Token)
   tokens = [] of Adamas::Compiler::Frontend::Token
   Adamas::Compiler::Frontend::Lexer.new(source).each_token(skip_trivia: true) do |token|
@@ -10,6 +12,23 @@ def operator_symbol_tokens(source : String) : Array(Adamas::Compiler::Frontend::
 end
 
 describe "Lexer operator-symbol longest match" do
+  it "distinguishes adjacent operators from named argument suffixes" do
+    operator_symbol_tokens(%q(!:"x"))[0, 2].map(&.kind).should eq([
+      OperatorSymbolTokenKind::Not, OperatorSymbolTokenKind::Symbol,
+    ])
+    operator_symbol_tokens(%q(!!:"x"))[0, 3].map(&.kind).should eq([
+      OperatorSymbolTokenKind::Not, OperatorSymbolTokenKind::Not, OperatorSymbolTokenKind::Symbol,
+    ])
+    operator_symbol_tokens(%q(?:"x"))[0, 2].map(&.kind).should eq([
+      OperatorSymbolTokenKind::Question, OperatorSymbolTokenKind::Symbol,
+    ])
+    {% for source in [%q(key!:"x"), %q(key?:"x")] %}
+      operator_symbol_tokens({{ source }})[0, 3].map(&.kind).should eq([
+        OperatorSymbolTokenKind::Identifier, OperatorSymbolTokenKind::Colon, OperatorSymbolTokenKind::String,
+      ])
+    {% end %}
+  end
+
   it "keeps :<=> whole before :<= and preserves adjacent shorter symbols" do
     source = ":<=> :<= :< :<< :>= :>"
     tokens = operator_symbol_tokens(source)

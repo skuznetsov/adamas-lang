@@ -50250,7 +50250,7 @@ module Adamas::HIR
     private def named_tuple_literal_key_name(node) : String?
       case node
       when Adamas::Compiler::Frontend::SymbolNode
-        normalize_named_tuple_key_name((safe_slice_to_string(node.name) || ""))
+        (safe_slice_to_string(node.name) || "").lchop(':')
       when Adamas::Compiler::Frontend::StringNode
         normalize_named_tuple_key_name((safe_slice_to_string(node.value) || ""))
       else
@@ -93713,8 +93713,7 @@ module Adamas::HIR
 
     private def lower_symbol(ctx : LoweringContext, node : Adamas::Compiler::Frontend::SymbolNode) : ValueId
       str = (safe_slice_to_string(node.name) || "")
-      # Strip leading ':' if present — symbol_to_s returns the name without the colon
-      str = str.lstrip(':')
+      str = str.lchop(':')
       lit = Literal.new(ctx.next_id, TypeRef::SYMBOL, str)
       ctx.emit(lit)
       lit.id

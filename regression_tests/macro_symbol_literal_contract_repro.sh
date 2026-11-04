@@ -164,9 +164,7 @@ compile_and_run() {
   printf 'PASS[%s:%s]\n' "$stage" "$name"
 }
 
-# This regression covers literal-key normalization at the HIR conversion boundary.
-# The broader 3737 packet retains the independently failing CLI, lexer, and annotation cases.
-CASES=(literal_tuple_declarations)
+CASES=(literal_tuple_declarations quoted_symbols)
 for name in "${CASES[@]}"; do
   compile_and_run original "$ORIGINAL" "$name" || FAILED=1
 done
