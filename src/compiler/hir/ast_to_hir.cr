@@ -121613,10 +121613,9 @@ module Adamas::HIR
               return_type = get_function_return_type(name)
             end
           end
-          # Fall back to POINTER if force-lower didn't help
-          if return_type == TypeRef::VOID
-            return_type = TypeRef::POINTER
-          end
+          # Inline yielding can suppress this early force. Keep the result
+          # unresolved so the pending yield-free target can answer below.
+          name_pointer_fallback_deferred = true if return_type == TypeRef::VOID
         end
       end
 

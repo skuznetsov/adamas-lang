@@ -24679,14 +24679,31 @@ integration, fresh bootstrap, or LavinMQ parity.
   Int32 loses a String subclass in the parent and 35q1637. Also resolve
   predeclared type designators in no-prelude case guards without requiring
   the fixtures to redeclare Hash, NamedTuple or String.
-- [ ] Trace the unannotated `Crystal::System.printf` yield producer.
+- [x] Trace the unannotated `Crystal::System.printf` yield producer.
   Unchanged LavinMQ on 35q1639 passes the Table case and reaches
   `IO::Memory#write(Pointer)` in `Crystal.buffered_message`. The first
   yield supplies Slice(UInt8); the second is Pointer before block
-  binding. A reduced formatter reproduces this with a correct
-  Slice(UInt8) block hint. A separate whole-body hint on the application
-  includes Slice(Int32 | Pointer(UInt8)). Keep the sink restriction and
-  determine which producer or inference pass introduces each type.
+  binding. The module helper's name-based Pointer fallback runs after an
+  early force is suppressed inside inline yielding. This makes the pending
+  result look settled and blocks the later exact, yield-free force. Defer
+  the fallback until the existing pending demand gets a chance to resolve.
+- DoD: run `bash regression_tests/inline_yield_module_result_repro.sh <fresh-S1>`.
+  Exact 35q1642 passes nine Crystal 1.22.1, lazy and eager checks for both
+  helper names and a real Pointer argument rejection. The parent rejects
+  the name-prefixed helper with an inferred Pointer. The nested-yield,
+  included-origin and force-depth gates pass. Both binaries fail the
+  older yielding macro gate at `UInt64.new` under no-prelude.
+- [ ] Trace the independent whole-body formatter hint that includes
+  `Slice(Int32 | Pointer(UInt8))`. Also reproduce the runtime trap with
+  two formatter call shapes in one program. Add a second call to
+  `Formatter.emit(pointerof(byte), pointerof(byte))` with the same block
+  after the string call. The neutral helper name reproduces the trap on
+  the parent, even though both yields are now typed correctly in HIR.
+- [ ] Trace the type of `contexts` through `ops.map` and
+  `each_with_index` in `Channel.select_impl`. The unchanged LavinMQ HIR
+  probe on 35q1642 passes the formatter and stops at incompatible explicit
+  arguments for `Channel::LooseReceiveAction(Nil)#unwait`. Preserve the
+  overload restriction while locating the loss of the context type.
 
 ### 2026-11-04: Source coordinates for macro-generated methods
 
