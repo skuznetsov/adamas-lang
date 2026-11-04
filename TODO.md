@@ -23118,10 +23118,18 @@ integration, fresh bootstrap, or LavinMQ parity.
   for both member and parenthesized calls, including Nil arms and inherited
   getters. The joined result belongs to the dispatch. The native gate also
   checks missing methods and incompatible consumers.
-- [ ] Bind qualified type annotations through included namespaces. Combined
-  q1574 passes the LavinMQ client-list `dig` call and rejects `send` with a
-  concrete `AMQ::Protocol::Frame::Basic::Cancel`. The q1573 fixture isolates
-  `AMQP::Frame`; its short and root-qualified equivalents match Crystal.
+- [x] Bind qualified type annotations through the selected namespace and
+  retain the concrete ABI for inherited value parameters. Exact q1588 agrees
+  with Crystal 1.22.1 in 57 native and diagnostic checks, including reopened
+  aliases, included and rooted paths, equivalent overload redeclarations,
+  inactive macro branches, and the source order of explicit superclasses.
+  The combined q1589 LavinMQ HIR run passes the AMQP frame call and stops at
+  `LavinMQ::Policy.merge_definitions` with two nullable arguments.
+- [ ] Resolve overloads for every tuple of union argument variants. A
+  no-prelude reduction of `Policy.merge_definitions` covers all four
+  `Policy?` and `OperatorPolicy?` combinations in Crystal. Exact q1588
+  rejects the complete family for both class and instance methods. Preserve
+  the rejection when one combination has no source overload.
 
 ## 2026-11-04 — Respect the source owner of nested next
 

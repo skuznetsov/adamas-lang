@@ -14729,6 +14729,10 @@ module Adamas::HIR
       record_constant_definition(owner_name, name, value_id, arena)
     end
 
+    @source_qualified_type_members = Set(String).new
+    @direct_module_include_source_order = {} of Tuple(String, String) => Array(Int32)
+    @explicit_superclass_source_order : Array(Int32)?
+
     def pre_scan_constant_name(
       name : String,
       owner_name : String? = nil,
@@ -14820,10 +14824,22 @@ module Adamas::HIR
       # return-type inference run while registering the earlier one.
       record_nested_type_names(owner_name, body)
 
-      body.each do |expr_id|
-        next if expr_id.invalid?
+      current_arena = @arena.as(Adamas::Compiler::Frontend::ArenaLike)
+      class_registration_body(body, current_arena).each do |expr_id|
+        next if expr_id.null_ptr? || expr_id.invalid?
 
-        member = unwrap_visibility_member_in_arena(@arena[expr_id], @arena)
+        member = unwrap_visibility_member_in_arena(current_arena[expr_id], current_arena)
+        # Direct declarations in later reopenings shadow inherited types.
+        # Index only unconditional declarations: unexpanded macro branches
+        # cannot establish a shadow, even if their names were prescanned.
+        unless member.is_a?(Adamas::Compiler::Frontend::CallNode)
+          if source_name = nested_source_type_name(member, current_arena)
+            member_name = strip_generic_args(source_name)
+            if simple_identifier_token?(member_name)
+              @source_qualified_type_members << "#{owner_name}::#{member_name}"
+            end
+          end
+        end
         case member
         when Adamas::Compiler::Frontend::MacroDefNode
           register_macro(member, owner_name)
@@ -20034,6 +20050,12 @@ module Adamas::HIR
 
       if param_name == "Array" || param_name == "Tuple" || param_name == "NamedTuple" || param_name == "Proc"
         return call_name.starts_with?("#{param_name}(")
+      end
+
+      # Value subtype bodies need their concrete ABI. Use the already-bound
+      # restriction, including when the source spelling names an included type.
+      if inherited_value_dispatch_needs_origin?(call_name) && inherits_from?(call_name, param_name)
+        return true
       end
 
       # A bare generic restriction admits each applied variant, but must not
@@ -33245,6 +33267,27 @@ module Adamas::HIR
       end
     end
 
+    private def register_direct_module_inclusions(node : Adamas::Compiler::Frontend::ModuleNode, module_name : String)
+      return unless body = node.body
+      with_namespace_override(module_name) do
+        body.each do |expr_id|
+          next if expr_id.null_ptr? || expr_id.invalid?
+          member = unwrap_visibility_member(@arena[expr_id])
+          next unless member.is_a?(Adamas::Compiler::Frontend::IncludeNode)
+          next unless target = resolve_path_like_name(member.target)
+
+          resolved = resolve_module_alias_for_include(resolve_type_name_in_context(target))
+          key = {module_name, resolved}
+          order = source_declaration_order_for(member, @arena)
+          previous = @direct_module_include_source_order[key]?
+          if !previous || source_declaration_order_after?(previous, order)
+            @direct_module_include_source_order[key] = order
+          end
+          record_module_inclusion(resolved, module_name, already_resolved: true)
+        end
+      end
+    end
+
     private def register_module_with_name_in_current_arena(node : Adamas::Compiler::Frontend::ModuleNode, module_name : String)
       bootstrap_trace_puts "[CLASS_FRONTIER] module_enter #{module_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
       trace_nested_child = env_has?("ADAMAS_TRACE_NESTED_CHILD")
@@ -33404,22 +33447,9 @@ module Adamas::HIR
         invalidate_type_cache_for_namespace(module_name) if existing_defs
       end
 
-      # Record module-to-module includes (e.g. Indexable includes Enumerable).
-      # This is needed for yield function resolution: when looking for Enumerable#each,
-      # the reverse walk needs to find Indexable (which defines each) in
-      # @module_includers["Enumerable"]. Without this, only concrete classes
-      # (Array, Hash, etc.) appear as includers, not intermediate modules.
-      if body = node.body
-        body.each do |expr_id|
-          next if expr_id.null_ptr? || expr_id.invalid?
-          member = unwrap_visibility_member(@arena[expr_id])
-          if member.is_a?(Adamas::Compiler::Frontend::IncludeNode)
-            if included_module = resolve_path_like_name(member.target)
-              record_module_inclusion(included_module, module_name)
-            end
-          end
-        end
-      end
+      # Publish module ancestors before signatures in nested declarations bind
+      # types through them. Yield lookup uses these same inclusion edges.
+      register_direct_module_inclusions(node, module_name)
 
       # Always register nested types (classes, enums, modules) from module bodies.
       # Namespace modules like Crystal, Crystal::MachO etc. are not "class-like"
@@ -38439,6 +38469,7 @@ module Adamas::HIR
         bump_module_defs_cache_version
         invalidate_type_cache_for_namespace(full_name) if existing_defs
       end
+      register_direct_module_inclusions(node, full_name)
       # Add module to short_type_index so Printer can resolve to Float::Printer
       short_name = if env_has?("ADAMAS_INLINE_LAST_NAMESPACE_COMPONENT")
                      if idx = full_name.rindex("::")
@@ -40356,6 +40387,21 @@ module Adamas::HIR
       end
     end
 
+    private def resolve_explicit_superclass_name(
+      name : String, class_name : String, node : Adamas::Compiler::Frontend::ClassNode,
+    ) : String
+      old_class = @current_class
+      old_order = @explicit_superclass_source_order
+      @current_class = class_name
+      @explicit_superclass_source_order = source_declaration_order_for(node, @arena)
+      begin
+        resolve_type_name_in_context(name)
+      ensure
+        @explicit_superclass_source_order = old_order
+        @current_class = old_class
+      end
+    end
+
     # Resolve only aliases that are already registered under their exact
     # canonical key. Superclass authority must not depend on the broader
     # suffix/inventory fallbacks used by ordinary type lookup.
@@ -40975,10 +41021,7 @@ module Adamas::HIR
               STDERR.puts "[CLASS_PARENT_TRACE] phase=before class=#{class_name} raw_parent=#{raw_parent}"
             end
           end
-          old_class = @current_class
-          @current_class = class_name
-          resolved_parent = resolve_type_name_in_context(raw_parent)
-          @current_class = old_class
+          resolved_parent = resolve_explicit_superclass_name(raw_parent, class_name, node)
           unless resolved_parent
             raise LoweringError.new("undefined constant #{raw_parent}", node)
           end
@@ -69444,10 +69487,20 @@ module Adamas::HIR
           split_union_type_name(name).map { |part| resolve_composite_type_argument_in_context(part) }.join(" | ")
         elsif named_tuple = resolve_named_tuple_type_name_in_context(name)
           named_tuple
-        elsif @signature_scan_mode
-          resolve_type_name_in_signature_context_impl(name)
         else
-          resolve_type_name_in_context_impl(name)
+          resolved = if @signature_scan_mode
+                       resolve_type_name_in_signature_context_impl(name)
+                     else
+                       resolve_type_name_in_context_impl(name)
+                     end
+          # The lexical resolver binds the head. Follow inherited and included
+          # members from that head just as a qualified expression does.
+          if namespace_separator_index(resolved) &&
+             !type_name_exists?(resolved) && !constant_name_exists?(resolved)
+            resolve_qualified_type_path_members(resolved, allow_forward_members: !@explicit_superclass_source_order) || resolved
+          else
+            resolved
+          end
         end
       ensure
         @resolve_type_name_stack.delete(name)
@@ -69605,6 +69658,9 @@ module Adamas::HIR
         end
       end
 
+      if namespace_separator_index(name) && materializable_unknown_named_type?(name)
+        return resolve_path_string_in_context(name)
+      end
       if resolved = resolve_class_name_in_signature_context(name)
         return resolved
       end
@@ -69983,6 +70039,12 @@ module Adamas::HIR
       return nil if depth > 16
       if mods = @class_included_modules[type_name]?
         mods.reverse_each do |mod|
+          # Includes are indexed early for method signatures. A superclass
+          # may traverse only the edges visible at its own declaration.
+          if (current = @explicit_superclass_source_order) &&
+             (included = @direct_module_include_source_order[{type_name, mod}]?)
+            next unless source_declaration_order_after?(current, included)
+          end
           mod_base = strip_generics_simple(mod)
           next if mod_base == type_name
           if found = nested_type_full_name_in_owner(mod_base, name, depth + 1, include_private)
@@ -70001,8 +70063,10 @@ module Adamas::HIR
     private def nested_type_full_name_in_owner(owner : String, name : String, depth : Int32, include_private : Bool) : String?
       if (nested = @nested_type_names[owner]?) && safe_set_includes?(nested, name)
         full_name = "#{owner}::#{name}"
-        return nil if !include_private && @private_nested_type_names.try(&.includes?(full_name))
-        return full_name
+        if !@explicit_superclass_source_order || type_name_exists?(full_name)
+          return nil if !include_private && @private_nested_type_names.try(&.includes?(full_name))
+          return full_name
+        end
       end
       nested_type_full_name_in_parents(owner, name, depth, include_private)
     end
@@ -71202,7 +71266,7 @@ module Adamas::HIR
     # The caller has already bound the first component. Within that namespace,
     # each remaining component can name a direct or inherited type. Follow the
     # selected member before looking up the next component.
-    private def resolve_qualified_type_path_members(name : String) : String?
+    private def resolve_qualified_type_path_members(name : String, allow_forward_members : Bool = false) : String?
       return nil unless materializable_unknown_named_type?(name)
       parts = name.split("::")
       owner = resolve_type_alias_chain_no_context(parts.shift)
@@ -71210,7 +71274,7 @@ module Adamas::HIR
 
       parts.each do |part|
         member = "#{owner}::#{part}"
-        unless type_name_exists?(member)
+        unless type_name_exists?(member) || (allow_forward_members && @source_qualified_type_members.includes?(member))
           return nil if constant_name_exists?(member)
           member = nested_type_full_name_in_parents(owner, part, 0, include_private: false) || return nil
         end
@@ -150302,6 +150366,7 @@ module Adamas::HIR
     end
 
     private def resolved_type_name_cache_get(name : String) : String?
+      return nil if @explicit_superclass_source_order
       current = @current_class
       override = @current_namespace_override
       locals = @current_typeof_local_names
@@ -150325,6 +150390,7 @@ module Adamas::HIR
     end
 
     private def resolved_type_name_cache_set(name : String, value : String) : Nil
+      return if @explicit_superclass_source_order
       current = @current_class
       override = @current_namespace_override
       locals = @current_typeof_local_names
