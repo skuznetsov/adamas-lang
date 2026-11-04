@@ -7083,10 +7083,12 @@ module Adamas::HIR
           end
         end
       elsif !is_new
-        @call_resolution_authority_revision =
-          @call_resolution_authority_revision &+ 1_u64
-        @function_defs[name] = def_node # missing-revision-owner
-        set_function_visibility(name, def_node.visibility)
+        # Repair passes may revisit the same DefNode. Refresh derived caches
+        # without invalidating call resolution unless a source fact changed.
+        if @function_visibilities[name]? != def_node.visibility
+          @call_resolution_authority_revision = @call_resolution_authority_revision &+ 1_u64
+          set_function_visibility(name, def_node.visibility)
+        end
         seed_function_param_caches(name, def_node)
       end
     end

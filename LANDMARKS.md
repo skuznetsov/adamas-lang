@@ -23443,3 +23443,19 @@ StaticArray union fixture. The bare-symbol boundary preserves both checks.
 Refresh after changes to static source receiver capture, inherited namespace
 provenance, or inline type bindings. The depth fallback has a separate body
 materialization path.
+
+### Advance call-resolution authority only on source changes
+
+Final missing lowering compares revisions and materialized bodies to
+distinguish progress from churn. Repair can re-register the same exact
+DefNode under the same key in every pass. Reseed its derived parameter
+cache without publishing a source change. Def replacement still changes
+the Def revision, and an actual visibility or arena change invalidates
+call resolution.
+
+In the installed-prelude File/JSON reducer, 35q1672 traces 17 identical
+Def registrations per unproductive pass. Exact S1 35q1674 emits HIR and
+all six method source arena checks pass. The convergence bound is
+unchanged. The File/JSON evidence ends at HIR. Refresh after changes
+to Def identity, visibility, parameter cache ownership, or final missing
+lowering.

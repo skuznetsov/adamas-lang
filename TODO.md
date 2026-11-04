@@ -24875,3 +24875,22 @@ integration, fresh bootstrap, or LavinMQ parity.
   against the surviving producer, including a custom `.new` returning a
   metaclass. The explicit `NoReturn` effect control gets no provisional
   receive-context type and still stops at the downstream `unwait` check.
+
+### 2026-11-04 Final missing lowering and repeated Def registration
+
+- [x] Keep the call-resolution revision stable when repair registers the
+  same DefNode with the same visibility. Derived parameter facts can
+  still be seeded. New or replaced Defs, visibility changes, source
+  arena changes, includes, and aliases retain their invalidation.
+- DoD runs `bash regression_tests/final_missing_def_registration_repro.sh <fresh-S1>`
+  with the installed Crystal 1.22.1 stdlib. The stock File/JSON program
+  exits zero. The parent stops at the authority-only convergence guard.
+  Exact S1 35q1674 emits HIR, including the File block and concrete
+  Array allocator. All six method source arena cases also pass.
+  Instrumentation in 35q1672 observed the same 17 Def writes on each
+  unproductive pass, with stable arenas, includes, and aliases.
+- [ ] Trace the separate installed-prelude `File.open` / `gets` native
+  blocker. With idempotent Def registration, full compilation reaches
+  `peek.index(delimiter_byte)` in `IO#gets_peek` (installed
+  `io.cr:703`) with an erroneous Nil receiver. Original Crystal runs
+  the same program and prints the first line.
