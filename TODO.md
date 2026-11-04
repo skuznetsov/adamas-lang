@@ -24699,11 +24699,32 @@ integration, fresh bootstrap, or LavinMQ parity.
   `Formatter.emit(pointerof(byte), pointerof(byte))` with the same block
   after the string call. The neutral helper name reproduces the trap on
   the parent, even though both yields are now typed correctly in HIR.
-- [ ] Trace the type of `contexts` through `ops.map` and
-  `each_with_index` in `Channel.select_impl`. The unchanged LavinMQ HIR
-  probe on 35q1642 passes the formatter and stops at incompatible explicit
-  arguments for `Channel::LooseReceiveAction(Nil)#unwait`. Preserve the
-  overload restriction while locating the loss of the context type.
+- [x] Record exact result dependencies after the late yield-free force in
+  `lower_call`. The earlier recorder missed depth refusals on this path,
+  and a completed caller could select an overload from a provisional tuple.
+  Run `bash regression_tests/late_inline_return_dependency_repro.sh <fresh-S1>`.
+  Crystal 1.22.1 and exact lazy S1 35q1648 print `65` for class and
+  module consumers with the installed stdlib. The class case prints `88`
+  on the parent. Eager prelude lowering stops separately at `Time::Instant`.
+- [ ] Exercise a first depth refusal in the later unresolved-generic
+  retry. The recorder now covers the late Void fallback.
+- [ ] Resolve the exact result before strict `unwait` in
+  `Channel.select_impl`. The unchanged LavinMQ HIR probe on 35q1642
+  passes the formatter and stops at that restriction.
+  The stock-prelude receive/timeout fixture confirms both exact
+  `create_context_and_wait` calls hit the inline force cap at depth two.
+  The scratch depth control produces the expected `SelectContext(Nil)`
+  arguments (35q1644). The class replay control prints `130` and rejects
+  a real integer argument. Its module counterpart retains a partial
+  `InProgress` body (35q1646). Use the deferred-result admission gate in
+  the compiler architecture SDD before enabling caller replay.
+- [ ] Isolate the Tuple-valued comparator reaching `Slice.heapify!` after
+  the exact context results settle. Compare the actual block result with
+  the Proc signature passed through `unstable_sort_by!` and the
+  comparator's `call`. The standalone union `StaticArray` projection
+  prints `ABC` on Crystal 1.22.1 and reproduces the same bodyless
+  Tuple comparison on 35q1642. The scalar Array controls reach HIR
+  with an `Int32` comparator. Preserve the numeric comparison restriction.
 
 ### 2026-11-04: Source coordinates for macro-generated methods
 

@@ -4740,6 +4740,44 @@ passes 125 HIR examples. Scoped verdict ROBUST. Printing argument reuse and
 LavinMQ completion are separate open obligations. Manifest ba8a274f2cc2de70cfd0087218b86e29206ed056b618dd822adba91026991013.
 Refresh after pending-call demand, result typing or completion-guard changes.
 
+### Separate deferred result discovery from overload rejection (2026-11-04)
+
+Status: PROPOSED. Crystal 1.22.1 accepts a `Channel(Nil)` select with a
+receive and a timeout. In Adamas 35q1642, `Tuple#map` binds both concrete
+action receivers. The inline force depth limit refuses both exact
+`create_context_and_wait` instances, and the resulting unknown tuple
+elements reach the strict `unwait` restriction. A diagnostic force of
+those same bodies yields `SelectContext(Nil)` for both calls (35q1644).
+
+The exact selected Def, source arena, and specialization own the result.
+A depth refusal is a pending obligation. Capture it after the late inline
+force as well as the ordinary force. A caller consuming that obligation
+must wait for the exact result or remain incomplete. Keep the existing
+depth, recursion and yield guards, and require the ordinary source
+restriction once the operand settles. A family cache, an ABI placeholder
+and an arbitrary depth increase cannot discharge this obligation.
+
+Replay requires retirement of the caller generation and its published
+state. Preserve independently settled callees. Cover exact and base
+return entries, call shapes, synthetic closures and lexical scope in the
+retirement contract. The scratch class replay passes a native marker
+(`130`) and rejects a real `Int32` argument. The equivalent module
+method retains a partial body and `InProgress` state on unwind (35q1646).
+Treat the absence of the class body as evidence of retirement of that
+body alone.
+
+Admission gate: run the reduced positive and negative cases through
+`scripts/run_safe.sh` against installed Crystal and fresh lazy/eager S1.
+Exercise both class and module owners, a capture before the deferred
+operand, and a second dependency found on replay. The positive cases must
+produce identical native markers and the negative cases must reject the
+same argument after its actual type is known. Retest the existing
+`force_depth_return_dependency_repro.sh`, then stock-prelude select and
+unchanged LavinMQ. The diagnostic select reaches a separate sort
+comparator whose Proc result is a Tuple where `heapify!` expects an
+integer. Refresh the evidence after force scheduling, result publication
+or body retirement changes.
+
 
 ### Certify wholly bottom concrete generic union calls (2026-10-16)
 An empty concrete generic class union value-return set admits the existing

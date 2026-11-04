@@ -122170,8 +122170,6 @@ module Adamas::HIR
           return_type = refreshed
         end
       end
-      record_force_lower_result_dependency(ctx, mangled_method_name, selected_return_def, refused_before_call_force)
-
       # The exact target may have been materialized by the force pass above.
       # Recompute authority after that pass, while retaining the base demand
       # itself for deferred/default-argument and recursive source paths.
@@ -122269,6 +122267,9 @@ module Adamas::HIR
           STDERR.puts "[FORCE_LOWER] final return_type=#{rt_name} force_lowered=#{force_lowered}"
         end
       end
+
+      # The yield-free retry above can be the first force to reach the depth cap.
+      record_force_lower_result_dependency(ctx, mangled_method_name, selected_return_def, refused_before_call_force)
 
       if unresolved_generic_return_type?(return_type)
         [primary_mangled_name, mangled_method_name, base_method_name].uniq.each do |name|
