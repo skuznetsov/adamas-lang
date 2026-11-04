@@ -24227,9 +24227,17 @@ integration, fresh bootstrap, or LavinMQ parity.
   class or instance scope. Crystal 1.22.1, lazy, and eager agree on
   same-name class and instance helpers and reject a wrong consumer
   (35q1269).
-- [ ] Keep the exact outer block activation through exception unwinding.
-  The installed-prelude streaming JSON probe now reaches `from_json(File)`
-  and its next error is `inline-yield lost its owned Block scope`.
+- [x] Unwind the exact loop body scope and lowering stacks when its body
+  rejects a call. Crystal 1.22.1, lazy, and eager agree on accepting the
+  valid call and rejecting a Boolean argument in all three loop forms
+  (35q1279).
+- [ ] Trace the installed-prelude JSON probe past `from_json(File)`.
+  With loop unwinding, the probe exposes a foreign `PrettyPrint::Group`
+  initializer selected for a `JSON::PullParser` argument (35q1279).
+- [ ] Resolve exact inferred source results before consuming them in
+  `Tuple#map`. The installed-prelude `Channel.select` probe reaches the
+  force-lowering depth limit for `create_context_and_wait`, then rejects
+  `unwait` with an unresolved context type (35q1279).
 - [ ] Trace the class-literal argument to `Log.for(Class)`. Both exact
   LavinMQ probes reject it as an instance of `AMQP::Client::Connection`
   before the deferred File.open path (35q1266, 35q1269).

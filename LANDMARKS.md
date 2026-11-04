@@ -23130,3 +23130,22 @@ the callback now supplies File and the subsequent inline scope error
 remains. The full exact LavinMQ probes stop earlier at the Log.for class
 literal argument. Refresh on changes to source Def context, implicit
 receiver lookup, or nested callback input inference.
+
+### Own loop lowering state through diagnostic unwinding
+
+Loop bodies share one owner for their lexical scope, break records, and
+lowering stacks. Release the lowering frame before reading backedge values,
+then restore the lexical scope. Inline-yield metadata cleanup covers body
+lowering as well as result merge. A strict type rejection inside a loop
+previously left its scope open, masking the rejection with an outer inline
+scope assertion.
+
+Crystal 1.22.1 and the exact candidate agree on native valid calls and
+type rejection inside `loop`, `while`, and `until`, with lazy and eager
+Adamas (35q1279). The exact parent masks the type rejection. Infinite
+loop results, nested inline backedges, and forwarded class yield input
+checks pass. The loop-family accumulator oracle still fails final missing
+lowering with the same `authority_revision` churn on both revisions.
+The installed-prelude Channel and JSON probes expose distinct downstream
+failures. Refresh these checks on changes to loop backedge tracking,
+inline-yield ownership, or rejected body cleanup.

@@ -101007,57 +101007,14 @@ module Adamas::HIR
 
       # Body block
       ctx.current_block = body_block
-      ctx.push_scope(ScopeKind::Loop)
-      @loop_exit_stack << exit_block
-      @loop_cond_stack << cond_block
-      @loop_inline_next_depth_stack << @inline_next_stack.size
-      @loop_phi_stack << phi_nodes
-      @loop_break_info_stack << [] of {BlockId, Hash(String, ValueId)}
-      @loop_break_inline_locals_stack << {exit_block, [] of {BlockId, Array(Hash(String, ValueId))}}
-      @loop_break_value_stack << {exit_block, [] of {BlockId, ValueId}}
-      # Apply truthy narrowing (e.g., `while current` narrows ListNode? to ListNode)
-      while_truthy_targets = truthy_narrowing_targets(node.condition)
-      if debug_env_filter_match?("DEBUG_WHILE_NARROW", ctx.function.name)
-        STDERR.puts(
-          "[WHILE_NARROW] caller=#{ctx.function.name} targets=#{while_truthy_targets.join(",")} " \
-          "before=#{while_truthy_targets.map { |name| id = ctx.lookup_local(name); id ? "#{name}:#{id}:#{get_type_name_from_ref(ctx.type_of(id))}" : "#{name}:missing" }.join(";")}"
-        )
-      end
-      apply_truthy_narrowing(ctx, while_truthy_targets)
-      # `while x.is_a?(T) && ...` proves `x : T` on entry to the body, exactly
-      # like the then-branch of `if` (Crystal narrows until the next
-      # reassignment). Without this, `x.m` in the body dispatches on the wide
-      # loop-phi union and a Nil variant yields a void/null result.
-      apply_is_a_narrowing(ctx, is_a_narrowing_targets(node.condition))
-      if debug_env_filter_match?("DEBUG_WHILE_NARROW", ctx.function.name)
-        STDERR.puts(
-          "[WHILE_NARROW] caller=#{ctx.function.name} " \
-          "after=#{while_truthy_targets.map { |name| id = ctx.lookup_local(name); id ? "#{name}:#{id}:#{get_type_name_from_ref(ctx.type_of(id))}" : "#{name}:missing" }.join(";")}"
-        )
-      end
-      pushed_inline = false
-      if !inline_vars.empty?
-        @inline_loop_vars_stack << inline_vars
-        pushed_inline = true
-        # Clear backedge values before body — they'll be populated by inline_block_body
-        reset_inline_loop_backedge_values(inline_vars)
-      end
-      begin
+      break_inline_locals = [] of {BlockId, Array(Hash(String, ValueId))}
+      updated_loop_values, break_info, break_values = with_loop_body_frame(
+        ctx, node, cond_block, exit_block, phi_nodes, assigned_vars, inline_vars,
+        break_inline_locals: break_inline_locals, shadow_key: shadow_key,
+      ) do
         lower_body(ctx, node.body)
-      ensure
-        @inline_loop_vars_stack.pop? if pushed_inline
-        @loop_exit_stack.pop?
-        @loop_cond_stack.pop?
-        @loop_inline_next_depth_stack.pop?
-        @loop_phi_stack.pop?
-        @loop_shadow_phis.delete(shadow_key)
       end
-      break_info = @loop_break_info_stack.pop
-      break_inline_locals = @loop_break_inline_locals_stack.pop[1]
-      break_values = @loop_break_value_stack.pop[1]
       body_exit_block = ctx.current_block
-      updated_loop_values = snapshot_loop_updated_values(ctx, assigned_vars, inline_vars)
-      ctx.pop_scope
 
       # After body execution, get updated values and patch phi nodes.
       # Track vars whose header phi is complete (got a backedge incoming or
@@ -101490,33 +101447,13 @@ module Adamas::HIR
         end
       end
 
-      ctx.push_scope(ScopeKind::Loop)
-      @loop_exit_stack << exit_block
-      @loop_cond_stack << body_block # for infinite loop, `next` jumps back to body start
-      @loop_inline_next_depth_stack << @inline_next_stack.size
-      @loop_phi_stack << phi_nodes
-      @loop_break_info_stack << [] of {BlockId, Hash(String, ValueId)}
-      @loop_break_value_stack << {exit_block, [] of {BlockId, ValueId}}
-      pushed_inline = false
-      if !inline_vars.empty?
-        @inline_loop_vars_stack << inline_vars
-        pushed_inline = true
-        reset_inline_loop_backedge_values(inline_vars)
-      end
-      begin
+      # For an infinite loop, `next` jumps back to its body.
+      updated_loop_values, break_info_loop, break_values = with_loop_body_frame(
+        ctx, node, body_block, exit_block, phi_nodes, assigned_vars, inline_vars,
+      ) do
         lower_body(ctx, node.body)
-      ensure
-        @inline_loop_vars_stack.pop? if pushed_inline
-        @loop_exit_stack.pop?
-        @loop_cond_stack.pop?
-        @loop_inline_next_depth_stack.pop?
-        @loop_phi_stack.pop?
       end
-      break_info_loop = @loop_break_info_stack.pop
-      break_values = @loop_break_value_stack.pop[1]
       body_exit_block = ctx.current_block
-      updated_loop_values = snapshot_loop_updated_values(ctx, assigned_vars, inline_vars)
-      ctx.pop_scope
 
       # After body execution, update phi nodes for next iteration
       assigned_vars.each do |var_name|
@@ -102093,6 +102030,82 @@ module Adamas::HIR
       end
     end
 
+    # The loop body owns both its lowering stacks and its lexical scope.
+    private def with_loop_body_frame(
+      ctx : LoweringContext,
+      node : AstNode,
+      next_block : BlockId,
+      exit_block : BlockId,
+      phi_nodes : Hash(String, Phi),
+      assigned_vars : Array(String),
+      inline_vars : Set(String),
+      break_inline_locals : Array({BlockId, Array(Hash(String, ValueId))})? = nil,
+      shadow_key : {FunctionId, BlockId}? = nil,
+      &
+    ) : {Hash(String, ValueId), Array({BlockId, Hash(String, ValueId)}), Array({BlockId, ValueId})}
+      loop_scope = ctx.push_scope(ScopeKind::Loop)
+      break_info = [] of {BlockId, Hash(String, ValueId)}
+      break_values = [] of {BlockId, ValueId}
+      @loop_exit_stack << exit_block
+      @loop_cond_stack << next_block
+      @loop_inline_next_depth_stack << @inline_next_stack.size
+      @loop_phi_stack << phi_nodes
+      @loop_break_info_stack << break_info
+      @loop_break_value_stack << {exit_block, break_values}
+      @loop_break_inline_locals_stack << {exit_block, break_inline_locals} if break_inline_locals
+      pushed_inline = false
+      begin
+        begin
+          if node.is_a?(Adamas::Compiler::Frontend::WhileNode)
+            # Apply truthy narrowing (e.g., `while current` narrows ListNode? to ListNode)
+            while_truthy_targets = truthy_narrowing_targets(node.condition)
+            if debug_env_filter_match?("DEBUG_WHILE_NARROW", ctx.function.name)
+              STDERR.puts(
+                "[WHILE_NARROW] caller=#{ctx.function.name} targets=#{while_truthy_targets.join(",")} " \
+                "before=#{while_truthy_targets.map { |name| id = ctx.lookup_local(name); id ? "#{name}:#{id}:#{get_type_name_from_ref(ctx.type_of(id))}" : "#{name}:missing" }.join(";")}"
+              )
+            end
+            apply_truthy_narrowing(ctx, while_truthy_targets)
+            # `while x.is_a?(T) && ...` proves `x : T` on entry to the body, exactly
+            # like the then-branch of `if` (Crystal narrows until the next
+            # reassignment). Without this, `x.m` in the body dispatches on the wide
+            # loop-phi union and a Nil variant yields a void/null result.
+            apply_is_a_narrowing(ctx, is_a_narrowing_targets(node.condition))
+            if debug_env_filter_match?("DEBUG_WHILE_NARROW", ctx.function.name)
+              STDERR.puts(
+                "[WHILE_NARROW] caller=#{ctx.function.name} " \
+                "after=#{while_truthy_targets.map { |name| id = ctx.lookup_local(name); id ? "#{name}:#{id}:#{get_type_name_from_ref(ctx.type_of(id))}" : "#{name}:missing" }.join(";")}"
+              )
+            end
+          end
+          unless inline_vars.empty?
+            @inline_loop_vars_stack << inline_vars
+            pushed_inline = true
+            reset_inline_loop_backedge_values(inline_vars)
+          end
+          yield
+        ensure
+          @inline_loop_vars_stack.pop if pushed_inline
+          @loop_exit_stack.pop
+          @loop_cond_stack.pop
+          @loop_inline_next_depth_stack.pop
+          @loop_phi_stack.pop
+          @loop_break_info_stack.pop
+          @loop_break_value_stack.pop
+          @loop_break_inline_locals_stack.pop if break_inline_locals
+          @loop_shadow_phis.delete(shadow_key) if shadow_key
+        end
+        # Backedge lookup reads the loop depth after the frame is removed
+        # and the local snapshot before the lexical scope is restored.
+        {snapshot_loop_updated_values(ctx, assigned_vars, inline_vars), break_info, break_values}
+      ensure
+        unless ctx.current_scope == loop_scope
+          raise LoweringError.new("loop body lost its owned Loop scope", node)
+        end
+        ctx.pop_scope
+      end
+    end
+
     private def snapshot_loop_updated_values(
       ctx : LoweringContext,
       assigned_vars : Array(String),
@@ -102493,33 +102506,12 @@ module Adamas::HIR
 
       # Body block
       ctx.current_block = body_block
-      ctx.push_scope(ScopeKind::Loop)
-      @loop_exit_stack << exit_block
-      @loop_cond_stack << cond_block
-      @loop_inline_next_depth_stack << @inline_next_stack.size
-      @loop_phi_stack << phi_nodes
-      @loop_break_info_stack << [] of {BlockId, Hash(String, ValueId)}
-      @loop_break_value_stack << {exit_block, [] of {BlockId, ValueId}}
-      pushed_inline = false
-      if !inline_vars.empty?
-        @inline_loop_vars_stack << inline_vars
-        pushed_inline = true
-        reset_inline_loop_backedge_values(inline_vars)
-      end
-      begin
+      updated_loop_values, break_info, break_values = with_loop_body_frame(
+        ctx, node, cond_block, exit_block, phi_nodes, assigned_vars, inline_vars,
+      ) do
         lower_body(ctx, node.body)
-      ensure
-        @inline_loop_vars_stack.pop? if pushed_inline
-        @loop_exit_stack.pop?
-        @loop_cond_stack.pop?
-        @loop_inline_next_depth_stack.pop?
-        @loop_phi_stack.pop?
       end
-      break_info = @loop_break_info_stack.pop
-      break_values = @loop_break_value_stack.pop[1]
       body_exit_block = ctx.current_block
-      updated_loop_values = snapshot_loop_updated_values(ctx, assigned_vars, inline_vars)
-      ctx.pop_scope
 
       # Patch phi nodes with back-edge values
       assigned_vars.each do |var_name|
@@ -135327,41 +135319,41 @@ module Adamas::HIR
             end
           end
         end
-        @inline_yield_caller_return_owner_stack << @captured_block_return_owner
-        @inline_active_caller_locals_index_stack << (@inline_caller_locals_stack.size - 1)
         begin
-          # The selected callee owns its lexical namespace, including no override.
-          # Inheriting a caller mixin override changes constant and visibility
-          # lookup inside the callee. Yielded blocks restore their own BlockOwner.
-          with_namespace_override_or_clear(namespace_override) do
-            if inline_param_map.empty?
-              apply_inline.call
-            else
-              with_type_param_map(inline_param_map) { apply_inline.call }
+          @inline_yield_caller_return_owner_stack << @captured_block_return_owner
+          @inline_active_caller_locals_index_stack << (@inline_caller_locals_stack.size - 1)
+          begin
+            # The selected callee owns its lexical namespace, including no override.
+            # Inheriting a caller mixin override changes constant and visibility
+            # lookup inside the callee. Yielded blocks restore their own BlockOwner.
+            with_namespace_override_or_clear(namespace_override) do
+              if inline_param_map.empty?
+                apply_inline.call
+              else
+                with_type_param_map(inline_param_map) { apply_inline.call }
+              end
+            end
+          ensure
+            @inline_active_caller_locals_index_stack.pop?
+            @inline_yield_caller_return_owner_stack.pop?
+          end
+
+          unless should_stop_sequential_lowering?(ctx)
+            result_value = nil_value(ctx) if inline_return.discards_method_result
+            ctx.terminate(Jump.new(inline_return.exit_block))
+            inline_return.incoming << {ctx.current_block, result_value}
+            if return_locals = @inline_yield_return_caller_locals_stack.last?
+              if current_caller_locals = @inline_caller_locals_stack.last?
+                return_locals << {ctx.current_block, snapshot_inline_caller_locals_for_return(current_caller_locals)}
+              end
             end
           end
-        ensure
-          @inline_active_caller_locals_index_stack.pop?
-          @inline_yield_caller_return_owner_stack.pop?
-        end
 
-        unless should_stop_sequential_lowering?(ctx)
-          result_value = nil_value(ctx) if inline_return.discards_method_result
-          ctx.terminate(Jump.new(inline_return.exit_block))
-          inline_return.incoming << {ctx.current_block, result_value}
+          ctx.switch_to_block(inline_return.exit_block)
           if return_locals = @inline_yield_return_caller_locals_stack.last?
-            if current_caller_locals = @inline_caller_locals_stack.last?
-              return_locals << {ctx.current_block, snapshot_inline_caller_locals_for_return(current_caller_locals)}
-            end
+            merge_inline_caller_locals_for_inline_return(ctx, caller_locals, return_locals)
           end
-        end
 
-        ctx.switch_to_block(inline_return.exit_block)
-        if return_locals = @inline_yield_return_caller_locals_stack.last?
-          merge_inline_caller_locals_for_inline_return(ctx, caller_locals, return_locals)
-        end
-
-        begin
           if inline_return.incoming.empty?
             @control_flow_dead_blocks.add({ctx.function.id, inline_return.exit_block})
             nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
