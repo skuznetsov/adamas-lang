@@ -24413,10 +24413,26 @@ integration, fresh bootstrap, or LavinMQ parity.
   NamedTuple regression passes after 35q1480, but a runtime `Int32 | Int64`
   argument still misses the right block body. Check exact arm binding,
   one-time argument evaluation, capture updates, and joined result types.
-- [ ] Resolve each structural NamedTuple receiver union arm under its own
-  source and result contract before joining results. A native holdout with
-  branch results `Int32 | Nil` and `Bool | Int64` still computes the second
-  result type for both arms (35q1479).
+- [x] Resolve direct positional calls on concrete NamedTuple receiver unions
+  before whole-union return inference. Each arm retains its selected
+  definition, arena, receiver layout, and completed return ABI. Ordinary
+  concrete calls publish their source binding while building the body.
+  A required receiver arm uses the same body materialization path as strict
+  union hash dispatch when speculative return discovery reaches its depth
+  limit. The native gate against Crystal 1.22.1 covers previously materialized
+  bodies, disjoint return unions, one-time argument evaluation, bad arguments,
+  private calls, and dynamic `[]?` with the installed stdlib (35q1496).
+  The combined LavinMQ HIR run cleared the NamedTuple lookup and reached the
+  nullable argument after `not_found` in `ConnectionsController` (35q1495).
+  The pre-existing strict union hash gate reports the same missing
+  `Pointer(Void)#object_id` on the parent and candidate with Crystal 1.22.1.
+- [ ] Extend the exact receiver-arm contract to other call shapes. Probe
+  named/default arguments, blocks, inherited methods, a non-returning arm,
+  and explicit mixed structural/nonstructural receiver unions separately.
+- [ ] Compare equality on primitive unions against Crystal. The installed
+  dynamic NamedTuple lookup can produce the expected mixed result, but direct
+  comparison in the original fixture triggers an ambiguous `Bool#==` MIR
+  target (35q1490). Isolate equality from receiver-arm lowering.
 - [ ] Trace macro iterable type projection for `type.resolve` when a macro
   argument names a NamedTuple alias. Crystal generates both indexed methods.
   The candidate reports `undefined method 'generated_name'` (35q1478).

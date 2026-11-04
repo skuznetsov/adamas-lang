@@ -49290,6 +49290,15 @@ module Adamas::HIR
                                      abstract_numeric_return_constraint(node)
                                    end
       return_type = TypeRef::VOID if abstract_return_constraint
+      if !is_class_method && concrete_named_tuple_receiver_owner(class_info.type_ref) == class_name
+        source_name = logical_registered_name || registered_name_for_logical_def("NamedTuple##{method_name}", node)
+        if source_name && @function_defs[source_name]?.try(&.same?(node)) &&
+           @function_def_arenas[source_name]?.try(&.same?(def_arena))
+          # Publish the binding while the lowering still owns the actual
+          # definition and arena. A later union call can then reuse this body.
+          bind_exact_source_call_target(full_name, source_name, node, def_arena, node, "NamedTuple method")
+        end
+      end
       func = @module.create_function(full_name, return_type)
       materializing_function = func
       stop_after_pending_target_lower_method_phase(
@@ -112433,12 +112442,13 @@ module Adamas::HIR
     # Default expansion selects the source before padding the physical ABI.
     # Named-only defaults must retain that selection too: the padded vector
     # cannot authorize a later lookup by symbol spelling alone.
-    private def bind_defaulted_source_call_target(
+    private def bind_exact_source_call_target(
       target : String,
       selected_name : String,
       selected_def : Adamas::Compiler::Frontend::DefNode,
       selected_arena : Adamas::Compiler::Frontend::ArenaLike,
       node : Adamas::Compiler::Frontend::Node? = nil,
+      binding_context : String = "defaulted call",
     ) : Nil
       source_def = @function_defs[selected_name]?
       source_arena = @function_def_arenas[selected_name]?
@@ -112447,19 +112457,19 @@ module Adamas::HIR
              source_arena && source_arena.same?(selected_arena) &&
              retained_arena && retained_arena.same?(selected_arena) &&
              arena_fits_def?(selected_arena, selected_def)
-        raise LoweringError.new("defaulted call lost its exact selected source binding: #{selected_name}", node)
+        raise LoweringError.new("#{binding_context} lost its exact selected source binding: #{selected_name}", node)
       end
 
       existing_def = @function_defs[target]?
       existing_arena = @function_def_arenas[target]?
       if existing_def && !existing_def.same?(selected_def)
-        raise LoweringError.new("defaulted call target already has a different source definition: #{target}", node)
+        raise LoweringError.new("#{binding_context} target already has a different source definition: #{target}", node)
       end
       if existing_arena && !existing_arena.same?(selected_arena)
-        raise LoweringError.new("defaulted call target already has a different source arena: #{target}", node)
+        raise LoweringError.new("#{binding_context} target already has a different source arena: #{target}", node)
       end
       if @module.has_function_with_body?(target) && (!existing_def || !existing_arena)
-        raise LoweringError.new("defaulted call target body has no complete source binding: #{target}", node)
+        raise LoweringError.new("#{binding_context} target body has no complete source binding: #{target}", node)
       end
 
       set_function_def_entry(target, selected_def, false)
@@ -115428,6 +115438,19 @@ module Adamas::HIR
         bottom_receiver = receiver_id if receiver_id && noreturn_type?(ctx.type_of(receiver_id))
         if terminal = bottom_receiver || args.last?
           return terminal
+        end
+      end
+      if receiver_id && !has_block_call && !has_splat && !has_named_args &&
+         source_named_entry.nil? && args.size == call_args.size &&
+         is_union_type?(ctx.type_of(receiver_id))
+        literal_index = (method_name == "[]" || method_name == "[]?") &&
+                        args.size == 1 && named_tuple_literal_key_name(call_arena[call_args.first])
+        unless literal_index
+          if dispatched = try_emit_named_tuple_receiver_union_call(
+               ctx, receiver_id, method_name, args, node, callee_node, explicit_self_receiver,
+             )
+            return dispatched
+          end
         end
       end
       abi_guard_explicit_arg_count = args.size
@@ -119209,7 +119232,7 @@ module Adamas::HIR
           unless default_source[1].same?(selected_def)
             raise LoweringError.new("defaulted call changed its selected source definition", node)
           end
-          bind_defaulted_source_call_target(
+          bind_exact_source_call_target(
             mangled_method_name, default_source[0], selected_def, default_source[2], node,
           )
         elsif (allocator_explicit_new_call && !has_block_call) ||
@@ -124226,6 +124249,158 @@ module Adamas::HIR
       phi.id
     end
 
+    # Each structural receiver owns the specialization of its shared
+    # NamedTuple declaration. Close every body before computing the call's
+    # result so source selection, physical parameters and the return join
+    # all use the same set of arms.
+    private def try_emit_named_tuple_receiver_union_call(
+      ctx : LoweringContext,
+      receiver_id : ValueId,
+      method_name : String,
+      args : Array(ValueId),
+      node : Adamas::Compiler::Frontend::Node,
+      callee_node : Adamas::Compiler::Frontend::Node,
+      explicit_self_receiver : Bool,
+    ) : ValueId?
+      receiver_type = ctx.type_of(receiver_id)
+      return nil unless is_union_type?(receiver_type) && !ctx.type_literal?(receiver_id)
+      return nil unless ensure_union_descriptor_for_type_ref(receiver_type)
+      descriptor = union_descriptor_from_sidecar(receiver_type)
+      return nil unless descriptor && descriptor.variants.size > 1
+
+      members = descriptor.variants.map do |variant|
+        member = mir_to_hir_type_ref(variant.type_ref)
+        owner = concrete_named_tuple_receiver_owner(member)
+        return nil unless owner
+        {member, owner, variant.type_id}
+      end
+      tags = members.map { |member| member[2] }
+      return nil if tags.any? { |tag| tag < 0 } || tags.uniq.size != members.size
+
+      arg_types = args.map { |arg| ctx.type_of(arg) }
+      return nil if arg_types.includes?(TypeRef::VOID)
+      source_facts = args.map { |arg| source_call_argument(ctx, arg).as(SourceCallArgument?) }
+      sources = members.map do |(_, owner, _)|
+        requested = "#{owner}##{method_name}"
+        input = CallResolutionInput.new(
+          requested, args.size, arg_types, false, false, false, nil,
+          raw_positional_count: args.size, source_argument_facts: source_facts,
+        )
+        selected = resolve_call_target(input)
+        return nil unless selected && !selected.def_node.is_abstract
+        source_name = selected.symbol_name
+        source_owner = method_owner(strip_type_suffix(source_name))
+        return nil unless source_owner == owner || source_owner == "NamedTuple"
+        stats = function_param_stats(source_name, selected.def_node)
+        return nil unless stats.positional_count == args.size &&
+                          !stats.has_block && !stats.has_splat &&
+                          !stats.has_double_splat && !stats.has_named_only
+        arena = selected.source_arena
+        return nil unless arena
+        physical_name = prefer_callsite_specialization(strip_type_suffix(source_name), source_name, arg_types, false) || source_name
+        target = specialize_method_owner_name(physical_name, owner)
+        validate_call_visibility!(ctx, node, callee_node, receiver_id, method_name, source_name, explicit_self_receiver, args.size)
+        {target, source_name, selected.def_node, arena}
+      end
+
+      result_members = [] of TypeRef
+      functions = sources.map_with_index do |(target, source_name, definition, arena), index|
+        bind_exact_source_call_target(target, source_name, definition, arena, node, "NamedTuple receiver arm")
+        remember_callsite_arg_types(target, arg_types)
+        lower_required_virtual_target_function(target, exact_demand: true)
+        force_required_union_arm_body(target)
+        function = @module.function_by_name(target)
+        unless function && function_state(target).completed? && @module.has_function_with_body?(target)
+          raise LoweringError.new("NamedTuple receiver arm has no complete body: #{target}", node)
+        end
+        params = function.params
+        unless params.size == args.size + 1 && params.first.type == members[index][0] &&
+               arg_types.each_with_index.all? { |arg_type, i| receiver_param_coercion_compatible?(arg_type, params[i + 1].type) }
+          raise LoweringError.new("NamedTuple receiver arm has an incompatible parameter ABI: #{target}", node)
+        end
+        result = function.return_type
+        return nil if result == TypeRef::VOID || noreturn_type?(result)
+        if is_union_type?(result)
+          ensure_union_descriptor_for_type_ref(result)
+          result_union = union_descriptor_from_sidecar(result)
+          unless result_union && !result_union.variants.empty?
+            raise LoweringError.new("NamedTuple receiver arm has no result union descriptor: #{target}", node)
+          end
+          result_union.variants.each do |variant|
+            result_members << mir_to_hir_type_ref(variant.type_ref)
+          end
+        else
+          result_members << result
+        end
+        function
+      end
+
+      result_type = complete_union_type(result_members.map { |member| generic_param_type_name_from_ref(member) }, result_members)
+      unless result_members.all? { |member| member == result_type || strict_union_member_variant_id(result_type, member) >= 0 }
+        raise LoweringError.new("cannot join the exact NamedTuple receiver arm results for '#{method_name}'", node)
+      end
+
+      locals = ctx.save_locals
+      cell_proofs = ctx.closure_cell_write_proofs_on(ctx.current_block)
+      merge = ctx.create_block
+      incoming = [] of {BlockId, ValueId}
+      members.each_with_index do |(member, _, tag), index|
+        next_block : BlockId? = nil
+        if index < members.size - 1
+          test = UnionIs.new(ctx.next_id, receiver_id, tag, receiver_type)
+          ctx.emit(test)
+          ctx.register_type(test.id, TypeRef::BOOL)
+          arm = ctx.create_block
+          next_block = ctx.create_block
+          ctx.terminate(Branch.new(test.id, arm, next_block))
+          ctx.current_block = arm
+          ctx.restore_locals(locals)
+        end
+        receiver = UnionUnwrap.new(ctx.next_id, member, receiver_id, tag, false)
+        ctx.emit(receiver)
+        ctx.register_type(receiver.id, member)
+        target = functions[index]
+        branch_args = coerce_args_to_param_types(ctx, args, target.name)
+        call = Call.with_receiver(ctx.next_id, target.return_type, receiver.id, target.name, branch_args)
+        ctx.emit(call)
+        ctx.register_type(call.id, target.return_type)
+        result = coerce_value_to_type(ctx, call.id, result_type)
+        incoming << {ctx.current_block, result}
+        ctx.terminate(Jump.new(merge))
+        if following = next_block
+          ctx.current_block = following
+          ctx.restore_locals(locals)
+        end
+      end
+      ctx.current_block = merge
+      ctx.restore_locals(locals)
+      ctx.carry_closure_cell_write_proofs(cell_proofs)
+      phi = Phi.new(ctx.next_id, result_type, incoming)
+      ctx.emit(phi)
+      ctx.register_type(phi.id, result_type)
+      phi.id
+    end
+
+    # Dispatch needs the physical return ABI before emitting any arms. Give
+    # an exact body demand its own bounded force chain, independent of the
+    # caller's speculative return-discovery depth. The force path still
+    # checks active bodies and whether it can detach from an inline yield.
+    private def force_required_union_arm_body(name : String) : Nil
+      return if @module.has_function_with_body?(name)
+
+      saved_force_depth = @force_lower_return_type_depth
+      @force_lower_return_type_depth = 0
+      begin
+        force_lower_function_for_return_type(
+          name,
+          bypass_inline_yield: true,
+          bypass_speculative_helper_guards: true,
+        )
+      ensure
+        @force_lower_return_type_depth = saved_force_depth
+      end
+    end
+
     private def try_emit_union_receiver_dispatch(
       ctx : LoweringContext, receiver_id : ValueId, recv_type : TypeRef, recv_desc,
       base_method_name : String, mangled_method_name : String?, args : Array(ValueId),
@@ -124511,19 +124686,7 @@ module Adamas::HIR
           # into a lowering error. Recursion stays bounded by the in-progress
           # state check inside force_lower.
           lower_required_virtual_target_function(vm, exact_demand: true)
-          unless @module.has_function_with_body?(vm)
-            saved_force_depth = @force_lower_return_type_depth
-            @force_lower_return_type_depth = 0
-            begin
-              force_lower_function_for_return_type(
-                vm,
-                bypass_inline_yield: true,
-                bypass_speculative_helper_guards: true,
-              )
-            ensure
-              @force_lower_return_type_depth = saved_force_depth
-            end
-          end
+          force_required_union_arm_body(vm)
         else
           lower_function_if_needed(vm)
         end
@@ -140059,7 +140222,7 @@ module Adamas::HIR
       # The late binding below remains as an idempotent guard for a distinct
       # primary name selected by later dispatch normalization.
       if default_source = source_default_entry
-        bind_defaulted_source_call_target(
+        bind_exact_source_call_target(
           actual_name, default_source[0], default_source[1], default_source[2], node,
         )
         remember_callsite_arg_types(actual_name, arg_types, has_named_args: defaulted_has_named_args)
@@ -141595,7 +141758,7 @@ module Adamas::HIR
       defaulted_source_target = false
       if (default_source = source_default_entry_out.first?) && source_new_entry.nil? && member_name != "new"
         selected_name, selected_def, selected_arena = default_source
-        bind_defaulted_source_call_target(mangled_name, selected_name, selected_def, selected_arena)
+        bind_exact_source_call_target(mangled_name, selected_name, selected_def, selected_arena)
         remember_callsite_arg_types(mangled_name, arg_types)
         defaulted_source_target = true
       end
