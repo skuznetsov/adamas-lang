@@ -176,4 +176,21 @@ describe "Adamas::Compiler::Frontend::Parser postfix modifiers" do
     arena[group.expression].should be_a(Adamas::Compiler::Frontend::IfNode)
     arena[inner.then_body.first].should be_a(Adamas::Compiler::Frontend::AssignNode)
   end
+
+  it "leaves suffixes outside a logical RHS unless explicitly grouped" do
+    ["return 1", "break 1", "next 1", "yield", "super", "previous_def"].each do |rhs|
+      source = "check || #{rhs} if enabled\ncheck || (#{rhs} if enabled)"
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
+      program = parser.parse_program
+
+      parser.diagnostics.should be_empty
+      program.roots.size.should eq(2)
+      arena = program.arena
+      outer = arena[program.roots[0]].as(Adamas::Compiler::Frontend::IfNode)
+      arena[outer.then_body.first].should be_a(Adamas::Compiler::Frontend::BinaryNode)
+      binary = arena[program.roots[1]].as(Adamas::Compiler::Frontend::BinaryNode)
+      group = arena[binary.right].as(Adamas::Compiler::Frontend::GroupingNode)
+      arena[group.expression].should be_a(Adamas::Compiler::Frontend::IfNode)
+    end
+  end
 end

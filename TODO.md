@@ -24288,6 +24288,10 @@ integration, fresh bootstrap, or LavinMQ parity.
   prefix conditional and consume a block delimiter. The unchanged
   LavinMQ input now registers `Controller::HaltRequest < Exception` and
   passes its `raise` call (35q1370).
+- [x] Keep postfix modifiers on the enclosing binary expression when
+  its right operand starts with a control or forwarding keyword. The
+  stock and Adamas native checks distinguish `check || return 1 if flag`
+  from its explicitly grouped form (35q1374).
 - [ ] Resolve the exact result of `Channel(Nil).select_impl` for a strict
   receive and a timeout. The combined LavinMQ HIR gate now reports
   `Tuple(Int32, Nil | Channel::NotReady | Unknown)` with an empty

@@ -10240,9 +10240,9 @@ module Adamas
             # return type and control flow, including named arguments.
             parse_identifier_like(token.span, stable_identifier_token_slice(token))
           when Token::Kind::Return
-            # Allow return in expression contexts (e.g., x || return y)
-            stmt = parse_return
-            parse_postfix_if_modifier(stmt)
+            # The enclosing expression owns postfix modifiers, including
+            # when this prefix is the RHS of a short-circuit operator.
+            parse_return
           when Token::Kind::If
             # Phase 103D: Check if this is identifier usage (if : Type)
             if next_comes_colon_space?
@@ -10335,31 +10335,15 @@ module Adamas
             parse_with
             # Raise removed - it's a regular method, not a keyword
           when Token::Kind::Yield
-            # Phase 10: yield (call block)
-            stmt = parse_yield
-            # Inside without_postfix_modifiers (the value of `return X if cond`)
-            # the modifier belongs to the OUTER statement. Binding it here turned
-            # `return yield if cond` into `return (yield if cond)` — an
-            # unconditional return that killed every statement after it
-            # (stdlib gen_to_: "".to_i? returned Int32(0) instead of nil).
-            if @consume_postfix_modifiers == false
-              stmt
-            else
-              parse_postfix_if_modifier(stmt)
-            end
+            parse_yield
           when Token::Kind::Super
-            # Allow 'super' as expression in contexts like boolean chains
-            stmt = parse_super
-            parse_postfix_if_modifier(stmt)
+            parse_super
           when Token::Kind::PreviousDef
-            stmt = parse_previous_def
-            parse_postfix_if_modifier(stmt)
+            parse_previous_def
           when Token::Kind::Break
-            stmt = parse_break
-            parse_postfix_if_modifier(stmt)
+            parse_break
           when Token::Kind::Next
-            stmt = parse_next
-            parse_postfix_if_modifier(stmt)
+            parse_next
           when Token::Kind::Require
             # Phase 65: require statement
             parse_require

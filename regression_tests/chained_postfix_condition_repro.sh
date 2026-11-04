@@ -83,10 +83,49 @@ LibC.exit(13) unless Conditions.new.grouped == 327
 LibC.exit(0)
 CRYSTAL
 
+cat >rhs_return.cr <<'CRYSTAL'
+lib LibC
+  fun exit(status : Int32) : NoReturn
+end
+
+class ReturnModifierCheck
+  @visited : Int32 = 0
+
+  def check
+    @visited = 1
+    false
+  end
+
+  def execute(enabled : Bool)
+    check || return 1 if enabled
+    2
+  end
+
+  def grouped(enabled : Bool)
+    check || (return 1 if enabled)
+    2
+  end
+
+  def visited
+    @visited
+  end
+end
+
+probe = ReturnModifierCheck.new
+LibC.exit(11) unless probe.execute(false) == 2
+LibC.exit(12) unless probe.visited == 0
+LibC.exit(13) unless probe.execute(true) == 1
+LibC.exit(14) unless probe.visited == 1
+probe = ReturnModifierCheck.new
+LibC.exit(15) unless probe.grouped(false) == 2
+LibC.exit(16) unless probe.visited == 1
+LibC.exit(0)
+CRYSTAL
+
 check() {
   local mode="$1" fixture output
   shift
-  for fixture in scope order; do
+  for fixture in scope order rhs_return; do
     output="$fixture.$mode"
     if ! "$safe" "$@" --prelude=empty "$fixture.cr" -o "$output" >"$output.compile.log" 2>&1; then
       cat "$output.compile.log" >&2
@@ -103,4 +142,4 @@ check stock "$crystal" 60 4096 build
 ADAMAS_EAGER_HIR=0 check lazy "$adamas" 60 4096
 ADAMAS_EAGER_HIR=1 check eager "$adamas" 60 4096
 
-echo 'PASS chained postfix conditions (six stock, lazy, and eager checks)'
+echo 'PASS postfix conditions (nine stock, lazy, and eager checks)'

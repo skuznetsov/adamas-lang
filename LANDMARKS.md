@@ -23388,3 +23388,18 @@ gate passes the `raise` boundary with unchanged application, shards,
 and installed stdlib and reaches an unresolved Channel select result
 (35q1370). Refresh after changes to modifier or grouping ownership,
 assignment RHS parsing, or block delimiters.
+
+### Keep keyword operands inside the enclosing modifier boundary
+
+Prefix handlers for control flow and forwarding calls could consume a
+postfix condition while parsing a binary right operand. Let the
+expression parser attach the condition and let grouping start its own
+expression. On the parent, `check || return 1 if flag` called `check`
+with `flag` false. Its explicitly grouped form intentionally calls it.
+
+The structural regression covers `return`, `break`, `next`, `yield`,
+`super`, and `previous_def`. Nine native stock, lazy, and eager checks
+and the installed-prelude hello pass. The parser suite adds one passing
+example and retains the parent's exact 101 existing failures (35q1374).
+Refresh when changing keyword operands, binary precedence, or postfix
+modifier ownership.
