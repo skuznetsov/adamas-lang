@@ -78361,6 +78361,10 @@ module Adamas::HIR
           @class_method_inheritance_cache[cache_key] = resolved
           return resolved
         end
+        if method_name == "new" && !direct_source_constructor_initializers(current).empty?
+          @class_method_inheritance_cache[cache_key] = nil
+          return nil
+        end
         # Enums carry no ClassInfo; their `Enum` parent lives only in the
         # module hierarchy, so `Sig.each` must still reach `Enum.each`.
         if parent = parent_name_for_hierarchy_lookup(current)
@@ -78410,6 +78414,7 @@ module Adamas::HIR
         return true if @function_defs.has_key?(test_name) ||
                        class_method_overload_exists?(test_name) ||
                        @class_accessor_entries.has_key?(test_name)
+        break if method_name == "new" && !direct_source_constructor_initializers(current).empty?
         if info = @class_info[current]?
           if parent = info.parent_name
             current = parent
@@ -126894,22 +126899,26 @@ module Adamas::HIR
        def_receiver_is_self_from_node(node, arena)}
     end
 
-    # Synthesized new and explicit factories are one source overload family.
-    # Keep the local owner boundary: inherited factories/initializers are not
-    # appended to a nearer owner's declared constructors.
-    private def source_named_constructor_family(
-      lookup_name : String,
-      factory_names : Array(String),
-    ) : Array(String)
-      owner = method_owner(strip_type_suffix(lookup_name)) || return factory_names
-      init_base = allocator_init_name_for(owner)
-      init_names = function_def_overload_keys(init_base).select do |name|
+    # A direct initialize introduces synthesized class-level new overloads.
+    # That constructor family owns the ancestor lookup boundary.
+    private def direct_source_constructor_initializers(owner : String) : Array(String)
+      owner = canonical_method_owner_name(owner)
+      function_def_overload_keys(allocator_init_name_for(owner)).select do |name|
         parts = parse_method_name(name)
         next false unless parts.separator == '#' && parts.owner == owner && parts.method == "initialize"
         definition = @function_defs[name]? || next false
         arena = @function_def_arenas[name]? || resolve_arena_for_def(definition, @arena)
         !@included_initializer_def_origins.has_key?({definition, arena})
       end
+    end
+
+    # Synthesized new and explicit factories are one source overload family.
+    private def source_named_constructor_family(
+      lookup_name : String,
+      factory_names : Array(String),
+    ) : Array(String)
+      owner = method_owner(strip_type_suffix(lookup_name)) || return factory_names
+      init_names = direct_source_constructor_initializers(owner)
       return factory_names if init_names.empty?
       names = (factory_names + init_names).select do |name|
         parts = parse_method_name(name)
@@ -127635,7 +127644,17 @@ module Adamas::HIR
         end
         if parts = method_parts
           if parts.separator == '.' && (method = parts.method)
-            get_parent_chain(parts.owner).each do |parent|
+            parents = get_parent_chain(parts.owner)
+            if method == "new"
+              # Let the immediate parent's source family decide whether its
+              # own ancestors are visible. A flat walk skips that boundary.
+              parents = if direct_source_constructor_initializers(parts.owner).empty?
+                          parents.first(1)
+                        else
+                          [] of String
+                        end
+            end
+            parents.each do |parent|
               inherited_lookup = "#{parent}.#{method}"
               next if inherited_lookup == func_name
               if inherited_entry = lookup_function_def_for_call(

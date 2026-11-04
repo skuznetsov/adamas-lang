@@ -23269,3 +23269,21 @@ selections (35q1318). The adjacent case gate and installed-prelude
 hello pass. The diagnostic replay build exposed this scope at
 `hash.cr:923` while lowering an unrelated exact-result producer.
 Refresh after changes to branch scope, narrowing, or inline locals.
+
+### Bound class constructor lookup by direct source initializers
+
+An abstract ancestor's explicit `new` could shadow the synthesized
+allocator of a child with its own `initialize`. When the ancestor's
+factory delegated to the child, the emitted child constructor called
+itself. Stop class-method lookup at the direct initializer family and
+let each immediate parent apply the same boundary for inherited `new`.
+
+The parent crashes in the native reducer. Crystal 1.22.1 and exact
+lazy and eager Adamas agree on 12 checks covering allocation, inherited
+and same-class factories, and rejection through both child and
+grandchild (35q1328). The named constructor family and installed-prelude
+hello gates pass. The adjacent explicit-`new` `allocate` probe still
+reports the same `Void` return on parent and candidate. The combined
+JSON probe emits the child's allocator and reaches a first-token error
+in `read_begin_array` (35q1329). Refresh after changes to constructor
+registration, inherited factories, or source owner normalization.

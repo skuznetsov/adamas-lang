@@ -24263,6 +24263,12 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [x] Give `unless` branches the same scope error cleanup as `if`.
   Dynamic and statically selected branches retain the source diagnostic
   in Crystal 1.22.1 and exact lazy and eager Adamas (35q1318).
+- [x] Stop class constructor lookup at the source initializer family.
+  An ancestor factory must not shadow a child's synthesized allocator
+  or supply a rejected overload through a grandchild (35q1328).
+- [ ] Trace JSON token initialization after constructing `StringBased`.
+  The installed-prelude array probe now reaches `read_begin_array`
+  and raises on the first token (35q1329).
 - [ ] Resolve the exact source result for `Channel.select` contexts.
   The strict timeout and receive probes now reach `unwait` (35q1286).
 - [ ] Isolate repeated inline activation and sorting after lexical target
