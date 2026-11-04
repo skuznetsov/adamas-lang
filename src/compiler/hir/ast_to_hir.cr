@@ -11387,6 +11387,19 @@ module Adamas::HIR
         resolved_name
     end
 
+    # Both virtual demand and body reuse must keep the same receiver owner
+    # as direct lowering when an inherited body specializes its self value.
+    private def virtual_target_preserves_requested_owner?(
+      candidate : String,
+      base_name : String,
+      resolved_name : String,
+      resolved_def : Adamas::Compiler::Frontend::DefNode,
+    ) : Bool
+      preserve_requested_value_owner_specialization?(candidate, resolved_name) ||
+        preserve_requested_value_owner_specialization?(base_name, resolved_name) ||
+        preserve_requested_runtime_reference_wrapper_owner?(candidate, resolved_name, resolved_def)
+    end
+
     private def broad_virtual_replay_declaring_owner(
       owner_name : String,
       replay_parent : String,
@@ -11547,9 +11560,7 @@ module Adamas::HIR
         resolved_name = resolved[0]
         resolved_owner = method_owner(strip_type_suffix(resolved_name))
         preserve_requested_owner =
-          exact_owner_required ||
-            preserve_requested_value_owner_specialization?(candidate, resolved_name) ||
-            preserve_requested_value_owner_specialization?(base_name, resolved_name)
+          exact_owner_required || virtual_target_preserves_requested_owner?(candidate, base_name, resolved_name, resolved[1])
         reuse_check_started_at = Time.instant if @debug_virtual_target_replay_stats
         inherited_wrapper_reusable = repair_resolved_body_available?(
           owner,
@@ -11632,8 +11643,8 @@ module Adamas::HIR
 
     # Final repair runs after the initial virtual-target replay and must not
     # rebroadcast an already-resolved request to every spelling of the owner.
-    # Keep the exact requested candidate when value/generic owner preservation
-    # says that the materializer must emit the body under that concrete owner;
+    # Keep the exact requested candidate when the materializer must emit
+    # the body under that concrete receiver owner;
     # otherwise the resolved exact target is sufficient because
     # lower_function_if_needed can use its DefNode source while retaining the
     # requested function name.  Lookup failure deliberately delegates to the
@@ -11658,9 +11669,7 @@ module Adamas::HIR
 
       if resolved = lookup_function_def_for_call(base_name, arg_types.size, has_block_call, arg_types, has_splat)
         resolved_name = resolved[0]
-        preserve_requested_owner =
-          preserve_requested_value_owner_specialization?(candidate, resolved_name) ||
-            preserve_requested_value_owner_specialization?(base_name, resolved_name)
+        preserve_requested_owner = virtual_target_preserves_requested_owner?(candidate, base_name, resolved_name, resolved[1])
         if preserve_requested_owner
           lower_required_virtual_target_function(candidate, replay_source: replay_trace_source)
         else
@@ -11716,11 +11725,8 @@ module Adamas::HIR
         selected_def = resolved[1]
         selected_arena = @function_def_arenas[resolved_name]?
         selected_source_path = selected_arena.try { |arena| source_path_for(arena) }
-        if preserve_requested_value_owner_specialization?(candidate, resolved_name) ||
-           preserve_requested_value_owner_specialization?(base_name, resolved_name)
-          # Same rule as lower_virtual_target_owner: a value owner (Int32 in
-          # `Nil | Int32`) materializes the inherited Def under itself. The
-          # ancestor symbol (Number#hash) would lower with an abstract self.
+        if virtual_target_preserves_requested_owner?(candidate, base_name, resolved_name, resolved[1])
+          # Use the same receiver owner as class-target replay.
           lower_demanded_virtual_target_function(candidate)
         else
           target_name = virtual_replay_specialized_name(resolved_name, arg_types, has_block_call)
@@ -83923,8 +83929,7 @@ module Adamas::HIR
       resolved_owner = method_owner(resolved_base)
       return false if generic_source_owner_requires_specialization?(owner, resolved_owner, resolved_name)
 
-      return false if preserve_requested_value_owner_specialization?(candidate, resolved_name)
-      return false if preserve_requested_value_owner_specialization?(base_name, resolved_name)
+      return false if virtual_target_preserves_requested_owner?(candidate, base_name, resolved_name, resolved[1])
 
       requested_owner = owner
       return false if requested_owner.empty? || resolved_owner.empty?
@@ -84097,8 +84102,9 @@ module Adamas::HIR
                   resolved_missing_body += 1
                   unique_resolved_missing << resolved_name
                 else
-                  preserve_requested = preserve_requested_value_owner_specialization?(candidate, resolved_name) ||
-                                       preserve_requested_value_owner_specialization?("#{owner}##{target.method_name}", resolved_name)
+                  preserve_requested = virtual_target_preserves_requested_owner?(
+                    candidate, "#{owner}##{target.method_name}", resolved_name, resolved[1],
+                  )
                   if preserve_requested
                     resolved_body_preserve += 1
                   else

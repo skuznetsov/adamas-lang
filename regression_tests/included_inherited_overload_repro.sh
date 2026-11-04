@@ -16,8 +16,8 @@ if [[ "$(uname -s)" == Darwin ]]; then
 fi
 
 write_probe() {
-  local input="$1" first="$2" second="$3"
-  cat <<'CR'
+  local input="$1" first="$2" second="$3" body="${4:-13}"
+  cat <<CR
 lib LibC
   fun exit(status : Int32) : NoReturn
 end
@@ -35,7 +35,7 @@ end
 
 class Object
   def serialize(output : Sink) : Int32
-    13
+    $body
   end
 end
 
@@ -118,8 +118,9 @@ check() {
 
 write_probe DerivedSink 13 13 >"$work/inherited.cr"
 write_probe Builder 11 21 >"$work/included.cr"
+write_probe Sink 13 23 'serialize(Builder.new) &+ 2' >"$work/redispatch.cr"
 write_probe Wrong 0 0 >"$work/rejected.cr"
-for mode in inherited included rejected; do
+for mode in inherited included redispatch rejected; do
   check crystal "$mode"
   check adamas "$mode"
 done

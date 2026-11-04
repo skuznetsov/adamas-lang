@@ -24446,11 +24446,12 @@ integration, fresh bootstrap, or LavinMQ parity.
   The previous compiler rejects the inherited call. Crystal 1.22.1 and the
   candidate both run the inherited and included cases, and both reject an
   argument accepted by neither (35q1507).
-- [ ] Preserve the runtime receiver of an inherited wrapper during virtual
-  body replay. The call initially selects `Resource#serialize` with the
-  exact inherited Def; later materialization requests `Object#serialize`.
-  A nested self call then fails to see the receiver's included overload
-  (35q1510). Check replay and final repair against the same owner contract.
+- [x] Preserve the runtime receiver of an inherited wrapper during virtual
+  body replay and final repair. An ancestor materialization loses the type
+  of `self` needed by a nested overload call. Reuse the direct call's owner
+  rule before demanding or reusing a virtual body. Crystal 1.22.1 and the
+  candidate agree on both receiver subclasses and the incompatible argument
+  control. The previous compiler rejects the wrapper's nested call (35q1511).
 - [ ] Extend the exact receiver-arm contract to other call shapes. Probe
   named/default arguments, blocks, inherited methods, a non-returning arm,
   and explicit mixed structural/nonstructural receiver unions separately.
