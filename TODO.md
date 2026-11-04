@@ -23050,6 +23050,24 @@ integration, fresh bootstrap, or LavinMQ parity.
   source yield owner and the active callback signature. Depth alone cannot
   identify the owner after a callee is inlined inside a materialized proc.
 
+## 2026-11-04 — Publish nilary virtual results before the enclosing call
+
+- Root cause: member access on an abstract class could emit a virtual call
+  with a Void result when the implementation was declared by its descendants.
+  The enclosing call then selected overloads using an erased value.
+- Join the selected concrete nilary results before lowering consumers. Include
+  Nil arms and consult the inherited getter's source when replay synthesized
+  its wrapper. Reject a concrete arm with a direct method family and no
+  compatible nilary source.
+- Verification: q1531 matches Crystal 1.22.1 on seven cases in lazy and eager
+  lowering. q1520 rejects the primary fixture and erases the inherited
+  getter's result. The inherited virtual NoReturn suite still passes.
+  The included-forall suite stops at the same missing String#size in the
+  parent and candidate under no-prelude.
+- [ ] Check that explicit virtual calls and later dispatch repair consume the
+  same selected arm results. The focused regression certifies the early
+  member-access result, with one parenthesized call as a control.
+
 ## 2026-10-31 — Preserve the selected method's forall annotation bindings
 
 - Root cause: deferring a callee copied ambient owner bindings over same-spelled method-forall variables. Executable parameter annotations then restored the receiver's map, and lexical aliases could independently replace bound formals in module return annotations.

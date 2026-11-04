@@ -11910,11 +11910,14 @@ module Adamas::HIR
       has_splat : Bool,
       include_nil : Bool = false,
       selected_parent_target : Tuple(String, Adamas::Compiler::Frontend::DefNode)? = nil,
+      strict_member : Adamas::Compiler::Frontend::MemberAccessNode? = nil,
     ) : TypeRef
       owners = [parent_name] + collect_subclasses_cached(parent_name)
       candidates = [] of TypeRef
 
       owners.each do |owner|
+        next if strict_member && registered_abstract_class_name?(owner)
+
         owner_base = "#{owner}##{method_name}"
         # The argument ABI proof and result query must consume the same
         # selected source. A family/arity lookup can pick a sibling overload
@@ -11927,13 +11930,32 @@ module Adamas::HIR
         resolved_name = resolved ? resolved[0] : mangle_function_name(owner_base, arg_types, has_block_call)
         selected_def = resolved.try { |entry| entry[1] }
 
+        if strict_member
+          if selected_def
+            return TypeRef::VOID if selected_def.is_abstract
+          else
+            # Replay can synthesize a child getter from an inherited field.
+            # The original source declaration owns the result signature.
+            getter_owner = get_ancestor_chain(owner).find do |ancestor|
+              direct_accessor_winner(ancestor, method_name) == :getter
+            end
+            unless getter_owner
+              if @class_info.has_key?(owner) && owner_directly_declares_instance_def?(owner, method_name)
+                raise LoweringError.new("no overload matches #{owner_base} without arguments", strict_member)
+              end
+              return TypeRef::VOID
+            end
+            resolved_name = "#{getter_owner}##{method_name}"
+          end
+        end
+
         candidate = get_function_return_type(resolved_name, arg_types.size, selected_def)
-        if candidate == TypeRef::VOID && resolved_name != owner_base &&
+        if !strict_member && candidate == TypeRef::VOID && resolved_name != owner_base &&
            !(owner == parent_name && selected_parent_target)
           candidate = get_function_return_type(owner_base, arg_types.size)
         end
 
-        if candidate == TypeRef::VOID || candidate == TypeRef::NIL
+        if candidate == TypeRef::VOID || (!strict_member && candidate == TypeRef::NIL)
           owner_ref = type_ref_for_name(owner)
           if inferred = resolve_return_type_from_def(
                resolved_name,
@@ -11948,6 +11970,7 @@ module Adamas::HIR
           end
         end
 
+        return TypeRef::VOID if strict_member && candidate == TypeRef::VOID
         next if candidate == TypeRef::VOID || (!include_nil && candidate == TypeRef::NIL)
         candidates << candidate
       end
@@ -140861,6 +140884,19 @@ module Adamas::HIR
           return_type = get_function_return_type(primary_name, 0)
         end
       end
+      # A nilary virtual call may be implemented only by the concrete
+      # descendants of its abstract receiver. Join their results before an
+      # enclosing expression resolves against the emitted value.
+      if call_virtual && args.empty? && !forced_return_type && return_type == TypeRef::VOID
+        if (receiver_desc = @module.get_type_descriptor(receiver_type)) &&
+           receiver_desc.kind == TypeKind::Class && registered_abstract_class_name?(receiver_desc.name)
+          return_type = infer_virtual_return_type_from_class_targets(
+            receiver_desc.name, member_name, arg_types, false, false,
+            include_nil: true, strict_member: node,
+          )
+        end
+      end
+
       # Inside an inline-yield body the force pass above refuses every callee,
       # so `e = xs.each_with_index` in a `wrap do ... end` block took the
       # name-shaped Pointer guess. Lower a yield-free target for its return
