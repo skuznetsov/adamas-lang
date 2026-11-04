@@ -11930,14 +11930,14 @@ module Adamas::HIR
       has_splat : Bool,
       include_nil : Bool = false,
       selected_parent_target : Tuple(String, Adamas::Compiler::Frontend::DefNode)? = nil,
-      strict_member : Adamas::Compiler::Frontend::MemberAccessNode? = nil,
+      strict_nilary_site : Adamas::Compiler::Frontend::Node? = nil,
       visibility_site : CallVisibilitySite? = nil,
     ) : TypeRef
       owners = [parent_name] + collect_subclasses_cached(parent_name)
       candidates = [] of TypeRef
 
       owners.each do |owner|
-        next if strict_member && registered_abstract_class_name?(owner)
+        next if strict_nilary_site && registered_abstract_class_name?(owner)
 
         owner_base = "#{owner}##{method_name}"
         # The argument ABI proof and result query must consume the same
@@ -11954,7 +11954,7 @@ module Adamas::HIR
           validate_call_visibility!(visibility_site, resolved_name, selected_def)
         end
 
-        if strict_member
+        if strict_nilary_site
           if selected_def
             return TypeRef::VOID if selected_def.is_abstract
           else
@@ -11965,7 +11965,7 @@ module Adamas::HIR
             end
             unless getter_owner
               if @class_info.has_key?(owner) && owner_directly_declares_instance_def?(owner, method_name)
-                raise LoweringError.new("no overload matches #{owner_base} without arguments", strict_member)
+                raise LoweringError.new("no overload matches #{owner_base} without arguments", strict_nilary_site)
               end
               return TypeRef::VOID
             end
@@ -11974,12 +11974,12 @@ module Adamas::HIR
         end
 
         candidate = get_function_return_type(resolved_name, arg_types.size, selected_def)
-        if !strict_member && candidate == TypeRef::VOID && resolved_name != owner_base &&
+        if !strict_nilary_site && candidate == TypeRef::VOID && resolved_name != owner_base &&
            !(owner == parent_name && selected_parent_target)
           candidate = get_function_return_type(owner_base, arg_types.size)
         end
 
-        if candidate == TypeRef::VOID || (!strict_member && candidate == TypeRef::NIL)
+        if candidate == TypeRef::VOID || (!strict_nilary_site && candidate == TypeRef::NIL)
           owner_ref = type_ref_for_name(owner)
           if inferred = resolve_return_type_from_def(
                resolved_name,
@@ -11994,7 +11994,18 @@ module Adamas::HIR
           end
         end
 
-        return TypeRef::VOID if strict_member && candidate == TypeRef::VOID
+        if strict_nilary_site && selected_def && candidate == TypeRef::VOID
+          # The declaration may be known while its exact return is still deferred.
+          # Complete the selected body before typing an enclosing expression.
+          force_lower_function_for_return_type(
+            resolved_name, bypass_inline_yield: true, pending_call_target_context: "class_nilary_result",
+          )
+          if function_state(resolved_name).completed? && @module.has_function_with_body?(resolved_name)
+            candidate = get_function_return_type(resolved_name, arg_types.size, selected_def)
+          end
+        end
+
+        return TypeRef::VOID if strict_nilary_site && candidate == TypeRef::VOID
         next if candidate == TypeRef::VOID || (!include_nil && candidate == TypeRef::NIL)
         candidates << candidate
       end
@@ -121612,12 +121623,22 @@ module Adamas::HIR
       if return_type == TypeRef::VOID && call_virtual && receiver_id
         if type_desc = @module.get_type_descriptor(ctx.type_of(receiver_id))
           if type_desc.kind == TypeKind::Class
+            strict_nilary = args.empty? && !has_block_call && !has_splat && !has_named_args &&
+                            registered_abstract_class_name?(type_desc.name)
             inferred_virtual_return = infer_virtual_return_type_from_class_targets(
-              type_desc.name, method_name, arg_types, has_block_call, has_splat
+              type_desc.name, method_name, arg_types, has_block_call, has_splat,
+              include_nil: strict_nilary,
+              strict_nilary_site: strict_nilary ? node : nil,
+              visibility_site: strict_nilary ? {ctx, node, callee_node, receiver_id, method_name, explicit_self_receiver, args.size} : nil,
             )
             if inferred_virtual_return != TypeRef::VOID
               return_type = inferred_virtual_return
-              set_function_type_entry(mangled_method_name, inferred_virtual_return)
+              if strict_nilary
+                # The joined result belongs to this dispatch, not to a source body.
+                return_type_pinned = true
+              else
+                set_function_type_entry(mangled_method_name, inferred_virtual_return)
+              end
             end
           end
         end
@@ -140858,7 +140879,7 @@ module Adamas::HIR
            receiver_desc.kind == TypeKind::Class && registered_abstract_class_name?(receiver_desc.name)
           return_type = infer_virtual_return_type_from_class_targets(
             receiver_desc.name, member_name, arg_types, false, false,
-            include_nil: true, strict_member: node,
+            include_nil: true, strict_nilary_site: node,
           )
         end
       end

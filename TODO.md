@@ -23113,11 +23113,15 @@ integration, fresh bootstrap, or LavinMQ parity.
   conditional that combines key reflection with a loop variable. The parent
   emits `CCC` for the first fixture instead of `ABC`. The q1562 prototype
   restores the missing left-hand fields in the expanded stdlib merge body.
-- [ ] Demand the exact nilary class virtual results before lowering
-  their consumers. Direct construction and merge preserve the result layout
-  in q1569. The separate abstract receiver fixture still gives both consumers
-  `Void` before the concrete bodies are available. Combined q1566 reaches
-  the stock-prelude LavinMQ client list and rejects `dig(Client, Array(String))`.
+- [x] Demand the exact nilary class virtual results before lowering
+  their consumers. Exact q1572 matches Crystal 1.22.1 in lazy and eager modes
+  for both member and parenthesized calls, including Nil arms and inherited
+  getters. The joined result belongs to the dispatch. The native gate also
+  checks missing methods and incompatible consumers.
+- [ ] Bind qualified type annotations through included namespaces. Combined
+  q1574 passes the LavinMQ client-list `dig` call and rejects `send` with a
+  concrete `AMQ::Protocol::Frame::Basic::Cancel`. The q1573 fixture isolates
+  `AMQP::Frame`; its short and root-qualified equivalents match Crystal.
 
 ## 2026-11-04 — Respect the source owner of nested next
 

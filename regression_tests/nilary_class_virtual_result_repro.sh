@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Class virtual calls without parentheses must publish their concrete result
-# before an enclosing call resolves against it.
+# Class virtual calls must publish their concrete result before an enclosing
+# call resolves against it.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -189,6 +189,70 @@ check(LibC.getpid > 0)
 check(LibC.getpid < 0)
 CRYSTAL
 
+cat > "$WORK/deferred-layout.cr" <<'CRYSTAL'
+require "named_tuple"
+
+lib LibC
+  fun putchar(value : Int32) : Int32
+  fun getpid : Int32
+end
+
+module Details
+  abstract def details
+end
+
+abstract class Client
+  include Details
+end
+
+class First < Client
+  def details
+    {common: 7}.merge(attributes)
+  end
+
+  def attributes
+    {value: 65, first: true}
+  end
+end
+
+class Second < Client
+  def details
+    {common: 7}.merge(attributes)
+  end
+
+  def attributes
+    {value: 66, second: false}
+  end
+end
+
+def choose(first : Bool) : Client
+  first ? First.new : Second.new
+end
+
+def wrap(&)
+  yield
+end
+
+def probe(first : Bool)
+  client = choose(first)
+  wrap do
+    result = client.details
+    if result.is_a?(NamedTuple(common: Int32, value: Int32, first: Bool))
+      LibC.putchar(result[:first] && result[:common] == 7 ? result[:value] : 88)
+    elsif result.is_a?(NamedTuple(common: Int32, value: Int32, second: Bool))
+      LibC.putchar(!result[:second] && result[:common] == 7 ? result[:value] : 88)
+    else
+      LibC.putchar(88)
+    end
+  end
+end
+
+probe(LibC.getpid > 0)
+probe(LibC.getpid < 0)
+CRYSTAL
+sed 's/result = client.details$/result = client.details()/' \
+  "$WORK/deferred-layout.cr" > "$WORK/deferred-layout-parens.cr"
+
 # Nilary dispatch is required on every concrete receiver.
 sed 's/class Fanout < AMQPExchange/class Fanout < Exchange/; /class Fanout < Exchange/{n;s/def bindings_details :/def bindings_details(required : Bool) :/;}' \
   "$WORK/both-arms.cr" > "$WORK/missing-nilary-arm.cr"
@@ -247,6 +311,8 @@ for mode in stock lazy eager; do
   run_positive "$mode" nil-arm BN
   run_positive "$mode" inherited-getter BN
   run_positive "$mode" parentheses BF
+  run_positive "$mode" deferred-layout AB
+  run_positive "$mode" deferred-layout-parens AB
   run_negative "$mode" missing-nilary-arm "$missing_diagnostic"
   run_negative "$mode" missing-direct-arm "$missing_diagnostic"
   run_negative "$mode" wrong-consumer "$consumer_diagnostic"
