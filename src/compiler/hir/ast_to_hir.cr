@@ -98774,7 +98774,13 @@ module Adamas::HIR
       end
       left_name = generic_param_type_name_from_ref(left_type)
       right_name = generic_param_type_name_from_ref(right_type)
-      create_union_type("#{left_name} | #{right_name}")
+      names = [left_name, right_name]
+      expanded_names = expand_abstract_value_union_variants(names)
+      return create_union_type(expanded_names.join(" | ")) if expanded_names != names
+
+      # Both operands already own their type identities. Build the union
+      # from those refs without parsing their display names in this scope.
+      complete_union_type(names, [left_type, right_type])
     end
 
     # Canonicalize a complete value-type set once. Repeatedly feeding a growing
@@ -152011,85 +152017,95 @@ module Adamas::HIR
       begin
         # Canonicalize by TypeRef to avoid duplicate variants like Thread | Nil | Thread.
         variant_refs = resolved_variant_names.map { |vn| type_ref_for_name(vn) }
-        # NoReturn is bottom: it contributes no values when a returning arm
-        # exists. Resolve aliases and namespaces first, so a nominal type such
-        # as Shadow::NoReturn is retained. An all-bottom join stays NoReturn;
-        # it must not become the unresolved/void ABI sentinel.
-        has_returning_variant = variant_refs.any? do |ref|
-          @module.get_type_descriptor(ref).try(&.name) != "NoReturn"
-        end
-        seen_refs = [] of TypeRef
-        dedup_names = [] of String
-        dedup_refs = [] of TypeRef
-        variant_refs.each_with_index do |ref, idx|
-          next if has_returning_variant && @module.get_type_descriptor(ref).try(&.name) == "NoReturn"
-          next if seen_refs.includes?(ref)
-          seen_refs << ref
-          dedup_refs << ref
-          canonical = generic_param_type_name_from_ref(ref)
-          canonical = resolved_variant_names[idx] if canonical == "Unknown"
-          dedup_names << canonical
-        end
-        # Canonicalize order: sort by name, but keep Nil first (matches Crystal semantics).
-        # Use manual insertion sort to avoid sort_by! Proc (V2 codegen null Proc bug).
-        n = dedup_names.size
-        i = 1
-        while i < n
-          j = i
-          while j > 0
-            a_nil = (dedup_refs[j - 1] == TypeRef::NIL || dedup_names[j - 1] == "Nil" || dedup_names[j - 1].ends_with?("::Nil")) ? 0 : 1
-            b_nil = (dedup_refs[j] == TypeRef::NIL || dedup_names[j] == "Nil" || dedup_names[j].ends_with?("::Nil")) ? 0 : 1
-            should_swap = a_nil > b_nil || (a_nil == b_nil && dedup_names[j - 1] > dedup_names[j])
-            break unless should_swap
-            dedup_names[j - 1], dedup_names[j] = dedup_names[j], dedup_names[j - 1]
-            dedup_refs[j - 1], dedup_refs[j] = dedup_refs[j], dedup_refs[j - 1]
-            j -= 1
-          end
-          i += 1
-        end
-        resolved_variant_names = dedup_names
-        variant_refs = dedup_refs
-
-        normalized_name = resolved_variant_names.join(" | ")
-        if resolved_variant_names.size == 1
-          return variant_refs.first
-        end
-        if tuple_ref = try_unify_tuple_variant_names(resolved_variant_names)
-          store_type_cache(type_cache_key(normalized_name), tuple_ref)
-          store_type_cache(input_cache_key, tuple_ref) if input_cache_key != type_cache_key(normalized_name)
-          return tuple_ref
-        end
-        cache_key = type_cache_key(normalized_name)
-
-        # Check cache first to prevent infinite recursion
-        if cached = @type_cache[cache_key]?
-          return cached if cached == TypeRef::VOID
-          ensure_union_descriptor(cached, normalized_name, resolved_variant_names)
-          return cached
-        end
-        # Mark as being processed with placeholder to break cycles
-        store_type_cache(cache_key, TypeRef::VOID)
-
-        # Get TypeRefs for each variant (recursive to handle nested unions)
-        if env_get("DEBUG_UNION_TYPES")
-          refs_debug = variant_refs.map { |ref| get_type_name_from_ref(ref) }.join(", ")
-          enum_debug = resolved_variant_names.map do |vn|
-            @enum_info ? @enum_info.not_nil!.has_key?(vn) : false
-          end.join(", ")
-          STDERR.puts "[DEBUG_UNION_TYPES] name=#{normalized_name} variants=#{resolved_variant_names.join(", ")} refs=#{refs_debug} enum_known=#{enum_debug}"
-        end
-
-        # Create union type and register descriptor
-        type_ref = @module.intern_type(TypeDescriptor.new(TypeKind::Union, normalized_name))
-        register_union_descriptor(type_ref, normalized_name, resolved_variant_names, variant_refs)
-
-        # Update cache with real value (replacing placeholder)
-        store_type_cache(cache_key, type_ref)
-
-        type_ref
+        complete_union_type(resolved_variant_names, variant_refs, input_cache_key)
       ensure
         @union_in_progress.delete(in_progress_name)
       end
+    end
+
+    private def complete_union_type(
+      resolved_variant_names : Array(String),
+      variant_refs : Array(TypeRef),
+      input_cache_key : String? = nil,
+    ) : TypeRef
+      # NoReturn is bottom: it contributes no values when a returning arm
+      # exists. Resolve aliases and namespaces first, so a nominal type such
+      # as Shadow::NoReturn is retained. An all-bottom join stays NoReturn;
+      # it must not become the unresolved/void ABI sentinel.
+      has_returning_variant = variant_refs.any? do |ref|
+        @module.get_type_descriptor(ref).try(&.name) != "NoReturn"
+      end
+      seen_refs = [] of TypeRef
+      dedup_names = [] of String
+      dedup_refs = [] of TypeRef
+      variant_refs.each_with_index do |ref, idx|
+        next if has_returning_variant && @module.get_type_descriptor(ref).try(&.name) == "NoReturn"
+        next if seen_refs.includes?(ref)
+        seen_refs << ref
+        dedup_refs << ref
+        canonical = generic_param_type_name_from_ref(ref)
+        canonical = resolved_variant_names[idx] if canonical == "Unknown"
+        dedup_names << canonical
+      end
+      # Canonicalize order: sort by name, but keep Nil first (matches Crystal semantics).
+      # Use manual insertion sort to avoid sort_by! Proc (V2 codegen null Proc bug).
+      n = dedup_names.size
+      i = 1
+      while i < n
+        j = i
+        while j > 0
+          a_nil = (dedup_refs[j - 1] == TypeRef::NIL || dedup_names[j - 1] == "Nil" || dedup_names[j - 1].ends_with?("::Nil")) ? 0 : 1
+          b_nil = (dedup_refs[j] == TypeRef::NIL || dedup_names[j] == "Nil" || dedup_names[j].ends_with?("::Nil")) ? 0 : 1
+          should_swap = a_nil > b_nil || (a_nil == b_nil && dedup_names[j - 1] > dedup_names[j])
+          break unless should_swap
+          dedup_names[j - 1], dedup_names[j] = dedup_names[j], dedup_names[j - 1]
+          dedup_refs[j - 1], dedup_refs[j] = dedup_refs[j], dedup_refs[j - 1]
+          j -= 1
+        end
+        i += 1
+      end
+      resolved_variant_names = dedup_names
+      variant_refs = dedup_refs
+
+      normalized_name = resolved_variant_names.join(" | ")
+      if resolved_variant_names.size == 1
+        return variant_refs.first
+      end
+      if tuple_ref = try_unify_tuple_variant_names(resolved_variant_names)
+        store_type_cache(type_cache_key(normalized_name), tuple_ref)
+        if input_cache_key && input_cache_key != type_cache_key(normalized_name)
+          store_type_cache(input_cache_key, tuple_ref)
+        end
+        return tuple_ref
+      end
+      cache_key = type_cache_key(normalized_name)
+
+      # Check cache first to prevent infinite recursion
+      if cached = @type_cache[cache_key]?
+        return cached if cached == TypeRef::VOID
+        register_union_descriptor(cached, normalized_name, resolved_variant_names, variant_refs)
+        return cached
+      end
+      # Mark as being processed with placeholder to break cycles
+      store_type_cache(cache_key, TypeRef::VOID)
+
+      # Get TypeRefs for each variant (recursive to handle nested unions)
+      if env_get("DEBUG_UNION_TYPES")
+        refs_debug = variant_refs.map { |ref| get_type_name_from_ref(ref) }.join(", ")
+        enum_debug = resolved_variant_names.map do |vn|
+          @enum_info ? @enum_info.not_nil!.has_key?(vn) : false
+        end.join(", ")
+        STDERR.puts "[DEBUG_UNION_TYPES] name=#{normalized_name} variants=#{resolved_variant_names.join(", ")} refs=#{refs_debug} enum_known=#{enum_debug}"
+      end
+
+      # Create union type and register descriptor
+      type_ref = @module.intern_type(TypeDescriptor.new(TypeKind::Union, normalized_name))
+      register_union_descriptor(type_ref, normalized_name, resolved_variant_names, variant_refs)
+
+      # Update cache with real value (replacing placeholder)
+      store_type_cache(cache_key, type_ref)
+
+      type_ref
     end
 
     private def cached_generic_type_ref_stale?(type_name : String, cached : TypeRef) : Bool

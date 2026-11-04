@@ -24336,9 +24336,15 @@ integration, fresh bootstrap, or LavinMQ parity.
   Crystal 1.22.1 rejects `f()` for `def f(*args : Int32)`; Adamas still accepts
   that shape independently of the unselected-family fix. Verify unrestricted
   rest, tuple-pattern rest, and explicit splat expansion separately.
-- [ ] Preserve the selected exception type through the installed Socket error
-  factory. The combined LavinMQ HIR probe rejects a
-  `Crystal::System::Socket::Error` argument to `raise` (35q1382).
+- [x] Preserve bound operand types when forming a two-arm value union. The
+  former name round trip rebound the root `Socket::Error` from
+  `Crystal::System::Socket` when lowering the error factory's `unless`.
+  Stock Crystal 1.22.1 and both Adamas modes agree on rooted, relative, and
+  wrong-shadow cases. The combined LavinMQ HIR probe crosses the `raise`
+  boundary and reaches a `Log::Metadata` alias-shape mismatch (35q1415).
+- [ ] Audit remaining value-union paths that reconstruct identity from display
+  names, including tuple element folding, nullable conversion, and multi-arm
+  merges. Verify same-spelling nominal shadows inside nested composites.
 - [x] Preserve the selected namespace of a qualified class receiver through
   overload refinement. Walk each remaining type component through direct
   declarations and visible ancestors in that namespace. Stock Crystal 1.22.1
