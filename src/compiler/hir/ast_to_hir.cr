@@ -122739,6 +122739,7 @@ module Adamas::HIR
               source_result_contract,
               source_yield_context: source_yield_context_for_proc,
               wildcard_source_inputs: wildcard_source_inputs,
+              discard_result: block_proc_expected_return_type == TypeRef::NIL,
             ).value
             if wildcard_inputs && (definition = selected_call_entry_def)
               proc_type = ctx.type_of(proc_id)
@@ -135527,7 +135528,8 @@ module Adamas::HIR
                            end
         proc_id = lower_block_to_proc(ctx, block, block_param_types, block_arena_for_proc, heap_block_proc, hint_return_type,
           source_result_contract: source_result_contract,
-          source_yield_context: captured_block_source_yield_context(selected_def, selected_arena)).value
+          source_yield_context: captured_block_source_yield_context(selected_def, selected_arena),
+          discard_result: expected_block_proc_return_type == TypeRef::NIL).value
         fallback_args << proc_id
         # `inline_key` can still be a bare `Owner#m` when the yield inline path bails out early,
         # or it can be the currently-lowered splat wrapper when a nested inline fallback hits a
@@ -136496,12 +136498,13 @@ module Adamas::HIR
                     # erased. The forwarder typically returns whatever the enclosing
                     # function returns (e.g., Array#fetch's inner block forwards the
                     # caller's default to `check_index_out_of_bounds`).
-                    hint_return_type = expected_nil_block_return_type_for_param(param, callee_arena) ||
-                                       proc_materialize_hint_return_type(ctx)
+                    declared_return_type = expected_nil_block_return_type_for_param(param, callee_arena)
+                    hint_return_type = declared_return_type || proc_materialize_hint_return_type(ctx)
                     lowered_proc = lower_block_to_proc(ctx, block, block_param_types, block_arena_for_proc, heap_block_proc, hint_return_type,
                       source_result_contract: inline_return.block_result_contract,
                       source_yield_context: block_source_yield_context,
-                      current_inline_yield_target: true)
+                      current_inline_yield_target: true,
+                      discard_result: declared_return_type == TypeRef::NIL)
                     ctx.restore_locals(saved_inline_locals)
                     ctx.register_local(param_name, lowered_proc.value)
                     ctx.register_type(lowered_proc.value, ctx.type_of(lowered_proc.value))
@@ -147163,6 +147166,7 @@ module Adamas::HIR
       source_yield_context : SourceYieldContext? = nil,
       current_inline_yield_target : Bool = false,
       wildcard_source_inputs : Array(SourceCallArgument)? = nil,
+      discard_result : Bool = false,
     ) : LoweredBlockProc
       constructor_contract = nil.as(TypeDescriptor?)
       if constructor_type = proc_constructor_type
@@ -147866,10 +147870,11 @@ module Adamas::HIR
         proc_func.return_type = result_type
         normalize_function_return_terminators(proc_ctx, result_type)
       else
-        # Terminate the proc function
+        # A contextual hint can describe an enclosing Nil-returning method.
+        # Only an explicit callback discard contract can replace this result.
         fn_block = proc_func.get_block(proc_ctx.current_block)
         return_value = last_value
-        if expected_return_type == TypeRef::NIL && !fn_block.terminator.is_a?(Return)
+        if discard_result && !fn_block.terminator.is_a?(Return)
           nil_lit = Literal.new(proc_ctx.next_id, TypeRef::NIL, nil)
           proc_ctx.emit(nil_lit)
           proc_ctx.register_type(nil_lit.id, TypeRef::NIL)
@@ -147882,7 +147887,7 @@ module Adamas::HIR
         end
 
         # Update return type
-        if expected_return_type == TypeRef::NIL
+        if discard_result
           proc_return_type = TypeRef::NIL
           proc_func.return_type = TypeRef::NIL
           normalize_function_return_terminators(proc_ctx, TypeRef::NIL)

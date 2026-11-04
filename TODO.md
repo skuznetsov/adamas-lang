@@ -24726,6 +24726,23 @@ integration, fresh bootstrap, or LavinMQ parity.
   Tuple comparison on 35q1642. The scalar Array controls reach HIR
   with an `Int32` comparator. Preserve the numeric comparison restriction.
 
+### 2026-11-04: Captured block result and discard contracts
+
+- [x] Keep the enclosing method's result hint separate from the selected
+  callback's discard contract. A captured block under a Nil-returning
+  method can still return an integer or a tuple. Only a selected discard
+  contract can replace the callback body result with Nil.
+- DoD: run `bash regression_tests/captured_block_contextual_nil_hint_repro.sh <fresh-S1>`.
+  Exact S1 35q1658 and Crystal 1.22.1 print `ABB`. The parent prints
+  byte `03` followed by `BB`. Both a direct Nil annotation and its Proc
+  alias discard the callback result. Six neighboring suites pass and
+  the installed-prelude smoke program prints `hello`.
+- [ ] Align mixed captured `yield` and `block.call` with Crystal's block
+  ownership. A named Nil Proc alias used both ways selects the Int32
+  overload for `yield` on both 35q1648 and 35q1658 (`AXBC`); Crystal
+  routes both through the captured Proc and prints `ACBC`. The same
+  named annotation used with `yield` alone prints `AX` on all three.
+
 ### 2026-11-04: Source coordinates for macro-generated methods
 
 - [x] Validate a generated Def's source span against the expansion buffer
