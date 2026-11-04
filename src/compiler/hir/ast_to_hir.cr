@@ -117077,47 +117077,6 @@ module Adamas::HIR
           entry_name = inherited_entry_name
           selected_call_entry_arena = inherited_source_arena
         end
-        # Avoid self-recursive overload capture when another compatible overload exists.
-        # This can happen in wrapper-style overloads (instance and class methods),
-        # where selecting the current overload again can later be mis-lowered.
-        if !source_default_entry &&
-           !semantic_target &&
-           !has_splat &&
-           entry_name == ctx.function.name
-          alt_entry = lookup_alternative_non_recursive_overload_for_call(
-            lookup_name,
-            args.size,
-            has_block_call,
-            arg_types,
-            has_named_args,
-            entry_name
-          )
-
-          # Some wrappers lower `{ ... }` to an explicit proc argument, so the call
-          # appears as non-block with one extra arg and can accidentally reselect self.
-          # Try a second lookup pass as a block call with the trailing arg removed.
-          if !alt_entry && !has_block_call && args.size > 0
-            alt_arg_types = arg_types[0, args.size - 1]
-            alt_entry = lookup_alternative_non_recursive_overload_for_call(
-              lookup_name,
-              args.size - 1,
-              true,
-              alt_arg_types,
-              has_named_args,
-              entry_name
-            )
-          end
-
-          if alt_entry
-            entry_name = alt_entry[0]
-            entry_def = alt_entry[1]
-            selected_call_entry_arena = nil
-            selected_call_entry_origin = nil
-            if has_block_call
-              block_proc_expected_return_type = expected_nil_block_return_type_for_def(entry_name, entry_def)
-            end
-          end
-        end
         if ENV.has_key?("DEBUG_CALL_PARAM_INFO")
           STDERR.puts "[CALL_PARAM_INFO] phase=entry lookup=#{lookup_name} entry=#{entry_name} base=#{base_method_name} method=#{method_name}"
         end
@@ -118621,29 +118580,6 @@ module Adamas::HIR
                 record_pending_type_param_map(base_method_name, map)
               end
             end
-          end
-        end
-      end
-
-      # Last-resort self-recursion escape:
-      # Some wrapper calls carry a lowered proc argument with no explicit block node,
-      # so they can resolve to themselves as plain calls. If that happens, try the
-      # corresponding block overload using args minus the trailing proc argument.
-      if mangled_method_name == ctx.function.name &&
-         !has_block_call &&
-         block_expr.nil? &&
-         block_pass_expr.nil? &&
-         args.size > 0 &&
-         arg_types.size >= args.size
-        block_arg_types = arg_types[0, args.size - 1]
-        block_candidate = mangle_function_name(base_method_name, block_arg_types, true)
-        if block_candidate != mangled_method_name
-          lower_function_if_needed(block_candidate)
-          if @module.has_function?(block_candidate) ||
-             @function_types.has_key?(block_candidate) ||
-             @function_defs.has_key?(block_candidate)
-            mangled_method_name = block_candidate
-            has_block_call = true
           end
         end
       end
@@ -150317,70 +150253,6 @@ module Adamas::HIR
       end
 
       false
-    end
-
-    private def lookup_alternative_non_recursive_overload_for_call(
-      func_name : String,
-      arg_count : Int32,
-      has_block : Bool,
-      arg_types : Array(TypeRef),
-      call_has_named_args : Bool,
-      excluded_name : String,
-    ) : Tuple(String, Adamas::Compiler::Frontend::DefNode)?
-      stripped_func = func_name.includes?('(') ? strip_generic_receiver_for_lookup(func_name) : func_name
-      overload_keys = function_def_overload_keys(func_name, stripped_func)
-      if overload_keys.empty?
-        base = strip_type_suffix(func_name)
-        if base != func_name
-          overload_keys = function_def_overload_keys(base)
-        end
-      end
-      overload_keys = filter_direct_getter_replaced_overloads(overload_keys)
-      return nil if overload_keys.empty?
-
-      best_name : String? = nil
-      best_def : Adamas::Compiler::Frontend::DefNode? = nil
-      best_score = Int32::MIN
-      best_param_count = Int32::MAX
-
-      overload_keys.each do |name|
-        next if name == excluded_name
-        def_node = @function_defs[name]?
-        next unless def_node
-        next if direct_getter_supersedes_def_candidate?(name, def_node)
-
-        stats = function_param_stats(name, def_node)
-        _, _, _, _, skip = effective_arity_stats_for_call(stats, call_has_named_args)
-        next if skip
-        next if !call_has_named_args && stats.has_named_only
-
-        if has_block
-          next unless stats.has_block
-        else
-          next if stats.has_block
-        end
-
-        param_count, required, has_splat, has_double_splat, _ = effective_arity_stats_for_call(stats, call_has_named_args)
-        next if arg_count < required
-        next if arg_count > param_count && !has_splat && !has_double_splat
-
-        func_context = function_context_for_lookup_candidate(func_name, name)
-        next unless params_compatible_with_args?(def_node, arg_types, func_context)
-
-        score = params_match_score(def_node, arg_types, func_context)
-        score += 6 if def_has_module_like_regular_param?(def_node)
-        score -= 1 if has_splat || has_double_splat
-
-        if score > best_score || (score == best_score && param_count < best_param_count)
-          best_score = score
-          best_param_count = param_count
-          best_name = name
-          best_def = def_node
-        end
-      end
-
-      return nil unless best_name && best_def
-      {best_name, best_def}
     end
 
     # A resolved name is an identity, including an applied owner's children.

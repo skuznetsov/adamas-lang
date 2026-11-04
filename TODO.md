@@ -24171,10 +24171,11 @@ integration, fresh bootstrap, or LavinMQ parity.
   regression compares both the scalar result and the tuple result, and checks
   the runtime values against Crystal 1.22.1. Input-bound result rejection and
   existing Proc discard behavior remain covered (35q1227).
-- [ ] Keep the selected ordinary Proc overload when a call is recursive. The
-  fallback at the recursive call can enqueue and select a block overload
-  without a source block. Trace 35q1221 isolates the extra Slice demand, and
-  35q1224 shows the recursive call retargeted in the reduced Walker HIR.
+- [x] Keep the selected source overload when a call is recursive. Remove
+  both recursion-specific overload retries. The native Walker oracle now
+  preserves a positional Proc, explicit block and forwarded Proc calls, and
+  the more specific same-shape overload. An incompatible Proc still fails
+  source validation (35q1224, 35q1231).
 - [ ] Give nested inline yields a lexical activation identity. The same AST
   block can appear in distinct activations, so its object identity cannot
   select the caller frame, arena, bindings, or self independently.

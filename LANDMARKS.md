@@ -23044,3 +23044,21 @@ and is paired with the selected block-result oracles and installed-prelude
 hello (35q1227). Refresh when materialized block facts, selected output
 binding, or inline callback ownership changes. Deferred callback targets and
 lexical yield activations remain separate open boundaries.
+
+### Keep the selected overload on recursive source calls
+
+Two lowering heuristics treated selection of the current function as a
+reason to choose another overload. One excluded the selected declaration,
+then retried after dropping the trailing positional argument. The other
+queued a block-shaped target directly. A positional Proc could consequently
+switch to a block overload, and a wider overload could replace the selected
+same-shape declaration. Recursive calls now retain the normal source
+overload result and call shape.
+
+In the reduced native fixture the parent returns 204 for a recursive
+positional callback, while Crystal 1.22.1 returns 10. The candidate matches
+the oracle in lazy and eager modes, preserves explicit block and forwarded
+Proc calls, and rejects an incompatible positional Proc. The historical
+named-capacity Hash constructor and installed-prelude hello also pass
+(35q1224, 35q1231). Refresh on changes to call shape collection, overload
+ranking, or recursive demand publication.
