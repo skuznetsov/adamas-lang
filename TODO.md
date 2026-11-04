@@ -24130,6 +24130,17 @@ integration, fresh bootstrap, or LavinMQ parity.
   then/elsif/else and post-merge fixture fails on the parent and matches
   Crystal 1.22.1 in lazy and eager modes (35q1155). Forwarded Proc ABI,
   27 HIR specs and installed-prelude hello also pass (35q1160–1161).
+- [x] Join the selected zero-argument source results across a closed union
+  of concrete classes. The previous dispatch anchor truncated a UInt64 arm
+  to Int32 and admitted an arm with no zero-argument overload. Native member
+  and explicit call forms now match Crystal 1.22.1 on both runtime arms.
+  Missing-overload rejection and an inherited-overload control also pass
+  (35q1197, 35q1201).
+- [ ] Keep union call defaults with each selected arm. The parent and the
+  zero-argument result candidate both expand an anchor arm's optional
+  argument before dispatch. In the control, this removes the sibling's
+  zero-argument method and both executions return the anchor's UInt64
+  default (35q1197). The dispatcher needs each selected source signature.
 - [ ] Reduce `inline-yield lost its owned Block scope` in a concrete union
   arm. The combined unchanged LavinMQ HIR probe passes the previous
   `SystemD::MemoryPressure` failure and reaches this invariant (35q1159).

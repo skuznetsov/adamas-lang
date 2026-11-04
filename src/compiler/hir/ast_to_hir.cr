@@ -11982,7 +11982,53 @@ module Adamas::HIR
       formal_types.size == arg_types.size ? formal_types : nil
     end
 
-    private def infer_virtual_return_type_from_registered_generic_union_targets(
+    # A dispatch name can be anchored on one member of a reference union.
+    # For a closed set of concrete classes with source definitions, resolve
+    # each arm independently before using any result as the dispatch ABI.
+    private def concrete_class_union_noarg_source_result(
+      variants : Array(String), method_name : String,
+    ) : TypeRef?
+      owners = variants.map { |name| resolve_type_alias_chain(name).lchop("::") }
+      return nil unless owners.all? do |owner|
+        strip_generic_args(owner) == owner && @class_info.has_key?(owner) &&
+          @module.get_type_descriptor(type_ref_for_name(owner)).try(&.kind) == TypeKind::Class &&
+          !class_has_subclasses?(owner) && !@abstract_class_names.includes?(owner)
+      end
+
+      targets = owners.map do |owner|
+        base = "#{owner}##{method_name}"
+        # Require a registered declaration on this concrete owner. Unknown,
+        # generated, and inherited-only methods keep their existing corridor.
+        return nil if function_def_overloads(base).empty?
+        lookup_function_def_for_call(base, 0, false, [] of TypeRef)
+      end
+      candidates = [] of TypeRef
+      targets.each_with_index do |target, index|
+        owner = owners[index]
+        unless target
+          # A nearer declaration can coexist with an overload supplied by
+          # inheritance, a module, or a generated getter.
+          return nil if registered_generated_accessor_request?("#{owner}##{method_name}", "#{owner}##{method_name}")
+          return nil if get_ancestor_chain(owner).any? do |ancestor|
+            source_included_instance_method_family?(ancestor, method_name) ||
+              (ancestor != owner &&
+                (source_method_family_at_owner?(ancestor, method_name, '#') ||
+                  source_generic_template_method_family?(ancestor, method_name, '#')))
+          end
+          raise LoweringError.new("no overload matches #{owner}##{method_name} for zero arguments")
+        end
+        name, definition = target
+        result = get_function_return_type(name, 0, definition)
+        if result == TypeRef::VOID
+          result = resolve_return_type_from_def(name, "#{owner}##{method_name}", type_ref_for_name(owner), 0, definition) || TypeRef::VOID
+        end
+        return nil if result == TypeRef::VOID
+        candidates << result
+      end
+      union_type_for_value_set(candidates)
+    end
+
+    private def infer_virtual_return_type_from_union_targets(
       union_name : String,
       method_name : String,
       arg_types : Array(TypeRef),
@@ -12003,6 +12049,12 @@ module Adamas::HIR
         )
       end
       return TypeRef::VOID if variants.size < 2
+
+      if arg_types.empty? && !has_block_call && !has_splat && !call_has_named_args
+        if result = concrete_class_union_noarg_source_result(variants, method_name)
+          return result
+        end
+      end
 
       resolved_variants = variants.map { |variant| resolve_type_alias_chain(variant) }
       all_concrete_generic = resolved_variants.all? do |variant|
@@ -59479,7 +59531,7 @@ module Adamas::HIR
             end
 
             if virtual_union_repair && receiver_desc
-              inferred_union_return = infer_virtual_return_type_from_registered_generic_union_targets(
+              inferred_union_return = infer_virtual_return_type_from_union_targets(
                 receiver_desc.name,
                 method_name,
                 arg_types,
@@ -121521,7 +121573,7 @@ module Adamas::HIR
         receiver_type = ctx.type_of(receiver_id)
         if receiver_desc = @module.get_type_descriptor(receiver_type)
           if receiver_desc.kind == TypeKind::Union
-            inferred_union_return = infer_virtual_return_type_from_registered_generic_union_targets(
+            inferred_union_return = infer_virtual_return_type_from_union_targets(
               receiver_desc.name,
               method_name,
               arg_types,
@@ -139923,7 +139975,7 @@ module Adamas::HIR
       if call_virtual
         if receiver_desc = @module.get_type_descriptor(ctx.type_of(object_id))
           if receiver_desc.kind == TypeKind::Union
-            inferred_union_return = infer_virtual_return_type_from_registered_generic_union_targets(
+            inferred_union_return = infer_virtual_return_type_from_union_targets(
               receiver_desc.name,
               member_name,
               arg_types,

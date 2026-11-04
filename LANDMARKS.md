@@ -23007,3 +23007,21 @@ isolated build. Refresh on changes to forwarded Proc materialization or
 HIR scope cleanup. The combined unchanged LavinMQ HIR probe (35q1159)
 clears the prior `SystemD::MemoryPressure` branch and stops in union-arm
 inline yield. The combined probe includes a separate deferred-self patch.
+
+### Join source results across a concrete class union
+
+The virtual dispatch symbol can use one arm as its naming anchor. It used to
+supply that arm's result type for the whole call as well. In a closed union
+of source-backed concrete classes, zero-argument calls now resolve each
+arm's overload and join the selected results before creating the HIR call.
+A missing overload is diagnosed when no other source provider is available.
+Inherited or generated overloads retain their existing lookup route.
+
+The native repro exercises both runtime arms through member access and
+explicit calls. On the parent the UInt64 result `2147483649` appeared as
+`-2147483647` and the missing-overload case compiled. The candidate matches
+Crystal 1.22.1, rejects the missing arm, and preserves the inherited control
+(35q1197, 35q1201). Refresh these results after changes to overload selection,
+virtual dispatch, or return carriers. Optional defaults are a separate open
+case because default expansion can change the dispatch signature before the
+result join sees it (35q1197).
