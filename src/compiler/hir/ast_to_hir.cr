@@ -1339,6 +1339,10 @@ module Adamas::HIR
       end
     end
 
+    private record LoweredBlockProc,
+      value : ValueId,
+      source_result_facts : Array({TypeRef, Bool})?
+
     # One source call owns its already evaluated argument values. Keep the
     # source expressions for literal restrictions and diagnostics, without
     # letting later binders evaluate them again or reread a mutable local.
@@ -74550,7 +74554,7 @@ module Adamas::HIR
     private def source_block_output_type_bindings(
       definition : Adamas::Compiler::Frontend::DefNode,
       declaration_owner : String?,
-      block_return_name : String,
+      block_result : String | SourceCallArgument,
       input_bindings : Hash(String, String),
     ) : Hash(String, String)?
       block_param = definition.params.try { |params| find_param(params) { |param| param.is_block } }
@@ -74566,9 +74570,13 @@ module Adamas::HIR
       return nil unless pattern.valid
       # The block result was inferred from values. Its name is a canonical
       # identity, unlike the selected declaration's output restriction above.
-      actual_value = with_canonical_type_scope do
-        source_call_argument_from_name(root_anchored_canonical_type_name(block_return_name))
-      end
+      actual_value = if block_result.is_a?(SourceCallArgument)
+                       block_result
+                     else
+                       with_canonical_type_scope do
+                         source_call_argument_from_name(root_anchored_canonical_type_name(block_result))
+                       end
+                     end
       actual_type = actual_value.type_ref
       return nil if actual_type == TypeRef::VOID
       inferred = {} of String => SourceCallArgument
@@ -121906,7 +121914,7 @@ module Adamas::HIR
               constructor_observed_return_type,
               source_result_contract,
               source_yield_context: source_yield_context_for_proc,
-            )
+            ).value
             if raw_callback_target && raw_callback_source_def && raw_callback_source_arena
               expected_callback = raw_callback_abi_for(raw_callback_target)
               unless expected_callback
@@ -134307,7 +134315,7 @@ module Adamas::HIR
                            end
         proc_id = lower_block_to_proc(ctx, block, block_param_types, block_arena_for_proc, heap_block_proc, hint_return_type,
           source_result_contract: source_result_contract,
-          source_yield_context: captured_block_source_yield_context(selected_def, selected_arena))
+          source_yield_context: captured_block_source_yield_context(selected_def, selected_arena)).value
         fallback_args << proc_id
         # `inline_key` can still be a bare `Owner#m` when the yield inline path bails out early,
         # or it can be the currently-lowered splat wrapper when a nested inline fallback hits a
@@ -135171,6 +135179,7 @@ module Adamas::HIR
           inline_self_class_name = owner_name unless owner_name.empty?
         end
         apply_inline = -> do
+          callback_output_bindings = {} of String => String
           inline_return.block_result_contract = source_result_contract
           if return_annotation = func_def.return_type
             # A source method's own Nil return contract adapts its ordinary
@@ -135263,12 +135272,29 @@ module Adamas::HIR
                     # caller's default to `check_index_out_of_bounds`).
                     hint_return_type = expected_nil_block_return_type_for_param(param, callee_arena) ||
                                        proc_materialize_hint_return_type(ctx)
-                    proc_id = lower_block_to_proc(ctx, block, block_param_types, block_arena_for_proc, heap_block_proc, hint_return_type,
+                    lowered_proc = lower_block_to_proc(ctx, block, block_param_types, block_arena_for_proc, heap_block_proc, hint_return_type,
                       source_result_contract: inline_return.block_result_contract,
                       source_yield_context: block_source_yield_context)
                     ctx.restore_locals(saved_inline_locals)
-                    ctx.register_local(param_name, proc_id)
-                    ctx.register_type(proc_id, ctx.type_of(proc_id))
+                    ctx.register_local(param_name, lowered_proc.value)
+                    ctx.register_type(lowered_proc.value, ctx.type_of(lowered_proc.value))
+                    if (callback_contract = source_result_contract) && (facts = lowered_proc.source_result_facts) &&
+                       !forall_type_param_names(func_def).empty?
+                      # A lowered callback owns its result. A source probe used
+                      # to prepare the inline frame can differ from that value.
+                      if facts.none? { |type, _| type == TypeRef::VOID || type.null_ptr? } &&
+                         (result_type = union_type_for_value_set(facts.map(&.[0])))
+                        kinds = facts.map(&.[1]).uniq
+                        result = SourceCallArgument.new(result_type, kinds == [true], value_facts: kinds.size > 1 ? facts : nil)
+                        if bindings = with_arena(callee_arena) {
+                             source_block_output_type_bindings(func_def,
+                               return_declaration_owner_for(inline_key, base_inline_name), result, callback_contract.type_bindings)
+                           }
+                          callback_output_bindings.merge!(bindings)
+                          @inline_yield_block_return_stack[-1] = proc_source_type_name(result)
+                        end
+                      end
+                    end
                   end
                 elsif arg_idx < call_args.size
                   arg_id = call_args[arg_idx]
@@ -135304,7 +135330,7 @@ module Adamas::HIR
             saved_inline_callee_return_owner = @captured_block_return_owner
             @captured_block_return_owner = false
             begin
-              result_value = lower_body(ctx, inline_body)
+              result_value = with_type_param_map(callback_output_bindings) { lower_body(ctx, inline_body) }
             ensure
               @captured_block_return_owner = saved_inline_callee_return_owner
             end
@@ -145799,7 +145825,7 @@ module Adamas::HIR
         @inline_yield_block_param_types_stack = saved_params[0, saved_params.size - 1]
         @inline_yield_name_stack = saved_names[0, Math.max(0, saved_names.size - 1)]
         @inline_yield_block_return_stack = saved_returns[0, Math.max(0, saved_returns.size - 1)]
-        value_id = lower_block_to_proc(ctx, target, target_params, target_arena, heap_proc: true)
+        value_id = lower_block_to_proc(ctx, target, target_params, target_arena, heap_proc: true).value
         YieldTarget.new(value_id, ctx.type_of(value_id), ProcCarrier::HeapProcObject)
       ensure
         ctx.restore_locals(saved_locals)
@@ -145825,7 +145851,7 @@ module Adamas::HIR
       semantic_return_type : TypeRef? = nil,
       source_result_contract : SourceBlockResultContract? = nil,
       source_yield_context : SourceYieldContext? = nil,
-    ) : ValueId
+    ) : LoweredBlockProc
       constructor_contract = nil.as(TypeDescriptor?)
       if constructor_type = proc_constructor_type
         descriptor = @module.get_type_descriptor(constructor_type)
@@ -146474,6 +146500,7 @@ module Adamas::HIR
         @type_param_map = saved_type_param_map
       end
 
+      source_result_facts = nil.as(Array({TypeRef, Bool})?)
       if source_result_contract
         unless should_stop_sequential_lowering?(proc_ctx)
           proc_ctx.terminate(Return.new(last_value))
@@ -146484,6 +146511,9 @@ module Adamas::HIR
             if ret = basic_block.terminator.as?(Return)
               validate_source_block_result(proc_ctx, block_node, source_result_contract, ret.value)
             end
+          end
+          unless source_result_contract.discards_result?
+            source_result_facts = proc_reachable_result_value_facts(proc_ctx)
           end
         ensure
           @enum_value_types = saved_enum_value_types
@@ -146594,7 +146624,8 @@ module Adamas::HIR
                   end
 
       if heap_proc
-        return emit_make_proc_value(ctx, proc_type, proc_func_name, proc_func, captured_vars)
+        value = emit_make_proc_value(ctx, proc_type, proc_func_name, proc_func, captured_vars)
+        return LoweredBlockProc.new(value, source_result_facts)
       end
 
       # Raw block callback path: return a bare function pointer typed as Proc.
@@ -146606,7 +146637,7 @@ module Adamas::HIR
         @block_proc_capture_carriers[{ctx.function.name, fp.id}] = capture_carriers
       end
 
-      fp.id
+      LoweredBlockProc.new(fp.id, source_result_facts)
     end
 
     private def record_block_proc_capture_writebacks(

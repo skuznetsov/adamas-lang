@@ -23025,3 +23025,22 @@ Crystal 1.22.1, rejects the missing arm, and preserves the inherited control
 virtual dispatch, or return carriers. Optional defaults are a separate open
 case because default expansion can change the dispatch signature before the
 result join sees it (35q1197).
+
+### Bind materialized inline callback output from reachable source results
+
+A source type probe can run before a block is materialized. In the
+StaticArray case the selected method's output formal still held an enclosing
+generic binding when its body called the constructor. The materialized
+block now supplies its reachable type and value-kind facts before return
+carrier normalization. The selected callback pattern binds free output
+formals for the inline body while preserving bindings from ordinary
+arguments. Discarded results and Proc descriptor construction follow their
+existing contracts.
+
+The scalar and tuple result probes fail on the parent at
+`StaticArray(U, 2).new` (35q1220). The native regression compares both types
+and elements with Crystal 1.22.1, checks an incompatible input-bound result,
+and is paired with the selected block-result oracles and installed-prelude
+hello (35q1227). Refresh when materialized block facts, selected output
+binding, or inline callback ownership changes. Deferred callback targets and
+lexical yield activations remain separate open boundaries.

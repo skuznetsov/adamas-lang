@@ -24162,3 +24162,23 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Reduce authority revision churn in the macro slice table regression.
   The parent and range candidate both hit the final missing-lowering bound
   (35q1124 and 35q1118).
+
+### Keep materialized block results with their source producer
+
+- [x] Bind method output formals for materialized inline callbacks from their
+  reachable source results. A pre-lowering probe could leave an enclosing
+  generic parameter in the selected method's map. The native StaticArray
+  regression compares both the scalar result and the tuple result, and checks
+  the runtime values against Crystal 1.22.1. Input-bound result rejection and
+  existing Proc discard behavior remain covered (35q1227).
+- [ ] Keep the selected ordinary Proc overload when a call is recursive. The
+  fallback at the recursive call can enqueue and select a block overload
+  without a source block. Trace 35q1221 isolates the extra Slice demand, and
+  35q1224 shows the recursive call retargeted in the reduced Walker HIR.
+- [ ] Give nested inline yields a lexical activation identity. The same AST
+  block can appear in distinct activations, so its object identity cannot
+  select the caller frame, arena, bindings, or self independently.
+- [ ] Transport exact result facts to deferred non-inlined callback targets.
+  The standalone nilable result control loses its non-Nil arm on the
+  isolated inline candidate (35q1220). Verify both result types and both
+  native branches after the retained target carries the source contract.
