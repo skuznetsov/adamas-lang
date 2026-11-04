@@ -8429,6 +8429,7 @@ module Adamas::HIR
     getter constant_literal_names : Hash(String, String)
     getter global_debug_infos : Hash(String, DebugGlobalInfo)
     @nested_type_names : Hash(String, Set(String))
+    @private_nested_type_names : Set(String)?
     # Macro record-time discovery needs the nominal kind of nested owners before
     # the ordinary class/module registration pass publishes their bodies.
     @record_only_source_type_kinds : Hash(String, TypeKind)
@@ -9186,6 +9187,7 @@ module Adamas::HIR
       @constant_literal_names = {} of String => String
       @global_debug_infos = {} of String => DebugGlobalInfo
       @nested_type_names = {} of String => Set(String)
+      @private_nested_type_names = nil
       @record_only_source_type_kinds = {} of String => TypeKind
       @debug_callsite = nil
       @pending_def_annotations = [] of Tuple(Adamas::Compiler::Frontend::AnnotationNode, Adamas::Compiler::Frontend::ArenaLike)
@@ -15364,6 +15366,7 @@ module Adamas::HIR
       return if expr_id.invalid?
       pending = pending_ivar_annotations || [] of Adamas::Compiler::Semantic::AnnotationInfo
       member = unwrap_visibility_member(@arena[expr_id])
+      record_expanded_nested_type_visibility(class_name, expr_id, member)
       record_ivar_annotation_member(class_name, member, expr_id, @arena, pending)
       if filter = env_get("DEBUG_CLASS_EXPANSION_TRACE")
         if filter == "1" || class_name.includes?(filter)
@@ -15937,7 +15940,7 @@ module Adamas::HIR
       current_arena = @arena.as(Adamas::Compiler::Frontend::ArenaLike)
       body.each do |expr_id|
         next if expr_id.null_ptr? || expr_id.invalid?
-        collect_nested_type_names(expr_id, set, current_arena)
+        collect_nested_type_names(expr_id, set, current_arena, class_name)
       end
       set.delete(class_name)
       set.delete("::#{class_name}")
@@ -16034,16 +16037,14 @@ module Adamas::HIR
       expr_id : ExprId,
       set : Set(String),
       arena : Adamas::Compiler::Frontend::ArenaLike,
+      visibility_owner : String? = nil,
     ) : Nil
       return if expr_id.null_ptr? || expr_id.invalid?
-      source = source_text_for_arena_or_file(arena)
-      node = unwrap_visibility_member_in_arena(arena[expr_id], arena)
+      raw_node = arena[expr_id]
+      node = unwrap_visibility_member_in_arena(raw_node, arena)
       case node
-      when Adamas::Compiler::Frontend::BlockNode
-        node.body.each { |child_id|
-          next if child_id.null_ptr? || child_id.invalid?
-          collect_nested_type_names(child_id, set, arena)
-        }
+      when Adamas::Compiler::Frontend::BlockNode, Adamas::Compiler::Frontend::BeginNode
+        node.body.each { |child_id| collect_nested_type_names(child_id, set, arena, visibility_owner) }
       when Adamas::Compiler::Frontend::MacroIfNode
         collect_nested_type_names(node.then_body, set, arena)
         if else_body = node.else_body
@@ -16051,31 +16052,51 @@ module Adamas::HIR
         end
       when Adamas::Compiler::Frontend::MacroForNode
         collect_nested_type_names(node.body, set, arena)
-      when Adamas::Compiler::Frontend::CallNode
-        callee_name = resolve_path_like_name_in_arena(node.callee, arena)
-        if callee_name == "record"
-          if first_arg = node.args.first?
-            if nested_name = resolve_path_like_name_in_arena(first_arg, arena)
-              short = last_namespace_component(nested_name)
-              set << short unless short.empty?
-            end
-          end
+      else
+        if name = nested_source_type_name(node, arena)
+          set << name
+          record_nested_type_visibility(visibility_owner, raw_node, name) if visibility_owner
         end
-      when Adamas::Compiler::Frontend::ClassNode
-        nested_name = class_name_from_node(node, source) || ""
-        set << nested_name unless nested_name.empty?
-      when Adamas::Compiler::Frontend::ModuleNode
-        nested_name = module_name_from_node(node, source) || ""
-        set << nested_name unless nested_name.empty?
-      when Adamas::Compiler::Frontend::EnumNode
-        nested_name = enum_name_from_node(node, source) || ""
-        set << nested_name unless nested_name.empty?
-      when Adamas::Compiler::Frontend::AliasNode
-        nested_name = safe_slice_to_string(node.name) || ""
-        set << nested_name unless nested_name.empty?
-      when Adamas::Compiler::Frontend::LibNode
-        nested_name = safe_slice_to_string(node.name) || ""
-        set << nested_name unless nested_name.empty?
+      end
+    end
+
+    private def nested_source_type_name(
+      node : Adamas::Compiler::Frontend::Node,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : String?
+      name = case node
+             when Adamas::Compiler::Frontend::CallNode
+               if resolve_path_like_name_in_arena(node.callee, arena) == "record"
+                 if first_arg = node.args.first?
+                   resolve_path_like_name_in_arena(first_arg, arena).try { |arg| last_namespace_component(arg) }
+                 end
+               end
+             when Adamas::Compiler::Frontend::ClassNode
+               class_name_from_node(node, source_text_for_arena_or_file(arena))
+             when Adamas::Compiler::Frontend::ModuleNode
+               module_name_from_node(node, source_text_for_arena_or_file(arena))
+             when Adamas::Compiler::Frontend::EnumNode
+               enum_name_from_node(node, source_text_for_arena_or_file(arena))
+             when Adamas::Compiler::Frontend::AliasNode, Adamas::Compiler::Frontend::LibNode
+               safe_slice_to_string(node.name)
+             end
+      name unless name.try(&.empty?)
+    end
+
+    private def record_nested_type_visibility(owner : String, raw_node : Adamas::Compiler::Frontend::Node, name : String) : Nil
+      if raw_node.is_a?(Adamas::Compiler::Frontend::VisibilityModifierNode) &&
+         raw_node.visibility == Adamas::Compiler::Frontend::Visibility::Private
+        names = (@private_nested_type_names ||= Set(String).new)
+        names.add(qualified_nested_type_name(owner, name))
+      end
+    end
+
+    private def record_expanded_nested_type_visibility(owner : String, expr_id : ExprId, node : Adamas::Compiler::Frontend::Node) : Nil
+      raw_node = @arena[expr_id]
+      if raw_node.is_a?(Adamas::Compiler::Frontend::VisibilityModifierNode)
+        if name = nested_source_type_name(node, @arena)
+          record_nested_type_visibility(owner, raw_node, name)
+        end
       end
     end
 
@@ -34765,6 +34786,7 @@ module Adamas::HIR
       return if depth > 8
       return if expr_id.invalid?
       member = unwrap_visibility_member(@arena[expr_id])
+      record_expanded_nested_type_visibility(module_name, expr_id, member)
       case member
       when Adamas::Compiler::Frontend::BlockNode
         register_module_macro_expansion_body(module_name, member.body, depth)
@@ -69800,16 +69822,15 @@ module Adamas::HIR
     # Searches nested types of *type_name*'s parents (included modules, last
     # included first, then the superclass), recursively, like Crystal's
     # `Type#lookup_path_item` does for `parents`.
-    private def nested_type_full_name_in_parents(type_name : String, name : String, depth : Int32) : String?
+    private def nested_type_full_name_in_parents(
+      type_name : String, name : String, depth : Int32, include_private : Bool = true,
+    ) : String?
       return nil if depth > 16
       if mods = @class_included_modules[type_name]?
         mods.reverse_each do |mod|
           mod_base = strip_generics_simple(mod)
           next if mod_base == type_name
-          if (nested = @nested_type_names[mod_base]?) && safe_set_includes?(nested, name)
-            return "#{mod_base}::#{name}"
-          end
-          if found = nested_type_full_name_in_parents(mod_base, name, depth + 1)
+          if found = nested_type_full_name_in_owner(mod_base, name, depth + 1, include_private)
             return found
           end
         end
@@ -69817,12 +69838,18 @@ module Adamas::HIR
       if parent = parent_name_for_hierarchy_lookup(type_name)
         parent_base = strip_generics_simple(parent)
         return nil if parent_base == type_name
-        if (nested = @nested_type_names[parent_base]?) && safe_set_includes?(nested, name)
-          return "#{parent_base}::#{name}"
-        end
-        return nested_type_full_name_in_parents(parent_base, name, depth + 1)
+        return nested_type_full_name_in_owner(parent_base, name, depth + 1, include_private)
       end
       nil
+    end
+
+    private def nested_type_full_name_in_owner(owner : String, name : String, depth : Int32, include_private : Bool) : String?
+      if (nested = @nested_type_names[owner]?) && safe_set_includes?(nested, name)
+        full_name = "#{owner}::#{name}"
+        return nil if !include_private && @private_nested_type_names.try(&.includes?(full_name))
+        return full_name
+      end
+      nested_type_full_name_in_parents(owner, name, depth, include_private)
     end
 
     private def namespace_path_head_in_namespace(head : String, namespace : String) : String?
@@ -71017,17 +71044,37 @@ module Adamas::HIR
       resolved
     end
 
-    # An absolute path has already selected the root namespace. If its leading
-    # `::` was stripped for HIR/type-name lookup, do not re-open lexical lookup
-    # for a single-component name such as `::Signal`.
-    private def resolve_path_type_alias_chain(name : String, absolute : Bool) : String
-      if absolute
-        expanded = expand_rooted_alias_path_head(name)
-        return resolve_type_alias_chain_no_context(expanded) if expanded
-        resolve_type_alias_chain_no_context(name)
-      else
-        resolve_type_alias_chain(name)
+    # The caller has already bound the first component. Within that namespace,
+    # each remaining component can name a direct or inherited type. Follow the
+    # selected member before looking up the next component.
+    private def resolve_qualified_type_path_members(name : String) : String?
+      return nil unless materializable_unknown_named_type?(name)
+      parts = name.split("::")
+      owner = resolve_type_alias_chain_no_context(parts.shift)
+      return nil unless type_name_exists?(owner)
+
+      parts.each do |part|
+        member = "#{owner}::#{part}"
+        unless type_name_exists?(member)
+          return nil if constant_name_exists?(member)
+          member = nested_type_full_name_in_parents(owner, part, 0, include_private: false) || return nil
+        end
+        return nil if @private_nested_type_names.try(&.includes?(member))
+        owner = resolve_type_alias_chain_no_context(member)
       end
+      owner
+    end
+
+    private def resolve_path_type_alias_chain(name : String, absolute : Bool) : String
+      unless name.includes?("::")
+        # Stripping the root prefix for lookup must not reopen lexical lookup.
+        return absolute ? resolve_type_alias_chain_no_context(name) : resolve_type_alias_chain(name)
+      end
+
+      seed = absolute ? (expand_rooted_alias_path_head(name) || name) : name
+      resolved = resolve_type_alias_chain_no_context(seed)
+      return resolved if resolved != seed || type_name_exists?(seed) || constant_name_exists?(seed)
+      resolve_qualified_type_path_members(seed) || (absolute ? resolved : resolve_type_alias_chain(name))
     end
 
     private def resolve_type_alias_chain(name : String, preserve_abstract_int : Bool = false) : String
@@ -71147,7 +71194,9 @@ module Adamas::HIR
     end
 
     private def resolve_type_alias_by_qualified_suffix(name : String) : String?
-      return nil if name.empty? || !name.includes?("::")
+      # A rooted path already names its namespace. Removing its initial
+      # separator for suffix recovery can replace it with a nested namesake.
+      return nil if absolute_name_prefix_bytes?(name) || !name.includes?("::")
       # Suffix fallback is only valid for a qualified identifier path. Composite
       # expressions such as `Hash(K, V), K -> V` may contain a qualified return
       # type, but resolving that suffix as an alias would collapse the entire
@@ -113248,6 +113297,7 @@ module Adamas::HIR
           # Keep a type-valued local's concrete owner after its compile-time
           # receiver is removed from the runtime argument list.
           type_literal_receiver_owner : String? = nil
+          source_path_receiver_name : String? = nil
           path_receiver_class_name = ""
           path_receiver_class_name_found = false
           constant_receiver = false
@@ -113768,6 +113818,7 @@ module Adamas::HIR
                             resolve_path_string_in_context(substituted_path)
                           end
               full_path = resolve_path_type_alias_chain(full_path, absolute_path)
+              source_path_receiver_name = full_path
               const_exists = constant_name_exists?(full_path)
               if env_get("DEBUG_CONST_RECV") && method_name == "unsafe_fetch"
                 STDERR.puts "[CONST_RECV] full_path=#{full_path} const_exists=#{const_exists} method=#{method_name}"
@@ -116563,14 +116614,15 @@ module Adamas::HIR
         member_node = call_arena[node.callee].unsafe_as(Adamas::Compiler::Frontend::MemberAccessNode)
         member_obj = call_arena[member_node.object]
         if member_obj.is_a?(Adamas::Compiler::Frontend::PathNode)
-          path_owner = with_arena(call_arena) { collect_path_string(member_obj) }
-          absolute_path_owner = path_owner.starts_with?("::")
-          # `::Foo.m`: collect_path_string keeps the absolute prefix, but method
-          # owners are registered without it. Unstripped, `::Sig.each` failed the
-          # class-method lookup here and fell to the same-named instance method.
-          path_owner = strip_absolute_name_prefix(path_owner) if absolute_path_owner
-          path_owner = substitute_type_params_in_type_name(path_owner)
-          path_owner = resolve_path_type_alias_chain(path_owner, absolute_path_owner)
+          raw_path = with_arena(call_arena) { collect_path_string(member_obj) }
+          absolute_path_owner = absolute_name_prefix_bytes?(raw_path)
+          # Overload refinement consumes the source path binding. Reopening
+          # lookup on the spelling can select a different relative namespace.
+          path_owner = source_path_receiver_name || begin
+            path = substitute_type_params_in_type_name(raw_path)
+            path = absolute_path_owner ? strip_absolute_name_prefix(path) : resolve_path_string_in_context(path)
+            resolve_path_type_alias_chain(path, absolute_path_owner)
+          end
           if absolute_path_owner && !constant_name_exists?(path_owner) &&
              !type_name_exists?(path_owner) && !@module.is_lib?(path_owner) &&
              !enum_member_path?(path_owner)

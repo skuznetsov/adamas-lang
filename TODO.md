@@ -24339,3 +24339,16 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Preserve the selected exception type through the installed Socket error
   factory. The combined LavinMQ HIR probe rejects a
   `Crystal::System::Socket::Error` argument to `raise` (35q1382).
+- [x] Preserve the selected namespace of a qualified class receiver through
+  overload refinement. Walk each remaining type component through direct
+  declarations and visible ancestors in that namespace. Stock Crystal 1.22.1
+  and both Adamas modes agree on rooted, relative, alias, inheritance, and
+  private-member cases. The installed-prelude smoke test passes (35q1392).
+- [ ] Audit qualified path ownership in annotations and value constants
+  separately. The static receiver gate covers class/type-member projection
+  and inherited visibility. It does not certify all qualified path consumers.
+- [ ] Preserve the concrete shape admitted by a bare generic union arm through
+  synthesized allocator and initializer signatures. The combined LavinMQ HIR
+  probe now passes the LZ4 writer's inherited `IO::Error` and stops when
+  `AMQP::Table.new` coerces a concrete server-properties tuple into the
+  unspecialized `NamedTuple | Void` restriction (35q1391).
