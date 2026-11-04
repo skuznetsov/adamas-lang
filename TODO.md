@@ -24648,3 +24648,31 @@ integration, fresh bootstrap, or LavinMQ parity.
   probe now passes the LZ4 writer's inherited `IO::Error` and stops when
   `AMQP::Table.new` coerces a concrete server-properties tuple into the
   unspecialized `NamedTuple | Void` restriction (35q1391).
+
+### 2026-11-04: Source coordinates for macro-generated methods
+
+- [x] Validate a generated Def's source span against the expansion buffer
+  recorded for its exact Def and arena pair. The arena can hold nodes from
+  the macro provider and several expansions, each with its own coordinates.
+  Keep body index and subtree validation, and invalidate an earlier fit for
+  that pair when expansion provenance is registered.
+- DoD: run `bash regression_tests/method_source_arena_repro.sh <fresh-S1>`.
+  Crystal 1.22.1 and lazy/eager Adamas must print `A` for the ordinary
+  overload and `AB` for two cross-file expansions with separate values.
+  The parent passes the ordinary overload and rejects the generated method
+  with `cannot establish exact source arena for yield owner`. Exact S1
+  35q1615 passes the native matrix, the nilary virtual result gate, the
+  generated initializer parameter gate, and the class/instance yield probe.
+- The combined unchanged LavinMQ HIR probe advances beyond the macro arena
+  error and the Exchange pagination site to `VHostView#details_tuple`:
+  `i.details_tuple` has a provisional Void result, so `compact_map`
+  retains `Array(VHostView)` and the later NamedTuple-only `dig` rejects
+  it (35q1613). Keep the overload check. Trace the exact result through
+  `VHostView`, both arguments of `NamedTuple#merge`, and block result
+  publication before deciding where the remaining dependency belongs.
+- [ ] Exercise the exact owner when an alternate lowering path clones a
+  generated Def header or remaps its body. Require a retained source witness
+  for a new identity. Exercise an in-range foreign ExprId in a large or deep
+  body before treating the existing sampled subtree check as an ownership
+  certificate. Refresh the native gate when macro parsing, Def registration,
+  or source-owner recovery changes.

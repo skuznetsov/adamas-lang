@@ -8492,7 +8492,7 @@ module Adamas::HIR
     # DefNode identities whose parameter slices came from macro-generated text.
     @macro_generated_parameter_def_ids : Set(UInt64)
     # Exact generated source buffer that produced each macro-expanded DefNode.
-    @macro_generated_parameter_sources : Hash({UInt64, UInt64}, String)
+    @macro_generated_def_sources : Hash({UInt64, UInt64}, String)
     # Exact source buffer for each parameter whose raw annotation slice was lost.
     @macro_generated_parameter_annotation_sources : Hash({UInt64, UInt64}, String)
     # Exact buffers for nodes parsed by macro expansion, partitioned by arena.
@@ -8887,7 +8887,7 @@ module Adamas::HIR
       @stdlib_root = stdlib_root
       @extra_sources_by_arena = {} of UInt64 => Array(String)
       @macro_generated_parameter_def_ids = Set(UInt64).new
-      @macro_generated_parameter_sources = {} of {UInt64, UInt64} => String
+      @macro_generated_def_sources = {} of {UInt64, UInt64} => String
       @macro_generated_parameter_annotation_sources = {} of {UInt64, UInt64} => String
       @macro_generated_sources_by_arena = {} of UInt64 => {Adamas::Compiler::Frontend::ArenaLike, Hash(Int32, String)}
       @macro_primary_source_owners = {} of UInt64 => {Adamas::Compiler::Frontend::ArenaLike, String, Int32}
@@ -9175,7 +9175,7 @@ module Adamas::HIR
       @paths_by_arena = paths_by_arena
       @extra_sources_by_arena = {} of UInt64 => Array(String)
       @macro_generated_parameter_def_ids = Set(UInt64).new
-      @macro_generated_parameter_sources = {} of {UInt64, UInt64} => String
+      @macro_generated_def_sources = {} of {UInt64, UInt64} => String
       @macro_generated_parameter_annotation_sources = {} of {UInt64, UInt64} => String
       @macro_generated_sources_by_arena = {} of UInt64 => {Adamas::Compiler::Frontend::ArenaLike, Hash(Int32, String)}
       @macro_primary_source_owners = {} of UInt64 => {Adamas::Compiler::Frontend::ArenaLike, String, Int32}
@@ -9206,7 +9206,7 @@ module Adamas::HIR
         Adamas::Compiler::Frontend::ArenaLike,
       }
       @macro_generated_parameter_def_ids = Set(UInt64).new
-      @macro_generated_parameter_sources = {} of {UInt64, UInt64} => String
+      @macro_generated_def_sources = {} of {UInt64, UInt64} => String
       @macro_generated_parameter_annotation_sources = {} of {UInt64, UInt64} => String
       @macro_generated_sources_by_arena = {} of UInt64 => {Adamas::Compiler::Frontend::ArenaLike, Hash(Int32, String)}
       @macro_primary_source_owners = {} of UInt64 => {Adamas::Compiler::Frontend::ArenaLike, String, Int32}
@@ -21737,7 +21737,14 @@ module Adamas::HIR
         @arena_fits_def_cache[fits_key] = false
         return false
       end
-      result = span_fits_source?(arena, func_def.span)
+      span = func_def.span
+      # The exact expansion owns generated spans even when its nodes share
+      # the arena of the file that supplied the macro.
+      result = if source = @macro_generated_def_sources[{arena_map_key(arena), func_def.object_id.to_u64}]?
+                 span.start_offset >= 0 && span.end_offset <= source.bytesize
+               else
+                 span_fits_source?(arena, span)
+               end
       @arena_fits_def_cache[fits_key] = result
       result
     end
@@ -25177,7 +25184,9 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::DefNode
         def_id = node.object_id.to_u64
         @macro_generated_parameter_def_ids.add(def_id)
-        @macro_generated_parameter_sources[{arena_map_key(arena), def_id}] = source
+        @macro_generated_def_sources[{arena_map_key(arena), def_id}] = source
+        # An earlier structural lookup may have tested the primary source.
+        @arena_fits_def_cache.delete({arena.object_id, node.object_id})
         if params = node.params
           each_param(params) do |param|
             @macro_generated_parameter_annotation_sources[{arena_map_key(arena), param.object_id.to_u64}] = source
@@ -25815,7 +25824,7 @@ module Adamas::HIR
       arena : Adamas::Compiler::Frontend::ArenaLike,
       expected_method_name : String,
     ) : Array(Tuple(String, String?))?
-      source = @macro_generated_parameter_sources[{
+      source = @macro_generated_def_sources[{
         arena_map_key(arena),
         node.object_id.to_u64,
       }]?
@@ -123541,11 +123550,11 @@ module Adamas::HIR
         # differ. Missing expansion evidence remains fail-closed: suppressing
         # dispatch is safer than synthesizing mutually recursive trampolines.
         return true unless selected_arena && variant_arena
-        selected_source = @macro_generated_parameter_sources[{
+        selected_source = @macro_generated_def_sources[{
           arena_map_key(selected_arena),
           selected_def_id,
         }]?
-        variant_source = @macro_generated_parameter_sources[{
+        variant_source = @macro_generated_def_sources[{
           arena_map_key(variant_arena),
           variant_def_id,
         }]?

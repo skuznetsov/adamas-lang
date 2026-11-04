@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Reopened overloads in separate source files must lower from the selected
 # method Def's declaration arena, not a sibling's bare-name arena hint.
+# Macro-generated Defs use the coordinates of their own expansion buffer.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -49,10 +50,72 @@ MethodSourceArenaOutput.putchar(owner.value(1))
 MethodSourceArenaOutput.putchar(10)
 CRYSTAL
 
-printf 'A\n' >"$WORK/expected"
+cat >"$WORK/stats.cr" <<'CRYSTAL'
+module Stats
+  macro define_stats(keys, value)
+    def stats
+      {
+        {% for key in keys %}
+          {{key.id}}: {value: {{value}}, rate: 0.0},
+        {% end %}
+      }
+    end
+  end
+end
+CRYSTAL
+
+cat >"$WORK/generated_stats.cr" <<'CRYSTAL'
+require "./stats"
+require "named_tuple"
+
+@[Link("gc")]
+lib LibC
+  fun putchar(value : Int32) : Int32
+end
+
+abstract class Source
+  abstract def details
+end
+
+abstract class Counters < Source
+  include Stats
+  define_stats({"ingress", "egress", "total", "accepted", "rejected", "requeued"}, 65)
+
+  def details
+    {code: stats[:ingress][:value], counters: stats}
+  end
+end
+
+class First < Counters
+end
+
+class Second < Counters
+  include Stats
+  define_stats({"ingress", "egress", "total", "accepted", "rejected", "requeued"}, 66)
+
+  def details
+    super.merge(code: stats[:egress][:value])
+  end
+end
+
+def choose(first : Bool) : Source
+  first ? First.new : Second.new
+end
+
+def show(source : Source)
+  LibC.putchar(source.details[:code])
+end
+
+show(choose(true))
+show(choose(false))
+LibC.putchar(10)
+CRYSTAL
+
+printf 'A\n' >"$WORK/selected_overload.expected"
+printf 'AB\n' >"$WORK/generated_stats.expected"
 
 compile_case() {
-  local mode="$1" status=0
+  local mode="$1" source="$2" result="$3" status=0
   local -a command_args mode_env
   mode_env=(env)
   if [[ "$mode" == original ]]; then
@@ -67,26 +130,28 @@ compile_case() {
   fi
   mode_env+=(ADAMAS_LLVM_CACHE=0)
   CRYSTAL_CACHE_DIR="$WORK/cache.$mode" "${mode_env[@]}" \
-    "$SAFE_RUNNER" "${command_args[@]}" "$WORK/selected_overload.cr" -o "$WORK/$mode.bin" \
-    >"$WORK/$mode.compile.log" 2>&1 || status=$?
+    "$SAFE_RUNNER" "${command_args[@]}" "$WORK/$source.cr" -o "$WORK/$result.bin" \
+    >"$WORK/$result.compile.log" 2>&1 || status=$?
   return "$status"
 }
 
 run_case() {
-  local mode="$1"
-  if ! compile_case "$mode"; then
-    cat "$WORK/$mode.compile.log" >&2
+  local mode="$1" source="$2"
+  local result="$source.$mode"
+  if ! compile_case "$mode" "$source" "$result"; then
+    cat "$WORK/$result.compile.log" >&2
     return 1
   fi
-  RUN_SAFE_PASSTHROUGH_STDIO=1 "$SAFE_RUNNER" "$WORK/$mode.bin" 5 512 \
-    >"$WORK/$mode.stdout" 2>"$WORK/$mode.run.log" || {
-      cat "$WORK/$mode.run.log" >&2
+  RUN_SAFE_PASSTHROUGH_STDIO=1 "$SAFE_RUNNER" "$WORK/$result.bin" 5 512 \
+    >"$WORK/$result.stdout" 2>"$WORK/$result.run.log" || {
+      cat "$WORK/$result.run.log" >&2
       return 1
     }
-  diff -u "$WORK/expected" "$WORK/$mode.stdout"
+  diff -u "$WORK/$source.expected" "$WORK/$result.stdout"
+  echo "PASS[$mode]: $source"
 }
 
 for mode in original lazy eager; do
-  run_case "$mode"
-  echo "PASS[$mode]: selected Int32 overload emitted A"
+  run_case "$mode" selected_overload
+  run_case "$mode" generated_stats
 done
