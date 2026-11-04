@@ -24643,11 +24643,24 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Audit qualified path ownership in annotations and value constants
   separately. The static receiver gate covers class/type-member projection
   and inherited visibility. It does not certify all qualified path consumers.
-- [ ] Preserve the concrete shape admitted by a bare generic union arm through
-  synthesized allocator and initializer signatures. The combined LavinMQ HIR
-  probe now passes the LZ4 writer's inherited `IO::Error` and stops when
-  `AMQP::Table.new` coerces a concrete server-properties tuple into the
-  unspecialized `NamedTuple | Void` restriction (35q1391).
+- [x] Preserve the concrete shape admitted by a bare generic union arm through
+  synthesized allocator and initializer signatures. The restriction symbol
+  had no physical layout, but both the shared allocator and constructor
+  prewarm could demand a body under it. Emit the admitted call shape, and
+  require every positional runtime-union arm to resolve before dispatch.
+- DoD: run `bash regression_tests/allocator_bare_generic_union_repro.sh <fresh-S1>`.
+  Crystal 1.22.1 and lazy/eager Adamas agree on `ABCDDE.F.G`, rejected
+  scalar and union calls containing Bool, and a missing NamedTuple key
+  (35q1635). The accepted fixture declares the alternative defaulted overload
+  first and checks one evaluation of each runtime-union argument.
+- [ ] Exercise named, splatted, block-taking, and inherited constructor
+  shapes with runtime union arguments. The positional fanout only proves
+  scalar source selection and the concrete wrapper ABI for each arm.
+- [ ] Trace the first strict rejection after the unchanged LavinMQ server
+  properties constant. Exact 35q1635 loads the installed prelude and
+  rejects `AMQ::Protocol::Table.new(String)` in a `case` body. Find the
+  actual argument producer and prove branch reachability before changing
+  constructor admission or type-test folding.
 
 ### 2026-11-04: Source coordinates for macro-generated methods
 

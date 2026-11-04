@@ -45085,7 +45085,8 @@ module Adamas::HIR
                init_base, init_base, call_arg_types, false,
                call_has_named_args, call_named_arg_names,
              )
-            if function_param_stats(selected[0], selected[1]).param_count > 0 &&
+            if (function_param_stats(selected[0], selected[1]).param_count > 0 ||
+                allocator_class_requires_union_shape?(class_name)) &&
                function_def_accepts_call_shape?(
                  selected[0], selected[1], call_arg_types, false,
                  call_has_named_args, call_named_arg_names,
@@ -45744,6 +45745,23 @@ module Adamas::HIR
         end
       end
 
+      # A bare generic union arm is a source restriction. It cannot supply a
+      # layout for the shared allocator, even when the class is registered
+      # before the first constructor call. Emit only the requested shape.
+      init_params = @init_params[class_name]? || [] of {String, TypeRef}
+      if allocator_class_requires_union_shape?(class_name)
+        # A positional runtime union is dispatched from the lowered values.
+        # The early inferred shape cannot select a physical allocator.
+        return if !call_has_named_args && !call_has_block &&
+                  call_arg_types.try(&.any? { |type| is_union_type?(type) })
+        generate_allocator_overload(
+          class_name, class_info, call_arg_types, call_has_named_args, call_has_block,
+          call_named_arg_names, call_block_node, call_block_param_types,
+          call_block_return_name, selected_initializer,
+        )
+        return
+      end
+
       # Keep the legacy allocator body positional when this first call selects
       # a named-only initializer. The shape-specific overload emitted after
       # the base allocator remains responsible for the named call itself.
@@ -45843,8 +45861,6 @@ module Adamas::HIR
         return
       end
 
-      # Get initialize parameters for this class before allocator body emission.
-      init_params = @init_params[class_name]? || [] of {String, TypeRef}
       allocator_params = init_params.map { |param| {param[0], param[1]} }
       if call_arg_types && call_arg_types.any? { |t| t != TypeRef::VOID }
         allocator_params.each_with_index do |(param_name, param_type), idx|
@@ -46629,6 +46645,9 @@ module Adamas::HIR
           end
         end
         if selected_init_target.nil? && (init_match.nil? || (!call_has_named_args && allocator_def_has_named_only?(init_match.not_nil![1])))
+          # A registration alias cannot establish admission to a source-only
+          # union. Wait for the full call shape instead of emitting its body.
+          return if allocator_class_requires_union_shape?(class_name)
           requested_init_name = if class_name.starts_with?("::") && !init_base.starts_with?("::")
                                   "::#{init_base}"
                                 else
@@ -46805,7 +46824,8 @@ module Adamas::HIR
             allocator_params[idx] = {param_name, call_type}
           elsif is_union_or_nilable_type?(param_type) &&
                 call_type != param_type &&
-                get_union_member_variant_id(param_type, call_type) >= 0
+                (get_union_member_variant_id(param_type, call_type) >= 0 ||
+                 (matched_init_def && allocator_union_template_admits_call_variant?(param_type, call_type)))
             # This overload is named from the concrete call shape. Keep its HIR
             # parameters equally concrete; otherwise a `$String` allocator can
             # silently forward a `Nil | String` value and bootstrap lowering may
@@ -47305,6 +47325,47 @@ module Adamas::HIR
       end
     end
 
+    private def allocator_source_only_union?(type : TypeRef) : Bool
+      desc = @module.get_type_descriptor(type)
+      return false unless desc && desc.kind == TypeKind::Union
+
+      split_union_type_name(desc.name).any? do |member|
+        name = member.strip.lchop("::")
+        name == "Tuple" || name == "NamedTuple" || @generic_templates.has_key?(name)
+      end
+    end
+
+    private def allocator_class_requires_union_shape?(class_name : String) : Bool
+      return true if @init_params[class_name]?.try(&.any? { |_, type| allocator_source_only_union?(type) })
+      return false unless init_base = resolve_method_with_inheritance(class_name, "initialize")
+
+      # The class-wide parameter snapshot describes only one declaration.
+      # A different initializer in the same family may still be source-only.
+      function_def_overloads(init_base).any? do |name|
+        (def_node = @function_defs[name]?) && allocator_initializer_requires_union_shape?(name, def_node)
+      end
+    end
+
+    private def allocator_initializer_requires_union_shape?(
+      name : String,
+      def_node : Adamas::Compiler::Frontend::DefNode,
+    ) : Bool
+      owner = function_context_from_name(name)
+      function_param_infos(name, def_node).any? do |param|
+        if type_name = param.type_annotation
+          allocator_source_only_union?(annotation_type_ref(type_name, owner))
+        else
+          false
+        end
+      end
+    end
+
+    # Bare generic arms are source restrictions with no concrete layout.
+    # Only use this after selecting the initializer with the source arguments.
+    private def allocator_union_template_admits_call_variant?(decl_type : TypeRef, call_type : TypeRef) : Bool
+      !is_union_or_nilable_type?(call_type) && exact_union_call_type_subset?(call_type, decl_type)
+    end
+
     # A concrete call variant specializes a declared union initializer param
     # when it is a direct union member, or when it reaches the union only
     # through a module arm (`args : En(Int32)?` called with `Ar(Int32)`).
@@ -47313,6 +47374,7 @@ module Adamas::HIR
     # `union_module_arm_admits_concrete_call?`.
     private def allocator_union_param_admits_call_variant?(decl_type : TypeRef, call_type : TypeRef) : Bool
       get_union_member_variant_id(decl_type, call_type) >= 0 ||
+        allocator_union_template_admits_call_variant?(decl_type, call_type) ||
         union_module_arm_admits_concrete_call?(decl_type, call_type)
     end
 
@@ -117278,8 +117340,13 @@ module Adamas::HIR
                     init_target = exact_name
                   end
                 end
-                remember_callsite_arg_types(init_target, arg_types, nil, nil, has_block_call, has_named_args, call_named_arg_names)
-                lower_function_if_needed(init_target)
+                # The allocator binds this declaration to a concrete call shape.
+                # Prewarming its restriction symbol queues a second body with
+                # unresolved bare generic arms and an unrelated runtime ABI.
+                unless allocator_initializer_requires_union_shape?(selected_name, selected_def)
+                  remember_callsite_arg_types(init_target, arg_types, nil, nil, has_block_call, has_named_args, call_named_arg_names)
+                  lower_function_if_needed(init_target)
+                end
               end
             end
           end
@@ -118256,6 +118323,21 @@ module Adamas::HIR
         unless explicit_match
           if class_name = method_owner(full_method_name)
             if class_info = @class_info[class_name]?
+              source_only_allocator = allocator_class_requires_union_shape?(class_name)
+              if source_only_allocator && !has_block_call && !has_splat && !has_named_args &&
+                 arg_types.any? { |type| is_union_type?(type) }
+                if dispatched = try_emit_union_arg_dispatch(
+                     ctx, nil, full_method_name, nil, args, arg_types, class_info.type_ref,
+                     false, false, false, false, require_source_compatible_variants: true,
+                     visibility_site: CallVisibilitySite.new(
+                       ctx, node, callee_node, nil, method_name, explicit_self_receiver, args.size, class_name,
+                     ),
+                   )
+                  return dispatched
+                end
+                actual_names = arg_types.map { |type| get_type_name_from_ref(type) }.join(", ")
+                raise LoweringError.new("no overload matches #{full_method_name} for argument types (#{actual_names})", node)
+              end
               alloc_block = has_block_call ? allocator_call_block_contract(class_name, arg_types, !!allocator_has_named_args, block_expr, block_pass_expr) : nil
               generate_allocator(
                 class_name,
@@ -118278,6 +118360,11 @@ module Adamas::HIR
                 call_named_arg_names,
                 source_initializer_entry,
               )
+              if source_only_allocator && !has_unknown_arg_types &&
+                 !@module.has_function_with_body?(allocator_call_shape_target)
+                actual_names = arg_types.map { |type| get_type_name_from_ref(type) }.join(", ")
+                raise LoweringError.new("no overload matches #{full_method_name} for argument types (#{actual_names})", node)
+              end
               if has_block_call && !has_unknown_arg_types
                 generated_block_name = mangle_function_name(full_method_name, arg_types, true)
                 if @module.has_function?(generated_block_name) ||
@@ -124081,6 +124168,7 @@ module Adamas::HIR
       vo_drop = [] of Bool
       variant_source_defs = [] of {String, Adamas::Compiler::Frontend::DefNode}
       has_distinct_source_variant = false
+      all_variants_are_allocator_bodies = true
       has_unresolved_variant_target = false
       # A nilable `.new` call can bind the union-shaped allocator before any
       # concrete allocator overload has been demanded. Materialize each
@@ -124151,9 +124239,11 @@ module Adamas::HIR
           end
         end
 
+        allocator_variant = false
         unless variant_source_def
           if allocator_source = materialized_allocator_union_source(vm, vat)
             variant_source_name, variant_source_def = allocator_source
+            allocator_variant = true
           end
         end
         if require_source_compatible_variants
@@ -124169,10 +124259,12 @@ module Adamas::HIR
             vm, selected = allocator
             variant_source_name = selected.symbol_name
             variant_source_def = selected.def_node
+            allocator_variant = true
           end
         end
+        all_variants_are_allocator_bodies &&= allocator_variant
 
-        if require_source_compatible_variants && !class_receiver_virtual &&
+        if require_source_compatible_variants && !allocator_variant && !class_receiver_virtual &&
            !call_has_splat && !call_splat_packed && !drop_for_this && variant_source_def
           if exact_target = specialize_union_variant_reference_arguments(variant_source_name, variant_source_def, vat)
             vm = exact_target
@@ -124215,8 +124307,9 @@ module Adamas::HIR
       # Prevent mutual recursion: if none of the variant functions have their
       # own explicit definition (they're all derived from the same union-param
       # base def), dispatching creates trampolines that call each other.
-      # In that case, call the union function directly.
-      has_explicit_variant = has_distinct_source_variant ||
+      # In that case, call the union function directly. Completed allocator
+      # wrappers with exact initializer calls cannot form those trampolines.
+      has_explicit_variant = has_distinct_source_variant || all_variants_are_allocator_bodies ||
                              (synthetic_nilable_allocator && vo.any? do |vm, _, _|
                                @module.has_function_with_body?(vm)
                              end)
