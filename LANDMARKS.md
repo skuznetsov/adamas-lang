@@ -23306,3 +23306,25 @@ hello also passes. The longer JSON array probe still fails at
 `read_int` (35q1336), and the qualified UInt64 member reducer shows a
 separate enum base-width loss on the parent (35q1337). Refresh after
 changes to field typing, contextual literal autocasts, or enum identity.
+
+### Resolve named constructors through the source include order
+
+The named constructor resolver considered only direct initializers. It
+could see `Regex.new(String, Options)` but could not bind its call to
+the named initializer supplied by the included engine. After a miss in
+the local source family, consult the first source include with an
+initializer, provided the class declares none directly. Resolve in
+that exact module application and preserve its definition and arena in
+the bound allocator target. A family that rejects the call closes the
+search at that point.
+
+Stock Crystal 1.22.1 and exact lazy and eager Adamas agree on 21 checks
+for named-only constructors, alias includes, direct declarations,
+module order, and rejection (35q1350). Installed-prelude hello and
+Regex construction with source and options access pass (35q1353).
+The separate matching probe times out. Its IR routes the stdlib object
+to the legacy PCRE2 helper, which expects the code at offset zero.
+A combined HIR experiment advances to the ViewsController route's
+`call_next` error with the same non-compiler inputs (35q1352).
+Refresh the constructor evidence after changes to source include order,
+named binding, or the initializer target carried by the allocator.

@@ -24266,6 +24266,20 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [x] Stop class constructor lookup at the source initializer family.
   An ancestor factory must not shadow a child's synthesized allocator
   or supply a rejected overload through a grandchild (35q1328).
+- [x] Resolve named constructors through the nearest source include when
+  the class has no direct initializer and its local factories do not match.
+  Stock Crystal and both Adamas modes agree on alias, precedence, and
+  rejection cases. Installed-prelude Regex construction passes (35q1350,
+  35q1353).
+- [ ] Unify installed-prelude Regex construction and operations on the
+  stdlib object layout. A constructed Regex has a type header and the
+  PCRE2 code at field offset 24. The builtin match helper reads the old
+  runtime layout with its code at offset zero (35q1350). Qualify both
+  literal and dynamic patterns, flags, captures, and match positions.
+- [ ] Reduce the unresolved `call_next` in the ViewsController route
+  closure. The combined experimental build reaches it after the named
+  Regex constructor with byte-identical application, shards, and installed
+  stdlib inputs (35q1352).
 - [x] Use the declared enum field type when lowering a source Symbol
   literal assignment. The installed-prelude JSON first-token probe now
   passes `read_begin_array`, and both Adamas modes match Crystal on

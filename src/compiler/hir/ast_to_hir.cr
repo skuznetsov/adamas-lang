@@ -126912,6 +126912,44 @@ module Adamas::HIR
       end
     end
 
+    # A class with no direct initializer can use a synthesized new from its
+    # first constructor-bearing include. Pick the family before checking the
+    # arguments, so an incompatible overload cannot expose an older module.
+    private def source_included_constructor_application(owner : String) : String?
+      return nil unless direct_source_constructor_initializers(owner).empty?
+      applications = source_super_module_applications(owner) || return nil
+      applications.find do |application|
+        module_owner = strip_generic_args(application)
+        origin = find_module_def_recursive_with_owner(
+          module_owner, "initialize", -1, Set(String).new,
+        )
+        origin && origin[2] == module_owner
+      end
+    end
+
+    private def lookup_source_named_included_constructor(
+      owner : String,
+      application : String,
+      input : CallResolutionInput,
+    ) : Tuple(String, Adamas::Compiler::Frontend::DefNode)?
+      arg_types = input.arg_types || return nil
+      module_owner = strip_generic_args(application)
+      module_bindings = included_module_type_param_map_for_origin(owner, module_owner, application)
+      return nil if module_bindings.nil? && !declared_module_type_param_names(module_owner).empty?
+      initializer = with_isolated_type_param_map(module_bindings || EMPTY_DEFERRED_TYPE_PARAM_SNAPSHOT) do
+        find_module_def_recursive_with_owner(
+          module_owner, "initialize", input.arg_count, Set(String).new,
+          arg_types, input.has_block, true, selection_input: input,
+        )
+      end
+      return nil unless initializer && initializer[2] == module_owner
+
+      register_included_module_call_target(
+        owner, "initialize", arg_types, input.has_block,
+        {initializer[0], initializer[1], module_owner, application}, input,
+      )
+    end
+
     # Synthesized new and explicit factories are one source overload family.
     private def source_named_constructor_family(
       lookup_name : String,
@@ -127614,6 +127652,11 @@ module Adamas::HIR
 
       STDERR.puts "[OVL] PICK func=#{func_name} -> #{best_name.inspect} score=#{best_score}" if ovl_trace
       unless best && best_name
+        if source_constructor_family && (parts = method_parts)
+          if application = source_included_constructor_application(parts.owner)
+            return lookup_source_named_included_constructor(parts.owner, application, input)
+          end
+        end
         # A local method name can exist without an overload that accepts this
         # call shape. Continue ordinary instance lookup through ancestors in
         # that case; a compatible local override has already won above.
