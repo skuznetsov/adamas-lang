@@ -6425,110 +6425,38 @@ module Adamas
           end
         end
 
-        # Phase 6/26/27: Handle postfix modifiers on a statement.
-        # Grammar: <stmt> if/unless/while/until <condition> (same line only)
+        # A postfix chain wraps the preceding expression from left to right.
+        # Each condition leaves the next same-level modifier for this loop.
         private def parse_postfix_if_modifier(stmt : ExprId) : ExprId
           return stmt if stmt.invalid?
-          # Postfix modifiers must be on the SAME line as the statement
-          # If there's a newline between them, the modifier is a separate statement
-          stmt_span = node_span(stmt)
-          stmt_end_line = stmt_span.end_line
-          skip_trivia
-          token = current_token
 
-          # If modifier is on a different line, it's NOT a postfix modifier
-          if token.span.start_line > stmt_end_line
-            return stmt
-          end
-
-          # Check for postfix if
-          if token.kind == Token::Kind::If
-            advance # consume 'if'
+          loop do
+            stmt_span = node_span(stmt)
             skip_trivia
+            token = current_token
+            break if token.span.start_line > stmt_span.end_line
+            kind = token.kind
+            break unless kind.in?(Token::Kind::If, Token::Kind::Unless, Token::Kind::While, Token::Kind::Until)
 
-            # Parse condition
-            condition = parse_op_assign
+            advance
+            skip_trivia
+            condition = without_postfix_modifiers { parse_op_assign }
             return PREFIX_ERROR if condition.invalid?
 
-            # Wrap statement in an if node
-            condition_span = node_span(condition)
-            if_span = stmt_span.cover(condition_span)
-
-            return @arena.add_typed(
-              IfNode.new(
-                if_span,
-                condition,
-                [stmt],
-                nil,
-                Array(ExprId).new(0)
-              )
-            )
+            span = stmt_span.cover(node_span(condition))
+            body = [stmt]
+            stmt = case kind
+                   when Token::Kind::If
+                     @arena.add_typed(IfNode.new(span, condition, body, nil, Array(ExprId).new(0)))
+                   when Token::Kind::Unless
+                     @arena.add_typed(UnlessNode.new(span, condition, body, Array(ExprId).new(0)))
+                   when Token::Kind::While
+                     @arena.add_typed(WhileNode.new(span, condition, body))
+                   else
+                     @arena.add_typed(UntilNode.new(span, condition, body))
+                   end
           end
 
-          # Phase 26: Check for postfix unless
-          if token.kind == Token::Kind::Unless
-            advance # consume 'unless'
-            skip_trivia
-
-            # Parse condition
-            condition = parse_op_assign
-            return PREFIX_ERROR if condition.invalid?
-
-            # Wrap statement in an unless node
-            condition_span = node_span(condition)
-            unless_span = stmt_span.cover(condition_span)
-
-            return @arena.add_typed(
-              UnlessNode.new(
-                unless_span,
-                condition,
-                [stmt],
-                Array(ExprId).new(0)
-              )
-            )
-          end
-
-          # Phase 27: postfix while
-          if token.kind == Token::Kind::While
-            advance # consume 'while'
-            skip_trivia
-
-            condition = parse_op_assign
-            return PREFIX_ERROR if condition.invalid?
-
-            condition_span = node_span(condition)
-            while_span = stmt_span.cover(condition_span)
-
-            return @arena.add_typed(
-              WhileNode.new(
-                while_span,
-                condition,
-                [stmt]
-              )
-            )
-          end
-
-          # Phase 27: postfix until
-          if token.kind == Token::Kind::Until
-            advance # consume 'until'
-            skip_trivia
-
-            condition = parse_op_assign
-            return PREFIX_ERROR if condition.invalid?
-
-            condition_span = node_span(condition)
-            until_span = stmt_span.cover(condition_span)
-
-            return @arena.add_typed(
-              UntilNode.new(
-                until_span,
-                condition,
-                [stmt]
-              )
-            )
-          end
-
-          # No postfix modifier, return statement as-is
           stmt
         end
 
@@ -10772,7 +10700,9 @@ module Adamas
             span = star_token.span.cover(@arena[value_expr].span)
             return @arena.add_typed(SplatNode.new(span, value_expr, star_token.kind == Token::Kind::StarStar))
           end
-          parse_op_assign
+          # A grouped expression owns its suffix even when the enclosing
+          # assignment RHS or postfix condition suppresses its own suffix.
+          parse_postfix_if_modifier(parse_op_assign)
         end
 
         # True when a Newline token separates the current token from the

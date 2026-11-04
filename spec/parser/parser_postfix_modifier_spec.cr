@@ -121,4 +121,59 @@ describe "Adamas::Compiler::Frontend::Parser postfix modifiers" do
     call.span.end_line.should eq(closing_line)
     unless_node.span.end_line.should eq(closing_line)
   end
+
+  it "keeps a chain of postfix conditions inside an assigned block" do
+    source = <<-CRYSTAL
+      class Demo
+        def first
+          result = collect do |item|
+            next unless accepts?(item) if enabled?
+            item
+          rescue ex
+            next
+          end
+          result
+        end
+
+        class Nested < Base; end
+      end
+    CRYSTAL
+
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
+    program = parser.parse_program
+
+    parser.diagnostics.should be_empty
+    arena = program.arena
+    class_body = arena[program.roots.first].as(Adamas::Compiler::Frontend::ClassNode).body.not_nil!
+    class_body.size.should eq(2)
+    definition = arena[class_body[0]].as(Adamas::Compiler::Frontend::DefNode)
+    nested = arena[class_body[1]].as(Adamas::Compiler::Frontend::ClassNode)
+    String.new(nested.name).should eq("Nested")
+
+    method_body = definition.body.not_nil!
+    method_body.size.should eq(2)
+    assignment = arena[method_body[0]].as(Adamas::Compiler::Frontend::AssignNode)
+    call = arena[assignment.value].as(Adamas::Compiler::Frontend::CallNode)
+    block = arena[call.block.not_nil!].as(Adamas::Compiler::Frontend::BlockNode)
+    handler = arena[block.body.first].as(Adamas::Compiler::Frontend::BeginNode)
+    outer = arena[handler.body.first].as(Adamas::Compiler::Frontend::IfNode)
+    inner = arena[outer.then_body.first].as(Adamas::Compiler::Frontend::UnlessNode)
+    arena[inner.then_branch.first].should be_a(Adamas::Compiler::Frontend::NextNode)
+    outer.span.end_line.should eq(4)
+  end
+
+  it "keeps a parenthesized postfix expression inside a condition" do
+    source = "result = 7 if (ready? if enabled?) unless stopped?"
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
+    program = parser.parse_program
+
+    parser.diagnostics.should be_empty
+    program.roots.size.should eq(1)
+    arena = program.arena
+    outer = arena[program.roots.first].as(Adamas::Compiler::Frontend::UnlessNode)
+    inner = arena[outer.then_branch.first].as(Adamas::Compiler::Frontend::IfNode)
+    group = arena[inner.condition].as(Adamas::Compiler::Frontend::GroupingNode)
+    arena[group.expression].should be_a(Adamas::Compiler::Frontend::IfNode)
+    arena[inner.then_body.first].should be_a(Adamas::Compiler::Frontend::AssignNode)
+  end
 end

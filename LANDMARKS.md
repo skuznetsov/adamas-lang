@@ -23365,3 +23365,26 @@ with identical application, shard, and installed stdlib input manifests
 (35q1352, 35q1366). Lexical metaclass argument identity remains open
 (35q1363). Refresh after changes to source definition registration,
 candidate scope, or named argument binding.
+
+
+### Parse postfix chains at the owning expression boundary
+
+Parsing one modifier condition could leave a second modifier to the
+statement parser. In a block on an assignment RHS, the leftover
+`if` became a prefix conditional and consumed the block delimiter.
+Read each condition without consuming the next sibling modifier,
+wrap the expression in source order, and let explicit grouping own
+its own suffix.
+
+The parent structural test fails and the native scope reducer reports
+an unmatched `end`. Six stock Crystal 1.22.1, lazy, and eager Adamas
+native checks cover the restored nested declaration, condition order,
+short-circuiting, and grouping. The 42 targeted parser specs and
+installed-prelude hello pass (35q1369). The full parser suite adds
+two passing specs and reports the same 101 existing failures as its
+parent. The exact LavinMQ file now closes `page` on line 57 and
+registers `HaltRequest < Exception` on line 261. Its combined HIR
+gate passes the `raise` boundary with unchanged application, shards,
+and installed stdlib and reaches an unresolved Channel select result
+(35q1370). Refresh after changes to modifier or grouping ownership,
+assignment RHS parsing, or block delimiters.

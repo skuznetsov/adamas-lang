@@ -24283,10 +24283,15 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Preserve rooted type-literal identity when binding a lexical
   `.class` restriction. The wrong nested class literal is still accepted
   on the installed compiler candidate (35q1360, 35q1363).
-- [ ] Keep chained postfix conditions inside their owning expression.
-  The parser lets the second modifier in
-  `next unless predicate if flag` start a prefix conditional and consume
-  a block delimiter, hiding `Controller::HaltRequest` (35q1367).
+- [x] Keep chained postfix conditions inside their owning expression.
+  The second modifier in `next unless predicate if flag` could start a
+  prefix conditional and consume a block delimiter. The unchanged
+  LavinMQ input now registers `Controller::HaltRequest < Exception` and
+  passes its `raise` call (35q1370).
+- [ ] Resolve the exact result of `Channel(Nil).select_impl` for a strict
+  receive and a timeout. The combined LavinMQ HIR gate now reports
+  `Tuple(Int32, Nil | Channel::NotReady | Unknown)` with an empty
+  dependency set (35q1370).
 - [x] Use the declared enum field type when lowering a source Symbol
   literal assignment. The installed-prelude JSON first-token probe now
   passes `read_begin_array`, and both Adamas modes match Crystal on
