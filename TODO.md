@@ -24392,6 +24392,19 @@ integration, fresh bootstrap, or LavinMQ parity.
   element and index. The native no-prelude fixture exits 2 with the previous
   compiler and 0 with Crystal 1.22.1 and the candidate. The parser tuple loop
   and literal iterable admission gates pass (35q1478).
+- [x] Materialize source methods on their concrete structural NamedTuple
+  receiver so macro `T` and field reads use the same layout. The native
+  gate alternates two layouts and reuses the first one. Crystal 1.22.1 and
+  the candidate agree, and the installed-prelude hello passes (35q1479).
+- [ ] Preserve the concrete source argument when entering an annotated
+  NamedTuple body that forwards it to a yielding overload. Also test actual
+  union arguments separately. In the installed-prelude String index probe,
+  the argument reaches the block lookup as `String | Symbol` and the legacy
+  inline fallback picks the Symbol overload (35q1479).
+- [ ] Resolve each structural NamedTuple receiver union arm under its own
+  source and result contract before joining results. A native holdout with
+  branch results `Int32 | Nil` and `Bool | Int64` still computes the second
+  result type for both arms (35q1479).
 - [ ] Trace macro iterable type projection for `type.resolve` when a macro
   argument names a NamedTuple alias. Crystal generates both indexed methods.
   The candidate reports `undefined method 'generated_name'` (35q1478).

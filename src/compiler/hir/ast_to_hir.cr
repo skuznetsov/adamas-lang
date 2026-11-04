@@ -3775,7 +3775,8 @@ module Adamas::HIR
       base_owner = numeric_template_owner || strip_generic_args(owner)
       concrete_tuple = base_owner == "Tuple" && owner.includes?('(')
       concrete_proc = base_owner == "Proc" && !proc_type_argument_names(owner).nil?
-      return nil unless concrete_tuple || concrete_proc || numeric_template_owner
+      concrete_named_tuple = base_owner == "NamedTuple" && concrete_named_tuple_receiver_owner(type_ref_for_name(owner))
+      return nil unless concrete_tuple || concrete_proc || concrete_named_tuple || numeric_template_owner
 
       base_info = @class_info[base_owner]?
       return nil unless base_info
@@ -3790,11 +3791,11 @@ module Adamas::HIR
       # source reopening creates a ClassInfo. An inherited Int/Float body still
       # needs that exact receiver and builtin size, rather than an abstract
       # template or an unmaterialized callable stub.
-      # Tuple and Proc signatures do not receive ordinary generic-class
-      # monomorphization/ClassInfo entries. Materialize inherited methods with
-      # the shared base layout but the exact value TypeRef so `self` keeps its
-      # receiver identity. Proc's TypeDescriptor also carries source argument,
-      # result, and class-literal facts used by its call contract.
+      # Tuple, NamedTuple, and Proc signatures do not receive ordinary
+      # generic-class monomorphization/ClassInfo entries. Materialize methods
+      # with the shared base layout but the exact value TypeRef so `self` keeps
+      # its receiver identity. Proc's TypeDescriptor also carries source
+      # argument, result, and class-literal facts used by its call contract.
       ClassInfo.new(
         owner,
         owner_type,
@@ -3804,6 +3805,15 @@ module Adamas::HIR
         numeric_template_owner ? true : base_info.is_struct,
         numeric_template_owner || base_info.parent_name,
       )
+    end
+
+    private def concrete_named_tuple_receiver_owner(type_ref : TypeRef) : String?
+      if descriptor = @module.get_type_descriptor(type_ref)
+        if descriptor.kind == TypeKind::NamedTuple && descriptor.name.starts_with?("NamedTuple(")
+          return descriptor.name
+        end
+      end
+      nil
     end
 
     # Object-level convenience wrappers such as `inspect : String` and `===`
@@ -78353,6 +78363,14 @@ module Adamas::HIR
         end
       end
 
+      # NamedTuple source methods are declared on the generic builtin owner,
+      # while each runtime layout has its own structural receiver identity.
+      # Preserve that exact value owner when lookup selected the NamedTuple
+      # declaration so its method body sees the matching macro `T` entries.
+      if strip_generic_args(raw_resolved_owner) == "NamedTuple" && concrete_named_tuple_receiver_owner(type_ref_for_name(raw_requested_owner))
+        return true
+      end
+
       # Primitive/value types that need origin-specific dispatch (Int32, Bool,
       # enums, structs) must keep the requested owner so the method is
       # materialized under the concrete type, not the abstract template.
@@ -90290,6 +90308,8 @@ module Adamas::HIR
               end
               vars["T"] = Adamas::Compiler::Semantic::MacroTupleValue.new(elems)
             end
+          elsif desc.kind == TypeKind::NamedTuple && desc.name.starts_with?("NamedTuple(")
+            vars["T"] = macro_value_for_type_name(desc.name)
           end
         end
       end
@@ -90304,6 +90324,8 @@ module Adamas::HIR
               elems << macro_value_for_type_name(arg)
             end
             vars["T"] = Adamas::Compiler::Semantic::MacroTupleValue.new(elems)
+          elsif base == "NamedTuple" && !args.empty? && !vars.has_key?("T")
+            vars["T"] = macro_value_for_type_name(current)
           elsif template = @generic_templates[base]?
             template.type_params.each_with_index do |param, idx|
               next if vars.has_key?(param)
@@ -117434,6 +117456,9 @@ module Adamas::HIR
             concrete_owner_name = receiver_type_name
           end
         end
+        if concrete_owner_name.nil? && receiver_id && !ctx.type_literal?(receiver_id)
+          concrete_owner_name = concrete_named_tuple_receiver_owner(ctx.type_of(receiver_id))
+        end
         entry_name = specialize_method_owner_name(entry_name, concrete_owner_name)
         if entry_def && concrete_owner_name &&
            (inherited_body_target = inherited_class_method_body_target(entry_name, concrete_owner_name))
@@ -117745,6 +117770,8 @@ module Adamas::HIR
             concrete_call_owner = proc_owner
           elsif receiver_desc.kind == TypeKind::Tuple && receiver_desc.name.starts_with?("Tuple(")
             concrete_call_owner = receiver_desc.name
+          elsif named_tuple_owner = concrete_named_tuple_receiver_owner(receiver_type)
+            concrete_call_owner = named_tuple_owner
           end
         end
       end
