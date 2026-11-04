@@ -23084,6 +23084,23 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Audit the use of ambient block return overrides at other reentrant
   lowering boundaries and require the physical function identity at consumers.
 
+## 2026-11-04 — Preserve source overloads on structural NamedTuple receivers
+
+- A materialized NamedTuple body represents one declaration, but its exact
+  layout previously hid other declarations on the shared builtin owner.
+  Retain those siblings in the overload family and preserve the keyword-rest
+  symbol when specializing an untyped rest call for the concrete receiver.
+- Exact q1556 matches Crystal 1.22.1 in lazy and eager modes. The native gate
+  alternates layouts and call orders and checks wrong labels and types after
+  positional specialization. The parent rejects the positive keyword call.
+  The per-layout rest, receiver ownership, named rest, and generic sibling
+  constructor gates also pass.
+- [ ] Bind an explicitly declared whole keyword-rest formal to its exact
+  NamedTuple layout. The installed stdlib's `merge(**other : **U) forall U`
+  now has a visible source overload, but `U` and its packed slot still need
+  to survive concrete materialization. Check empty packs and constraints from
+  other formals separately.
+
 ## 2026-11-04 — Respect the source owner of nested next
 
 - The inline yield selector treated jumps inside nested blocks and loop

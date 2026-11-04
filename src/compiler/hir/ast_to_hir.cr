@@ -2651,7 +2651,19 @@ module Adamas::HIR
       # example Box.new$Float64$arity2 from Box(Int64, Float64)); letting them
       # tie with Box(UInt32, Int32).new$Int32$arity2 re-targets the call to the
       # sibling once the owner is re-specialized.
-      exact.empty? ? fallback : exact
+      return fallback if exact.empty?
+      if separator == '#' && requested_base == "NamedTuple"
+        # Structural NamedTuple instances share the declarations registered on
+        # the bare builtin owner. A call-site instance represents only its own
+        # Def, so keep other declarations visible for this same layout.
+        fallback.each do |candidate|
+          next unless parse_method_name_compact(candidate).owner == requested_base
+          definition = @function_defs[candidate]? || next
+          next if exact.any? { |name| @function_defs[name]?.try(&.same?(definition)) }
+          exact << candidate
+        end
+      end
+      exact
     end
 
     private def filter_method_overload_candidates_for_owner(
@@ -117677,6 +117689,15 @@ module Adamas::HIR
         if entry_name.includes?('$')
           if preserve_requested_value_owner && !arg_types.empty?
             mangled_method_name = mangle_function_name(base_method_name, arg_types, has_block_call)
+            # Reowning a keyword-rest instance must retain its call shape. A
+            # positional overload can take the very same NamedTuple value.
+            if entry_name.ends_with?("_double_splat") &&
+               !has_unknown_arg_types &&
+               def_has_untyped_double_splat_param?(entry_def) &&
+               (layout = concrete_named_tuple_entries(arg_types.last)) && !layout.empty?
+              mangled_method_name = "#{mangled_method_name}_double_splat"
+              double_splat_layout_specialized = true
+            end
             # Entry key may encode only annotated params (e.g. IO#read_bytes$IO::ByteFormat).
             # When concrete callsite args are available for untyped params, preserve
             # specialization by remangling with full arg_types.
