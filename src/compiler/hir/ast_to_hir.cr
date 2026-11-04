@@ -104385,24 +104385,68 @@ module Adamas::HIR
       descriptor.variants.map(&.type_id).to_set
     end
 
-    # Only union_is leaves joined by `||` identify arms: the condition holds
-    # exactly when the subject is in one of them.
-    private def remove_case_union_variants_tested(
+    # Only a disjunction of exact tag checks and proven-false comparisons
+    # justifies narrowing a branch to the matching carriers. Unknown leaves
+    # still contribute any independently covered tags to exhaustiveness.
+    private def collect_case_union_variants_tested(
       ctx : LoweringContext,
       subject_id : ValueId,
       condition_id : ValueId,
       uncovered : Set(Int32),
-    ) : Nil
+      covered : Set(Int32)?,
+    ) : Bool
       case condition = ctx.value_for(condition_id)
       when UnionIs
-        if condition.union_value == subject_id && condition.union_type == ctx.type_of(subject_id)
-          uncovered.delete(condition.variant_type_id)
-        end
+        return false unless condition.union_value == subject_id && condition.union_type == ctx.type_of(subject_id)
+        uncovered.delete(condition.variant_type_id)
+        covered.try(&.add(condition.variant_type_id))
+        true
       when BinaryOperation
-        return unless condition.op == BinaryOp::Or
-        remove_case_union_variants_tested(ctx, subject_id, condition.left, uncovered)
-        remove_case_union_variants_tested(ctx, subject_id, condition.right, uncovered)
+        return false unless condition.op == BinaryOp::Or
+        left_exact = collect_case_union_variants_tested(ctx, subject_id, condition.left, uncovered, covered)
+        right_exact = collect_case_union_variants_tested(ctx, subject_id, condition.right, uncovered, covered)
+        left_exact && right_exact
+      else
+        !!covered && case_condition_proven_false?(ctx, subject_id, condition_id)
       end
+    end
+
+    private def apply_case_union_tag_narrowing(
+      ctx : LoweringContext,
+      name : String,
+      subject_id : ValueId,
+      covered : Set(Int32),
+    ) : Nil
+      source_type = ctx.type_of(subject_id)
+      descriptor = union_descriptor_from_sidecar(source_type)
+      return unless descriptor
+
+      matched = descriptor.variants.select { |variant| covered.includes?(variant.type_id) }
+      return unless matched.size == covered.size && matched.size < descriptor.variants.size
+
+      types = matched.map { |variant| exact_hir_type_ref_for_union_variant(variant) }
+      return if types.any?(&.==(TypeRef::VOID))
+      if types.size == 1
+        narrowed_type = types.first
+        narrowed = UnionUnwrap.new(ctx.next_id, narrowed_type, subject_id, matched.first.type_id, false)
+      else
+        union_name = types.map { |type| generic_param_type_name_from_ref(type) }.join(" | ")
+        narrowed_type = create_union_type(union_name)
+        return if narrowed_type == source_type || !is_union_type?(narrowed_type)
+        narrowed = if all_ref_union_type_ref?(source_type) && all_ref_union_type_ref?(narrowed_type)
+                     Copy.new(ctx.next_id, narrowed_type, subject_id)
+                   else
+                     UnionWrap.new(ctx.next_id, narrowed_type, subject_id, -2)
+                   end
+      end
+      ctx.emit(narrowed)
+      ctx.register_type(narrowed.id, narrowed_type)
+      targets = types.map { |type| IsANarrowingTarget.new(name, type) }
+      if facts = case_type_set_narrowed_source_facts(ctx, subject_id, targets)
+        ctx.register_source_value_facts(narrowed.id, facts)
+        ctx.mark_type_literal(narrowed.id) if !facts.empty? && facts.all? { |(_, literal)| literal }
+      end
+      ctx.register_local(name, narrowed.id)
     end
 
     private def case_union_member_disjoint?(member_type : TypeRef, check_type : TypeRef) : Bool
@@ -104498,13 +104542,19 @@ module Adamas::HIR
                   nil
                 end
         branch_proven_taken = false
+        exact_branch_tags = nil
         if sid = subject_id
           next if conds && !conds.empty? && conds.all? { |condition| case_condition_proven_false?(ctx, sid, condition) }
           if conds
             branch_proven_taken = conds.any? { |condition| case_condition_proven_true?(ctx, sid, condition) }
             if uncovered = uncovered_union_variants
-              conds.each { |condition| remove_case_union_variants_tested(ctx, sid, condition, uncovered) }
+              covered = Set(Int32).new if conds.size > 1 && subject_var_name
+              exact = true
+              conds.each do |condition|
+                exact = false unless collect_case_union_variants_tested(ctx, sid, condition, uncovered, covered)
+              end
               branch_proven_taken ||= uncovered.empty?
+              exact_branch_tags = covered if exact && covered && !covered.empty?
             end
           end
         end
@@ -104550,6 +104600,7 @@ module Adamas::HIR
           subj_is_union = subj_type && is_union_type?(subj_type)
           single_condition = when_branch.conditions.size == 1
           type_set_targets = [] of IsANarrowingTarget
+          type_set_requires_kind = false
           all_conditions_are_type_checks = true
           if subj_type
             when_branch.conditions.each do |cond_expr|
@@ -104575,8 +104626,10 @@ module Adamas::HIR
                 if single_condition && should_narrow
                   apply_is_a_narrowing(ctx, [IsANarrowingTarget.new(svn, target_ref)])
                 end
+                target_literal = is_a_target_type_literal?(type_name)
+                type_set_requires_kind ||= target_literal == true
                 if should_narrow && target_ref != TypeRef::VOID
-                  type_set_targets << IsANarrowingTarget.new(svn, target_ref, is_a_target_type_literal?(type_name))
+                  type_set_targets << IsANarrowingTarget.new(svn, target_ref, target_literal)
                 else
                   all_conditions_are_type_checks = false
                 end
@@ -104644,9 +104697,15 @@ module Adamas::HIR
                 all_conditions_are_type_checks = false
               end
             end
-            if !single_condition && all_conditions_are_type_checks &&
-               type_set_targets.size == when_branch.conditions.size
-              apply_case_type_set_narrowing(ctx, svn, type_set_targets)
+            unless single_condition
+              if all_conditions_are_type_checks && type_set_targets.size == when_branch.conditions.size
+                apply_case_type_set_narrowing(ctx, svn, type_set_targets)
+              end
+              # Tag evidence can narrow a mixed carrier or a branch with a
+              # disjoint alternative. It cannot establish class-object kind.
+              if !type_set_requires_kind && (tags = exact_branch_tags) && (sid = subject_id) && ctx.lookup_local(svn) == sid
+                apply_case_union_tag_narrowing(ctx, svn, sid, tags)
+              end
             end
           end
         end

@@ -24915,3 +24915,20 @@ integration, fresh bootstrap, or LavinMQ parity.
   and a same-name nilary instance method. A one-argument call in the
   constructor reducer selected the nilary method in 35q1676 before the
   fixture used a distinct helper name.
+
+### 2026-11-04 Multi-condition case union narrowing
+
+- [x] Preserve the tag set of a case branch when its emitted condition is
+  an exact disjunction of runtime union-tag checks and proven-false
+  alternatives. Unwrap a singleton or remap the carrier for several
+  reachable tags. Preserve independent source value-kind facts.
+- DoD runs `bash regression_tests/case_union_tag_narrowing_repro.sh <fresh-S1>`
+  with Crystal 1.22.1. Exact 35q1687 agrees on four runtime inputs and
+  rejects a reachable NamedTuple passed to a Hash-only method. All ten
+  source-fact checks and the native case-in union fixture pass.
+- [ ] Refresh the unchanged LavinMQ probe on the next combined candidate.
+  Experimental 35q1685, which also contains recursive Hash initializer
+  and deferred Channel changes, advances past the Table case to block
+  result validation in `LavinMQ::HTTP::Controller#put`. The isolated
+  shard fixture still rejects an erroneous pointer length at
+  `AMQ::Protocol::Table#ensure_available`.

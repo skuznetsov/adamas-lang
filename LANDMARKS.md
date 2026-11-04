@@ -23475,3 +23475,19 @@ concrete argument inside the selected initializer. All 12 existing
 bare-generic allocator checks pass. Refresh after changes to source
 restriction matching, concrete parameter inference, or allocator shape.
 Recursive Hash restrictions need separate declaration-scope evidence.
+
+### Narrow multi-condition case branches using emitted union tags
+
+A mixed union can have a branch such as `when Hash, NamedTuple` with one
+disjoint alternative. Use exact tag tests on the unchanged subject to
+derive the admitted carriers after the branch. One tag unwraps its exact
+payload. Several tags can require a tagged carrier remap. A literal-value
+predicate that can match only part of an arm and a class-object check
+need their own proof. The existing source-fact path keeps its value-kind
+authority.
+
+Crystal 1.22.1 and exact 35q1687 agree on the four inputs and the rejected
+Hash-only call in `case_union_tag_narrowing_repro.sh`. The ten
+`case_type_set_source_facts_repro.sh` checks and the native case-in union
+fixture also pass. Refresh after changes to condition emission, source
+value-kind transport, or union carrier remapping.
