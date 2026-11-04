@@ -65435,7 +65435,7 @@ module Adamas::HIR
     end
 
     # True when some `yield` result is CONSUMED as a value (call argument,
-    # assignment RHS, operand, or a nested block's tail — e.g. Array#map =
+    # assignment RHS, typeof argument, operand, or nested block tail such as
     # `Array(U).new(size) { |i| yield unsafe_fetch(i) }`) rather than only
     # appearing as a bare statement. Such bodies are block-return-dependent
     # exactly like the passthrough shapes: a shared fallback symbol stamped by
@@ -65514,6 +65514,9 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::RangeNode
         yield_in_value_position?(node.begin_expr, true, depth + 1) ||
           yield_in_value_position?(node.end_expr, true, depth + 1)
+      when Adamas::Compiler::Frontend::TypeofNode
+        # A compile-time use still specializes the enclosing method's body.
+        node.args.any? { |arg| yield_in_value_position?(arg, true, depth + 1) }
       when Adamas::Compiler::Frontend::ArrayLiteralNode
         node.elements.any? { |el| yield_in_value_position?(el, true, depth + 1) }
       when Adamas::Compiler::Frontend::TupleLiteralNode

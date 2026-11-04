@@ -147,6 +147,35 @@ ProbeRange.new(0, 0).each { |value| value + 1 }
 ProbeRange.new(0, 0).each { |_value| "typed" }
 CRYSTAL
 
+cat >"$WORK_DIR/distinct_result_types.cr" <<'CRYSTAL'
+lib LibC
+  fun exit(Int32) : NoReturn
+end
+
+class Small
+  def code : Int32
+    7
+  end
+end
+
+class Wide
+  def wide_code : Int32
+    8
+  end
+end
+
+def build(n : Int32, & : Int32 -> _)
+  typeof(yield n).new
+end
+
+calls = 0
+first = build(1) { calls += 1; Small.new }
+second = build(2) { Wide.new }
+third = build(3) { Small.new }
+LibC.exit(1) unless first.code == 7 && second.wide_code == 8 && third.code == 7
+LibC.exit(calls)
+CRYSTAL
+
 cat >"$WORK_DIR/array_uniq_stock.cr" <<'CRYSTAL'
 lib LibC
   fun exit(status : Int32) : NoReturn
@@ -275,6 +304,7 @@ failures=0
 run_case empty_any noprelude 0 "" || failures=$((failures + 1))
 run_case nonempty_any noprelude 3 "" || failures=$((failures + 1))
 run_case nested_any noprelude 0 "" || failures=$((failures + 1))
+run_case distinct_result_types noprelude 0 "" || failures=$((failures + 1))
 run_case type_identity prelude 0 $'Int32\nString\n' || failures=$((failures + 1))
 
 if [[ "${TYPEOF_YIELD_STDLIB_CONTROLS:-0}" == "1" ]]; then

@@ -24356,6 +24356,15 @@ integration, fresh bootstrap, or LavinMQ parity.
   variable rejections. The installed `Deque(Float64)#unshift 0` runs natively
   and the combined LavinMQ HIR probe reaches a route callback result mismatch
   (35q1433, 35q1434, 35q1435).
+- [x] Include compile-time `typeof` uses of `yield` in callback-result
+  specialization. The previous shared target reused the first callback's
+  result for another call with the same input type. Crystal 1.22.1 and lazy
+  and eager Adamas agree on alternating result types and zero callback
+  executions in `typeof_yield_compiletime_side_effect_repro.sh` (35q1453).
+- [ ] Preserve the result type and value kind when `typeof` consumes a nested
+  yielding call. A direct metaclass result currently collapses to its instance
+  carrier and falsely admits `.new`. Array element type annotations also need
+  their own specialization probe (35q1449, 35q1450, 35q1451).
 - [ ] Audit source numeric autocast beyond the current integer literal width
   and integer-to-float paths. Compare 128-bit literal value retention, floating
   literal conversion, and source overload precedence against Crystal.
