@@ -24834,3 +24834,44 @@ integration, fresh bootstrap, or LavinMQ parity.
   The repeat guard is symbolic and scoped to one worklist drain. It is
   not evidence that a producer has completed or that any future drain
   terminates with an unbounded set of specialization names.
+
+### 2026-11-04 Applied class receivers in yielding calls
+
+- [x] Carry the source class application into inline yielding calls even
+  when static dispatch passes no runtime receiver. Read owner bindings and
+  class self from that application when the selected body has the bare
+  symbol of its own generic family. Inherited bodies keep their ancestor's
+  bindings and method forall variables keep their call-specific scope.
+- DoD runs `bash regression_tests/inline_static_source_receiver_repro.sh <fresh-S1>`.
+  Crystal 1.22.1 and exact lazy/eager S1 35q1670 print `ABC` and reject
+  the invalid element constructor. The parent calls the bare receiver
+  dispatch stub. The unguarded candidate 35q1665 binds the child's
+  `T=Char` in an inherited body that requires `T=Element(Char)`.
+  Applying the binding to already specialized symbols in 35q1667 also
+  regresses installed-prelude hello and the StaticArray union fixture.
+  Both programs compile and run on the scoped 35q1670 candidate.
+- On 35q1670, the installed-prelude JSON string reproducer emits HIR and
+  the File reproducer reaches final missing lowering. Both bind
+  `Array(Int32).new` with `T=Int32`. The File reproducer then fails the
+  existing convergence guard with four authority-only passes and an empty
+  queue. Track those revisions before changing the guard.
+- [ ] Restore owner inference for the bare generic constructor in
+  `selected_block_output_contract_repro.sh` (`positive_owner_generic_output`).
+  Crystal 1.22.1 passes. Both the parent 35q1662 and the broad 35q1667
+  candidate reject the same `SelectedBlockOwnerBox(T)` call.
+- [ ] Carry exact class receiver evidence across yield-depth fallback,
+  including inherited bodies with distinct generic ancestor applications.
+  The native gate exercises the inline path. Separately, using an owner
+  parameter as a standalone type literal (`yield T`) fails as undefined
+  on both 35q1662 and 35q1665.
+- [ ] Recheck the full LavinMQ HIR frontier with the scoped receiver
+  binding and the provisional Channel candidate. The broader 35q1666
+  combination passed the JSON failure and rejected the pointer-backed
+  `Slice` initializer with the exact nested pointer and `read_only`.
+  The application and installed stdlib manifests were unchanged.
+- [ ] Finish the deferred Channel result contract before promotion. The
+  35q1663 candidate verifies the selected Def, arena, physical parameter
+  types, self, and result TypeRef. Also verify the result's value kind
+  against the surviving producer, including a custom `.new` returning a
+  metaclass. The explicit `NoReturn` effect control gets no provisional
+  receive-context type and still stops at the downstream `unwait` check.

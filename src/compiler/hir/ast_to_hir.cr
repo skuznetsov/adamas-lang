@@ -118949,6 +118949,7 @@ module Adamas::HIR
                   block_param_types_inline,
                   selected_arena,
                   source_call_binding,
+                  source_class_receiver: source_receiver_name,
                 )
               end
             end
@@ -119260,7 +119261,10 @@ module Adamas::HIR
                   STDERR.puts "[INLINE_PICK] site=effective_key use_key=#{use_key} eff=#{effective_yield_key} mangled=#{mangled_method_name}"
                 end
                 callee_arena = function_def_arena_or_current(use_key)
-                return inline_yield_function(ctx, func_def, use_key.as(String), inline_receiver_id, call_arg_values, block_cast, block_param_types_inline, callee_arena, source_call_binding)
+                return inline_yield_function(
+                  ctx, func_def, use_key.as(String), inline_receiver_id, call_arg_values, block_cast,
+                  block_param_types_inline, callee_arena, source_call_binding, source_class_receiver: source_receiver_name,
+                )
               end
             end
           end
@@ -119299,7 +119303,10 @@ module Adamas::HIR
                     STDERR.puts "[INLINE_PICK] site=yield_name_for yield_name=#{yield_name} base=#{base_method_name}"
                   end
                   callee_arena = function_def_arena_or_current(yield_name)
-                  return inline_yield_function(ctx, func_def, yield_name.as(String), inline_receiver_id, call_arg_values, block_cast, block_param_types_inline, callee_arena, source_call_binding)
+                  return inline_yield_function(
+                    ctx, func_def, yield_name.as(String), inline_receiver_id, call_arg_values, block_cast,
+                    block_param_types_inline, callee_arena, source_call_binding, source_class_receiver: source_receiver_name,
+                  )
                 end
               end
             end
@@ -119332,7 +119339,10 @@ module Adamas::HIR
                 if debug_env_filter_match?("DEBUG_INLINE_PICK", yield_name)
                   STDERR.puts "[INLINE_PICK] site=lookup_block_early yield_name=#{yield_name} base=#{base_method_name}"
                 end
-                return inline_yield_function(ctx, yield_def, yield_name.as(String), inline_receiver_id, call_arg_values, block_cast, block_param_types_inline, callee_arena, source_call_binding)
+                return inline_yield_function(
+                  ctx, yield_def, yield_name.as(String), inline_receiver_id, call_arg_values, block_cast,
+                  block_param_types_inline, callee_arena, source_call_binding, source_class_receiver: source_receiver_name,
+                )
               end
             end
           end
@@ -119348,7 +119358,10 @@ module Adamas::HIR
                   STDERR.puts "[INLINE_PICK] site=find_fallback yield_key=#{yield_key} base=#{base_method_name}"
                 end
                 callee_arena = function_def_arena_or_current(yield_key)
-                return inline_yield_function(ctx, func_def, yield_key.as(String), inline_receiver_id, call_arg_values, block_cast, block_param_types_inline, callee_arena, source_call_binding)
+                return inline_yield_function(
+                  ctx, func_def, yield_key.as(String), inline_receiver_id, call_arg_values, block_cast,
+                  block_param_types_inline, callee_arena, source_call_binding, source_class_receiver: source_receiver_name,
+                )
               end
             end
           end
@@ -119448,6 +119461,7 @@ module Adamas::HIR
                 block_param_types_inline,
                 callee_arena,
                 source_call_binding,
+                source_class_receiver: source_receiver_name,
               )
             end
           end
@@ -135950,6 +135964,8 @@ module Adamas::HIR
       block_param_types : Array(TypeRef)?,
       callee_arena : Adamas::Compiler::Frontend::ArenaLike,
       source_binding : SourceCallBinding? = nil,
+      *,
+      source_class_receiver : String? = nil,
     ) : ValueId
       caller_source_yield_context = @source_yield_context
       entry_local_declaration_scopes = ctx.save_local_declaration_scopes
@@ -136036,7 +136052,25 @@ module Adamas::HIR
             return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract)
           end
         end
+        parts = parse_method_name(base_inline_name)
         namespace_override = function_namespace_override_for(inline_key, base_inline_name)
+        inline_class_receiver : String? = nil
+        class_receiver_bindings : Hash(String, String)? = nil
+        if !receiver_id && parts.is_class && (source_owner = source_class_receiver)
+          declaration_owner = namespace_override || parts.owner
+          # A shared template symbol lacks the application that the call's
+          # source receiver supplies. Inherited bodies keep their own owner.
+          if (source_generic = generic_owner_info(source_owner)) &&
+             source_generic.base == parts.owner &&
+             source_generic.base == strip_generic_args(declaration_owner) &&
+             concrete_type_args?(source_generic.args)
+            resolved_bindings = type_param_map_for_generic_type_name(source_owner)
+            unless resolved_bindings.empty?
+              class_receiver_bindings = resolved_bindings
+              inline_class_receiver = source_owner
+            end
+          end
+        end
         debug_inline_self = false
         if filter = env_get("DEBUG_INLINE_SELF")
           if filter.empty? || filter == "1" || inline_key.includes?(filter) || base_inline_name.includes?(filter)
@@ -136261,10 +136295,9 @@ module Adamas::HIR
             end
           end
         end
-        parts = parse_method_name(base_inline_name)
         if method_name = parts.method
           unless parts.owner.empty?
-            @current_class = parts.owner
+            @current_class = inline_class_receiver || parts.owner
             @current_method = method_name unless method_name.empty?
             @current_method_is_class = parts.is_class
           end
@@ -136362,6 +136395,12 @@ module Adamas::HIR
           inline_param_map = inline_param_map.merge(pending)
           store_function_type_param_map(inline_key, base_inline_name, pending)
         end
+        if receiver_owner_bindings = class_receiver_bindings
+          # A registered map for the shared symbol may describe a different
+          # application. Method forall variables still bind from this call.
+          forall_type_param_names(func_def).each { |formal| receiver_owner_bindings.delete(formal) }
+          inline_param_map.merge!(receiver_owner_bindings)
+        end
         # Method-forall variables are bound by this call's arguments (`type :
         # F.class`, `x : F`) and shadow owner/cached maps, as in lower_method;
         # without them the inlined body sees `F` as an undefined constant.
@@ -136425,7 +136464,7 @@ module Adamas::HIR
         callee_is_class = class_method?(base_inline_name)
         inline_self_class_name : String? = nil
         if !receiver_id && callee_is_class
-          owner_name = method_owner(base_inline_name)
+          owner_name = inline_class_receiver || method_owner(base_inline_name)
           if owner_name.empty?
             owner_name = @current_class || ""
           end

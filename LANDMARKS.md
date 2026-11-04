@@ -23423,3 +23423,23 @@ both Channel select contexts and the former empty tuple failure (35q1382).
 That probe includes the experimental exact-result replay. Refresh this
 evidence after changes to callsite shape, source registration, or deferred
 body materialization.
+
+### Preserve applied class self when inlining a shared yielding body
+
+The selected source Def and the class application are separate facts.
+Static dispatch can select the generic template body without emitting a
+runtime receiver. When the symbol is the bare template, the inline frame
+needs the call's class application to bind self and the declared owner
+parameters. A cached family map can hold a different application's
+bindings. Inherited bodies take owner parameters from their declaring
+ancestor. Method forall bindings have their own scope.
+
+The native gate `inline_static_source_receiver_repro.sh` passes with
+Crystal 1.22.1 and exact lazy/eager S1 35q1670. It exercises two applications
+through a shared Def, an inherited body with conflicting owner parameter
+names, and constructor rejection. The broad 35q1667 candidate also rebound
+already specialized symbols and failed installed-prelude hello and the
+StaticArray union fixture. The bare-symbol boundary preserves both checks.
+Refresh after changes to static source receiver capture, inherited namespace
+provenance, or inline type bindings. The depth fallback has a separate body
+materialization path.
