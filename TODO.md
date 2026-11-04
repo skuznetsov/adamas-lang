@@ -23084,6 +23084,28 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Audit the use of ambient block return overrides at other reentrant
   lowering boundaries and require the physical function identity at consumers.
 
+## 2026-11-04 — Admit included overloads per union argument arm
+
+- The included-method ABI guard rejected a call when no single overload
+  accepted the combined argument. Apply the existing source-checked union
+  dispatch before raising that diagnostic. Validate the selected declaration
+  for every argument arm and for its virtual receiver targets before emitting
+  the call.
+- Exact q1546 agrees with Crystal 1.22.1 in lazy and eager modes on the
+  four native dispatches, an uncovered arm, a private included overload,
+  and a private override on a possible receiver. The allocator union and
+  inline return-owner suites pass.
+- The unchanged LavinMQ HIR probe q1547 passes
+  `Client#search_match?(Regex | String)`. The following
+  `Client#details_tuple` still yields Void, so `compact_map` retains
+  `Array(Client)` and the sort path rejects it at `dig`.
+- [ ] Preserve the concrete receiver at annotated source parameters. A
+  restriction of `Client` with only `First.new` as the actual value still
+  considers an unused subclass's private overload. The parent and q1546
+  both reject this case. Crystal narrows the parameter to `First`. Reproduce
+  with the override-private fixture and replace the callers with calls on
+  `First.new` alone.
+
 ## 2026-11-04 — Preserve the actual argument of an applied class restriction
 
 - Root cause: matching Rows(Channel) against Rows(Sortable) succeeded, but

@@ -11829,6 +11829,13 @@ module Adamas::HIR
       same_protected_namespace?(current_base, owner_base)
     end
 
+    private alias CallVisibilitySite = {LoweringContext, Adamas::Compiler::Frontend::CallNode, Adamas::Compiler::Frontend::Node, ValueId, String, Bool, Int32}
+
+    private def validate_call_visibility!(site : CallVisibilitySite, target_name : String, source_def : Adamas::Compiler::Frontend::DefNode) : Nil
+      ctx, node, callee_node, receiver_id, method_name, explicit_self, arg_count = site
+      validate_call_visibility!(ctx, node, callee_node, receiver_id, method_name, target_name, explicit_self, arg_count, source_def: source_def)
+    end
+
     private def validate_call_visibility!(
       ctx : LoweringContext,
       node : Adamas::Compiler::Frontend::Node,
@@ -11838,12 +11845,13 @@ module Adamas::HIR
       target_name : String,
       explicit_self_receiver : Bool,
       call_arg_count : Int32,
+      source_def : Adamas::Compiler::Frontend::DefNode? = nil,
     ) : Nil
       return unless receiver_id
       return unless callee_node.is_a?(Adamas::Compiler::Frontend::MemberAccessNode)
       return if explicit_self_receiver
 
-      visibility = function_visibility(target_name, call_arg_count)
+      visibility = source_def ? source_def.visibility : function_visibility(target_name, call_arg_count)
       return unless visibility
 
       target_base = strip_type_suffix(target_name)
@@ -11911,6 +11919,7 @@ module Adamas::HIR
       include_nil : Bool = false,
       selected_parent_target : Tuple(String, Adamas::Compiler::Frontend::DefNode)? = nil,
       strict_member : Adamas::Compiler::Frontend::MemberAccessNode? = nil,
+      visibility_site : CallVisibilitySite? = nil,
     ) : TypeRef
       owners = [parent_name] + collect_subclasses_cached(parent_name)
       candidates = [] of TypeRef
@@ -11929,6 +11938,9 @@ module Adamas::HIR
                    end
         resolved_name = resolved ? resolved[0] : mangle_function_name(owner_base, arg_types, has_block_call)
         selected_def = resolved.try { |entry| entry[1] }
+        if selected_def && visibility_site
+          validate_call_visibility!(visibility_site, resolved_name, selected_def)
+        end
 
         if strict_member
           if selected_def
@@ -117494,6 +117506,19 @@ module Adamas::HIR
                 unless m3e_input && selected_target &&
                        m3e_input.arg_count == abi_guard_explicit_arg_count &&
                        selected_class_overload_accepts_call?(receiver_name, method_name, m3e_input, selected_target)
+                  # An included overload can reject the combined argument even
+                  # when every union arm has its own applicable source target.
+                  if !has_block_call && !has_splat && !has_named_args &&
+                     explicit_arg_types.size == args.size && explicit_arg_types.any? { |type| is_union_type?(type) }
+                    if dispatched = try_emit_union_arg_dispatch(
+                         ctx, receiver_id, "#{receiver_name}##{method_name}", nil,
+                         args, explicit_arg_types, TypeRef::VOID, false, false, false, false,
+                         require_source_compatible_variants: true,
+                         visibility_site: {ctx, node, callee_node, receiver_id, method_name, explicit_self_receiver, args.size},
+                       )
+                      return dispatched
+                    end
+                  end
                   raise LoweringError.new(
                     "cannot safely lower incompatible explicit arguments for concrete generic receiver #{receiver_name}##{method_name}",
                     node,
@@ -123870,6 +123895,7 @@ module Adamas::HIR
       return_type : TypeRef, has_block_call : Bool, call_has_splat : Bool,
       call_splat_packed : Bool, call_has_named_args : Bool,
       require_source_compatible_variants : Bool = false,
+      visibility_site : CallVisibilitySite? = nil,
     ) : ValueId?
       ui = -1
       ut = TypeRef::VOID
@@ -124084,6 +124110,11 @@ module Adamas::HIR
       unless has_explicit_variant
         return nil
       end
+      if visibility_site
+        variant_source_defs.each do |source_name, source_def|
+          validate_call_visibility!(visibility_site, source_name, source_def)
+        end
+      end
       vo.each do |method_name, variant_type, _|
         if class_receiver_virtual && (receiver = receiver_id)
           arm_types = arg_types.dup
@@ -124141,6 +124172,7 @@ module Adamas::HIR
           virtual_return = infer_virtual_return_type_from_class_targets(
             receiver_name, method_short_from_name(bfm) || bfm, arm_types,
             has_block_call, call_has_splat, include_nil: true,
+            visibility_site: visibility_site,
           )
           target_return = virtual_return unless virtual_return == TypeRef::VOID
         end
