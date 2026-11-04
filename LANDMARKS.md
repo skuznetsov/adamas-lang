@@ -23113,3 +23113,20 @@ transitive include with generic module self, early root-argument loss,
 and the applied-module dispatch ABI are separate open cases. Refresh
 on changes to include registration, lexical type lookup, or constructor
 restriction matching.
+
+### Resolve forwarded yield inputs in the selected method's receiver scope
+
+During yield input inference, the current source Def determines the
+receiver kind of a nested implicit call. Previously the inference queried
+only instance methods, even for a class method. Inline lowering could
+still obtain the correct yielded value, but a standalone callback had
+only the Pointer fallback for its parameter.
+
+The exact parent rejects a typed consumer in the standalone implicit
+class callback. Crystal 1.22.1 and the isolated candidate agree on native
+implicit and explicit class calls, same-name instance helpers, and the
+wrong-consumer rejection (35q1269). In the installed-prelude JSON probe,
+the callback now supplies File and the subsequent inline scope error
+remains. The full exact LavinMQ probes stop earlier at the Log.for class
+literal argument. Refresh on changes to source Def context, implicit
+receiver lookup, or nested callback input inference.

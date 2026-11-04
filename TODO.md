@@ -24220,3 +24220,16 @@ integration, fresh bootstrap, or LavinMQ parity.
   module. Source admission and constructor inference can succeed while
   the virtual call still carries an unresolved return or foreign arms
   (35q1260, 35q1265).
+
+### Preserve implicit class receiver identity when inferring forwarded yields
+
+- [x] Resolve a nested receiverless block call in the selected definition's
+  class or instance scope. Crystal 1.22.1, lazy, and eager agree on
+  same-name class and instance helpers and reject a wrong consumer
+  (35q1269).
+- [ ] Keep the exact outer block activation through exception unwinding.
+  The installed-prelude streaming JSON probe now reaches `from_json(File)`
+  and its next error is `inline-yield lost its owned Block scope`.
+- [ ] Trace the class-literal argument to `Log.for(Class)`. Both exact
+  LavinMQ probes reject it as an instance of `AMQP::Client::Connection`
+  before the deferred File.open path (35q1266, 35q1269).

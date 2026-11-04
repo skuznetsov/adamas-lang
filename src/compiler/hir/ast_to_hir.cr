@@ -32629,7 +32629,22 @@ module Adamas::HIR
       elsif callee_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
         method_name = (safe_slice_to_string(callee_node.name) || "")
         owner_name = self_type_name || @current_class
-        if owner_name && (base = resolve_method_with_inheritance(owner_name, method_name))
+        # Yield input inference walks the selected Def before lowering its
+        # body. An implicit receiver there has the Def's receiver kind,
+        # which can differ from the active lowering caller's receiver.
+        class_scope = if definition = @current_def_node
+                        !definition.receiver.nil?
+                      else
+                        @current_method_is_class
+                      end
+        base = if owner_name
+                 if class_scope
+                   resolve_class_method_with_inheritance(owner_name, method_name)
+                 else
+                   resolve_method_with_inheritance(owner_name, method_name)
+                 end
+               end
+        if owner_name && base
           receiver_ref = type_ref_for_name(owner_name)
           return nil if receiver_ref == TypeRef::VOID
           return block_param_types_for_call(
