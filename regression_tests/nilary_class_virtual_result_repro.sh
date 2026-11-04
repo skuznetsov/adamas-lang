@@ -253,6 +253,86 @@ CRYSTAL
 sed 's/result = client.details$/result = client.details()/' \
   "$WORK/deferred-layout.cr" > "$WORK/deferred-layout-parens.cr"
 
+# The unannotated virtual result passes through bare self calls inside a
+# NamedTuple. Picking the Int32 overload exposes a premature type hint.
+cat > "$WORK/deferred-overload.cr" <<'CRYSTAL'
+require "named_tuple"
+@[Link("gc")]
+lib LibC
+  fun putchar(value : Int32) : Int32
+  fun getpid : Int32
+end
+
+module Shape
+  abstract def details
+end
+abstract class Base
+  include Shape
+end
+class Counter(T)
+  @n : T
+  def initialize(@n : T)
+  end
+  def get(flag : Bool)
+    if flag
+      @n
+    else
+      @n
+    end
+  end
+end
+
+abstract class Middle < Base
+  @counter : Counter(UInt64)
+  def initialize
+    @counter = Counter(UInt64).new(67_u64)
+  end
+
+  def details
+    {code: 65, nested: fields}
+  end
+  private def fields
+    {value: count}
+  end
+  private def count
+    LibC.putchar(46)
+    @counter.get(LibC.getpid > 0)
+  end
+end
+class Concrete < Middle
+end
+class Other < Middle
+  CODE = 66
+  def details
+    super.merge(code: CODE)
+  end
+end
+def choose(first : Bool) : Base
+  first ? Concrete.new : Other.new
+end
+def marker(_value : UInt64) : Int32
+  85
+end
+def marker(_value : Int32) : Int32
+  73
+end
+def output(row : NamedTuple)
+  LibC.putchar(row[:code])
+  LibC.putchar(marker(row[:nested][:value]))
+end
+def once(&)
+  yield
+end
+def show(receiver : Base)
+  once { output(receiver.details) }
+end
+show(choose(LibC.getpid > 0))
+show(choose(LibC.getpid < 0))
+LibC.putchar(10)
+CRYSTAL
+sed 's/nested: fields}/nested: fields()}/; s/value: count}/value: count()}/' \
+  "$WORK/deferred-overload.cr" > "$WORK/deferred-overload-parens.cr"
+
 # Nilary dispatch is required on every concrete receiver.
 sed 's/class Fanout < AMQPExchange/class Fanout < Exchange/; /class Fanout < Exchange/{n;s/def bindings_details :/def bindings_details(required : Bool) :/;}' \
   "$WORK/both-arms.cr" > "$WORK/missing-nilary-arm.cr"
@@ -313,6 +393,8 @@ for mode in stock lazy eager; do
   run_positive "$mode" parentheses BF
   run_positive "$mode" deferred-layout AB
   run_positive "$mode" deferred-layout-parens AB
+  run_positive "$mode" deferred-overload $'.AU.BU\n'
+  run_positive "$mode" deferred-overload-parens $'.AU.BU\n'
   run_negative "$mode" missing-nilary-arm "$missing_diagnostic"
   run_negative "$mode" missing-direct-arm "$missing_diagnostic"
   run_negative "$mode" wrong-consumer "$consumer_diagnostic"

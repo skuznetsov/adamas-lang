@@ -12005,8 +12005,9 @@ module Adamas::HIR
           end
         end
 
-        if strict_nilary_site && selected_def && candidate == TypeRef::VOID
-          # The declaration may be known while its exact return is still deferred.
+        if strict_nilary_site && selected_def &&
+           (candidate == TypeRef::VOID || selected_source_result_pending?(resolved_name, selected_def))
+          # A syntax-derived type is provisional until the selected body settles.
           # Complete the selected body before typing an enclosing expression.
           force_lower_function_for_return_type(
             resolved_name, bypass_inline_yield: true, pending_call_target_context: "class_nilary_result",
@@ -94185,11 +94186,12 @@ module Adamas::HIR
             # the exact pending target before its value enters caller lowering;
             # tuple extraction likewise needs the completed concrete layout.
             tuple_return = get_type_name_from_ref(return_type).starts_with?("Tuple(")
-            if return_type == TypeRef::VOID || tuple_return
+            source_def = @function_defs[full_name]?
+            if return_type == TypeRef::VOID || tuple_return || selected_source_result_pending?(full_name, source_def)
+              refused_before_call_force = @force_lower_depth_refused.size
               force_pending_call_targets_for_return_type(full_name, context: "bare_self")
-            end
-            if return_type == TypeRef::VOID || tuple_return
-              return_type = get_function_return_type(full_name)
+              record_force_lower_result_dependency(ctx, full_name, source_def, refused_before_call_force)
+              return_type = get_function_return_type(full_name, bare_self_args.size, source_def)
               if return_type == TypeRef::VOID && full_name != class_method_base
                 return_type = get_function_return_type(class_method_base)
               end
@@ -112377,6 +112379,27 @@ module Adamas::HIR
       true
     end
 
+    # A depth-refused exact result remains provisional when embedded in a
+    # larger value, even if the caller itself has a non-Void return type.
+    private def record_force_lower_result_dependency(
+      ctx : LoweringContext,
+      target : String,
+      source : Adamas::Compiler::Frontend::DefNode?,
+      refused_before_force : Int32,
+    ) : Nil
+      return unless source && source.return_type.nil?
+      return unless @function_defs[target]?.try(&.same?(source))
+      return unless (!@module.has_function_with_body?(target) &&
+                     @force_lower_depth_refused[refused_before_force...].includes?(target)) ||
+                    @force_lower_provisional_dependencies.has_key?(target)
+
+      dependencies = @force_lower_provisional_dependencies[ctx.function.name] ||= Set(String).new
+      dependencies << target
+      if env_has?("DEBUG_FORCE_LOWER_DEPTH")
+        STDERR.puts "[FORCE_LOWER_PROVISIONAL] caller=#{ctx.function.name} callee=#{target} retried=#{@force_lower_depth_retried.includes?(ctx.function.name)}"
+      end
+    end
+
     # A syntactically inferred scalar is only a registration hint until the
     # selected source body has been lowered. Early returns can add Nil (or a
     # different result) even when the final expression looks concrete. Demand
@@ -122011,17 +122034,7 @@ module Adamas::HIR
           return_type = refreshed
         end
       end
-      if selected_return_def && selected_return_def.return_type.nil? &&
-         @function_defs[mangled_method_name]?.try(&.same?(selected_return_def)) &&
-         ((!@module.has_function_with_body?(mangled_method_name) &&
-          @force_lower_depth_refused[refused_before_call_force...].includes?(mangled_method_name)) ||
-          @force_lower_provisional_dependencies.has_key?(mangled_method_name))
-        dependencies = @force_lower_provisional_dependencies[ctx.function.name] ||= Set(String).new
-        dependencies << mangled_method_name
-        if env_has?("DEBUG_FORCE_LOWER_DEPTH")
-          STDERR.puts "[FORCE_LOWER_PROVISIONAL] caller=#{ctx.function.name} callee=#{mangled_method_name} retried=#{@force_lower_depth_retried.includes?(ctx.function.name)}"
-        end
-      end
+      record_force_lower_result_dependency(ctx, mangled_method_name, selected_return_def, refused_before_call_force)
 
       # The exact target may have been materialized by the force pass above.
       # Recompute authority after that pass, while retaining the base demand

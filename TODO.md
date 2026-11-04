@@ -24676,3 +24676,22 @@ integration, fresh bootstrap, or LavinMQ parity.
   body before treating the existing sampled subtree check as an ownership
   certificate. Refresh the native gate when macro parsing, Def registration,
   or source-owner recovery changes.
+
+### 2026-11-04: Exact results for nilary class dispatch
+
+- [x] Materialize a pending unannotated arm before consuming its
+  registration-time type in strict nilary class dispatch. Bare self calls
+  also demand the selected result and carry the same depth-refusal
+  dependency as parenthesized calls. A preliminary `Int32` inside a
+  NamedTuple previously selected the wrong overload even though the
+  eventual body returned `UInt64`.
+- DoD: run `bash regression_tests/nilary_class_virtual_result_repro.sh <fresh-S1>`
+  with the installed Crystal stdlib. Crystal 1.22.1 and lazy/eager Adamas
+  must print `.AU.BU` for both spellings. The parent printed `.AI.BI` in
+  lazy mode for the bare form. The call-site markers also check that each
+  arm evaluates the nested method once.
+- [ ] Require an exact settled result when strict virtual forcing is
+  refused or its requested body is itself provisional. Keep source
+  diagnostics separate from incomplete result discovery. Exercise both
+  virtual and concrete consumers across sequential depth refusals before
+  treating all call spellings as having one result owner.
