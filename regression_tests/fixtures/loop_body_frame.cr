@@ -8,6 +8,17 @@ def loop
   end
 end
 
+struct Int32
+  def times(&)
+    index = 0
+    while index < self
+      yield index
+      index &+= 1
+    end
+    self
+  end
+end
+
 module Accept(T)
   def consume(value : T)
     value

@@ -24231,6 +24231,12 @@ integration, fresh bootstrap, or LavinMQ parity.
   rejects a call. Crystal 1.22.1, lazy, and eager agree on accepting the
   valid call and rejecting a Boolean argument in all three loop forms
   (35q1279).
+- [x] Unwind the intrinsic `Int#times` body scope and break bookkeeping
+  on the same rejected-call path. The extended gate passes on Crystal
+  1.22.1 and exact lazy and eager Adamas (35q1282).
+- [ ] Trace the excess Tuple nesting in the `StaticArray#map` callback
+  result. The two installed-prelude `Channel.select` probes with
+  `StrictReceiveAction` now preserve this source diagnostic (35q1282).
 - [ ] Trace the installed-prelude JSON probe past `from_json(File)`.
   With loop unwinding, the probe exposes a foreign `PrettyPrint::Group`
   initializer selected for a `JSON::PullParser` argument (35q1279).

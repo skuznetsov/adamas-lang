@@ -23149,3 +23149,19 @@ lowering with the same `authority_revision` churn on both revisions.
 The installed-prelude Channel and JSON probes expose distinct downstream
 failures. Refresh these checks on changes to loop backedge tracking,
 inline-yield ownership, or rejected body cleanup.
+
+### Keep the intrinsic times body scope owned during diagnostics
+
+The integer iteration intrinsic kept its break records and Block scope
+when lowering rejected a call in its callback. The nested inline-yield
+scope assertion hid the type error. The intrinsic restores its frame
+before snapshotting backedge values and restores its scope on both exits.
+
+Crystal 1.22.1 and exact lazy and eager Adamas agree on the valid and
+invalid call in the extended loop regression (35q1282). Infinite loop
+results, nested inline loop backedges, forwarded class yield inputs, and
+the installed-prelude hello pass. Two installed-prelude Channel.select
+probes now expose an excess Tuple level in the StaticArray map callback
+restriction. The full LavinMQ HIR probe retains its earlier Log.for
+failure with unchanged inputs. Refresh after changes to intrinsic
+iteration, inline scope cleanup, or backedge snapshots.
