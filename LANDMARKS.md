@@ -23252,3 +23252,20 @@ and the native integer boundary iterator probe pass. A separate
 `unless` branch scope remains open in the broader exact-result replay
 experiment (35q1317). Refresh after changes to intrinsic loop scopes,
 non-local exits, or inline backedge state.
+
+### Keep unless branches inside the owning scope boundary
+
+The dynamic `unless` arms closed their lexical scopes only after the
+body returned. An incompatible call under inline yield then lost its
+diagnostic to the outer scope check. Both arms now use the existing
+`if` branch cleanup and take successful snapshots before scope exit.
+Statically selected arms pass their exact scope through narrowing and
+branch lowering as well.
+
+The parent fails the dynamic no-prelude reducer with an inline scope
+error. Crystal 1.22.1 and exact lazy and eager Adamas agree on valid
+execution and rejected calls in both dynamic arms and both static
+selections (35q1318). The adjacent case gate and installed-prelude
+hello pass. The diagnostic replay build exposed this scope at
+`hash.cr:923` while lowering an unrelated exact-result producer.
+Refresh after changes to branch scope, narrowing, or inline locals.

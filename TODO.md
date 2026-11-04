@@ -24260,6 +24260,9 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [x] Release case arm scopes when body lowering unwinds. Both the when
   and else negative probes now retain the source overload diagnostic.
   Stock Crystal 1.22.1 and exact lazy and eager Adamas agree (35q1302).
+- [x] Give `unless` branches the same scope error cleanup as `if`.
+  Dynamic and statically selected branches retain the source diagnostic
+  in Crystal 1.22.1 and exact lazy and eager Adamas (35q1318).
 - [ ] Resolve the exact source result for `Channel.select` contexts.
   The strict timeout and receive probes now reach `unwait` (35q1286).
 - [ ] Isolate repeated inline activation and sorting after lexical target
