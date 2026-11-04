@@ -23095,21 +23095,29 @@ integration, fresh bootstrap, or LavinMQ parity.
   positional specialization. The parent rejects the positive keyword call.
   The per-layout rest, receiver ownership, named rest, and generic sibling
   constructor gates also pass.
-- [ ] Bind an explicitly declared whole keyword-rest formal to its exact
-  NamedTuple layout. The installed stdlib's `merge(**other : **U) forall U`
-  now has a visible source overload, but `U` and its packed slot still need
-  to survive concrete materialization. Check empty packs and constraints from
-  other formals separately.
+- [x] Bind a free whole keyword-rest formal to its nonempty concrete
+  NamedTuple layout and use that layout for the lowered parameter. The
+  deduced bare `NamedTuple.new(**options : **T)` uses the same layout for
+  its result. Exact q1569 matches Crystal 1.22.1 in lazy and eager modes
+  on both stdlib `merge` call shapes, field replacement and type changes,
+  free formals on functions and methods, and a competing positional
+  overload. Unknown keys and incompatible downstream arguments are rejected.
+- [ ] Check typed keyword-rest arguments at source selection before packing.
+  The parent and candidate accept a Bool for `**entries : Int32` and fail to
+  unify a formal shared by positional `input : U` and whole `**entries : **U`.
+  Crystal rejects both. Check the empty row and explicitly applied
+  `NamedTuple(...).new` separately (q1567).
 - [x] Keep nested macro conditions in the expansion's lexical context and
   expose NamedTuple TypeNode keys from the same entries used for iteration.
   Crystal 1.22.1 and q1561 agree on a loop with if, elsif, and else, and on a
   conditional that combines key reflection with a loop variable. The parent
   emits `CCC` for the first fixture instead of `ABC`. The q1562 prototype
   restores the missing left-hand fields in the expanded stdlib merge body.
-- [ ] Verify that the selected NamedTuple constructor publishes its actual
-  keyword layout through the return ABI. The q1562 expansion builds the right
-  fields, but the shared `NamedTuple.new$**T_double_splat` result still loses
-  the concrete shape and the native virtual merge fixture prints `XX`.
+- [ ] Demand the exact nilary class virtual results before lowering
+  their consumers. Direct construction and merge preserve the result layout
+  in q1569. The separate abstract receiver fixture still gives both consumers
+  `Void` before the concrete bodies are available. Combined q1566 reaches
+  the stock-prelude LavinMQ client list and rejects `dig(Client, Array(String))`.
 
 ## 2026-11-04 — Respect the source owner of nested next
 

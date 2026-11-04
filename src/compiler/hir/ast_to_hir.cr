@@ -39551,6 +39551,7 @@ module Adamas::HIR
       # Bind `forall` variables before resolving parameter annotations; see
       # the same step in `lower_def`.
       method_forall_bindings = method_forall_call_bindings(node, call_types)
+      whole_double_splat_layout = bind_whole_double_splat_formal(node, full_name_override, method_forall_bindings)
       if params = node.params
         with_type_param_map(method_forall_bindings) do
           each_param(params) do |param|
@@ -39564,6 +39565,7 @@ module Adamas::HIR
             if is_ivar_param
               param_name = param_name.lstrip('@')
             end
+            rest_layout = param.is_double_splat ? whole_double_splat_layout : nil
             type_ann_str : String? = nil
             raw_type_ann_str : String? = nil
             param_type = if (ta = param.type_annotation) && (raw_type_ann_str = safe_slice_to_string(ta))
@@ -39575,9 +39577,9 @@ module Adamas::HIR
                                type_ann_str = contextual_alias
                              end
                            end
-                           method_forall_annotation_type_ref(type_ann_str, module_name, node, method_forall_bindings)
+                           rest_layout || method_forall_annotation_type_ref(type_ann_str, module_name, node, method_forall_bindings)
                          elsif param.is_double_splat
-                           double_splat_layout_type_from_name(full_name_override) ||
+                           rest_layout || double_splat_layout_type_from_name(full_name_override) ||
                              type_ref_for_name("NamedTuple")
                          else
                            TypeRef::VOID
@@ -39792,7 +39794,7 @@ module Adamas::HIR
           STDERR.puts "[LOWER_MODULE_TPM] base=#{base_name} override=#{full_name_override || "nil"} merged=#{registered_params}"
         end
       end
-      extra_type_params.merge!(method_forall_call_bindings(node, call_types))
+      extra_type_params.merge!(whole_double_splat_layout ? method_forall_bindings : method_forall_call_bindings(node, call_types))
 
       if splat_param_name
         splat_type = packed_splat_param_type || TypeRef::VOID
@@ -48775,6 +48777,7 @@ module Adamas::HIR
       # Bind `forall` variables before resolving parameter annotations; see
       # the same step in `lower_def`.
       method_forall_bindings = method_forall_call_bindings(node, call_types)
+      whole_double_splat_layout = bind_whole_double_splat_formal(node, effective_full_name_override, method_forall_bindings)
       if raw_callback_contract.try(&.wildcard)
         if exact_bindings = effective_full_name_override.try { |name| @function_type_param_maps[name]? }
           forall_type_param_names(node).each do |name|
@@ -48804,6 +48807,7 @@ module Adamas::HIR
             if is_ivar_param
               param_name = param_name.lstrip('@')
             end
+            rest_layout = param.is_double_splat ? whole_double_splat_layout : nil
             type_ann_str : String? = nil
             raw_type_ann_str : String? = nil
             param_type = TypeRef::VOID
@@ -48816,7 +48820,7 @@ module Adamas::HIR
                   end
                 end
                 type_ann_str = type_ann_value
-                param_type = method_forall_annotation_type_ref(type_ann_value, signature_owner, node, method_forall_bindings)
+                param_type = rest_layout || method_forall_annotation_type_ref(type_ann_value, signature_owner, node, method_forall_bindings)
               end
             end
             if type_ann_str.nil?
@@ -48829,11 +48833,11 @@ module Adamas::HIR
                   end
                 end
                 type_ann_str = type_ann_value
-                param_type = method_forall_annotation_type_ref(type_ann_value, signature_owner, node, method_forall_bindings)
+                param_type = rest_layout || method_forall_annotation_type_ref(type_ann_value, signature_owner, node, method_forall_bindings)
               end
             end
             if type_ann_str.nil? && param.is_double_splat
-              param_type = double_splat_layout_type_from_name(effective_full_name_override) ||
+              param_type = rest_layout || double_splat_layout_type_from_name(effective_full_name_override) ||
                            type_ref_for_name("NamedTuple")
             end
             if param.is_block && param_type == TypeRef::VOID
@@ -82125,8 +82129,10 @@ module Adamas::HIR
       # own parameter is also named `UC` (`record FromCharsResultT(UC)`), and
       # that phantom type wins over the call's `Pointer(UInt8)`.
       method_forall_bindings = method_forall_call_bindings(node, call_types)
+      whole_double_splat_layout = bind_whole_double_splat_formal(node, full_name_override, method_forall_bindings)
       param_annotation_map = registered_param_map.try(&.dup) || {} of String => String
       param_annotation_map.merge!(method_forall_bindings)
+      extra_type_params.merge!(method_forall_bindings) if whole_double_splat_layout
       if params = node.params
         with_type_param_map(param_annotation_map) do
           param_idx = 0
@@ -82141,25 +82147,26 @@ module Adamas::HIR
                          (param.name ? safe_slice_to_string(param.name.not_nil!) : nil) ||
                          param_info.try(&.name) ||
                          "_"
+            rest_layout = param.is_double_splat ? whole_double_splat_layout : nil
             type_ann_str = ""
             has_type_ann_str = false
             param_type = TypeRef::VOID
             if source_ann = parameter_type_annotation_string(param, @arena, false)
               type_ann_str = source_ann
               has_type_ann_str = true
-              param_type = method_forall_annotation_type_ref(type_ann_str, @current_class, node, method_forall_bindings)
+              param_type = rest_layout || method_forall_annotation_type_ref(type_ann_str, @current_class, node, method_forall_bindings)
             elsif ta = param.type_annotation
               if ann = safe_slice_to_string(ta)
                 type_ann_str = ann
                 has_type_ann_str = true
-                param_type = method_forall_annotation_type_ref(type_ann_str, @current_class, node, method_forall_bindings)
+                param_type = rest_layout || method_forall_annotation_type_ref(type_ann_str, @current_class, node, method_forall_bindings)
               end
             elsif param_info && param_info.not_nil!.type_annotation
               type_ann_str = param_info.not_nil!.type_annotation.not_nil!
               has_type_ann_str = true
-              param_type = method_forall_annotation_type_ref(type_ann_str, @current_class, node, method_forall_bindings)
+              param_type = rest_layout || method_forall_annotation_type_ref(type_ann_str, @current_class, node, method_forall_bindings)
             elsif param.is_double_splat
-              param_type = double_splat_layout_type_from_name(full_name_override) ||
+              param_type = rest_layout || double_splat_layout_type_from_name(full_name_override) ||
                            type_ref_for_name("NamedTuple")
             end
             if param.is_block && param_type == TypeRef::VOID
@@ -117689,7 +117696,7 @@ module Adamas::HIR
             # positional overload can take the very same NamedTuple value.
             if entry_name.ends_with?("_double_splat") &&
                !has_unknown_arg_types &&
-               def_has_untyped_double_splat_param?(entry_def) &&
+               double_splat_param_specializes_by_layout?(entry_def, base_method_name) &&
                (layout = concrete_named_tuple_entries(arg_types.last)) && !layout.empty?
               mangled_method_name = "#{mangled_method_name}_double_splat"
               double_splat_layout_specialized = true
@@ -117743,7 +117750,7 @@ module Adamas::HIR
           elsif !arg_types.empty? &&
                 entry_name.ends_with?("_double_splat") &&
                 !has_unknown_arg_types &&
-                def_has_untyped_double_splat_param?(entry_def) &&
+                double_splat_param_specializes_by_layout?(entry_def, base_method_name) &&
                 (double_splat_layout = concrete_named_tuple_entries(arg_types.last)) &&
                 !double_splat_layout.empty?
             # An untyped `**opts` is monomorphized per NamedTuple layout, like a
@@ -151170,6 +151177,58 @@ module Adamas::HIR
       return nil unless layout && !layout.empty?
       name = mangle_function_name(base, arg_types)
       name.ends_with?("_double_splat") ? name : "#{name}_double_splat"
+    end
+
+    private def whole_double_splat_formal(definition : Adamas::Compiler::Frontend::DefNode) : String?
+      return nil if definition.forall_type_params.empty?
+      params = function_param_infos(definition)
+      rest = params.find(&.is_double_splat) || return nil
+      rest_restriction = rest.type_annotation || return nil
+      return nil unless rest_restriction.starts_with?("**")
+      formal = rest_restriction.lchop("**").strip
+      return nil unless forall_type_param_names(definition).includes?(formal)
+      # Other parameters that constrain this formal also need source-side
+      # unification. The layout alone is sufficient for a free rest formal.
+      constrained = params.any? do |param|
+        !param.is_double_splat &&
+          (restriction = param.type_annotation) &&
+          type_name_includes_param?(restriction, formal)
+      end
+      constrained ? nil : formal
+    end
+
+    private def double_splat_param_specializes_by_layout?(
+      definition : Adamas::Compiler::Frontend::DefNode,
+      base : String,
+    ) : Bool
+      def_has_untyped_double_splat_param?(definition) ||
+        !whole_double_splat_formal(definition).nil? ||
+        named_tuple_deduced_constructor_rest?(definition, base)
+    end
+
+    private def named_tuple_deduced_constructor_rest?(
+      definition : Adamas::Compiler::Frontend::DefNode,
+      base : String,
+    ) : Bool
+      return false unless base == "NamedTuple.new"
+      params = function_param_infos(definition)
+      params.size == 1 && params[0].is_double_splat && params[0].type_annotation == "**T"
+    end
+
+    private def bind_whole_double_splat_formal(
+      definition : Adamas::Compiler::Frontend::DefNode,
+      full_name : String?,
+      bindings : Hash(String, String),
+    ) : TypeRef?
+      return nil unless full_name && full_name.ends_with?("_double_splat")
+      formal = whole_double_splat_formal(definition)
+      if formal.nil? && named_tuple_deduced_constructor_rest?(definition, strip_type_suffix(full_name))
+        formal = "T"
+      end
+      return nil unless formal
+      layout = double_splat_layout_type_from_name(full_name) || return nil
+      bindings[formal] = get_type_name_from_ref(layout)
+      layout
     end
 
     private def def_has_untyped_double_splat_param?(func_def : Adamas::Compiler::Frontend::DefNode) : Bool
