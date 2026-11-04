@@ -104790,7 +104790,8 @@ module Adamas::HIR
     end
 
     private def current_inline_return_context(ctx : LoweringContext) : InlineReturnContext?
-      return nil unless @inline_yield_proc_depth == 0
+      # A proc body starts with an isolated stack and can inline methods of
+      # its own. Their early returns still belong to the selected inline owner.
       context = if override = @inline_yield_return_override_stack.last?
                   override.active ? override.context : @inline_yield_return_stack.last?
                 else
@@ -147550,11 +147551,9 @@ module Adamas::HIR
           actual_return_type = typeof_local_type_for_value(proc_ctx, last_value, actual_return_type)
           @enum_value_types = saved_enum_value_types
           if actual_return_type == TypeRef::VOID || actual_return_type == TypeRef::NIL
-            # last_value is nil_lit when lower_return ran inside the proc body
-            # (because @inline_yield_proc_depth > 0 makes lower_return emit
-            # Return.new(value_id) and return nil_lit.id as the dummy result).
-            # Scan the actual Return terminators for the real value type so that
-            # blocks containing `return X` get a non-void proc signature.
+            # A return owned by this proc produces a dummy Nil expression
+            # after emitting the terminator. Use the actual Return value to
+            # recover the proc's result type.
             proc_func.blocks.each do |blk|
               ret = blk.terminator.as?(Return)
               next unless ret

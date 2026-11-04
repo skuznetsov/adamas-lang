@@ -155,8 +155,68 @@ else
 end
 CRYSTAL
 
-cases=(valid_returns)
-expected_stdout=('ADPNQGHCQ')
+# A captured callback gets its own HIR function. Inlined methods inside
+# that function must own their early returns just as in an ordinary method.
+cat > "$WORK/proc_inline_returns.cr" <<'CRYSTAL'
+lib LibC
+  fun putchar(value : Int32) : Int32
+  fun exit(status : Int32) : NoReturn
+end
+
+class Context
+  @status : Int32
+
+  def initialize(@status : Int32)
+  end
+
+  def status : Int32
+    @status
+  end
+end
+
+class Router
+  alias Action = Proc(Context, Bool, Context)
+
+  def post(context : Context, allowed : Bool, &action : Action) : Context
+    action.call(context, allowed)
+  end
+
+  def with_vhost(context, allowed, *, marker = 65, &)
+    if allowed
+      yield marker
+    else
+      access_refused
+    end
+    context
+  end
+
+  private def access_refused
+    LibC.exit(9)
+  end
+
+  private def maybe_emit(enabled, &)
+    return unless enabled
+    yield
+  end
+
+  def register_routes(enabled : Bool) : Context
+    post(Context.new(7), true) do |context, allowed|
+      with_vhost(context, allowed) do |marker|
+        maybe_emit(enabled) { LibC.putchar(76) }
+        LibC.putchar(marker)
+        nil
+      end
+    end
+  end
+end
+
+router = Router.new
+LibC.exit(1) unless router.register_routes(false).status == 7
+LibC.exit(2) unless router.register_routes(true).status == 7
+CRYSTAL
+
+cases=(valid_returns proc_inline_returns)
+expected_stdout=('ADPNQGHCQ' 'ALA')
 
 run_case() {
   local mode="$1" index="$2" probe="${cases[$2]}" status

@@ -23032,6 +23032,24 @@ integration, fresh bootstrap, or LavinMQ parity.
 - Adversary: ROBUST for nested, forwarded, physical and repeated-generic block returns, including both equal-result-type methods and a no-return block under inference. This does not close stock prelude, bootstrap or LavinMQ parity. Refresh after inline-context lifetime or block-owner producer changes.
 
 
+## 2026-11-04 — Route inline method returns inside materialized callbacks
+
+- Root cause: proc lowering correctly isolates the outer return stack, but
+  a proc-depth guard also hid valid inline contexts pushed inside that proc.
+  As a result, the two bare returns in stdlib Log#debug became physical
+  returns from the LavinMQ publish callback. q1518 HIR shows its real Context
+  return alongside these extra Nil edges.
+- Resolve the live lexical inline return context inside a proc as in any
+  other HIR function. Preserve the function identity and active-context
+  checks, block overrides, and the strict callback result contract.
+- Verification: q1517 rejects the nested callback fixture. q1520 matches
+  Crystal 1.22.1 byte-for-byte in both lazy and eager lowering on the old
+  logical-return suite and the new callback fixture (ALA). Both reject the
+  control whose wrapper actually returns Nil.
+- [ ] Audit remaining proc-depth decisions at yield ABI lookup against the
+  source yield owner and the active callback signature. Depth alone cannot
+  identify the owner after a callee is inlined inside a materialized proc.
+
 ## 2026-10-31 — Preserve the selected method's forall annotation bindings
 
 - Root cause: deferring a callee copied ambient owner bindings over same-spelled method-forall variables. Executable parameter annotations then restored the receiver's map, and lexical aliases could independently replace bound formals in module return annotations.
