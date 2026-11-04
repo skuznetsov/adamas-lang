@@ -123790,6 +123790,46 @@ module Adamas::HIR
       {source_name, source_def}
     end
 
+    # Resolve an unmaterialized constructor arm against initialize before
+    # generating a body. A layout or an arity-only allocator fallback cannot
+    # establish that the scalar source call is legal.
+    private def demand_source_union_allocator_variant(
+      base : String,
+      argument_types : Array(TypeRef),
+    ) : Tuple(String, SelectedCallTarget)?
+      return nil unless base.ends_with?(".new")
+      return nil if argument_types.any? { |type| type == TypeRef::VOID || is_union_or_nilable_type?(type) }
+      owner = method_owner_from_name(base)
+      return nil unless info = @class_info[owner]?
+      return nil unless initializer = resolve_method_with_inheritance(owner, "initialize")
+      selected = resolve_call_target(CallResolutionInput.new(
+        func_name: initializer, arg_count: argument_types.size, arg_types: argument_types,
+        has_block: false, has_splat: false, has_named: false, named_names: nil,
+        raw_positional_count: argument_types.size,
+      ))
+      return nil unless selected && (source_arena = selected.source_arena)
+      return nil unless @function_def_arenas[selected.symbol_name]?.try(&.same?(source_arena))
+      admitted = with_union_variant_declaration_context(
+        selected.symbol_name, function_context_for_lookup_candidate(initializer, selected.symbol_name),
+      ) do |declaration_context|
+        stats = function_param_stats(selected.symbol_name, selected.def_node)
+        !stats.has_splat && !stats.has_double_splat && !stats.has_block &&
+          !def_contains_yield?(selected.def_node, source_arena) &&
+          function_def_accepts_call_shape?(selected.symbol_name, selected.def_node, argument_types, false, false, nil) &&
+          source_generic_argument_mismatch_for_def(selected.def_node, argument_types, declaration_context).nil?
+      end
+      return nil unless admitted
+
+      generate_allocator_overload(owner, info, argument_types, selected_initializer: true, selected_init_target: selected)
+      name = allocator_generated_target_name_for_call(owner, argument_types, selected_init_target: selected)
+      proof = @generated_allocator_sources[name]?
+      return nil unless proof && proof[2].same?(selected.def_node) && proof[3].same?(source_arena)
+      return nil unless generated_allocator_source_accepts?(name, argument_types)
+      target = proof[0]
+      return nil unless target.return_type == info.type_ref && target.params.map(&.type) == argument_types
+      {name, selected}
+    end
+
     # Union arg dispatch: when an arg is union with distinct typed overloads
     private def try_emit_union_arg_dispatch(
       ctx : LoweringContext, receiver_id : ValueId?, base_method_name : String,
@@ -123951,14 +123991,19 @@ module Adamas::HIR
           end
         end
         if require_source_compatible_variants
-          return nil unless variant_source_def
-          admitted = with_union_variant_declaration_context(
+          admitted = variant_source_def && with_union_variant_declaration_context(
             variant_source_name, function_context_for_lookup_candidate(bfm, variant_source_name),
           ) do |declaration_context|
             source_generic_argument_mismatch_for_def(variant_source_def, vat, declaration_context).nil? &&
               params_compatible_with_args?(variant_source_def, vat, declaration_context)
           end
-          return nil unless admitted
+          unless admitted
+            return nil if call_has_splat || call_splat_packed || drop_for_this
+            return nil unless allocator = demand_source_union_allocator_variant(bfm, vat)
+            vm, selected = allocator
+            variant_source_name = selected.symbol_name
+            variant_source_def = selected.def_node
+          end
         end
 
         has_unresolved_variant_target ||= !(@function_types.has_key?(vm) ||

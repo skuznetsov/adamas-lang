@@ -21129,9 +21129,16 @@ Refresh after concrete registration, kind interning, or type-cache changes.
   specializations without fake source overloads, and consume it for the verified
   allocator union corridor. union1484/1432 RED; union1480/1471 GREEN on four
   original-first native outputs; union1481 GREEN on 85 HIR examples.
-- [ ] Demand source-admitted concrete allocators on an unprimed union call.
-  union1452/union1474 still rejects IO::Memory.new(Slice(UInt8)|String), whereas
-  the scalar-primed union now works. Avoid speculative allocator fabrication.
+- [x] Demand a missing initializer-backed allocator from the selected scalar
+  source overload before emitting strict union argument dispatch. Verify the
+  resulting body against the same Def, arena, argument types, and return ABI.
+  Parent q1511 rejects the unprimed fixture. q1517 matches stock Crystal 1.22.1
+  on default evaluation, installed IO::Memory sizes 4/2, and Bool-arm rejection.
+  The combined q1516 LavinMQ HIR run passes this constructor and first reports
+  a Nil result for the publish POST callback requiring HTTP::Server::Context.
+- [ ] Resolve explicit factory precedence independently of allocator demand.
+  In q1512 explicit_tie.cr, stock rejects a wrong-arity nested new call, while
+  q1511 and q1514 accept it. Check source precedence before implicit allocation.
 - [ ] Fix unsupported union constructor admission: union1479 fixture SHA
   4739f7b3a5427b0fafc04e0daa4fbe6c2c6f9b23c522976d250db95f3ffebcc6
   passes on parent1432 and candidate1471 although Crystal rejects Bool|String.
