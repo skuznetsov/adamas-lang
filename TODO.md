@@ -24342,6 +24342,17 @@ integration, fresh bootstrap, or LavinMQ parity.
   Stock Crystal 1.22.1 and both Adamas modes agree on rooted, relative, and
   wrong-shadow cases. The combined LavinMQ HIR probe crosses the `raise`
   boundary and reaches a `Log::Metadata` alias-shape mismatch (35q1415).
+- [x] Preserve keyed tuple aliases when normalizing braced type syntax and
+  validate concrete NamedTuple restrictions by field name and type. Crystal
+  1.22.1 and both Adamas modes agree on exact and reordered keys, and reject
+  wrong keys, wrong field types, and positional tuples. The combined LavinMQ
+  HIR probe crosses `Log::Metadata` and reaches the integer autocast in
+  `Deque(Float64)#unshift` (35q1430, 35q1431).
+- [ ] Trace pointer reads of named tuples after alias normalization. A minimal
+  `pointerof` and generic view compiles with both alias spellings, but returns
+  the wrong field value relative to Crystal 1.22.1 (35q1418, 35q1421).
+- [ ] Check quoted NamedTuple keys with punctuation through the shared
+  structural type parser and key normalization.
 - [ ] Audit remaining value-union paths that reconstruct identity from display
   names, including tuple element folding, nullable conversion, and multi-arm
   merges. Verify same-spelling nominal shadows inside nested composites.

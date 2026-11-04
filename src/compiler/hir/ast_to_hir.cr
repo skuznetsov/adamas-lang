@@ -60066,9 +60066,11 @@ module Adamas::HIR
       return nil unless actual
       actual_args = split_generic_type_args(actual.args)
       declared_args = split_generic_type_args(declared.args)
-      # Named fields and variadic restrictions have their own binding rules.
-      return nil if declared_base == "NamedTuple" || actual.args.includes?('*') || declared.args.includes?('*')
+      return nil if actual.args.includes?('*') || declared.args.includes?('*')
       return false unless actual_args.size == declared_args.size
+      if declared_base == "NamedTuple"
+        return source_named_tuple_restriction_match?(actual_args, declared_args)
+      end
       undecided = false
       declared_args.each_with_index do |restriction, index|
         if declared_base == "Proc" && index == declared_args.size - 1
@@ -60081,6 +60083,26 @@ module Adamas::HIR
           next if result_restriction == "Nil" || result_restriction == "Void" || result_actual == "NoReturn"
         end
         matched = source_generic_argument_matches?(actual_args[index], restriction)
+        return false if matched == false
+        undecided = true if matched.nil?
+      end
+      undecided ? nil : true
+    end
+
+    private def source_named_tuple_restriction_match?(actual_args : Array(String), declared_args : Array(String)) : Bool?
+      actual_fields = {} of String => String
+      actual_args.each do |arg|
+        field = split_named_tuple_entry(arg)
+        return nil unless field
+        actual_fields[field[0]] = field[1]
+      end
+      undecided = false
+      declared_args.each do |arg|
+        field = split_named_tuple_entry(arg)
+        return nil unless field
+        actual_type = actual_fields[field[0]]?
+        return false unless actual_type
+        matched = source_generic_argument_matches?(actual_type, field[1])
         return false if matched == false
         undecided = true if matched.nil?
       end
@@ -149361,7 +149383,12 @@ module Adamas::HIR
 
       inner = trimmed[1, trimmed.size - 2]
       tuple_args = split_generic_type_args(inner)
-      "Tuple(#{tuple_args.join(", ")})"
+      base = if !tuple_args.empty? && tuple_args.all? { |arg| split_named_tuple_entry(arg) }
+               "NamedTuple"
+             else
+               "Tuple"
+             end
+      "#{base}(#{tuple_args.join(", ")})"
     end
 
     private def union_tuple_variant_params_from_name(type_name : String) : Array(Array(TypeRef))
