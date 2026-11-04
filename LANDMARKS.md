@@ -22893,3 +22893,31 @@ The four-argument CliOpt path needs both macro multiple assignment and
 preservation of the fourth argument's source AST (35q1003). Standalone
 macro begin loses arguments separately (35q1000). These checks do not
 establish unchanged LavinMQ compilation or bootstrap.
+
+### 2026-11-03: Macro destructuring consumes one RHS and retains source targets
+
+Standalone macro assignment parsing stopped at the first comma. Inside
+macro control flow, a MultipleAssignNode could reach evaluation without a
+binder. A leading star could also attach as multiplication across a macro
+statement's newline. Keep the source targets and share the comma grammar.
+After parsing the RHS, apply postfix conditions to the complete statement.
+The last rule is required by Int#gcd in stock Crystal 1.22.1 (35q1021).
+
+Evaluate the RHS once, then assign left to right using the current target
+receiver and index. A rest slice preserves its Array/Tuple kind. A discarded
+rest skips the range lookup. Missing fixed elements keep explicit Nil.
+Reusing indexed writes exposed an old silent failure on invalid array
+indexes. The shared writer now validates keys, bounds, and arity, and
+supports nested Array/Tuple targets.
+
+Fresh S1 35q1030 passes 24 stock/lazy/eager checks (35q1031), stock-prelude
+hello (35q1032), 129 focused specs (35q1033), and two existing native
+multiple-assignment regressions (35q1034). The adversary's invalid index
+counterexample is in the permanent regression. Refresh after changes to
+comma or postfix grammar, macro AST caching, or indexed assignment.
+
+Scope covers the tested Array/Tuple cases and their arity failures. Range
+index dispatch for other macro values and annotation expression source
+ownership remain open. The unchanged LavinMQ export still stops at
+Log.for(self) in HIR (35q1034). Bootstrap and LavinMQ runtime/test parity
+remain open.

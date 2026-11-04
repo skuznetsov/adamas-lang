@@ -11,7 +11,10 @@ module Adamas
   module Compiler
     module Semantic
       # A failed command is an evaluation error, never an ordinary string fallback.
-      class MacroCommandError < Exception
+      class MacroEvaluationError < Exception
+      end
+
+      class MacroCommandError < MacroEvaluationError
       end
 
       # Small JSONL writer for macro-expansion diagnostics.
@@ -1084,12 +1087,12 @@ module Adamas
               end
               return macro_nil_value
             elsif node.is_a?(Frontend::AssignNode)
-              if target = node_for_expr?(node.target)
-                if target.is_a?(Frontend::IdentifierNode)
-                  return evaluate_macro_variable_assignment(node, target, context)
-                end
+              if value = assign_macro_target(node.target, context) { evaluate_to_macro_value(node.value, context) }
+                return value
               end
               return MacroNodeValue.new(expr_id, @arena, @string_pool)
+            elsif node.is_a?(Frontend::MultipleAssignNode)
+              return evaluate_macro_multiple_assignment(expr_id, node, context)
             elsif node.is_a?(Frontend::TypeDeclarationNode) || node.is_a?(Frontend::GenericNode)
               return MacroNodeValue.new(expr_id, @arena, @string_pool)
             elsif node.is_a?(Frontend::PathNode)
@@ -2498,22 +2501,87 @@ module Adamas
           end
         end
 
-        # Assignment is an expression: its value is the exact evaluated RHS.
-        # Keep the binding in this context so condition consumers and later
-        # expressions observe the same value, including false and nil.
-        private def evaluate_macro_variable_assignment(
-          node : Frontend::AssignNode,
-          target : Frontend::IdentifierNode,
+        private def assign_macro_target(target_id : ExprId, context : Context, & : -> MacroValue) : MacroValue?
+          target = node_for_expr?(target_id)
+          case target
+          when Frontend::IdentifierNode
+            name = Frontend.node_literal_string(target)
+            return unless name
+            assigned = yield
+            context.variables[name] = assigned unless name == "_"
+            if ENV["DEBUG_MACRO_ASSIGN"]?
+              STDERR.puts "[MACRO_ASSIGN] #{name}=#{assigned.class_name}: #{assigned.to_macro_output[0, 80].inspect}"
+            end
+            assigned
+          when Frontend::IndexNode
+            apply_macro_index_assignment(target, context) { yield }
+          end
+        end
+
+        private def evaluate_macro_multiple_assignment(
+          expr_id : ExprId,
+          node : Frontend::MultipleAssignNode,
           context : Context
         ) : MacroValue
-          value = evaluate_to_macro_value(node.value, context)
-          if name = Frontend.node_literal_string(target)
-            context.variables[name] = value unless name == "_"
-            if ENV["DEBUG_MACRO_ASSIGN"]?
-              STDERR.puts "[MACRO_ASSIGN] #{name}=#{value.class_name}: #{value.to_macro_output[0, 80].inspect}"
+          rhs = evaluate_to_macro_value(node.value, context)
+          targets = node.targets
+          splat_index = targets.index { |id| node_for_expr?(id).is_a?(Frontend::SplatNode) }
+
+          middle_splat = splat_index && 0 < splat_index < targets.size - 1
+          if middle_splat || context.flag?("strict_multi_assign")
+            size = rhs.call_method("size", [] of MacroValue, nil)
+            unless size.is_a?(MacroNumberValue)
+              raise ArgumentError.new("undefined macro method '#{rhs.class_name}#size'")
             end
+            mismatch = splat_index ? size.to_i < targets.size - 1 : size.to_i != targets.size
+            raise ArgumentError.new("Multiple assignment count mismatch") if mismatch
           end
-          value
+
+          last = macro_nil_value
+          targets.each_with_index do |target_id, index|
+            if splat = node_for_expr?(target_id).as?(Frontend::SplatNode)
+              target_id = splat.expr
+              # Crystal skips the range lookup entirely for a discarded rest.
+              target = node_for_expr?(target_id)
+              next if target.is_a?(Frontend::IdentifierNode) && Frontend.node_literal_string(target) == "_"
+            end
+
+            assigned = assign_macro_target(target_id, context) do
+              if index == splat_index
+                range = index..(index - targets.size)
+                case rhs
+                when MacroArrayValue
+                  elements = rhs.elements[range]?
+                  elements ? MacroArrayValue.new(elements) : MacroNilLiteralValue.new
+                when MacroTupleValue
+                  elements = rhs.elements[range]?
+                  elements ? MacroTupleValue.new(elements) : MacroNilLiteralValue.new
+                else
+                  raise ArgumentError.new("cannot destructure a rest from #{rhs.class_name}")
+                end
+              else
+                slot = splat_index && index > splat_index ? index - targets.size : index
+                case rhs
+                when MacroArrayValue, MacroTupleValue
+                  rhs.elements[slot]? || MacroNilLiteralValue.new
+                when MacroAnnotationValue, MacroHashValue
+                  value = rhs.call_method("[]", [MacroNumberValue.new(slot.to_i64).as(MacroValue)], nil)
+                  value.is_a?(MacroNilValue) ? MacroNilLiteralValue.new : value
+                else
+                  raise ArgumentError.new("cannot destructure #{rhs.class_name} with a numeric index")
+                end
+              end
+            end
+            unless assigned
+              raise ArgumentError.new("can only assign to variables or writable indexes")
+            end
+            last = assigned
+          end
+          last
+        rescue ex : ArgumentError
+          message = ex.message || "Invalid macro multiple assignment"
+          emit_error(message, expr_id)
+          raise MacroEvaluationError.new(message)
         end
 
         private def evaluate_expression(expr_id : ExprId, context : Context) : String
@@ -2552,15 +2620,10 @@ module Adamas
             return ""
           end
 
-          # Handle assignment in macro expressions: {% var = expr %}
+          # Keep ordinary assignment emission unchanged while sharing its
+          # effects with value-position evaluation.
           if node.is_a?(Frontend::AssignNode)
-            target = node_for_expr?(node.target)
-            return "" unless target
-            if target.is_a?(Frontend::IdentifierNode)
-              evaluate_macro_variable_assignment(node, target, context)
-            elsif target.is_a?(Frontend::IndexNode)
-              apply_macro_index_assignment(target, node.value, context)
-            end
+            assign_macro_target(node.target, context) { evaluate_to_macro_value(node.value, context) }
             return ""
           end
 
@@ -2570,6 +2633,7 @@ module Adamas
              node.is_a?(Frontend::UnaryNode) ||
              node.is_a?(Frontend::TernaryNode) ||
              node.is_a?(Frontend::CallNode) ||
+             node.is_a?(Frontend::MultipleAssignNode) ||
              node.is_a?(Frontend::YieldNode)
             return evaluate_to_macro_value(expr_id, context).to_macro_output
           end
@@ -2704,41 +2768,40 @@ module Adamas
 
         private def apply_macro_index_assignment(
           target : Frontend::IndexNode,
-          value_expr : ExprId,
-          context : Context
-        ) : Nil
-          obj = @arena[target.object]
-          return unless obj.is_a?(Frontend::IdentifierNode)
-          name = Frontend.node_literal_string(obj)
-          return unless name
-          container = context.variables[name]?
-          return unless container
-          index_expr = target.indexes.first?
-          return unless index_expr
+          context : Context,
+          & : -> MacroValue
+        ) : MacroValue?
+          container = evaluate_to_macro_value(target.object, context)
+          unless target.indexes.size == 1
+            raise MacroEvaluationError.new("macro index assignment expects one index")
+          end
 
-          key = evaluate_to_macro_value(index_expr, context)
-          value = evaluate_to_macro_value(value_expr, context)
+          key = evaluate_to_macro_value(target.indexes[0], context)
+          value = yield
 
           case container
-          when MacroArrayValue
-            # arr[i] = value (mirrors original Crystal `ArrayLiteral#[]=`).
-            # In the macro statement path `arr[i] = v` parses to an AssignNode
-            # with an IndexNode target (parse_op_assign does not rewrite it to a
-            # `[]=` call the way parse_statement does), so the in-place mutation
-            # must happen here. The array is mutated through its shared reference
-            # so the change is visible to every later `{{ arr ... }}` read.
-            if key.is_a?(MacroNumberValue)
-              idx = key.to_i.to_i32
-              elements = container.elements
-              idx += elements.size if idx < 0
-              elements[idx] = value if 0 <= idx < elements.size
+          when MacroArrayValue, MacroTupleValue
+            unless key.is_a?(MacroNumberValue)
+              raise MacroEvaluationError.new("expected index argument to ArrayLiteral#[]= to be a number, not #{key.class_name}")
             end
+            elements = container.elements
+            index = key.to_i
+            index += elements.size if index < 0
+            unless 0 <= index < elements.size
+              raise MacroEvaluationError.new("index out of bounds (index: #{index}, size: #{elements.size})")
+            end
+            elements[index] = value
           when MacroHashValue
             container.assign(key, value)
           when MacroNamedTupleValue
-            key_name = key.to_id
-            container.entries[key_name] = value unless key_name.empty?
+            unless key.is_a?(MacroIdValue) || key.is_a?(MacroSymbolValue) || (key.is_a?(MacroStringValue) && !key.is_a?(MacroCharValue))
+              raise MacroEvaluationError.new("invalid NamedTupleLiteral#[]= key #{key.class_name}")
+            end
+            container.entries[key.to_id] = value
+          else
+            return nil
           end
+          value
         end
 
         # Evaluate instance variable expressions used in macros
@@ -3335,7 +3398,7 @@ module Adamas
             target = node_for_expr?(node.target)
             return {false, context} unless target
             if target.is_a?(Frontend::IdentifierNode)
-              value = evaluate_macro_variable_assignment(node, target, context)
+              value = evaluate_to_macro_value(expr_id, context)
               return {value.truthy?, context}
             end
           end

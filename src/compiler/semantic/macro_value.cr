@@ -1892,9 +1892,7 @@ module Adamas
             if arg = args[0]?
               if arg.is_a?(MacroNumberValue)
                 idx = arg.to_i.to_i32
-                if idx >= 0 && idx < @elements.size
-                  return @elements[idx]
-                end
+                return @elements[idx]? || MacroNilValue.new
               end
             end
             MacroNilValue.new

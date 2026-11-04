@@ -24065,3 +24065,26 @@ integration, fresh bootstrap, or LavinMQ parity.
   In 35q1000, a mixed statement and interpolation begin emits calls missing
   their collection arguments and aborts. The same body works in a named
   macro in 35q1003. Keep this separate from the collection rendering check.
+
+### 2026-11-03: Bind macro multiple assignment before expanding statements
+
+- Share multiple-assignment parsing between runtime statements and macro
+  expressions. Keep a leading splat at the start of its statement and apply
+  postfix modifiers to the completed assignment, including the Int#gcd swap.
+- Evaluate the RHS once, then bind fixed and rest targets in source order.
+  Retain Array/Tuple rest shapes, explicit Nil for missing elements, and
+  Crystal's compile-time and strict arity checks. Use the same indexed write
+  semantics for ordinary assignments and destructuring, including nested
+  receivers, negative indexes, and invalid-key rejection.
+- Fresh S1 35q1030 passes the 24-case stock/lazy/eager regression (35q1031),
+  stock-prelude hello (35q1032), 129 focused parser/macro/AST-cache examples
+  (35q1033), and the existing tuple-result and StaticArray regressions
+  (35q1034). The unchanged LavinMQ HIR compile still stops at Log.for(self).
+- [ ] Preserve annotation argument AST when reflecting a Proc pointer or
+  named call expression. The reduced case prints ABCD with Crystal 1.22.1
+  and drops call arguments in both Adamas modes (35q1028).
+- [ ] Test range-key dispatch for destructuring non-sequence macro values.
+  Crystal expands splatted assignment into a RangeLiteral index, and its
+  StringLiteral and HashLiteral support that index. Adamas materializes
+  macro ranges as arrays in value position and handles rest slicing directly
+  for Array and Tuple. A shared range index needs its own AST contract.

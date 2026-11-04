@@ -224,6 +224,27 @@ describe "Adamas::Compiler::Frontend::Parser" do
       targets.size.should eq(5)
     end
 
+    it "applies postfix modifiers to the entire assignment" do
+      source = <<-CRYSTAL
+      def exchange(left, right)
+        left, right = right, left if left > right
+        {left, right}
+      end
+      CRYSTAL
+
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
+      program = parser.parse_program
+      parser.diagnostics.should be_empty
+
+      method = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::DefNode)
+      body = method.body.not_nil!
+      body.size.should eq(2)
+      condition = program.arena[body[0]].as(Adamas::Compiler::Frontend::IfNode)
+      assignment = program.arena[condition.then_body[0]].as(Adamas::Compiler::Frontend::MultipleAssignNode)
+      values = program.arena[assignment.value].as(Adamas::Compiler::Frontend::TupleLiteralNode)
+      values.elements.size.should eq(2)
+    end
+
     it "parses splatted targets in multiple assignment" do
       source = "first, *rest = segments"
 

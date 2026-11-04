@@ -817,6 +817,10 @@ module Adamas
 
           # Parse expression or assignment (like original Crystal's parse_op_assign)
           # This handles: assignments, multiple assignments, type declarations
+          if current_token.kind.in?(Token::Kind::Star, Token::Kind::StarStar)
+            return parse_postfix_if_modifier(parse_leading_splat_assignment)
+          end
+
           left = parse_op_assign
           return PREFIX_ERROR if left.invalid?
 
@@ -888,129 +892,9 @@ module Adamas
             token = current_token
           end
 
-          # Phase 73: Check for multiple assignment: a, b = ...
           if token.kind == Token::Kind::Comma
-            # Parse remaining targets
-            targets = [left]
-            loop do
-              advance # consume comma
-              skip_trivia
-
-              # Prevent individual type declarations during target parsing
-              # so that "x, y : Type" is parsed as multi-var, not "x, (y : Type)"
-              @no_type_declaration += 1
-              target = parse_multiple_assign_target
-              @no_type_declaration -= 1
-              return PREFIX_ERROR if target.invalid?
-              targets << target
-
-              skip_trivia
-              break unless current_token.kind == Token::Kind::Comma
-            end
-
-            # Check for multi-var type declaration: x, y, z : Type
-            if current_token.kind == Token::Kind::Colon && @no_type_declaration == 0
-              advance # consume ':'
-              skip_trivia
-
-              # Parse type annotation
-              type_start_token = current_token
-              declared_type_slice = parse_type_annotation
-              type_end_token = previous_token
-
-              if declared_type_slice.empty?
-                emit_unexpected(current_token)
-                return PREFIX_ERROR
-              end
-
-              # Create TypeDeclarationNode for each target
-              # For multiple vars, we create a single TypeDeclarationNode with the first var name
-              # and an Expressions node containing all declarations
-              # Actually, Crystal's original parser expands "x, y, z : Int" to multiple TypeDeclarations
-              # We'll create multiple TypeDeclarationNodes wrapped in an Expressions
-              type_span = type_end_token ? type_start_token.span.cover(type_end_token.span) : type_start_token.span
-
-              type_decl_nodes = [] of ExprId
-              targets.each do |target|
-                target_node = @arena[target]
-                # Extract the variable name from the target node
-                var_literal = Frontend.node_literal(target_node)
-                unless var_literal
-                  @diagnostics << Diagnostic.new("Multi-var type declaration requires simple identifiers", target_node.span)
-                  return PREFIX_ERROR
-                end
-
-                full_span = target_node.span.cover(type_span)
-                decl_node = @arena.add_typed(TypeDeclarationNode.new(
-                  full_span,
-                  var_literal,
-                  declared_type_slice,
-                  nil # no initial value
-                ))
-                type_decl_nodes << decl_node
-              end
-
-              # Return the first declaration (all vars share the same type)
-              # For proper semantic handling, we'd return an Expressions wrapper,
-              # but for parsing purposes returning the first is sufficient
-              return type_decl_nodes[0]
-            end
-
-            # Expect = for multi-assignment
-            unless current_token.kind == Token::Kind::Eq
-              emit_unexpected(current_token)
-              return PREFIX_ERROR
-            end
-            advance # consume =
-            skip_trivia
-
-            # Parse right side (tuple literal or comma-separated expressions)
-            first_value = parse_expression(0)
-            return PREFIX_ERROR if first_value.invalid?
-            skip_trivia
-
-            # Check if right side has multiple values (implicit tuple)
-            value = if current_token.kind == Token::Kind::Comma
-                      # Multiple values: 1, 2, 3 → create implicit tuple
-                      values = [first_value]
-                      loop do
-                        advance # consume comma
-                        skip_trivia
-
-                        val = parse_expression(0)
-                        return PREFIX_ERROR if val.invalid?
-                        values << val
-
-                        skip_trivia
-                        break unless current_token.kind == Token::Kind::Comma
-                      end
-
-                      # Create implicit TupleLiteral node
-                      first_val_span = @arena[values[0]].span
-                      last_val_span = @arena[values.last].span
-                      tuple_span = first_val_span.cover(last_val_span)
-
-                      @arena.add_typed(TupleLiteralNode.new(
-                        tuple_span,
-                        values
-                      ))
-                    else
-                      # Single value or explicit tuple
-                      first_value
-                    end
-
-            # Calculate span
-            first_target_span = @arena[targets[0]].span
-            value_span = @arena[value].span
-            multi_assign_span = first_target_span.cover(value_span)
-
-            # Create MultipleAssign node
-            return @arena.add_typed(MultipleAssignNode.new(
-              multi_assign_span,
-              targets,
-              value
-            ))
-        end
+            return parse_postfix_if_modifier(parse_multiple_assignment(left))
+          end
 
         # Phase 66/77: Check for type declaration (Global variables only)
           # Phase 103: Identifier type declarations moved to parse_prefix
@@ -9288,6 +9172,154 @@ module Adamas
           left
         end
 
+        private def parse_leading_splat_assignment : ExprId
+          left = parse_multiple_assign_target
+          return left if left.invalid?
+          skip_trivia
+          parse_multiple_assignment(left)
+        end
+
+        private def parse_multiple_assignment(left : ExprId) : ExprId
+          # Parse remaining targets
+          targets = [left]
+          while current_token.kind == Token::Kind::Comma
+            advance # consume comma
+            skip_trivia
+
+            # Prevent individual type declarations during target parsing
+            # so that "x, y : Type" is parsed as multi-var, not "x, (y : Type)"
+            @no_type_declaration += 1
+            target = parse_multiple_assign_target
+            @no_type_declaration -= 1
+            return PREFIX_ERROR if target.invalid?
+            targets << target
+
+            skip_trivia
+          end
+
+          # Check for multi-var type declaration: x, y, z : Type
+          if current_token.kind == Token::Kind::Colon && @no_type_declaration == 0
+            advance # consume ':'
+            skip_trivia
+
+            # Parse type annotation
+            type_start_token = current_token
+            declared_type_slice = parse_type_annotation
+            type_end_token = previous_token
+
+            if declared_type_slice.empty?
+              emit_unexpected(current_token)
+              return PREFIX_ERROR
+            end
+
+            # Create TypeDeclarationNode for each target
+            # For multiple vars, we create a single TypeDeclarationNode with the first var name
+            # and an Expressions node containing all declarations
+            # Actually, Crystal's original parser expands "x, y, z : Int" to multiple TypeDeclarations
+            # We'll create multiple TypeDeclarationNodes wrapped in an Expressions
+            type_span = type_end_token ? type_start_token.span.cover(type_end_token.span) : type_start_token.span
+
+            type_decl_nodes = [] of ExprId
+            targets.each do |target|
+              target_node = @arena[target]
+              # Extract the variable name from the target node
+              var_literal = Frontend.node_literal(target_node)
+              unless var_literal
+                @diagnostics << Diagnostic.new("Multi-var type declaration requires simple identifiers", target_node.span)
+                return PREFIX_ERROR
+              end
+
+              full_span = target_node.span.cover(type_span)
+              decl_node = @arena.add_typed(TypeDeclarationNode.new(
+                full_span,
+                var_literal,
+                declared_type_slice,
+                nil # no initial value
+              ))
+              type_decl_nodes << decl_node
+            end
+
+            # Return the first declaration (all vars share the same type)
+            # For proper semantic handling, we'd return an Expressions wrapper,
+            # but for parsing purposes returning the first is sufficient
+            return type_decl_nodes[0]
+          end
+
+          splat_target = nil
+          targets.each do |target|
+            if (splat = @arena[target].as?(SplatNode))
+              if splat_target || splat.double?
+                message = splat.double? ? "unexpected token: **" : "splat assignment already specified"
+                @diagnostics << Diagnostic.new(message, splat.span)
+                return PREFIX_ERROR
+              end
+              splat_target = splat
+            end
+          end
+
+          # Expect = for multi-assignment
+          unless current_token.kind == Token::Kind::Eq
+            emit_unexpected(current_token)
+            return PREFIX_ERROR
+          end
+          advance # consume =
+          skip_trivia
+
+          # Parse right side (tuple literal or comma-separated expressions)
+          first_value = without_postfix_modifiers { parse_op_assign }
+          return PREFIX_ERROR if first_value.invalid?
+          skip_trivia
+
+          # Check if right side has multiple values (implicit tuple)
+          value = if current_token.kind == Token::Kind::Comma
+                    # Multiple values: 1, 2, 3 → create implicit tuple
+                    values = [first_value]
+                    loop do
+                      advance # consume comma
+                      skip_trivia
+
+                      val = without_postfix_modifiers { parse_op_assign }
+                      return PREFIX_ERROR if val.invalid?
+                      values << val
+
+                      skip_trivia
+                      break unless current_token.kind == Token::Kind::Comma
+                    end
+
+                    mismatch = splat_target ? targets.size - 1 > values.size : targets.size != values.size
+                    if mismatch
+                      @diagnostics << Diagnostic.new("Multiple assignment count mismatch", node_span(left))
+                      return PREFIX_ERROR
+                    end
+
+                    # Preserve evaluation order in the tuple. The syntax
+                    # count check above applies only to a comma-separated RHS.
+                    first_val_span = @arena[values[0]].span
+                    last_val_span = @arena[values.last].span
+                    tuple_span = first_val_span.cover(last_val_span)
+
+                    @arena.add_typed(TupleLiteralNode.new(
+                      tuple_span,
+                      values
+                    ))
+                  else
+                    # Single value or explicit tuple
+                    first_value
+                  end
+
+          # Calculate span
+          first_target_span = @arena[targets[0]].span
+          value_span = @arena[value].span
+          multi_assign_span = first_target_span.cover(value_span)
+
+          # Create MultipleAssign node
+          return @arena.add_typed(MultipleAssignNode.new(
+            multi_assign_span,
+            targets,
+            value
+          ))
+        end
+
         private def parse_multiple_assign_target : ExprId
           if current_token.kind == Token::Kind::Star || current_token.kind == Token::Kind::StarStar
             splat_token = current_token
@@ -9298,7 +9330,7 @@ module Adamas
             return PREFIX_ERROR if target_expr.invalid?
 
             span = splat_token.span.cover(@arena[target_expr].span)
-            return @arena.add_typed(SplatNode.new(span, target_expr))
+            return @arena.add_typed(SplatNode.new(span, target_expr, splat_token.kind == Token::Kind::StarStar))
           end
 
           parse_expression(0)
@@ -9842,6 +9874,12 @@ module Adamas
                 advance
                 next
               end
+            end
+            # Macro trivia can consume the separator before a leading splat.
+            # At statement level that star starts a new assignment.
+            if !inside_delimiters? && token.kind.in?(Token::Kind::Star, Token::Kind::StarStar) &&
+               newline_before_current_token?
+              break
             end
             debug { "parse_expression(#{precedence}): postfix loop, token=#{token.kind}" }
             # Treat do..end blocks as a statement boundary during expression parsing,
@@ -16307,8 +16345,18 @@ current_token.kind == Token::Kind::Identifier &&
           parse_postfix_if_modifier(stmt)
         end
 
+        private def parse_macro_assignment : ExprId
+          if current_token.kind.in?(Token::Kind::Star, Token::Kind::StarStar)
+            return parse_leading_splat_assignment
+          end
+
+          left = parse_op_assign
+          return left if left.invalid? || current_token.kind != Token::Kind::Comma
+          parse_multiple_assignment(left)
+        end
+
         private def parse_macro_control_assign_with_recovery(error_token : Token) : ExprId
-          with_macro_terminator(:control) { parse_op_assign }
+          with_macro_terminator(:control) { parse_macro_assignment }
         rescue ex : IndexError
           @diagnostics << Diagnostic.new("Recovered from macro expression parse index error", error_token.span)
           fast_forward_macro_expression
@@ -16579,7 +16627,7 @@ current_token.kind == Token::Kind::Identifier &&
           # Use parse_op_assign to handle assignments (a = 1) and wrap with
           # parse_postfix_if_modifier for if/unless modifiers (a = 1 if cond)
           expr = with_macro_terminator(:expression) {
-            stmt = parse_op_assign
+            stmt = parse_macro_assignment
             stmt.invalid? ? stmt : parse_postfix_if_modifier(stmt)
           }
           return PREFIX_ERROR if expr.invalid?
@@ -16629,7 +16677,7 @@ current_token.kind == Token::Kind::Identifier &&
           # Use parse_op_assign to handle assignments (a = 1) and wrap with
           # parse_postfix_if_modifier for if/unless modifiers (a = 1 if cond)
           expr = with_macro_terminator(:expression) {
-            stmt = parse_op_assign
+            stmt = parse_macro_assignment
             stmt.invalid? ? stmt : parse_postfix_if_modifier(stmt)
           }
           skip_macro_whitespace
