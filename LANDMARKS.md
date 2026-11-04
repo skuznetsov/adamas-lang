@@ -23165,3 +23165,20 @@ probes now expose an excess Tuple level in the StaticArray map callback
 restriction. The full LavinMQ HIR probe retains its earlier Log.for
 failure with unchanged inputs. Refresh after changes to intrinsic
 iteration, inline scope cleanup, or backedge snapshots.
+
+### Capture the lexical yield of an inlined callback Proc
+
+When lowering a named callback to a Proc, the active substitution slot
+can contain the same callback. Capturing that slot re-enters the
+callback instead of invoking its lexical method's yield target. Select
+the preceding active slot for this producer and keep its exact caller
+locals, callback arena, and input slots. If no active slot remains, the
+existing physical callback lookup handles the yield.
+
+The exact parent infers an excess Tuple level in the generic Box and
+installed StaticArray union-map probes. Crystal 1.22.1 and the isolated
+candidate produce the same native values. Lazy and eager preserve the
+source rejection of an incompatible callback result (35q1286). Both
+strict Channel.select probes now reach unwait. Repeated inline
+activation, native sort, and full LavinMQ remain open. Refresh after
+changes to inline substitution, lexical caller frames, or Proc capture.

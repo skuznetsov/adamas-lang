@@ -135264,7 +135264,8 @@ module Adamas::HIR
                                        proc_materialize_hint_return_type(ctx)
                     lowered_proc = lower_block_to_proc(ctx, block, block_param_types, block_arena_for_proc, heap_block_proc, hint_return_type,
                       source_result_contract: inline_return.block_result_contract,
-                      source_yield_context: block_source_yield_context)
+                      source_yield_context: block_source_yield_context,
+                      current_inline_yield_target: true)
                     ctx.restore_locals(saved_inline_locals)
                     ctx.register_local(param_name, lowered_proc.value)
                     ctx.register_type(lowered_proc.value, ctx.type_of(lowered_proc.value))
@@ -145789,8 +145790,13 @@ module Adamas::HIR
     # block in its own environment before crossing the function boundary.
     private def materialize_inline_yield_target(
       ctx : LoweringContext,
+      current_inline_yield_target : Bool,
     ) : YieldTarget?
-      target = @inline_yield_block_stack.last?
+      # A callback being converted to a Proc can still occupy the callee's
+      # substitution slot. Its lexical yield belongs to the preceding slot.
+      target_index = @inline_yield_block_stack.size - (current_inline_yield_target ? 2 : 1)
+      return nil if target_index < 0
+      target = @inline_yield_block_stack[target_index]?
       return nil unless target
       frame = @block_owner_caller_frame_index[target.object_id]?
       owner_function = @block_owner_function_ids[target.object_id]?
@@ -145799,9 +145805,9 @@ module Adamas::HIR
                         @inline_caller_function_id_stack[frame]? == ctx.function.id
       locals = snapshot_active_inline_caller_locals(ctx, frame)
       return nil unless locals
-      target_arena = @inline_yield_block_arena_stack.last?
+      target_arena = @inline_yield_block_arena_stack[target_index]?
       return nil unless target_arena
-      target_params = @inline_yield_block_param_types_stack.last?
+      target_params = @inline_yield_block_param_types_stack[target_index]?
       saved_locals = ctx.save_locals
       saved_blocks = @inline_yield_block_stack
       saved_arenas = @inline_yield_block_arena_stack
@@ -145810,11 +145816,12 @@ module Adamas::HIR
       saved_returns = @inline_yield_block_return_stack
       begin
         ctx.restore_locals(locals)
-        @inline_yield_block_stack = saved_blocks[0, saved_blocks.size - 1]
-        @inline_yield_block_arena_stack = saved_arenas[0, saved_arenas.size - 1]
-        @inline_yield_block_param_types_stack = saved_params[0, saved_params.size - 1]
-        @inline_yield_name_stack = saved_names[0, Math.max(0, saved_names.size - 1)]
-        @inline_yield_block_return_stack = saved_returns[0, Math.max(0, saved_returns.size - 1)]
+        @inline_yield_block_stack = saved_blocks[0, target_index]
+        @inline_yield_block_arena_stack = saved_arenas[0, target_index]
+        @inline_yield_block_param_types_stack = saved_params[0, target_index]
+        removed = saved_blocks.size - target_index
+        @inline_yield_name_stack = saved_names[0, Math.max(0, saved_names.size - removed)]
+        @inline_yield_block_return_stack = saved_returns[0, Math.max(0, saved_returns.size - removed)]
         value_id = lower_block_to_proc(ctx, target, target_params, target_arena, heap_proc: true).value
         YieldTarget.new(value_id, ctx.type_of(value_id), ProcCarrier::HeapProcObject)
       ensure
@@ -145841,6 +145848,7 @@ module Adamas::HIR
       semantic_return_type : TypeRef? = nil,
       source_result_contract : SourceBlockResultContract? = nil,
       source_yield_context : SourceYieldContext? = nil,
+      current_inline_yield_target : Bool = false,
     ) : LoweredBlockProc
       constructor_contract = nil.as(TypeDescriptor?)
       if constructor_type = proc_constructor_type
@@ -146041,7 +146049,7 @@ module Adamas::HIR
           parent_enum_ledger = @enum_value_types
           @enum_value_types = saved_enum_value_types
           begin
-            if target = materialize_inline_yield_target(ctx)
+            if target = materialize_inline_yield_target(ctx, current_inline_yield_target)
               explicit_yield_target = CapturedYieldTarget.new("__inline_yield_target_#{proc_func_name}", target)
             end
           ensure

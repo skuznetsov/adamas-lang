@@ -24234,9 +24234,15 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [x] Unwind the intrinsic `Int#times` body scope and break bookkeeping
   on the same rejected-call path. The extended gate passes on Crystal
   1.22.1 and exact lazy and eager Adamas (35q1282).
-- [ ] Trace the excess Tuple nesting in the `StaticArray#map` callback
-  result. The two installed-prelude `Channel.select` probes with
-  `StrictReceiveAction` now preserve this source diagnostic (35q1282).
+- [x] Capture the lexical yield target when an inlined callback is
+  materialized while its own substitution slot is active. The generic Box
+  and installed StaticArray union map oracles match Crystal (35q1286).
+- [ ] Resolve the exact source result for `Channel.select` contexts.
+  The strict timeout and receive probes now reach `unwait` (35q1286).
+- [ ] Isolate repeated inline activation and sorting after lexical target
+  capture. The nested Box callback still receives a Pointer in the inner
+  result. Scalar sorting compiles but returns the wrong order. The union
+  sorter fails receiver repair with a Tuple-valued comparator (35q1286).
 - [ ] Trace the installed-prelude JSON probe past `from_json(File)`.
   With loop unwinding, the probe exposes a foreign `PrettyPrint::Group`
   initializer selected for a `JSON::PullParser` argument (35q1279).
