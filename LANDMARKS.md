@@ -22968,3 +22968,25 @@ specs, installed-prelude hello, and a native FFI control with an LLVM i64
 argument. Refresh on changes to macro indexing, arena switching, or Enum's
 conversion macro. A separate LavinMQ candidate including deferred-self
 passed the prior SSL check and stopped at LZ4 exception dispatch.
+
+### Register modules from their exact declaration slot
+
+A source module's body carries arena-local `ExprId`s. In the unchanged LavinMQ
+trace (35q1136), treating `UnlessNode` as evidence against the current arena
+made registration read `Compress::LZ4` children from `sys/socket.cr` and a
+nested lib from `benchmark.cr`. The class descriptor for `LZ4Error` then
+lacked its `Exception` edge. The overload family was present (35q1123).
+
+CLI collection now transports the declaration slot with the node and arena.
+Explicit-slot registration requires AST object identity and resolves a virtual
+file slot back to its file arena before reading the body. Known nested
+registration sites use the same check. The legacy node-only HIR entry point
+retains compatibility for direct callers.
+
+The regression with a literal in a root module and an `unless` in a qualified
+nested module reproduces the missing edge on the parent (35q1141). The
+candidate matches the native Crystal 1.22.1 output and preserves the unrelated
+argument error (35q1143). Recheck slot identity when declaration collection or
+virtual arena projection changes. The combined experimental LavinMQ HIR run
+passed the previous LZ4 failure and stopped at an `elsif` scope invariant
+(35q1150). Native application and suite parity remain open.

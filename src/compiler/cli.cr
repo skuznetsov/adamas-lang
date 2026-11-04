@@ -2049,7 +2049,7 @@ module Adamas
         # Collect nodes by type
         def_nodes = [] of Tuple(Frontend::DefNode, Frontend::ArenaLike)
         class_nodes = [] of Tuple(Frontend::ClassNode, Frontend::ArenaLike, Frontend::ExprId)
-        module_nodes = [] of Tuple(Frontend::ModuleNode, Frontend::ArenaLike)
+        module_nodes = [] of Tuple(Frontend::ModuleNode, Frontend::ArenaLike, Frontend::ExprId)
         # Preserve declaration order across classes, modules, and aliases. Qualified class
         # declarations use ModuleNode scaffolds and must not leap ahead of an
         # earlier ClassNode that declares their superclass. The kind/index
@@ -2269,7 +2269,7 @@ module Adamas
         i = 0
         while i < module_nodes.size
           bootstrap_trace_puts "[S2_HIR_SETUP] phase=prescan_module_before_fetch idx=#{i}"; STDERR.flush
-          module_node, arena = module_nodes.unsafe_fetch(i)
+          module_node, arena, _ = module_nodes.unsafe_fetch(i)
           module_path = paths_by_arena[arena.object_id.to_u64]? || "(unknown)"
           bootstrap_trace_puts "[S2_HIR_SETUP] phase=prescan_module_after_fetch idx=#{i} path=#{module_path}"; STDERR.flush
           if body = module_node.body
@@ -2328,7 +2328,7 @@ module Adamas
         bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_enter"; STDERR.flush
         if false && BootstrapEnv.enabled?("DEBUG_NESTED_CLASS")
           bootstrap_trace_puts "[DEBUG_CLI] class_nodes: #{class_nodes.size}, module_nodes: #{module_nodes.size}"
-          module_nodes.each do |module_node, arena|
+          module_nodes.each do |module_node, arena, _|
             name = String.new(module_node.name)
             bootstrap_trace_puts "[DEBUG_CLI] Module: #{name}, body_size=#{module_node.body.try(&.size) || 0}"
           end
@@ -2442,7 +2442,7 @@ module Adamas
         end
         i = 0
         while i < module_nodes.size
-          n, a = module_nodes.unsafe_fetch(i)
+          n, a, _ = module_nodes.unsafe_fetch(i)
           hir_converter.arena = a
           hir_converter.pre_register_module_scoped_macros(n)
           i += 1
@@ -2497,7 +2497,7 @@ module Adamas
               bootstrap_trace_puts "[REG_TYPE] alias #{String.new(n.name)} #{ms.round(1)}ms" if reg_type_profile && ms > 5.0
             end
           when Frontend::NodeKind::Module
-            n, a = module_nodes.unsafe_fetch(i)
+            n, a, expr_id = module_nodes.unsafe_fetch(i)
             bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_module_before_fetch idx=#{i}"; STDERR.flush
             module_path = paths_by_arena[a.object_id.to_u64]? || "(unknown)"
             bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_module_after_fetch idx=#{i} path=#{module_path}"; STDERR.flush
@@ -2513,7 +2513,7 @@ module Adamas
             end
             reg_t0 = Time.instant if reg_type_profile || debug_profile
             bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_module_before_register idx=#{i}"; STDERR.flush
-            hir_converter.register_module(n)
+            hir_converter.register_module(n, expr_id)
             bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_module_after_register idx=#{i}"; STDERR.flush
             if reg_type_profile || debug_profile
               ms = (Time.instant - reg_t0.not_nil!).total_milliseconds
@@ -5257,7 +5257,7 @@ module Adamas
         expr_id : Frontend::ExprId,
         def_nodes : Array(Tuple(Frontend::DefNode, Frontend::ArenaLike)),
         class_nodes : Array(Tuple(Frontend::ClassNode, Frontend::ArenaLike, Frontend::ExprId)),
-        module_nodes : Array(Tuple(Frontend::ModuleNode, Frontend::ArenaLike)),
+        module_nodes : Array(Tuple(Frontend::ModuleNode, Frontend::ArenaLike, Frontend::ExprId)),
         enum_nodes : Array(Tuple(Frontend::EnumNode, Frontend::ArenaLike)),
         macro_nodes : Array(MacroEntry),
         alias_nodes : Array(Tuple(Frontend::AliasNode, Frontend::ArenaLike)),
@@ -5334,7 +5334,7 @@ module Adamas
           pending_annotations.clear
         when Frontend::ModuleNode
           top_level_type_names.add(String.new(node.name))
-          module_nodes << {node, arena}
+          module_nodes << {node, arena, expr_id}
           if roots = @active_source_order_roots
             roots << {expr_id, arena}
           end
@@ -5704,7 +5704,7 @@ module Adamas
         macro_origin_path : String?,
         def_nodes : Array(Tuple(Frontend::DefNode, Frontend::ArenaLike)),
         class_nodes : Array(Tuple(Frontend::ClassNode, Frontend::ArenaLike, Frontend::ExprId)),
-        module_nodes : Array(Tuple(Frontend::ModuleNode, Frontend::ArenaLike)),
+        module_nodes : Array(Tuple(Frontend::ModuleNode, Frontend::ArenaLike, Frontend::ExprId)),
         enum_nodes : Array(Tuple(Frontend::EnumNode, Frontend::ArenaLike)),
         macro_nodes : Array(MacroEntry),
         alias_nodes : Array(Tuple(Frontend::AliasNode, Frontend::ArenaLike)),
@@ -8170,7 +8170,7 @@ module Adamas
 
         def_nodes = [] of Tuple(Frontend::DefNode, Frontend::ArenaLike)
         class_nodes = [] of Tuple(Frontend::ClassNode, Frontend::ArenaLike, Frontend::ExprId)
-        module_nodes = [] of Tuple(Frontend::ModuleNode, Frontend::ArenaLike)
+        module_nodes = [] of Tuple(Frontend::ModuleNode, Frontend::ArenaLike, Frontend::ExprId)
         enum_nodes = [] of Tuple(Frontend::EnumNode, Frontend::ArenaLike)
         macro_nodes = [] of MacroEntry
         alias_nodes = [] of Tuple(Frontend::AliasNode, Frontend::ArenaLike)
@@ -8406,7 +8406,7 @@ module Adamas
         paths_by_arena : Hash(UInt64, String),
         def_nodes : Array(Tuple(Frontend::DefNode, Frontend::ArenaLike)),
         class_nodes : Array(Tuple(Frontend::ClassNode, Frontend::ArenaLike, Frontend::ExprId)),
-        module_nodes : Array(Tuple(Frontend::ModuleNode, Frontend::ArenaLike)),
+        module_nodes : Array(Tuple(Frontend::ModuleNode, Frontend::ArenaLike, Frontend::ExprId)),
         enum_nodes : Array(Tuple(Frontend::EnumNode, Frontend::ArenaLike)),
         macro_nodes : Array(MacroEntry),
         alias_nodes : Array(Tuple(Frontend::AliasNode, Frontend::ArenaLike)),

@@ -132,7 +132,7 @@ module HIRFrontierProbeHost
         node = unwrap_visibility(unit.arena, unit.arena[expr_id])
         case node
         when Adamas::Compiler::Frontend::ModuleNode
-          converter.register_module(node)
+          converter.register_module(node, expr_id)
         when Adamas::Compiler::Frontend::ClassNode
           converter.register_class(node)
         when Adamas::Compiler::Frontend::EnumNode

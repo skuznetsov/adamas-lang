@@ -24116,10 +24116,23 @@ integration, fresh bootstrap, or LavinMQ parity.
   installed stdlib's `name[1..-1]` now gives `to_u64!` its UInt64 return
   annotation. The native FFI control checks a UInt32-backed enum conversion
   against an external UInt64 parameter (35q1122).
-- [ ] Reduce the next unchanged LavinMQ HIR failure, `raise(LZ4Error)`
-  (35q1116, experimental stack with deferred-self). The Exception overload
-  is present but rejects this subclass (35q1123). Compare its registered
-  ancestry to a sibling exception accepted in the same compilation.
+- [x] Restore declaration registration after executable module members. The
+  `raise(LZ4Error)` trace lost the `Exception` edge because a legal
+  `UnlessNode` made an arena shape check choose the same slot numbers from a
+  foreign file. Carry the declaration's exact `ExprId` into registration.
+  The two-file subtype repro fails on the parent and passes alongside an
+  unrelated-type rejection on Crystal 1.22.1 and the candidate.
+- [x] Pass `raise(LZ4Error)` on unchanged LavinMQ HIR with the experimental
+  deferred constant `self` candidate and this fix (35q1150).
+- [ ] Reduce `if elsif branch lost its owned Block scope`, reached next in
+  `SystemD::MemoryPressure.monitor_regular_file` (35q1151). The no-prelude
+  forwarded `&action` repro fails in Adamas and prints `BCE` on Crystal
+  (35q1152). Audit closure-scope ownership in `lower_block_pass_proc`.
+- [ ] Verify nested `LibNode` source ownership. Module registration now has an
+  exact slot, but the lib body resolver still uses arena fit and span heuristics.
+- [ ] Reduce the eager HIR prelude failure `undefined constant ::Time::Instant`
+  (35q1141 parent and 35q1139 candidate). The subtype repro uses default HIR
+  with the installed prelude.
 
 ### Remaining macro range and expansion contracts
 - [x] Share RangeLiteral indexing for StringLiteral, MacroId, SymbolLiteral,

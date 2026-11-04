@@ -14883,7 +14883,7 @@ module Adamas::HIR
         if env_get("DEBUG_MACRO_TYPE_REG")
           STDERR.puts "[DEBUG_MACRO_TYPE_REG] register module #{full_name}"
         end
-        register_module_with_name(member, full_name)
+        register_module_with_name(member, full_name, expr_id)
       when Adamas::Compiler::Frontend::EnumNode
         nested_name = (safe_slice_to_string(member.name) || "")
         full_name = qualified_source_declaration_name(class_name, nested_name)
@@ -15568,7 +15568,7 @@ module Adamas::HIR
         register_enum_with_name(member, qualified_source_declaration_name(class_name, nested_name), expr_id)
       when Adamas::Compiler::Frontend::ModuleNode
         nested_name = (safe_slice_to_string(member.name) || "")
-        register_nested_module(member, "#{class_name}::#{nested_name}")
+        register_nested_module(member, "#{class_name}::#{nested_name}", expr_id)
       when Adamas::Compiler::Frontend::MacroDefNode
         register_macro(member, class_name)
       when Adamas::Compiler::Frontend::MacroIfNode
@@ -16898,23 +16898,23 @@ module Adamas::HIR
         set_path_for_arena(reparsed_arena, path)
       end
 
-      module_node = nil.as(Adamas::Compiler::Frontend::Node?)
+      module_source = nil.as(Tuple(Adamas::Compiler::Frontend::ModuleNode, ExprId)?)
       root_idx = 0
       while root_idx < program.roots.size
         expr_id = program.roots.unsafe_fetch(root_idx)
         candidate = reparsed_arena[expr_id]
         if candidate.is_a?(Adamas::Compiler::Frontend::ModuleNode)
-          module_node = candidate
+          module_source = {candidate, expr_id}
           break
         end
         root_idx += 1
       end
-      return false unless module_node
+      return false unless module_source
 
       old_arena = @arena
       @arena = reparsed_arena
       begin
-        yield module_node.as(Adamas::Compiler::Frontend::ModuleNode)
+        yield module_source[0], module_source[1]
       ensure
         @arena = old_arena
       end
@@ -18161,7 +18161,7 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::ModuleNode
         name = (safe_slice_to_string(node.name) || "")
         full_name = resolve_class_name_for_definition(name)
-        register_module_with_name(node, full_name)
+        register_module_with_name(node, full_name, expr_id)
         lower_module_with_name(node, full_name)
         nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
         ctx.emit(nil_lit)
@@ -32781,11 +32781,24 @@ module Adamas::HIR
     # Register a module and its methods (pass 1)
     # Modules are like classes but with only class methods (self.method)
     # Also handles nested classes: module Foo; class Bar; end; end -> Foo::Bar
-    def register_module(node : Adamas::Compiler::Frontend::ModuleNode)
+    def register_module(node : Adamas::Compiler::Frontend::ModuleNode, expr_id : ExprId? = nil)
+      if expr_id
+        with_arena(module_declaration_arena(node, expr_id)) do
+          register_module_in_source(node, exact_source: true)
+        end
+      else
+        register_module_in_source(node, exact_source: false)
+      end
+    end
+
+    private def register_module_in_source(
+      node : Adamas::Compiler::Frontend::ModuleNode,
+      exact_source : Bool,
+    )
       module_name = module_name_from_node(node) || ""
       if module_name.empty?
-        if with_reparsed_module_from_current_source(node) do |reparsed_node|
-             register_module(reparsed_node)
+        if with_reparsed_module_from_current_source(node) do |reparsed_node, reparsed_id|
+             register_module(reparsed_node, reparsed_id)
            end
           return
         end
@@ -32796,7 +32809,11 @@ module Adamas::HIR
       @current_class = nil
       @current_namespace_override = nil
       begin
-        register_module_with_name(node, module_name)
+        if exact_source
+          register_module_with_name_in_current_arena(node, module_name)
+        else
+          register_module_without_source(node, module_name)
+        end
       ensure
         @current_class = old_class
         @current_namespace_override = old_override
@@ -32861,7 +32878,49 @@ module Adamas::HIR
       true
     end
 
-    private def register_module_with_name(node : Adamas::Compiler::Frontend::ModuleNode, module_name : String)
+    # A module's child ExprIds belong to the arena that owns this declaration.
+    # Runtime expressions in the body are legal and cannot disprove ownership.
+    private def module_declaration_arena(
+      node : Adamas::Compiler::Frontend::ModuleNode,
+      expr_id : ExprId,
+    ) : Adamas::Compiler::Frontend::ArenaLike
+      arena = @arena
+      unless expr_id_matches_arena?(arena, expr_id)
+        raise LoweringError.new("module declaration source does not own its ModuleNode", node)
+      end
+
+      raw = arena[expr_id]
+      if arena.is_a?(Adamas::Compiler::Frontend::VirtualArena)
+        if file_source = arena.file_source_for(expr_id)
+          file_arena, file_expr_id = file_source
+          unless expr_id_matches_arena?(file_arena, file_expr_id) && raw.same?(file_arena[file_expr_id])
+            raise LoweringError.new("module file source does not own its ModuleNode", node)
+          end
+          arena = file_arena
+        end
+      end
+
+      unless unwrap_visibility_member_in_arena(raw, arena).same?(node)
+        raise LoweringError.new("module declaration source does not own its ModuleNode", node)
+      end
+      arena
+    end
+
+    private def register_module_with_name(
+      node : Adamas::Compiler::Frontend::ModuleNode,
+      module_name : String,
+      expr_id : ExprId,
+    )
+      with_arena(module_declaration_arena(node, expr_id)) do
+        register_module_with_name_in_current_arena(node, module_name)
+      end
+    end
+
+    # Compatibility for callers of register_module that only retain a ModuleNode.
+    private def register_module_without_source(
+      node : Adamas::Compiler::Frontend::ModuleNode,
+      module_name : String,
+    )
       current_fit = arena_fits_module_node?(@arena, node)
       if current_fit
         register_module_with_name_in_current_arena(node, module_name)
@@ -32989,7 +33048,7 @@ module Adamas::HIR
                 register_self_nested_module_members(module_name, member, source)
                 next
               end
-              register_nested_module(member, full_nested_name)
+              register_nested_module(member, full_nested_name, expr_id)
             when Adamas::Compiler::Frontend::ClassNode
               nested_name = class_name_from_node(member, source) || ""
               full_nested_name = qualified_nested_type_name(module_name, nested_name)
@@ -33091,7 +33150,7 @@ module Adamas::HIR
               register_self_nested_module_members(module_name, member, source)
               next
             end
-            register_nested_module(member, full_nested_name)
+            register_nested_module(member, full_nested_name, expr_id)
           when Adamas::Compiler::Frontend::AliasNode
             safe_str_guard(member.name, "next")
             safe_str_guard(member.value, "next")
@@ -33228,7 +33287,7 @@ module Adamas::HIR
               register_self_nested_module_members(module_name, member, source)
               next
             end
-            register_module_with_name(member, full_nested_name)
+            register_module_with_name(member, full_nested_name, expr_id)
           elsif member.is_a?(Adamas::Compiler::Frontend::EnumNode)
             enum_name = enum_name_from_node(member) || ""
             full_enum_name = qualified_source_declaration_name(module_name, enum_name)
@@ -33677,7 +33736,7 @@ module Adamas::HIR
                   when Adamas::Compiler::Frontend::ModuleNode
                     nested_name = (safe_slice_to_string(expr_node.name) || "")
                     full_nested_name = "#{module_name}::#{nested_name}"
-                    register_nested_module(expr_node, full_nested_name)
+                    register_nested_module(expr_node, full_nested_name, expr_id)
                   when Adamas::Compiler::Frontend::ExtendNode
                     mark_module_extend_self(expr_node, module_name)
                   when Adamas::Compiler::Frontend::MacroIfNode
@@ -33866,7 +33925,7 @@ module Adamas::HIR
             when Adamas::Compiler::Frontend::ModuleNode
               nested_name = (safe_slice_to_string(expr_node.name) || "")
               full_nested_name = "#{module_name}::#{nested_name}"
-              register_nested_module(expr_node, full_nested_name)
+              register_nested_module(expr_node, full_nested_name, expr_id)
             when Adamas::Compiler::Frontend::ExtendNode
               mark_module_extend_self(expr_node, module_name)
             when Adamas::Compiler::Frontend::MacroIfNode
@@ -33940,7 +33999,7 @@ module Adamas::HIR
             when Adamas::Compiler::Frontend::ModuleNode
               nested_name = (safe_slice_to_string(expr_node.name) || "")
               full_nested_name = "#{module_name}::#{nested_name}"
-              register_nested_module(expr_node, full_nested_name)
+              register_nested_module(expr_node, full_nested_name, expr_id)
             when Adamas::Compiler::Frontend::ExtendNode
               mark_module_extend_self(expr_node, module_name)
             when Adamas::Compiler::Frontend::MacroIfNode
@@ -33982,7 +34041,7 @@ module Adamas::HIR
               when Adamas::Compiler::Frontend::ModuleNode
                 nested_name = (safe_slice_to_string(expr_node.name) || "")
                 full_nested_name = "#{module_name}::#{nested_name}"
-                register_nested_module(expr_node, full_nested_name)
+                register_nested_module(expr_node, full_nested_name, expr_id)
               when Adamas::Compiler::Frontend::ExtendNode
                 mark_module_extend_self(expr_node, module_name)
               when Adamas::Compiler::Frontend::MacroIfNode
@@ -34045,7 +34104,7 @@ module Adamas::HIR
             when Adamas::Compiler::Frontend::ModuleNode
               nested_name = (safe_slice_to_string(expr_node.name) || "")
               full_nested_name = "#{module_name}::#{nested_name}"
-              register_nested_module(expr_node, full_nested_name)
+              register_nested_module(expr_node, full_nested_name, expr_id)
             when Adamas::Compiler::Frontend::ExtendNode
               mark_module_extend_self(expr_node, module_name)
             when Adamas::Compiler::Frontend::MacroIfNode
@@ -34105,7 +34164,7 @@ module Adamas::HIR
               when Adamas::Compiler::Frontend::ModuleNode
                 nested_name = (safe_slice_to_string(expr_node.name) || "")
                 full_nested_name = "#{module_name}::#{nested_name}"
-                register_nested_module(expr_node, full_nested_name)
+                register_nested_module(expr_node, full_nested_name, expr_id)
               when Adamas::Compiler::Frontend::ExtendNode
                 mark_module_extend_self(expr_node, module_name)
               when Adamas::Compiler::Frontend::MacroIfNode
@@ -34633,7 +34692,7 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::ModuleNode
         nested_name = (safe_slice_to_string(member.name) || "")
         full_nested_name = "#{module_name}::#{nested_name}"
-        register_nested_module(member, full_nested_name)
+        register_nested_module(member, full_nested_name, expr_id)
       when Adamas::Compiler::Frontend::EnumNode
         enum_name = (safe_slice_to_string(member.name) || "")
         full_enum_name = qualified_source_declaration_name(module_name, enum_name)
@@ -36467,7 +36526,7 @@ module Adamas::HIR
                   when Adamas::Compiler::Frontend::ModuleNode
                     nested_name = (safe_slice_to_string(expr_node.name) || "")
                     full_nested_name = "#{class_name}::#{nested_name}"
-                    register_nested_module(expr_node, full_nested_name)
+                    register_nested_module(expr_node, full_nested_name, expr_id)
                   when Adamas::Compiler::Frontend::GetterNode
                     register_accessors_in_class(expr_node, class_name, ivars, offset_ref)
                   when Adamas::Compiler::Frontend::SetterNode
@@ -36716,7 +36775,7 @@ module Adamas::HIR
             when Adamas::Compiler::Frontend::ModuleNode
               nested_name = (safe_slice_to_string(expr_node.name) || "")
               full_nested_name = "#{class_name}::#{nested_name}"
-              register_nested_module(expr_node, full_nested_name)
+              register_nested_module(expr_node, full_nested_name, expr_id)
             when Adamas::Compiler::Frontend::GetterNode
               register_accessors_in_class(expr_node, class_name, ivars, offset_ref)
             when Adamas::Compiler::Frontend::SetterNode
@@ -36787,7 +36846,7 @@ module Adamas::HIR
               when Adamas::Compiler::Frontend::ModuleNode
                 nested_name = (safe_slice_to_string(expr_node.name) || "")
                 full_nested_name = "#{class_name}::#{nested_name}"
-                register_nested_module(expr_node, full_nested_name)
+                register_nested_module(expr_node, full_nested_name, expr_id)
               when Adamas::Compiler::Frontend::GetterNode
                 register_accessors_in_class(expr_node, class_name, ivars, offset_ref)
               when Adamas::Compiler::Frontend::SetterNode
@@ -36982,7 +37041,7 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::ModuleNode
         nested_name = (safe_slice_to_string(expr_node.name) || "")
         full_nested_name = "#{class_name}::#{nested_name}"
-        register_nested_module(expr_node, full_nested_name)
+        register_nested_module(expr_node, full_nested_name, expr_id)
       when Adamas::Compiler::Frontend::GetterNode
         register_accessors_in_class(expr_node, class_name, ivars, offset_ref)
       when Adamas::Compiler::Frontend::SetterNode
@@ -37710,7 +37769,7 @@ module Adamas::HIR
           STDERR.puts "[BEGIN_MACRO_CLASS] class=#{class_name} phase=body_module idx=#{begin_idx}" if trace_begin_macro
           nested_name = (safe_slice_to_string(expr_node.name) || "")
           full_nested_name = "#{class_name}::#{nested_name}"
-          register_nested_module(expr_node, full_nested_name)
+          register_nested_module(expr_node, full_nested_name, expr_id)
         when Adamas::Compiler::Frontend::GetterNode
           STDERR.puts "[BEGIN_MACRO_CLASS] class=#{class_name} phase=body_getter idx=#{begin_idx}" if trace_begin_macro
           register_accessors_in_class(expr_node, class_name, ivars, offset_ref)
@@ -37846,7 +37905,7 @@ module Adamas::HIR
         when Adamas::Compiler::Frontend::ModuleNode
           nested_name = (safe_slice_to_string(expr_node.name) || "")
           full_nested_name = "#{class_name}::#{nested_name}"
-          register_nested_module(expr_node, full_nested_name)
+          register_nested_module(expr_node, full_nested_name, expr_id)
         when Adamas::Compiler::Frontend::GetterNode
           register_accessors_in_class(expr_node, class_name, ivars, offset_ref)
         when Adamas::Compiler::Frontend::SetterNode
@@ -38039,25 +38098,12 @@ module Adamas::HIR
     end
 
     # Register a nested module with full path
-    private def register_nested_module(node : Adamas::Compiler::Frontend::ModuleNode, full_name : String)
-      current_fit = arena_fits_module_node?(@arena, node)
-      if current_fit
-        register_nested_module_in_current_arena(node, full_name)
-        return
-      end
-
-      module_arena = resolve_arena_for_module_node(node, @arena)
-      module_arena_fit = module_arena != @arena &&
-                         (arena_fits_module_node?(module_arena, node) ||
-                          arena_shallow_fits_module_node?(module_arena, node))
-      if module_arena_fit
-        with_arena(module_arena) do
-          register_nested_module_in_current_arena(node, full_name)
-        end
-        return
-      end
-
-      with_arena(module_arena) do
+    private def register_nested_module(
+      node : Adamas::Compiler::Frontend::ModuleNode,
+      full_name : String,
+      expr_id : ExprId,
+    )
+      with_arena(module_declaration_arena(node, expr_id)) do
         register_nested_module_in_current_arena(node, full_name)
       end
     end
@@ -38150,7 +38196,7 @@ module Adamas::HIR
               register_self_nested_module_members(full_name, member, source_text_for_arena_or_file(@arena))
               next
             end
-            register_nested_module(member, full_nested_name)
+            register_nested_module(member, full_nested_name, expr_id)
           elsif member.is_a?(Adamas::Compiler::Frontend::EnumNode)
             enum_name = enum_name_from_node(member) || ""
             full_enum_name = qualified_source_declaration_name(full_name, enum_name)
@@ -38968,7 +39014,7 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::ModuleNode
         nested_name = (safe_slice_to_string(member.name) || "")
         full_nested_name = "#{module_name}::#{nested_name}"
-        register_module_with_name(member, full_nested_name)
+        register_module_with_name(member, full_nested_name, expr_id)
         lower_module_with_name(member, full_nested_name)
       when Adamas::Compiler::Frontend::EnumNode
         enum_name = (safe_slice_to_string(member.name) || "")
@@ -40186,7 +40232,7 @@ module Adamas::HIR
                   nested_name = module_name_from_node(member, source) || ""
                   next if nested_name.empty?
                   full_nested_name = qualified_nested_type_name(class_name, nested_name)
-                  register_nested_module(member, full_nested_name)
+                  register_nested_module(member, full_nested_name, expr_id)
                 when Adamas::Compiler::Frontend::LibNode
                   register_nested_lib(member, class_name)
                 when Adamas::Compiler::Frontend::MacroDefNode
@@ -40823,7 +40869,7 @@ module Adamas::HIR
             nested_name = module_name_from_node(member) || ""
             full_nested_name = qualified_nested_type_name(nested_prefix, nested_name)
             trace_nested_registration LoweringBinaryTrace::Event::NestedRegisterStart, full_nested_name
-            register_nested_module(member, full_nested_name)
+            register_nested_module(member, full_nested_name, expr_id)
             trace_nested_registration LoweringBinaryTrace::Event::NestedRegisterDone, full_nested_name
           when Adamas::Compiler::Frontend::NodeKind::Lib
             register_nested_lib(member.unsafe_as(Adamas::Compiler::Frontend::LibNode), nested_prefix) unless specialized_class
@@ -44072,7 +44118,7 @@ module Adamas::HIR
         safe_str_guard(member.name, "return")
         nested_name = (safe_slice_to_string(member.name) || "")
         full_name = "#{class_name}::#{nested_name}"
-        register_module_with_name(member, full_name)
+        register_module_with_name(member, full_name, expr_id)
         lower_module_with_name(member, full_name)
       when Adamas::Compiler::Frontend::EnumNode
         safe_str_guard(member.name, "return")
