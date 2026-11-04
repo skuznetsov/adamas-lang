@@ -78466,7 +78466,7 @@ module Adamas::HIR
       base = resolve_generic_template_base(info.base)
       targets = @source_class_include_targets[owner]? || @source_class_include_targets[base]?
       return result unless targets
-      args = split_generic_type_args(info.args).map(&.strip)
+      args = split_generic_type_args(info.args).map { |arg| root_anchored_canonical_type_name(arg) }
       param_map = {} of String => String
       if base == "Tuple"
         # Tuple's implicit variadic T belongs to the builtin declaration, while
@@ -78497,7 +78497,9 @@ module Adamas::HIR
                 # searches enclosing namespaces and can select an outer module
                 # over a same-named nested module.
                 resolved = source_resolve_direct_class_include_name(target, owner, base)
-                next unless resolved && macro_concrete_module_instance?(resolved, base)
+                next unless resolved
+                resolved = resolve_source_include_application_arguments(resolved, owner)
+                next unless macro_concrete_module_instance?(resolved, base)
                 result << resolved unless result.includes?(resolved)
               end
             end
@@ -78507,6 +78509,22 @@ module Adamas::HIR
         @current_class = old_class
       end
       result
+    end
+
+    # AST arguments can still be relative names. Resolve them in the include's
+    # lexical owner before using the application as a concrete projection.
+    private def resolve_source_include_application_arguments(target : String, lexical_owner : String) : String
+      application = split_generic_base_and_args(target) || return target
+      old_class = @current_class
+      @current_class = lexical_owner
+      begin
+        args = split_generic_type_args(application.args).map do |argument|
+          resolve_composite_type_argument_in_context(argument.strip)
+        end
+        "#{application.base}(#{args.join(", ")})"
+      ensure
+        @current_class = old_class
+      end
     end
 
     # Match initializer restrictions structurally instead of assigning each
@@ -78524,7 +78542,7 @@ module Adamas::HIR
       return false if actual.empty? || actual == "Void" || actual == "Unknown"
       if formals.includes?(restriction)
         if previous = bindings[restriction]?
-          return previous == actual
+          return root_anchored_canonical_type_name(previous) == root_anchored_canonical_type_name(actual)
         end
         bindings[restriction] = actual
         return true
@@ -78549,7 +78567,12 @@ module Adamas::HIR
           end
           matches << candidate if compatible
         end
-        matches.uniq!
+        # Registered and source-derived projections can spell the same
+        # resolved type with different root anchors. Compare their bound
+        # identities before deciding whether the restriction is ambiguous.
+        matches.uniq! do |candidate|
+          candidate.transform_values { |name| root_anchored_canonical_type_name(name) }
+        end
         return false unless matches.size == 1
         matches.first.each { |formal, concrete| bindings[formal] = concrete }
         return true
@@ -89864,8 +89887,9 @@ module Adamas::HIR
 
           target = with_arena(module_arena) do
             with_namespace_override(namespace) do
-              with_type_param_map(param_map) do
-                stringify_type_expr_in_current_arena(member.target)
+              with_isolated_type_param_map(param_map) do
+                source_target = stringify_type_expr_in_current_arena(member.target)
+                resolve_source_include_application_arguments(source_target, namespace) if source_target
               end
             end
           end
@@ -89896,7 +89920,9 @@ module Adamas::HIR
       return mapping unless info
       args = split_generic_type_args(info.args)
       return mapping unless args.size == params.size
-      params.each_with_index { |param, index| mapping[param] = args[index].strip }
+      params.each_with_index do |param, index|
+        mapping[param] = root_anchored_canonical_type_name(args[index])
+      end
       mapping
     end
 

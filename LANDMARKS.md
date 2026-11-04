@@ -23096,3 +23096,20 @@ Installed-prelude hello passes. The older receiver-call typeof oracle
 still fails on both revisions, so general expression result ownership
 remains open. Refresh on changes to the active local TypeRef map, Proc
 slot metadata, or type-position generic argument construction.
+
+### Resolve constructor include projections in their lexical declarations
+
+The include AST can contain relative type arguments or module formals.
+Resolve relative arguments in the include's namespace, and substitute
+concrete module arguments under an isolated formal map. Constructor
+inference compares the resulting identities when checking repeated
+bindings and merging registered and source-derived projections.
+
+Crystal 1.22.1 and the isolated candidate agree on native direct and
+transitive lexical include cases, a direct self projection, and rejection
+of contradictory bindings (35q1266). The exact parent cannot infer the
+constructor's arguments in the lexical cases (35q1252, 35q1260). A
+transitive include with generic module self, early root-argument loss,
+and the applied-module dispatch ABI are separate open cases. Refresh
+on changes to include registration, lexical type lookup, or constructor
+restriction matching.

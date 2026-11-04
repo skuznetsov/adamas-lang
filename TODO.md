@@ -24201,3 +24201,22 @@ integration, fresh bootstrap, or LavinMQ parity.
   result and value-kind ownership. The receiver-call oracle still falls
   back to Pointer(Void) on both 35q1252 and 35q1260. Audit ivars and
   synthetic Proc descriptors separately.
+
+### Keep lexical type identities through constructor include projections
+
+- [x] Resolve direct and transitive include arguments in their source
+  declaration scope, and compare canonical bindings during constructor
+  inference (35q1266).
+- [ ] Preserve exact applied module self across transitive includes.
+  Crystal accepts `Wrapped(Int32)` with `include Projection(self)` as
+  `Projection(Wrapped(Int32))`. Both compiler revisions and the
+  self-context-only experiment still fail constructor inference
+  (35q1252, 35q1255b, 35q1263).
+- [ ] Keep root qualification through early generic application registration
+  and audit two distinct applications of the same module in source MRO.
+  A lexical shadow can already capture a rooted argument before the
+  constructor sees it (35q1252, 35q1255b).
+- [ ] Verify native dispatch from an ivar restricted to an applied generic
+  module. Source admission and constructor inference can succeed while
+  the virtual call still carries an unresolved return or foreign arms
+  (35q1260, 35q1265).
