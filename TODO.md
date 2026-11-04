@@ -24932,3 +24932,26 @@ integration, fresh bootstrap, or LavinMQ parity.
   result validation in `LavinMQ::HTTP::Controller#put`. The isolated
   shard fixture still rejects an erroneous pointer length at
   `AMQ::Protocol::Table#ensure_available`.
+
+### 2026-11-04 Inline yield continuation for block-local next
+
+- [x] Keep an otherwise inlineable yielding call on the source continuation
+  path when its block contains a local `next`. Merge its supplied value and
+  the normal block exit at the continuation and preserve post-yield code.
+- DoD runs `bash regression_tests/yield_next_continuation_result_repro.sh <fresh-S1>`
+  against Crystal 1.22.1. Parent S1 35q1687 rejects the valid inherited route.
+  Exact S1 35q1697 matches default and explicit named calls and both consumed
+  `next` outcomes in lazy and eager modes. All three modes reject an Int32
+  result where the source callback requires RouteContext.
+- [ ] Derive the result of a genuinely materialized block from all reachable
+  returns. The 35q1692 fallback prototype resolves the route result but still
+  emits a NUL byte for a bare `next` on a consumed `Nil | Int32` result.
+- [ ] Preserve the aggregate positional rest restriction `*args : *T`.
+  With the inline continuation and the provisional Hash and Channel
+  changes, unchanged LavinMQ 35q1696 reaches `Tuple.new(stats(context))`.
+  A no-prelude `Pack(*T).build(*args : *T)` reproduces the overload refusal.
+- [ ] Preserve selected initializer ownership in the recorded-signature
+  sweep. In 35q1693, the recorded concrete Hash argument causes a fresh
+  lookup that requests the broad recursive union initializer. Check source
+  Def and arena identity, receiver, and full call shape before reusing the
+  already materialized specialization.

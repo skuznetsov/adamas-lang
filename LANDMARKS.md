@@ -23491,3 +23491,19 @@ Hash-only call in `case_union_tag_narrowing_repro.sh`. The ten
 `case_type_set_source_facts_repro.sh` checks and the native case-in union
 fixture also pass. Refresh after changes to condition emission, source
 value-kind transport, or union carrier remapping.
+
+### Keep block-local next on an owned yield continuation
+
+Inline yield already creates a continuation for local `next`, collects
+values and locals at each incoming edge, and resumes the callee after the
+yield. Selecting the materialized Proc path solely because the source block
+has `next` bypassed this path. In the inherited HTTP-route reducer, it
+also exposed an unresolved result for the yielding method and caused the
+enclosing typed callback to reject valid source.
+
+The continuation keeps the callee's result and the block's consumed
+`Nil | Int32` result distinct. Crystal 1.22.1 and exact 35q1697 agree on
+default and explicit named arguments and reject an incompatible outer
+block result. Recheck after changes to inline eligibility, continuation
+edge merging, or source block-result validation. Calls that genuinely
+require materialization have their own Proc result ABI.

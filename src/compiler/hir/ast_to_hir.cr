@@ -136085,8 +136085,8 @@ module Adamas::HIR
         # block that breaks out of this call must be inlined like one that returns.
         block_contains_break = with_arena(block_arena) { contains_block_local_break?(block.body) }
         fallback_allowed = !block_requires_inline_nonlocal_exit?(block, block_arena)
-        force_inline_with_next = inline_key.includes?("with_brace_newlines_skipped") || inline_key.includes?("with_brace_newlines_as_separators")
-        debug_with_brace = env_get("DEBUG_WITH_BRACE_CALL") && force_inline_with_next
+        debug_with_brace = env_get("DEBUG_WITH_BRACE_CALL") &&
+                           (inline_key.includes?("with_brace_newlines_skipped") || inline_key.includes?("with_brace_newlines_as_separators"))
         base_inline_name = strip_type_suffix(inline_key)
         concrete_tuple_each_inline = concrete_tuple_each_inline?(ctx, base_inline_name, receiver_id)
         if debug_with_brace
@@ -136222,21 +136222,6 @@ module Adamas::HIR
             debug_hook("inline.yield.force_inline_for_return", "callee=#{inline_key} reason=block_arena_mismatch_with_return")
           end
         end
-        if !concrete_tuple_each_inline && with_arena(block_arena) { contains_block_local_next?(block.body) }
-          if !force_inline_with_next
-            STDERR.puts "[WITH_BRACE_INLINE] stage=block_contains_next callee=#{inline_key} caller=#{ctx.function.name}" if debug_with_brace
-            debug_hook("inline.yield.skip", "callee=#{inline_key} reason=block_contains_next")
-            if fallback_allowed
-              return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract)
-            end
-            # Block has non-local return — proc materialization cannot represent it.
-            # Force inline despite the next inside body.
-            debug_hook("inline.yield.force_inline_for_return", "callee=#{inline_key} reason=block_contains_next_with_return")
-          elsif debug_with_brace
-            STDERR.puts "[WITH_BRACE_INLINE] stage=block_contains_next_force_inline callee=#{inline_key} caller=#{ctx.function.name}"
-          end
-        end
-
         if func_body = func_def.body
           unless func_body.empty?
             max_index = max_expr_index(func_body)

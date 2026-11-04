@@ -1,12 +1,7 @@
 #!/usr/bin/env bash
-# A block containing `next` is not inlined into a yielding callee; the caller
-# passes the block thunk as a trailing argument instead
-# (inline_yield_fallback_call). A def that uses bare `yield` without a source
-# `&block` slot was lowered with no block parameter, so MIR found no yield
-# target and replaced every `yield` with nil: the block body never ran.
-# The value cases (`twice`) also need the block param types inferred from the
-# callee's yield args; otherwise the thunk returns through a POINTER slot and
-# the callee sees a VOID yield result.
+# Preserve block effects and yield results across repeated bare yields with
+# next. The fallback historically lost the callback slot for bare yield and
+# used the wrong ABI for a value returned by the callback.
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPILER="${1:-$ROOT_DIR/bin/adamas}"
