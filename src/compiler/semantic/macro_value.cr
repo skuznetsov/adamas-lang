@@ -1870,6 +1870,31 @@ module Adamas
         end
       end
 
+      # Internal iteration entry. A mapping binds key, optional value, and
+      # optional index. A tuple value remains one element of a sequence.
+      class MacroForEntry < MacroValue
+        def initialize(@key : MacroValue, @value : MacroValue)
+        end
+
+        def bind(vars : Hash(String, MacroValue), names : Array(String), index : Int32) : Nil
+          vars[names[0]] = @key
+          if name = names[1]?
+            vars[name] = @value
+          end
+          if name = names[2]?
+            vars[name] = MacroNumberValue.new(index.to_i64)
+          end
+        end
+
+        def to_macro_output : String
+          @key.to_macro_output
+        end
+
+        def class_name : String
+          "MacroForEntry"
+        end
+      end
+
       # Tuple value (similar to array but immutable semantics)
       class MacroTupleValue < MacroValue
         getter elements : Array(MacroValue)
@@ -2316,7 +2341,7 @@ module Adamas
               return nil unless colon
               key = MacroIdValue.new(var.byte_slice(0, colon).strip.strip('"')).as(MacroValue)
               type_name = var.byte_slice(colon + 1, var.bytesize - colon - 1).strip
-              MacroTupleValue.new([key, MacroTypeValue.new(type_name).as(MacroValue)]).as(MacroValue)
+              MacroForEntry.new(key, MacroTypeValue.new(type_name)).as(MacroValue)
             end
           end
         end

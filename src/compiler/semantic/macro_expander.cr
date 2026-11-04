@@ -300,6 +300,12 @@ module Adamas
             Context.new(new_vars, @macro_vars, @owner_type, @depth, @flags, @block_id, @scope, @preserve_unresolved_expressions)
           end
 
+          def with_for_entry(names : Array(String), entry : MacroForEntry, index : Int32) : Context
+            new_vars = @variables.dup
+            entry.bind(new_vars, names, index)
+            Context.new(new_vars, @macro_vars, @owner_type, @depth, @flags, @block_id, @scope, @preserve_unresolved_expressions)
+          end
+
           def with_owner_type(owner : ClassSymbol?) : Context
             Context.new(@variables, @macro_vars, owner, @depth, @flags, @block_id, @scope, @preserve_unresolved_expressions)
           end
@@ -726,9 +732,7 @@ module Adamas
             end
           when Frontend::MacroForNode
             iter_vars = node.iter_vars
-            value_var = iter_vars[0]?
-            index_var = iter_vars[1]?
-            unless value_var
+            if iter_vars.empty?
               emit_error("Missing loop variable in {% for %} block", node_id)
               return ""
             end
@@ -738,12 +742,15 @@ module Adamas
             elem_values = evaluate_iterable_to_macro_values(iterable_node, context, node.iterable)
             return "" unless elem_values
 
-            value_var_name = intern_name(value_var)
-            index_var_name = index_var ? intern_name(index_var) : nil
+            loop_names = iter_vars.map { |name| intern_name(name) }
+            value_var_name = loop_names[0]
+            index_var_name = loop_names[1]?
 
             String.build do |str|
               elem_values.each_with_index do |elem_value, idx|
-                if pair_iteration && index_var_name && elem_value.is_a?(MacroTupleValue) && elem_value.elements.size >= 2
+                if elem_value.is_a?(MacroForEntry)
+                  loop_context = context.with_for_entry(loop_names, elem_value, idx)
+                elsif pair_iteration && index_var_name && elem_value.is_a?(MacroTupleValue) && elem_value.elements.size >= 2
                   loop_context = context.with_variable(value_var_name, elem_value.elements[0])
                   loop_context = loop_context.with_variable(index_var_name, elem_value.elements[1])
                 elsif index_var_name
@@ -3988,7 +3995,7 @@ module Adamas
             return {"", end_index + 1}
           end
 
-          # Support 1 or 2 loop variables: value and optional index
+          # Sequences bind value and index. Mapping entries also bind a key.
           value_var = iter_vars[0]?
           index_var = iter_vars[1]?
           unless value_var
@@ -4027,7 +4034,9 @@ module Adamas
           end
           output = String.build do |str|
             elem_values.each_with_index do |elem_value, idx|
-              if pair_iteration && index_var && elem_value.is_a?(MacroTupleValue) && elem_value.elements.size >= 2
+              if elem_value.is_a?(MacroForEntry)
+                loop_context = context.with_for_entry(iter_vars, elem_value, idx)
+              elsif pair_iteration && index_var && elem_value.is_a?(MacroTupleValue) && elem_value.elements.size >= 2
                 # Hash/named-tuple iteration: destructure into key + value variables
                 if ENV["DEBUG_MACRO_TYPE"]?
                   STDERR.puts "[MACRO_FOR_TUPLE] #{value_var}=#{elem_value.elements[0].to_macro_output.inspect} #{index_var}=#{elem_value.elements[1].to_macro_output.inspect}"

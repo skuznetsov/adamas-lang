@@ -24387,6 +24387,14 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Trace pointer reads of named tuples after alias normalization. A minimal
   `pointerof` and generic view compiles with both alias spellings, but returns
   the wrong field value relative to Crystal 1.22.1 (35q1418, 35q1421).
+- [x] Bind concrete NamedTuple type macro loops as key, optional type, and
+  optional index. Keep sequence iteration distinct so Tuple still binds
+  element and index. The native no-prelude fixture exits 2 with the previous
+  compiler and 0 with Crystal 1.22.1 and the candidate. The parser tuple loop
+  and literal iterable admission gates pass (35q1478).
+- [ ] Trace macro iterable type projection for `type.resolve` when a macro
+  argument names a NamedTuple alias. Crystal generates both indexed methods.
+  The candidate reports `undefined method 'generated_name'` (35q1478).
 - [ ] Check quoted NamedTuple keys with punctuation through the shared
   structural type parser and key normalization.
 - [ ] Audit remaining value-union paths that reconstruct identity from display

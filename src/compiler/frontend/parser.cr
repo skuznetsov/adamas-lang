@@ -15387,28 +15387,20 @@ current_token.kind == Token::Kind::Identifier &&
         end
 
         private def parse_macro_for_header
-          # Parse: identifier [, identifier] in expression
           vars = [] of String
 
-          if current_token.kind == Token::Kind::Identifier
+          loop do
+            unless current_token.kind == Token::Kind::Identifier
+              emit_unexpected(current_token)
+              return {vars, nil}
+            end
+
             vars << token_text(current_token)
             advance
-          else
-            emit_unexpected(current_token)
-            return {vars, nil}
-          end
-
-          skip_macro_whitespace
-
-          if operator_token?(current_token, Token::Kind::Comma)
-            advance
             skip_macro_whitespace
-            if current_token.kind == Token::Kind::Identifier
-              vars << token_text(current_token)
-              advance
-            else
-              emit_unexpected(current_token)
-            end
+
+            break unless operator_token?(current_token, Token::Kind::Comma)
+            advance
             skip_macro_whitespace
           end
 

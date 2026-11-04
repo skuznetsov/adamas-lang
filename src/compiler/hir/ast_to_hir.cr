@@ -89376,6 +89376,11 @@ module Adamas::HIR
       value : Adamas::Compiler::Semantic::MacroValue,
       idx : Int32,
     ) : Nil
+      if value.is_a?(Adamas::Compiler::Semantic::MacroForEntry)
+        value.bind(vars, iter_vars, idx)
+        return
+      end
+
       if iter_vars.size >= 2
         case value
         when Adamas::Compiler::Semantic::MacroTupleValue,
