@@ -24348,6 +24348,17 @@ integration, fresh bootstrap, or LavinMQ parity.
   wrong keys, wrong field types, and positional tuples. The combined LavinMQ
   HIR probe crosses `Log::Metadata` and reaches the integer autocast in
   `Deque(Float64)#unshift` (35q1430, 35q1431).
+- [x] Admit integer arguments to floating-point restrictions using the source
+  literal rule or the integer expression's full representable domain. Use a
+  numeric conversion when materializing the selected argument. Crystal 1.22.1
+  and both Adamas modes agree on literal rounding, signed and unsigned domain
+  checks, named arguments, exact overload precedence, and the two out-of-domain
+  variable rejections. The installed `Deque(Float64)#unshift 0` runs natively
+  and the combined LavinMQ HIR probe reaches a route callback result mismatch
+  (35q1433, 35q1434, 35q1435).
+- [ ] Audit source numeric autocast beyond the current integer literal width
+  and integer-to-float paths. Compare 128-bit literal value retention, floating
+  literal conversion, and source overload precedence against Crystal.
 - [ ] Trace pointer reads of named tuples after alias normalization. A minimal
   `pointerof` and generic view compiles with both alias spellings, but returns
   the wrong field value relative to Crystal 1.22.1 (35q1418, 35q1421).

@@ -60299,18 +60299,8 @@ module Adamas::HIR
       return false unless numeric_primitive_class_name?(actual_name) && numeric_primitive_class_name?(declared_name)
       actual_ref = type_ref_for_name(actual_name)
       declared_ref = type_ref_for_name(declared_name)
-      actual_integer = signed_integer_primitive?(actual_ref) || unsigned_integer_type?(actual_ref)
-      declared_integer = signed_integer_primitive?(declared_ref) || unsigned_integer_type?(declared_ref)
-      if actual_integer && declared_integer
-        return source_integer_domain_subset?(actual_ref, declared_ref)
-      end
       return true if actual_ref == TypeRef::FLOAT32 && declared_ref == TypeRef::FLOAT64
-      if actual_integer && (declared_ref == TypeRef::FLOAT32 || declared_ref == TypeRef::FLOAT64)
-        bits = integer_bit_width(actual_ref)
-        return false unless bits
-        return bits <= (declared_ref == TypeRef::FLOAT32 ? 16 : 32)
-      end
-      false
+      source_integer_domain_subset?(actual_ref, declared_ref)
     end
     private def allocator_integer_source_pair?(actual_name : String, declared_name : String) : Bool
       actual_name = resolve_type_alias_chain(actual_name.strip.lchop("::"), preserve_abstract_int: true)
@@ -60322,8 +60312,8 @@ module Adamas::HIR
         (signed_integer_primitive?(declared_type) || unsigned_integer_type?(declared_type))
     end
 
-    # A direct integer literal may autocast only when its value fits the exact
-    # declared integer type. Identifiers and other expressions use domain checks.
+    # Direct integer literals use the same source rule as ordinary calls.
+    # Identifiers and other expressions use domain checks.
     private def allocator_integer_literal_source_autocast_compatible?(
       expr_id : ExprId,
       source_arena : Adamas::Compiler::Frontend::ArenaLike,
@@ -60337,7 +60327,6 @@ module Adamas::HIR
       actual_type = type_ref_for_name(actual_name)
       declared_type = type_ref_for_name(declared_name)
       return false unless signed_integer_primitive?(actual_type) || unsigned_integer_type?(actual_type)
-      return false unless signed_integer_primitive?(declared_type) || unsigned_integer_type?(declared_type)
       source_node = source_arena[expr_id]
       return false unless source_node.is_a?(Adamas::Compiler::Frontend::NumberNode)
       integer_literal_representable_as?(source_node, declared_type)
@@ -95512,10 +95501,7 @@ module Adamas::HIR
                   node,
                 )
               end
-              cast = Cast.new(ctx.next_id, target_type, value_id, target_type)
-              ctx.emit(cast)
-              ctx.register_type(cast.id, target_type)
-              candidate_args[index] = cast.id
+              candidate_args[index] = coerce_value_to_type(ctx, value_id, target_type)
             end
           end
           callable = true
@@ -128393,13 +128379,15 @@ module Adamas::HIR
     end
 
     # Retry source lookup only after the ordinary types have no match. The
-    # converted vector is a source contract: changed literals fit the target
-    # range, and changed runtime integers have their entire domain preserved.
+    # converted vector follows Crystal's literal rules or preserves the entire
+    # domain of an integer expression.
     private def integer_literal_representable_as?(
       node : Adamas::Compiler::Frontend::NumberNode,
       target_type : TypeRef,
     ) : Bool
       return false if node.kind.f32? || node.kind.f64? || node.kind.i128? || node.kind.u128?
+      # Crystal admits integer literals to floats even when rounding is needed.
+      return true if target_type == TypeRef::FLOAT32 || target_type == TypeRef::FLOAT64
       return false unless signed_integer_primitive?(target_type) || unsigned_integer_type?(target_type)
       bits = integer_bit_width(target_type)
       return false unless bits && bits <= 64
@@ -128425,10 +128413,13 @@ module Adamas::HIR
     # Char and enum storage are not integer source types.
     private def source_integer_domain_subset?(source : TypeRef, target : TypeRef) : Bool
       return false unless signed_integer_primitive?(source) || unsigned_integer_type?(source)
-      return false unless signed_integer_primitive?(target) || unsigned_integer_type?(target)
       source_bits = integer_bit_width(source)
+      return false unless source_bits
+      return source_bits <= 16 if target == TypeRef::FLOAT32
+      return source_bits <= 32 if target == TypeRef::FLOAT64
+      return false unless signed_integer_primitive?(target) || unsigned_integer_type?(target)
       target_bits = integer_bit_width(target)
-      return false unless source_bits && target_bits
+      return false unless target_bits
       source_unsigned = unsigned_integer_type?(source)
       target_unsigned = unsigned_integer_type?(target)
       if source_unsigned == target_unsigned
@@ -128815,10 +128806,7 @@ module Adamas::HIR
                    enum_tracked_type(ctx, value_id) != arg_types[idx]
                   raise LoweringError.new("no overload matches #{func_name}: integer autocast requires a runtime #{get_type_name_from_ref(arg_types[idx])} value")
                 end
-                cast = Cast.new(ctx.next_id, target_type, value_id, target_type)
-                ctx.emit(cast)
-                ctx.register_type(cast.id, target_type)
-                value_id = cast.id
+                value_id = coerce_value_to_type(ctx, value_id, target_type)
               end
             end
             result << value_id
@@ -128983,13 +128971,11 @@ module Adamas::HIR
                  enum_tracked_type(ctx, value_id) != source_types[slot]
                 raise LoweringError.new("no overload matches #{func_name}: integer autocast requires a runtime #{get_type_name_from_ref(source_types[slot])} value")
               end
-              cast = Cast.new(ctx.next_id, target_type, value_id, target_type)
-              ctx.emit(cast)
-              ctx.register_type(cast.id, target_type)
+              converted = coerce_value_to_type(ctx, value_id, target_type)
               if slot < positional_values.size
-                positional_values[slot] = cast.id
+                positional_values[slot] = converted
               else
-                named_values[names[slot - positional_values.size]] = cast.id
+                named_values[names[slot - positional_values.size]] = converted
               end
             end
             source_types = converted_types
