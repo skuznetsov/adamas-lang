@@ -66785,10 +66785,6 @@ module Adamas::HIR
     # End AST Reachability
     # ============================================================
 
-    private def contains_next?(body : Array(ExprId)) : Bool
-      body.any? { |expr_id| contains_next_in_expr?(expr_id) }
-    end
-
     # Whether `next` belongs to the block represented by `body`. Nested loops,
     # call blocks, and proc literals own their own `next` and must not activate
     # an outer inline-next context.
@@ -66914,105 +66910,12 @@ module Adamas::HIR
         return true if node.else_body && contains_block_local_jump?(node.else_body.not_nil!, match_break)
         return true if node.ensure_body && contains_block_local_jump?(node.ensure_body.not_nil!, match_break)
         false
-      when Adamas::Compiler::Frontend::WhileNode,
-           Adamas::Compiler::Frontend::UntilNode,
-           Adamas::Compiler::Frontend::LoopNode,
+      when Adamas::Compiler::Frontend::WhileNode, Adamas::Compiler::Frontend::UntilNode
+        # The loop body owns its jumps. Its condition is evaluated in the enclosing context.
+        contains_block_local_jump_in_expr?(node.condition, match_break)
+      when Adamas::Compiler::Frontend::LoopNode,
            Adamas::Compiler::Frontend::BlockNode,
            Adamas::Compiler::Frontend::ProcLiteralNode
-        false
-      else
-        false
-      end
-    end
-
-    private def contains_next_in_expr?(expr_id : ExprId) : Bool
-      return false if expr_id.invalid?
-      node = @arena[expr_id]
-      case node
-      when Adamas::Compiler::Frontend::NextNode
-        true
-      when Adamas::Compiler::Frontend::AssignNode
-        contains_next_in_expr?(node.target) || contains_next_in_expr?(node.value)
-      when Adamas::Compiler::Frontend::MemberAccessNode
-        contains_next_in_expr?(node.object)
-      when Adamas::Compiler::Frontend::CallNode
-        if callee_id = node.callee
-          return true if contains_next_in_expr?(callee_id)
-        end
-        if args = node.args
-          args.each do |arg|
-            return true if contains_next_in_expr?(arg)
-          end
-        end
-        if block_id = node.block
-          return true if contains_next_in_expr?(block_id)
-        end
-        if named = node.named_args
-          named.each do |na|
-            return true if contains_next_in_expr?(na.value)
-          end
-        end
-        false
-      when Adamas::Compiler::Frontend::UnaryNode
-        contains_next_in_expr?(node.operand)
-      when Adamas::Compiler::Frontend::BinaryNode
-        contains_next_in_expr?(node.left) || contains_next_in_expr?(node.right)
-      when Adamas::Compiler::Frontend::GroupingNode
-        contains_next_in_expr?(node.expression)
-      when Adamas::Compiler::Frontend::MacroExpressionNode
-        contains_next_in_expr?(node.expression)
-      when Adamas::Compiler::Frontend::IfNode
-        contains_next_in_expr?(node.condition) ||
-          contains_next?(node.then_body) ||
-          (node.elsifs && node.elsifs.not_nil!.any? do |branch|
-            contains_next_in_expr?(branch.condition) || contains_next?(branch.body)
-          end) ||
-          (node.else_body ? contains_next?(node.else_body.not_nil!) : false)
-      when Adamas::Compiler::Frontend::UnlessNode
-        contains_next_in_expr?(node.condition) ||
-          contains_next?(node.then_branch) ||
-          (node.else_branch ? contains_next?(node.else_branch.not_nil!) : false)
-      when Adamas::Compiler::Frontend::WhileNode
-        contains_next_in_expr?(node.condition) || contains_next?(node.body)
-      when Adamas::Compiler::Frontend::UntilNode
-        contains_next_in_expr?(node.condition) || contains_next?(node.body)
-      when Adamas::Compiler::Frontend::LoopNode
-        contains_next?(node.body)
-      when Adamas::Compiler::Frontend::BlockNode
-        contains_next?(node.body)
-      when Adamas::Compiler::Frontend::ProcLiteralNode
-        contains_next?(node.body)
-      when Adamas::Compiler::Frontend::CaseNode
-        node.when_branches.any? { |w| contains_next?(w.body) } ||
-          (node.else_branch ? contains_next?(node.else_branch.not_nil!) : false)
-      when Adamas::Compiler::Frontend::ArrayLiteralNode
-        return true if node.elements.any? { |el| contains_next_in_expr?(el) }
-        node.of_type ? contains_next_in_expr?(node.of_type.not_nil!) : false
-      when Adamas::Compiler::Frontend::TupleLiteralNode
-        node.elements.any? { |el| contains_next_in_expr?(el) }
-      when Adamas::Compiler::Frontend::HashLiteralNode
-        node.entries.any? do |entry|
-          contains_next_in_expr?(entry.key) || contains_next_in_expr?(entry.value)
-        end
-      when Adamas::Compiler::Frontend::NamedTupleLiteralNode
-        node.entries.any? { |entry| contains_next_in_expr?(entry.value) }
-      when Adamas::Compiler::Frontend::StringInterpolationNode
-        node.pieces.any? do |piece|
-          piece.kind == Adamas::Compiler::Frontend::StringPiece::Kind::Expression &&
-            piece.expr && contains_next_in_expr?(piece.expr.not_nil!)
-        end
-      when Adamas::Compiler::Frontend::IndexNode
-        return true if contains_next_in_expr?(node.object)
-        node.indexes.any? { |idx| contains_next_in_expr?(idx) }
-      when Adamas::Compiler::Frontend::RangeNode
-        contains_next_in_expr?(node.begin_expr) || contains_next_in_expr?(node.end_expr)
-      when Adamas::Compiler::Frontend::BeginNode
-        return true if contains_next?(node.body)
-        if clauses = node.rescue_clauses
-          return true if clauses.any? { |cl| contains_next?(cl.body) }
-        end
-        return true if node.else_body && contains_next?(node.else_body.not_nil!)
-        return true if node.ensure_body && contains_next?(node.ensure_body.not_nil!)
         false
       else
         false
@@ -135823,7 +135726,7 @@ module Adamas::HIR
             debug_hook("inline.yield.force_inline_for_return", "callee=#{inline_key} reason=block_arena_mismatch_with_return")
           end
         end
-        if !concrete_tuple_each_inline && with_arena(block_arena) { contains_next?(block.body) }
+        if !concrete_tuple_each_inline && with_arena(block_arena) { contains_block_local_next?(block.body) }
           if !force_inline_with_next
             STDERR.puts "[WITH_BRACE_INLINE] stage=block_contains_next callee=#{inline_key} caller=#{ctx.function.name}" if debug_with_brace
             debug_hook("inline.yield.skip", "callee=#{inline_key} reason=block_contains_next")

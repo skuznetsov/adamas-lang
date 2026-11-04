@@ -23084,6 +23084,22 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Audit the use of ambient block return overrides at other reentrant
   lowering boundaries and require the physical function identity at consumers.
 
+## 2026-11-04 — Respect the source owner of nested next
+
+- The inline yield selector treated jumps inside nested blocks and loop
+  bodies as exits from the surrounding source block. Reuse the same
+  block-local jump query as the actual inline continuation and leave loop
+  conditions in the enclosing scope.
+- The parent rejects the nested block and loop fixture with a Pointer in
+  place of Host. Exact q1551 matches Crystal 1.22.1 stdout in lazy and eager
+  modes and passes the inline return-owner gate. The bare-yield and closure
+  recursion gates pass their no-prelude cases. Their stdlib cases hit the
+  same Int32.from_io result mismatch on the parent and q1551.
+- [ ] Recover source-bound yield argument types for the materialized block
+  path. A genuinely block-local next still exposes a Pointer when the
+  yielding method obtains its argument through a short-circuit assignment.
+  Compare a narrowed local with a subsequent rebind before yielding.
+
 ## 2026-11-04 — Admit included overloads per union argument arm
 
 - The included-method ABI guard rejected a call when no single overload
