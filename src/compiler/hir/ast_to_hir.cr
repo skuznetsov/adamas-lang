@@ -8327,6 +8327,14 @@ module Adamas::HIR
     # until class materialization and RTA are complete. Keep their identities
     # so the pre-MIR boundary can reject a stale or incomplete dispatch set.
     @included_forall_virtual_return_certificates : Array(IncludedForallVirtualReturnCertificate)
+    private record InheritedVirtualBottomCertificate,
+      caller : Function,
+      call : Call,
+      target_name : String,
+      source_def : Adamas::Compiler::Frontend::DefNode,
+      source_arena : Adamas::Compiler::Frontend::ArenaLike
+
+    @inherited_virtual_bottom_certificates = [] of InheritedVirtualBottomCertificate
     @deferred_union_variant_contracts : Array(DeferredUnionVariantContract)
     @materialized_initializer_sources = {} of String => MaterializedInitializerSource
     @included_forall_virtual_body_demands : Array(IncludedForallVirtualBodyDemand) = [] of IncludedForallVirtualBodyDemand
@@ -29428,7 +29436,11 @@ module Adamas::HIR
       materialized_function_noreturn?(name, Set(String).new)
     end
 
-    private def materialized_function_noreturn?(name : String, visiting : Set(String)) : Bool
+    private def materialized_function_noreturn?(
+      name : String,
+      visiting : Set(String),
+      allow_inherited_virtual : Bool = false,
+    ) : Bool
       return false if visiting.includes?(name)
       source_def = @function_defs[name]?
       return false unless source_def
@@ -29453,8 +29465,9 @@ module Adamas::HIR
             when ExternCall
               instruction.noreturn
             when Call
-              !instruction.virtual && !instruction.has_block? &&
-                materialized_function_noreturn?(instruction.method_name, visiting)
+              !instruction.has_block? &&
+                (!instruction.virtual || (allow_inherited_virtual && inherited_virtual_noreturn_target?(target, instruction))) &&
+                materialized_function_noreturn?(instruction.method_name, visiting, allow_inherited_virtual)
             else
               false
             end
@@ -29462,6 +29475,73 @@ module Adamas::HIR
         end
       ensure
         visiting.delete(name)
+      end
+    end
+
+    # This proves a single inherited implementation, not just an inferred
+    # return type on the dispatch anchor. Even a different overload in a
+    # descendant makes this proof inapplicable.
+    private def inherited_virtual_noreturn_target?(caller : Function, call : Call) : Bool
+      return false unless call.has_receiver? && noreturn_type?(call.type)
+      parts = parse_method_name_compact(call.method_name)
+      method_name = parts.method
+      return false unless method_name && parts.separator == '#'
+
+      receiver_type = hir_value_type_in_function(caller, call.receiver_value)
+      return false unless receiver_type
+      receiver = @module.get_type_descriptor(receiver_type)
+      return false unless receiver && receiver.kind == TypeKind::Class && receiver.name == parts.owner
+      return false if bare_reference_generic_template?(receiver.name)
+
+      collect_subclasses_cached(receiver.name).none? do |owner|
+        owner_directly_declares_instance_method?(owner, method_name) ||
+          owner_directly_declares_instance_def?(owner, method_name) ||
+          source_included_instance_method_family?(owner, method_name)
+      end
+    end
+
+    private def certify_inherited_virtual_bottom?(
+      caller : Function,
+      call : Call,
+      source_def : Adamas::Compiler::Frontend::DefNode?,
+    ) : Bool
+      return false unless source_def && !call.has_block? && noreturn_type?(call.type)
+      name = call.method_name
+      return false unless @function_defs[name]?.try(&.same?(source_def))
+      source_arena = @function_def_arenas[name]?
+      return false unless source_arena
+      return false unless materialized_function_noreturn?(name, Set(String).new, allow_inherited_virtual: true)
+
+      @inherited_virtual_bottom_certificates << InheritedVirtualBottomCertificate.new(
+        caller, call, name, source_def, source_arena,
+      )
+      true
+    end
+
+    # Source registration can still add a descendant or a module method
+    # after a guard has removed its nil path. Recheck the entire proof before
+    # passing surviving HIR to MIR.
+    def validate_inherited_virtual_bottom_certificates!(hir_module : Adamas::HIR::Module) : Nil
+      return if @inherited_virtual_bottom_certificates.empty?
+      unless hir_module.same?(@module)
+        raise LoweringError.new("inherited virtual bottom certificates belong to another HIR module")
+      end
+
+      live_functions = hir_module.functions.to_set
+      @inherited_virtual_bottom_certificates.each do |certificate|
+        caller = certificate.caller
+        next unless live_functions.includes?(caller)
+        call = certificate.call
+        name = certificate.target_name
+        call_present = caller.blocks.any? do |block|
+          block.instructions.any? { |instruction| instruction.same?(call) }
+        end
+        unless call_present && !call.virtual && !call.has_block? && call.method_name == name && noreturn_type?(call.type) &&
+               @function_defs[name]?.try(&.same?(certificate.source_def)) &&
+               @function_def_arenas[name]?.try(&.same?(certificate.source_arena)) &&
+               materialized_function_noreturn?(name, Set(String).new, allow_inherited_virtual: true)
+          raise LoweringError.new("inherited virtual bottom proof changed before MIR: #{name} in #{caller.name}")
+        end
       end
     end
 
@@ -122882,6 +122962,17 @@ module Adamas::HIR
           end
         end
       end
+      # The early return lookup can learn a provisional NoReturn after the
+      # ordinary force path was suppressed by inline lowering. A guard still
+      # needs the exact body before it can eliminate its terminating branch.
+      # Bypass inline suppression only through the existing yield-free check.
+      if !call_virtual && !has_block_call && block_id.nil? &&
+         noreturn_type?(return_type) && selected_source_result_pending?(emit_method_name, selected_call_entry_def)
+        force_lower_function_for_return_type(emit_method_name, bypass_inline_yield: true)
+        if target = @module.function_by_name(emit_method_name)
+          return_type = target.return_type if function_state(emit_method_name).completed?
+        end
+      end
       # V2 bootstrap: `receiver_id.nil?` can be miscompiled for UInt32? zombie-nil
       # in stage2. Truthiness keeps real ValueId(0) receivers distinct from nil.
       call = if receiver_id
@@ -122955,7 +123046,8 @@ module Adamas::HIR
       # Keep the selected target's bottom effect separate from VOID, which
       # also represents an unresolved ABI. A virtual call needs every target.
       unless call_virtual
-        if selected_call_noreturn?(emit_method_name, selected_call_entry_def)
+        if selected_call_noreturn?(emit_method_name, selected_call_entry_def) ||
+           certify_inherited_virtual_bottom?(ctx.function, call, selected_call_entry_def)
           @control_flow_dead_blocks.add({ctx.function.id, ctx.current_block})
         end
       end

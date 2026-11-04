@@ -24426,6 +24426,19 @@ integration, fresh bootstrap, or LavinMQ parity.
   nullable argument after `not_found` in `ConnectionsController` (35q1495).
   The pre-existing strict union hash gate reports the same missing
   `Pointer(Void)#object_id` on the parent and candidate with Crystal 1.22.1.
+- [x] Prove terminating guards that call an inherited virtual implementation.
+  Demand the exact pending source body through the yield-free force path.
+  Narrow only when the completed body proves termination and no descendant
+  supplies another implementation. Recheck surviving proofs before MIR.
+  Crystal 1.22.1 and the candidate agree on the native guard and two returning
+  override controls. The installed-prelude guard agrees as well; the effects
+  fixture hits the same exception runtime timeout on the parent and candidate
+  (35q1496 and 35q1505). The combined LavinMQ HIR probe now passes
+  `can_access_connection?` with `LavinMQ::Client` and stops at
+  `LavinMQ::Client#to_json` (35q1504).
+- [ ] Exercise a late hierarchy change after a terminating guard is narrowed.
+  An invalidated proof currently stops before MIR. Probe exact body replay
+  before extending this proof to additional virtual call forms.
 - [ ] Extend the exact receiver-arm contract to other call shapes. Probe
   named/default arguments, blocks, inherited methods, a non-returning arm,
   and explicit mixed structural/nonstructural receiver unions separately.
