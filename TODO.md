@@ -22615,10 +22615,15 @@ Refresh after concrete registration, kind interning, or type-cache changes.
 - [x] Lower explicit self as the lexical class or module value of a deferred
   constant initializer. Crystal 1.22.1 and exact lazy and eager Adamas agree
   on class, module, nested owner, and ordinary instance receivers (35q1308).
-- [ ] Preserve the producer's value kind through ordinary overload selection.
-  LavinMQ still rejects Log.for(self). A class value forwarded through an
-  untyped helper can lose its method owner, and default argument replay
-  needs the same class versus instance distinction (35q1292, 35q1308).
+- [x] Preserve source value kind in ordinary positional overload selection
+  and default binding for direct and inherited class calls. Stock Crystal
+  1.22.1 and exact lazy and eager Adamas agree on nine probes. Unchanged
+  LavinMQ HIR crosses Log.for(self) and Config#parse_value, then rejects
+  an unresolved argument to Channel::LooseReceiveAction(Nil)#unwait (35q1310).
+- [ ] Carry the same fact through included-module default selection and its
+  exact HIR target identity. Distinct source overloads currently claim one
+  receiver alias. Method-returned class values and named or splatted
+  arguments still need their source facts at overload admission (35q1310).
 - [ ] Resolve inherited methods on the Class metaclass for explicit and
   infix calls. Stock Crystal selects Class.| for Int32 and UInt8. Adamas
   treats the infix call as integer arithmetic and rejects the explicit call.

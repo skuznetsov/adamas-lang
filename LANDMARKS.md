@@ -23213,3 +23213,26 @@ Untyped forwarding still loses the module method owner. Unchanged LavinMQ
 HIR stops at Log.for(self), where overload lookup consumes the carrier type.
 Refresh after changes to deferred constant scope, class value production,
 or class and instance overload selection.
+
+### Carry source class value kind through positional call selection
+
+Deferred self now produces a class value, but a carrier TypeRef alone
+does not distinguish that value from an instance of the same class.
+Project the existing source value fact into the positional resolver
+query and its memo identity. The source restriction matcher decides
+class value compatibility before carrier compatibility or default
+selection, including when the resolver searches inherited declarations.
+Concrete metaclass restrictions retain their source identity in the
+declaration key.
+
+The parent rejects the Log.for shape. The class argument kind gate
+passes nine probes in stock Crystal 1.22.1 and exact lazy and eager
+Adamas (35q1310). It exercises default values, use of the actual
+metaclass in the body, lexical Class shadowing, and an incompatible
+instance in a mixed union. The installed-prelude hello passes. On an
+unchanged 4506-entry LavinMQ manifest, only compiler source and binary
+changed. HIR now reaches Channel::LooseReceiveAction(Nil)#unwait with
+an Unknown context argument. Included default selection, method-returned
+class values, named and splatted calls, and native LavinMQ remain open.
+Refresh after changes to source value production, resolver memo identity,
+overload ranking, default binding, or declaration keys.

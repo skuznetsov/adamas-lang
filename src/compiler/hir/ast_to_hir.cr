@@ -1762,6 +1762,10 @@ module Adamas::HIR
       # positional prefix of a def (slots before `*` / "already specified").
       getter raw_positional_count : Int32?
       getter source_named_types : Bool
+      # Exact per-slot source facts are supplied only by the ordinary plain-
+      # positional lower_call boundary. They are a projection of the existing
+      # SSA source-fact owner, not a second inference authority.
+      getter source_argument_facts : Array(SourceCallArgument?)?
 
       def initialize(
         @func_name : String,
@@ -1773,7 +1777,9 @@ module Adamas::HIR
         @named_names : Array(String)?,
         @raw_positional_count : Int32? = nil,
         @source_named_types : Bool = false,
+        source_argument_facts : Array(SourceCallArgument?)? = nil,
       )
+        @source_argument_facts = source_argument_facts.try(&.dup)
       end
     end
 
@@ -1791,6 +1797,7 @@ module Adamas::HIR
       getter named_names : Array(String)?
       getter raw_positional_count : Int32?
       getter source_named_types : Bool
+      getter source_argument_facts : Array(SourceCallArgument?)?
       getter current_class : String?
       getter current_method : String?
       getter current_namespace : String?
@@ -1832,6 +1839,7 @@ module Adamas::HIR
         @named_names = input.named_names.try(&.dup)
         @raw_positional_count = input.raw_positional_count
         @source_named_types = input.source_named_types
+        @source_argument_facts = input.source_argument_facts.try(&.dup)
         @type_params = [] of Tuple(String, String)
         type_param_map.each do |name, value|
           @type_params << {name, value}
@@ -1864,6 +1872,7 @@ module Adamas::HIR
         return false unless @named_names == input.named_names
         return false unless @raw_positional_count == input.raw_positional_count
         return false unless @source_named_types == input.source_named_types
+        return false unless @source_argument_facts == input.source_argument_facts
         return false unless @current_class == current_class
         return false unless @current_method == current_method
         return false unless @current_namespace == current_namespace
@@ -52249,15 +52258,22 @@ module Adamas::HIR
         # two distinct source restrictions overwrite the same declaration.
         # Only the declaration key changes; call instances retain their actual
         # argument TypeRefs and the existing source restriction checks.
-        if param_types[param_count - 1]? == TypeRef::INT32
+        if param_type = param_types[param_count - 1]?
           if source_annotation = parameter_type_annotation_string(param, parameter_arena)
-            owner = method_owner_from_name(base_name)
-            context = owner.empty? || owner == base_name ? nil : owner
-            declared_name = normalize_declared_type_name(source_annotation, context, specialize_bare_generics: false)
-            declared_name = resolve_type_alias_chain(declared_name.lchop("::"), preserve_abstract_int: true)
-            if declared_name == "Int"
-              source_restriction_names ||= Array(String?).new(param_types.size, nil)
-              source_restriction_names[param_count - 1] = declared_name
+            if param_type == TypeRef::INT32 || source_annotation.includes?(".class") || source_annotation.includes?(".metaclass")
+              owner = method_owner_from_name(base_name)
+              context = owner.empty? || owner == base_name ? nil : owner
+              declared_name = normalize_declared_type_name(source_annotation, context, specialize_bare_generics: false)
+              declared_name = resolve_type_alias_chain(declared_name.lchop("::"), preserve_abstract_int: true)
+              restriction_name = if param_type == TypeRef::INT32 && declared_name == "Int"
+                                   declared_name
+                                 elsif param_type != TypeRef::VOID && proc_annotation_type_literal?(declared_name)
+                                   proc_source_type_name(param_type, true)
+                                 end
+              if restriction_name
+                source_restriction_names ||= Array(String?).new(param_types.size, nil)
+                source_restriction_names[param_count - 1] = restriction_name
+              end
             end
           end
         end
@@ -60568,6 +60584,7 @@ module Adamas::HIR
       param_infos : Array(DefParamInfo)? = nil,
       trace : Bool = false,
       packed_source_slots : Bool = false,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : Bool
       params = method_forall_call_param_infos(def_node, arg_types, param_infos || function_param_infos(def_node), context)
       STDERR.puts "[COMPAT] enter def=#{def_node.name} params=#{params.size} args=#{arg_types.size} ctx=#{context}" if trace
@@ -60622,21 +60639,39 @@ module Adamas::HIR
       return false if arg_types.size < min_args
       return false if !has_splat && arg_types.size > max_args
 
+      source_formals = source_argument_facts ? source_block_type_param_names(def_node, context) : nil
       arg_idx = 0
       params.each do |param|
         next if param.is_block
         next if named_only_separator?(param)
         if param.is_splat || param.is_double_splat
           if param.is_splat && !param.is_double_splat && (ta = param.type_annotation)
+            class_slots = nil.as(Set(Int32)?)
+            if source_argument_facts && source_formals && !ta.starts_with?('*')
+              (arg_idx...arg_types.size).each do |index|
+                kind_match = proven_class_argument_matches_param?(param, source_argument_facts[index]?, context, source_formals)
+                return false if kind_match == false
+                if kind_match == true
+                  (class_slots ||= Set(Int32).new) << index
+                end
+              end
+            end
             return with_parameter_restriction(ta, context, normalize_unbound: !context.nil?) do |type_name, contract_type|
-              splat_params_compatible_with_args?(type_name, contract_type, arg_types, arg_idx)
+              splat_params_compatible_with_args?(type_name, contract_type, arg_types, arg_idx, class_slots)
             end
           end
           return true
         end
         break if arg_idx >= arg_types.size
 
-        return false unless param_compatible_with_arg?(param, arg_types[arg_idx], context, trace, arg_idx)
+        kind_match = if source_argument_facts && source_formals
+                       proven_class_argument_matches_param?(param, source_argument_facts[arg_idx]?, context, source_formals)
+                     end
+        if kind_match.nil?
+          return false unless param_compatible_with_arg?(param, arg_types[arg_idx], context, trace, arg_idx)
+        else
+          return false unless kind_match
+        end
 
         arg_idx += 1
       end
@@ -60649,6 +60684,7 @@ module Adamas::HIR
       contract_type : TypeRef?,
       arg_types : Array(TypeRef),
       arg_idx : Int32,
+      accepted_source_class_slots : Set(Int32)? = nil,
     ) : Bool
       unless splat_type_name.empty? || splat_type_name == "_" || unresolved_type_param_annotation?(splat_type_name)
         splat_resolved_name = resolve_type_alias_chain(splat_type_name, preserve_abstract_int: true)
@@ -60662,7 +60698,7 @@ module Adamas::HIR
           # Tuple itself. Skip unpacking when the splat formal is itself Tuple-typed
           # (e.g. `def foo(*x : Tuple)`), since the Tuple arg is intentional there.
           splat_check_args = arg_types
-          if arg_idx + 1 == arg_types.size
+          if arg_idx + 1 == arg_types.size && !accepted_source_class_slots.try(&.includes?(arg_idx))
             packed_arg = arg_types[arg_idx]
             if packed_arg != TypeRef::VOID
               packed_desc = @module.get_type_descriptor(packed_arg)
@@ -60687,6 +60723,10 @@ module Adamas::HIR
 
           check_idx = arg_idx
           while check_idx < splat_check_args.size
+            if accepted_source_class_slots.try(&.includes?(check_idx))
+              check_idx += 1
+              next
+            end
             splat_arg_type = splat_check_args[check_idx]
             return false if splat_arg_type == TypeRef::VOID
             generic_match = source_generic_restriction_match?(generic_param_type_name_from_ref(splat_arg_type), splat_resolved_name)
@@ -61195,11 +61235,13 @@ module Adamas::HIR
       arg_types : Array(TypeRef),
       context : String? = nil,
       param_infos : Array(DefParamInfo)? = nil,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : Int32
       params = param_infos || function_param_infos(def_node)
       return 0 if params.empty?
 
       score = 0
+      source_formals = source_argument_facts ? source_block_type_param_names(def_node, context) : nil
       arg_idx = 0
       params.each do |param|
         next if param.is_block
@@ -61215,6 +61257,22 @@ module Adamas::HIR
           param_type_name = normalize_declared_type_name(param_type_name, context, specialize_bare_generics: false)
         end
 
+        if source_argument_facts && source_formals &&
+           proven_class_argument_matches_param?(param, source_argument_facts[arg_idx]?, context, source_formals) == true
+          # Concrete metaclass restrictions precede Class, which precedes its
+          # broad Value/Object ancestors. Never score by the instance carrier.
+          score += if param_type_name.ends_with?(".class") || param_type_name.ends_with?(".metaclass")
+                     3
+                   elsif param_type_name.lchop("::") == "Class"
+                     2
+                   elsif param_type_name.lchop("::") == "Value"
+                     1
+                   else
+                     0
+                   end
+          arg_idx += 1
+          next
+        end
         arg_type = arg_types[arg_idx]
         if arg_type != TypeRef::VOID && !param_type_name.empty?
           actual_name = generic_param_type_name_from_ref(arg_type)
@@ -77422,6 +77480,122 @@ module Adamas::HIR
       kinds = facts.map(&.[1]).uniq
       SourceCallArgument.new(enum_tracked_type(ctx, value), kinds == [true], rest_values,
         kinds.size > 1 ? facts : nil)
+    end
+
+    # Project only source expressions whose value kind is already known.
+    # General expression results get their facts from the lowered ValueIds.
+    private def source_class_arguments_before_lowering(
+      ctx : LoweringContext,
+      args : Array(ExprId),
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Array(SourceCallArgument?)?
+      slots = nil.as(Array(SourceCallArgument?)?)
+      with_arena(arena) do
+        args.each_with_index do |expr, index|
+          node = arena[expr]
+          type = case node
+                 when Adamas::Compiler::Frontend::SelfNode
+                   deferred_initializer_self_owner(ctx).try { |owner| type_ref_for_name(owner) }
+                 when Adamas::Compiler::Frontend::IdentifierNode
+                   if local = ctx.lookup_local(safe_slice_to_string(node.name) || "")
+                     ctx.type_of(local) if ctx.type_literal?(local)
+                   else
+                     infer_type_literal_name_from_expr(expr).try { |owner| type_ref_for_name(owner) }
+                   end
+                 when Adamas::Compiler::Frontend::PathNode, Adamas::Compiler::Frontend::GenericNode
+                   infer_type_literal_name_from_expr(expr).try { |owner| type_ref_for_name(owner) }
+                 end
+          if type && type != TypeRef::VOID
+            (slots ||= Array(SourceCallArgument?).new(args.size, nil))[index] = SourceCallArgument.new(type, true)
+          end
+        end
+      end
+      slots
+    end
+
+    # Read source value facts once for the current argument vector.
+    private def call_resolution_source_argument_facts(
+      ctx : LoweringContext,
+      args : Array(ValueId),
+      arg_types : Array(TypeRef)?,
+      has_splat : Bool = false,
+      has_named : Bool = false,
+    ) : Array(SourceCallArgument?)?
+      return nil if has_splat || has_named || !arg_types || args.size != arg_types.size
+      slots = args.map do |value|
+        facts = source_block_result_value_facts(ctx, value)
+        if facts.size == 1
+          actual, literal = facts[0]
+          SourceCallArgument.new(actual, literal) unless actual == TypeRef::VOID
+        end
+      end
+      slots.any? { |facts| !facts.nil? } ? slots : nil
+    end
+
+    private def proven_class_argument_matches_param?(
+      param : DefParamInfo,
+      argument : SourceCallArgument?,
+      context : String?,
+      formals : Array(String),
+    ) : Bool?
+      return nil unless argument
+      actual = argument.type_ref
+      restriction = param.type_annotation || return nil
+      source = restriction.strip
+      return nil if source.empty? || source == "_"
+      pattern = build_source_block_result_pattern(source, context, formals, annotation_type_bindings(context))
+      return nil unless pattern.valid
+      if argument.type_literal
+        source_block_result_pattern_matches_value?(actual, true, pattern)
+      elsif source_block_result_type_literal_pattern?(pattern) ||
+            (pattern.kind == SourceBlockResultPattern::Kind::Concrete &&
+             pattern.restriction_name.lchop("::") == "Class")
+        false
+      elsif pattern.kind == SourceBlockResultPattern::Kind::Union &&
+            pattern.children.any? { |child| source_block_result_type_literal_pattern?(child) }
+        # A metaclass arm cannot admit an instance with the same carrier.
+        # Keep ordinary numeric and other source compatibility for the
+        # remaining arms, including their implicit conversions.
+        pattern.children.any? do |child|
+          !source_block_result_type_literal_pattern?(child) &&
+            param_compatible_with_arg?(
+              DefParamInfo.new(param.name, param.external_name, child.restriction_name,
+                param.default_value, param.is_splat, param.is_double_splat, param.is_block),
+              actual, context, false, 0,
+            )
+        end
+      end
+    end
+
+    private def call_source_argument_kinds_match?(
+      input : CallResolutionInput,
+      definition : Adamas::Compiler::Frontend::DefNode,
+      selected_name : String?,
+    ) : Bool
+      slots = input.source_argument_facts || return true
+      return false if input.has_named || input.has_splat || slots.size != input.arg_count
+      context = function_context_for_lookup_candidate(input.func_name, selected_name || input.func_name)
+      formals = source_block_type_param_names(definition, context)
+      params = function_param_infos(definition).reject { |param| param.is_block || named_only_separator?(param) }
+      index = 0
+      params.each do |param|
+        break if param.is_double_splat
+        if param.is_splat
+          # A plain typed rest restricts each source actual. Aggregate *Tuple
+          # restrictions require their own packed-layout binding instead.
+          unless param.type_annotation.try(&.starts_with?('*'))
+            while index < slots.size
+              return false if proven_class_argument_matches_param?(param, slots[index], context, formals) == false
+              index += 1
+            end
+          end
+          break
+        end
+        break if index >= slots.size
+        return false if proven_class_argument_matches_param?(param, slots[index], context, formals) == false
+        index += 1
+      end
+      true
     end
 
     private def source_call_argument_from_name(name : String) : SourceCallArgument
@@ -94220,14 +94394,16 @@ module Adamas::HIR
     # ═══════════════════════════════════════════════════════════════════════
 
     private def lower_self(ctx : LoweringContext, node : Adamas::Compiler::Frontend::SelfNode) : ValueId
-      # Deferred constant initializers run in the generated main, but retain
-      # the lexical self of their owning class or module.
-      if ctx.function.name == "__adamas_main" && @current_method.nil?
-        if (owner = @deferred_constant_owner) && owner == @current_class
-          return lower_type_literal_from_name(ctx, "::#{owner}")
-        end
+      if owner = deferred_initializer_self_owner(ctx)
+        return lower_type_literal_from_name(ctx, "::#{owner}")
       end
       emit_self(ctx)
+    end
+
+    private def deferred_initializer_self_owner(ctx : LoweringContext) : String?
+      return nil unless ctx.function.name == "__adamas_main" && @current_method.nil?
+      owner = @deferred_constant_owner
+      owner if owner == @current_class
     end
 
     # Lower implicit object (like .foo syntax) - treated as self
@@ -114150,9 +114326,13 @@ module Adamas::HIR
                   call_arg_types = expanded_types
                 end
               end
+              prelowering_facts = unless call_has_splat || call_has_named_args
+                                    source_class_arguments_before_lowering(ctx, call_args, call_arena)
+                                  end
               selected_class_method_entry = lookup_function_def_for_call(
                 full_method_name, call_arg_types.size, has_block_call, call_arg_types,
                 call_has_splat, call_has_named_args, call_named_arg_names,
+                source_argument_facts: prelowering_facts,
               )
               if selected_class_method_entry.nil? && !call_has_splat && !call_has_named_args &&
                  call_arg_types.all? { |type| type != TypeRef::VOID }
@@ -116262,6 +116442,7 @@ module Adamas::HIR
           has_splat: call_has_splat,
           has_named: call_has_named_args,
           named_names: canonical_named_arg_names(call_named_arg_names),
+          source_argument_facts: call_resolution_source_argument_facts(ctx, args, arg_types, call_has_splat, call_has_named_args),
         ) : nil
         if entry = (m3f_input_c ? resolve_call_input(m3f_input_c) : nil)
           refined_name = entry[0]
@@ -116369,6 +116550,7 @@ module Adamas::HIR
             has_splat: has_splat,
             has_named: has_named_args,
             named_names: canonical_named_arg_names(call_named_arg_names),
+            source_argument_facts: call_resolution_source_argument_facts(ctx, args, arg_types, has_splat, has_named_args),
           ) : nil
           if entry = (m3f_input_p ? resolve_call_input(m3f_input_p) : nil)
             full_method_name = entry[0]
@@ -116845,6 +117027,7 @@ module Adamas::HIR
         has_named: has_named_args,
         named_names: canonical_named_arg_names(call_named_arg_names),
         raw_positional_count: has_named_args ? raw_call_positional_count : nil,
+        source_argument_facts: call_resolution_source_argument_facts(ctx, args, arg_types, has_splat, has_named_args),
       ) : nil
       if receiver_id &&
          abi_guard_explicit_arg_count > 0 &&
@@ -117569,6 +117752,7 @@ module Adamas::HIR
                              has_splat: false,
                              has_named: has_named_args,
                              named_names: canonical_named_arg_names(call_named_arg_names),
+                             source_argument_facts: call_resolution_source_argument_facts(ctx, args, arg_types, false, has_named_args),
                            ) : nil
                            m3h_input ? resolve_call_input(m3h_input) : nil
                          end
@@ -118915,7 +119099,8 @@ module Adamas::HIR
           if prior_rejection = source_call_rejections.first?
             # A later owner-aware rematch may legitimately find a different Def.
             # It must establish compatibility before superseding a typed rejection.
-            source_admitted = final_def && params_compatible_with_args?(final_def, arg_types, final_context)
+            source_admitted = final_def && params_compatible_with_args?(final_def, arg_types, final_context,
+              source_argument_facts: call_resolution_source_argument_facts(ctx, args, arg_types))
           end
         ensure
           leave_lookup_candidate_scope(candidate_scope)
@@ -121000,6 +121185,7 @@ module Adamas::HIR
                 has_splat: has_splat,
                 has_named: has_named_args,
                 named_names: canonical_named_arg_names(call_named_arg_names),
+                source_argument_facts: call_resolution_source_argument_facts(ctx, args, arg_types, has_splat, has_named_args),
               ) : nil
               if resolved = (m3j_input ? resolve_call_input(m3j_input) : nil)
                 resolved_name = value_receiver_static_dispatch_target(concrete_base, resolved[0], arg_types, has_block_call)
@@ -121128,6 +121314,7 @@ module Adamas::HIR
                 has_splat: has_splat,
                 has_named: has_named_args,
                 named_names: canonical_named_arg_names(call_named_arg_names),
+                source_argument_facts: call_resolution_source_argument_facts(ctx, args, arg_types, has_splat, has_named_args),
               ) : nil
               if entry = (m3g_input_r ? resolve_call_input(m3g_input_r) : nil)
                 resolved_name = entry[0]
@@ -121238,6 +121425,7 @@ module Adamas::HIR
           has_splat: has_splat,
           has_named: has_named_args,
           named_names: canonical_named_arg_names(call_named_arg_names),
+          source_argument_facts: call_resolution_source_argument_facts(ctx, args, arg_types, has_splat, has_named_args),
         ) : nil
         if rematched = (m3g_input_f ? resolve_call_input(m3g_input_f) : nil)
           rematched_name = rematched[0]
@@ -122082,6 +122270,7 @@ module Adamas::HIR
           has_named: has_named_args,
           named_names: canonical_named_arg_names(call_named_arg_names),
           raw_positional_count: raw_call_positional_count,
+          source_argument_facts: call_resolution_source_argument_facts(ctx, args, lookup_arg_types, false, has_named_args),
         ) : nil
         if direct_block_target = (m3i_input ? resolve_call_target(m3i_input) : nil)
           selected_source_block_target = true
@@ -126065,6 +126254,7 @@ module Adamas::HIR
       named_arg_names : Array(String)? = nil,
       raw_positional_count : Int32? = nil,
       source_named_types : Bool = false,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : Tuple(String, Adamas::Compiler::Frontend::DefNode)?
       return nil unless v2_string_readable?(func_name)
       # Source argument lookup needs an explicit (possibly empty) keyword list.
@@ -126083,6 +126273,7 @@ module Adamas::HIR
         named_names: named_arg_names,
         raw_positional_count: raw_positional_count,
         source_named_types: source_named_types,
+        source_argument_facts: source_argument_facts,
       ))
     end
 
@@ -126227,6 +126418,19 @@ module Adamas::HIR
       else
         hash = call_resolution_memo_mix(hash, UInt64::MAX)
       end
+      if source_argument_facts = input.source_argument_facts
+        hash = call_resolution_memo_mix(hash, source_argument_facts.size.to_u64)
+        source_argument_facts.each do |argument|
+          if argument
+            hash = call_resolution_memo_mix(hash, argument.type_ref.id.to_u64)
+            hash = call_resolution_memo_mix(hash, argument.type_literal ? 1_u64 : 0_u64)
+          else
+            hash = call_resolution_memo_mix(hash, UInt64::MAX - 2_u64)
+          end
+        end
+      else
+        hash = call_resolution_memo_mix(hash, UInt64::MAX - 3_u64)
+      end
       if named_names = input.named_names
         hash = call_resolution_memo_mix(hash, named_names.size.to_u64)
         named_names.each do |name|
@@ -126293,6 +126497,7 @@ module Adamas::HIR
       # A direct generated getter is the exact zero-positional/no-block
       # overload. A splat or named-only Def may coexist in this family, but
       # must not steal this call merely because it also accepts zero values.
+      return false unless call_source_argument_kinds_match?(input, def_node, selected_name)
       return false if source_instance_getter_owns_call_shape?(input)
       return false if selected_name && direct_getter_supersedes_def_candidate?(selected_name, def_node)
 
@@ -127227,6 +127432,7 @@ module Adamas::HIR
 
         untyped_candidate = untyped_candidate_for?(stats)
         next if prefer_untyped && !untyped_candidate
+        next unless call_source_argument_kinds_match?(input, def_node, name)
 
         score = 0
         compatible = true
@@ -127255,10 +127461,12 @@ module Adamas::HIR
             candidate_param_map = lookup_candidate_restriction_param_map(name, def_node)
             compatible = if candidate_param_map
                            with_type_param_map(candidate_param_map) do
-                             params_compatible_with_args?(def_node, match_arg_types, func_context, match_param_infos, ovl_trace)
+                             params_compatible_with_args?(def_node, match_arg_types, func_context, match_param_infos, ovl_trace,
+                               source_argument_facts: input.source_argument_facts)
                            end
                          else
-                           params_compatible_with_args?(def_node, match_arg_types, func_context, match_param_infos, ovl_trace)
+                           params_compatible_with_args?(def_node, match_arg_types, func_context, match_param_infos, ovl_trace,
+                               source_argument_facts: input.source_argument_facts)
                          end
             STDERR.puts "[OVL]   cand=#{name} pc=#{param_count} req=#{required} ctx=#{func_context} compat=#{compatible}" if ovl_trace
             if compatible && (single_candidate_fast_path || source_constructor_family)
@@ -127276,10 +127484,10 @@ module Adamas::HIR
               end
               score = if candidate_param_map
                         with_type_param_map(candidate_param_map) do
-                          params_match_score(def_node, match_arg_types, func_context, match_param_infos)
+                          params_match_score(def_node, match_arg_types, func_context, match_param_infos, input.source_argument_facts)
                         end
                       else
-                        params_match_score(def_node, match_arg_types, func_context, match_param_infos)
+                        params_match_score(def_node, match_arg_types, func_context, match_param_infos, input.source_argument_facts)
                       end
               score += class_method_owner_match_bonus(func_name, name, arg_types)
               score += named_args_match_score(def_node, named_arg_names)
@@ -127399,6 +127607,7 @@ module Adamas::HIR
                    named_arg_names,
                    input.raw_positional_count,
                    input.source_named_types,
+                   source_argument_facts: input.source_argument_facts,
                  )
                 if debug_call_lookup
                   STDERR.puts "[CALL_LOOKUP_INHERITED_AFTER_LOCAL_MISS] func=#{func_name} target=#{inherited_lookup}"
@@ -127423,6 +127632,7 @@ module Adamas::HIR
                    named_arg_names,
                    input.raw_positional_count,
                    input.source_named_types,
+                   source_argument_facts: input.source_argument_facts,
                  )
                 if debug_call_lookup
                   STDERR.puts "[CALL_LOOKUP_INHERITED_CLASS_AFTER_LOCAL_MISS] func=#{func_name} target=#{inherited_lookup}"
@@ -127446,6 +127656,7 @@ module Adamas::HIR
                    named_arg_names,
                    input.raw_positional_count,
                    input.source_named_types,
+                   source_argument_facts: input.source_argument_facts,
                  )
                 return inherited_entry
               end
@@ -128363,7 +128574,8 @@ module Adamas::HIR
       if arg_types.any? { |t| t == TypeRef::VOID } && !func_name.starts_with?("Atomic::Ops.")
         return lower_positional_args_until_dead(ctx, positional_args)
       end
-      func_entry = lookup_function_def_for_call(func_name, positional_args.size, has_block_call, arg_types)
+      func_entry = lookup_function_def_for_call(func_name, positional_args.size, has_block_call, arg_types,
+        source_argument_facts: source_class_arguments_before_lowering(ctx, positional_args, call_arena))
       literal_types : Array(TypeRef)? = nil
       if func_entry.nil?
         if literal_entry = source_integer_autocast_entry(
@@ -129121,11 +129333,13 @@ module Adamas::HIR
       func_name = full_method_name || method_name
       source_arg_count = args.size
       arg_types = args.map { |arg_id| ctx.type_of(arg_id) }
+      source_argument_facts = call_resolution_source_argument_facts(ctx, args, arg_types, false, call_has_named_args)
       # Preserve the actual named-argument signal when choosing an overload for
       # default expansion. Optional named-only defaults remain callable without
       # named args via effective_arity_stats_for_call, but required named-only
       # params must not be matched by a positional call.
-      func_entry = lookup_function_def_for_call(func_name, args.size, has_block_call, arg_types, false, call_has_named_args)
+      func_entry = lookup_function_def_for_call(func_name, args.size, has_block_call, arg_types, false, call_has_named_args,
+        source_argument_facts: source_argument_facts)
       func_entry_arena : Adamas::Compiler::Frontend::ArenaLike? = nil
       # If not found directly, try parent classes (for inherited methods with defaults)
       unless func_entry
@@ -129141,7 +129355,8 @@ module Adamas::HIR
             break if visited.includes?(parent)
             visited << parent
             parent_func = "#{parent}##{method_part}"
-            func_entry = lookup_function_def_for_call(parent_func, args.size, has_block_call, arg_types, false, call_has_named_args)
+            func_entry = lookup_function_def_for_call(parent_func, args.size, has_block_call, arg_types, false, call_has_named_args,
+              source_argument_facts: source_argument_facts)
             if debug_da
               result = func_entry ? "FOUND=#{func_entry[0]}" : "not found"
               STDERR.puts "[DEFAULT_ARGS]   parent=#{parent} try=#{parent_func} → #{result}"
