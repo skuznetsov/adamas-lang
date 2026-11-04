@@ -24396,11 +24396,14 @@ integration, fresh bootstrap, or LavinMQ parity.
   receiver so macro `T` and field reads use the same layout. The native
   gate alternates two layouts and reuses the first one. Crystal 1.22.1 and
   the candidate agree, and the installed-prelude hello passes (35q1479).
-- [ ] Preserve the concrete source argument when entering an annotated
-  NamedTuple body that forwards it to a yielding overload. Also test actual
-  union arguments separately. In the installed-prelude String index probe,
-  the argument reaches the block lookup as `String | Symbol` and the legacy
-  inline fallback picks the Symbol overload (35q1479).
+- [x] Keep the selected NamedTuple declaration key until explicit argument
+  specialization finishes. The scalar calls select distinct yielding overloads,
+  and the installed-prelude String index probe preserves hit and miss results
+  (35q1480).
+- [ ] Dispatch actual union arguments to yielding overloads. The scalar
+  NamedTuple regression passes after 35q1480, but a runtime `Int32 | Int64`
+  argument still misses the right block body. Check exact arm binding,
+  one-time argument evaluation, capture updates, and joined result types.
 - [ ] Resolve each structural NamedTuple receiver union arm under its own
   source and result contract before joining results. A native holdout with
   branch results `Int32 | Nil` and `Bool | Int64` still computes the second

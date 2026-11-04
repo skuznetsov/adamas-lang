@@ -11,6 +11,18 @@ struct NamedTuple
     result
   end
 
+  def source_result(value : Int32 | Int64)
+    source_fetch(value) { 9 }
+  end
+
+  def source_fetch(value : Int32, &)
+    value == 7 ? yield : 11
+  end
+
+  def source_fetch(value : Int64, &)
+    value == 4_000_000_000_i64 ? yield : 12
+  end
+
   def source_name
     {% for key in T %}
       {% if key.stringify == "name" %}
@@ -40,5 +52,7 @@ end
 
 first = {name: 11, enabled: true}
 second = {count: 7, name: 8, other: 9}
+LibC.exit(6) unless first.source_result(7) == 9
+LibC.exit(7) unless first.source_result(4_000_000_000_i64) == 9
 LibC.exit(verify(count_fields(first, 10), count_fields(second, 20),
   count_fields(first, 30), read_name(first), read_name(second)))

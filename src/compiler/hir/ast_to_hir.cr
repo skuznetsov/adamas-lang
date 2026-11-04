@@ -117456,9 +117456,9 @@ module Adamas::HIR
             concrete_owner_name = receiver_type_name
           end
         end
-        if concrete_owner_name.nil? && receiver_id && !ctx.type_literal?(receiver_id)
-          concrete_owner_name = concrete_named_tuple_receiver_owner(ctx.type_of(receiver_id))
-        end
+        # Keep an instance receiver's selected declaration key until argument
+        # specialization has consumed it. Concrete value owners are applied to
+        # the callable target below, after the source binding is recorded.
         entry_name = specialize_method_owner_name(entry_name, concrete_owner_name)
         if entry_def && concrete_owner_name &&
            (inherited_body_target = inherited_class_method_body_target(entry_name, concrete_owner_name))
