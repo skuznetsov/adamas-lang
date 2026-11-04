@@ -135859,7 +135859,6 @@ module Adamas::HIR
         pushed_name = false
         pushed_tuple_each_next = false
         pushed_block = false
-        pushed_override = false
         pushed_block_owner_frame_index = false
         prev_block_owner_frame_index : Int32? = nil
         previous_block_owner = @block_owner[block.object_id]?
@@ -135874,10 +135873,9 @@ module Adamas::HIR
         @inline_tuple_each_next_stack << concrete_tuple_each_inline
         @inline_tuple_each_loop_exit_depth_stack << (concrete_tuple_each_inline ? @loop_exit_stack.size : -1)
         pushed_tuple_each_next = true
-        if @inline_yield_block_body_depth > 0
-          @inline_yield_return_override_stack << InlineReturnOverride.new(false, nil)
-          pushed_override = true
-        end
+        # A new inlined method owns its body even during reentrant lowering.
+        # Its caller's block override applies again only after this frame exits.
+        @inline_yield_return_override_stack << InlineReturnOverride.new(false, nil)
         @inline_yield_block_stack << block
         @inline_yield_block_arena_stack << block_arena
         @inline_yield_block_param_types_stack << block_param_types
@@ -136381,7 +136379,7 @@ module Adamas::HIR
           @inline_tuple_each_loop_exit_depth_stack.pop? if pushed_tuple_each_next
           @inline_yield_return_stack.pop?
           @inline_yield_return_caller_locals_stack.pop?
-          @inline_yield_return_override_stack.pop? if pushed_override
+          @inline_yield_return_override_stack.pop?
           if pushed_block_owner_frame_index
             if prev_block_owner_frame_index
               @block_owner_caller_frame_index[block.object_id] = prev_block_owner_frame_index

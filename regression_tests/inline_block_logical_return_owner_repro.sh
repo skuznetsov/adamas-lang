@@ -215,8 +215,49 @@ LibC.exit(1) unless router.register_routes(false).status == 7
 LibC.exit(2) unless router.register_routes(true).status == 7
 CRYSTAL
 
-cases=(valid_returns proc_inline_returns)
-expected_stdout=('ADPNQGHCQ' 'ALA')
+# Resolving render's inferred result while lowering the callback enters a
+# separate function. Its inlined gate must not return from the callback.
+cat > "$WORK/reentrant_inline_returns.cr" <<'CRYSTAL'
+lib LibC
+  fun putchar(value : Int32) : Int32
+  fun getpid : Int32
+end
+
+def gate(enabled : Bool, &)
+  return unless enabled
+  yield
+end
+
+class Context
+  def write : Int32
+    LibC.putchar(67)
+  end
+end
+
+class Handler
+  def render(context, flag : Bool)
+    gate(flag) { LibC.putchar(65) }
+    context
+  end
+
+  def on(& : Context -> Context)
+    yield Context.new
+  end
+
+  def run(flag : Bool)
+    on do |context|
+      render(context, flag)
+    end.write
+  end
+end
+
+handler = Handler.new
+handler.run(LibC.getpid < 0)
+handler.run(LibC.getpid > 0)
+CRYSTAL
+
+cases=(valid_returns proc_inline_returns reentrant_inline_returns)
+expected_stdout=('ADPNQGHCQ' 'ALA' 'CAC')
 
 run_case() {
   local mode="$1" index="$2" probe="${cases[$2]}" status

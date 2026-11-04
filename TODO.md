@@ -23068,6 +23068,22 @@ integration, fresh bootstrap, or LavinMQ parity.
   same selected arm results. The focused regression certifies the early
   member-access result, with one parenthesized call as a control.
 
+## 2026-11-04 — Scope inline return ownership across reentrant demand
+
+- Root cause: deferred result inference can reenter lowering in another HIR
+  function with block-body depth reset. The caller's lexical return override
+  was still visible, so an early return in a newly inlined method escaped
+  that method and widened its enclosing callback's result.
+- Mask the caller override on every inline method entry and restore it on
+  exit. Capture the caller's logical return destination before installing
+  that boundary so the caller's own block keeps its original owner.
+- Verification: q1535 rejects the reentrant callback as Nil | Context.
+  Exact q1538 matches Crystal 1.22.1 in all three return-owner cases, lazy and
+  eager. In the integration probe q1537, both Log#warn returns stay inside
+  the inlined warning call and LavinMQ reaches the bindings DELETE route.
+- [ ] Audit the use of ambient block return overrides at other reentrant
+  lowering boundaries and require the physical function identity at consumers.
+
 ## 2026-11-04 — Preserve the actual argument of an applied class restriction
 
 - Root cause: matching Rows(Channel) against Rows(Sortable) succeeded, but
