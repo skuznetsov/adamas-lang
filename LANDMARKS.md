@@ -23062,3 +23062,20 @@ Proc calls, and rejects an incompatible positional Proc. The historical
 named-capacity Hash constructor and installed-prelude hello also pass
 (35q1224, 35q1231). Refresh on changes to call shape collection, overload
 ranking, or recursive demand publication.
+
+### Preserve a concrete signature under a bare Proc restriction
+
+A concrete Proc descriptor and the bare source restriction can both display
+as `Proc`. Body specialization now compares their signature slots before
+using display-name equality. The already admitted argument supplies the
+specialized local's TypeRef, including the input and output value kinds.
+
+Crystal 1.22.1 and the isolated S1 candidate agree on native Proc literal,
+method-pointer, metaclass-input, and lexical shadowing cases. Both reject
+the incompatible input type and value kind and reject a non-Proc argument.
+The parent fails the positive fixture with a missing concrete signature
+(35q1231, 35q1252). The Proc-call admission and recursive overload oracles
+and installed-prelude hello pass. Nested `Array(Proc)` overload admission
+still fails with the same diagnostic on both compiler revisions. Refresh
+on changes to body-parameter specialization, Proc descriptor slots, or
+late callback signature reconstruction.

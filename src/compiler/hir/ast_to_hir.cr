@@ -19860,6 +19860,15 @@ module Adamas::HIR
       call_name = get_type_name_from_ref(call_type)
       return false if call_name.empty? || call_name == "Void" || call_name == "Unknown"
       return true if param_name.empty? || param_name == "Void" || param_name == "Unknown"
+      # Bare and concrete Proc descriptors share a display name. A specialized
+      # body must keep the admitted callback signature, including its slot
+      # value kinds, when the source restriction itself has no signature.
+      if param_name == "Proc" && call_name == "Proc"
+        param = @module.get_type_descriptor(param_type)
+        actual = @module.get_type_descriptor(call_type)
+        return !!(param && param.type_params.empty? &&
+                  actual && actual.kind == TypeKind::Proc && !actual.type_params.empty?)
+      end
       return false if param_name == call_name
 
       # Object-restricted parameters still need a concrete call-site body

@@ -24183,3 +24183,13 @@ integration, fresh bootstrap, or LavinMQ parity.
   The standalone nilable result control loses its non-Nil arm on the
   isolated inline candidate (35q1220). Verify both result types and both
   native branches after the retained target carries the source contract.
+
+### Keep bare Proc restrictions distinct from specialized callback signatures
+
+- [x] Preserve the admitted Proc descriptor when typing a bare-restricted
+  body local. The stock, lazy, and eager fixtures cover native values, type
+  and metaclass-kind rejection, and a lexical class with the same name
+  (35q1252).
+- [ ] Reduce the nested `Array(Proc)` admission failure independently.
+  The nullable Proc source regression fails at the same overload on the
+  parent and candidate (35q1231, 35q1252).
