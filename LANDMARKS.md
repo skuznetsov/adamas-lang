@@ -23344,3 +23344,24 @@ Installed-prelude hello and the JSON lexer and pull-parser reducer pass.
 The lexer now returns `Int` for the second token in `[3,4]`, and
 `read_int` returns 3. This gate covers the first integer only. Refresh
 after changes to generated setters, enum identity, or contextual autocast.
+
+
+### Resolve call restrictions in the selected declaration's lexical scope
+
+An included method's restrictions were checked against the concrete
+receiver's namespace and could resolve to a same-named type in the
+caller. Use the namespace stored for the selected source definition
+while retaining the concrete receiver for generic bindings and self.
+A direct candidate clears any inherited caller override. Packed named
+arguments are checked before restoring the caller's lexical scope.
+
+Crystal 1.22.1 and exact lazy and eager Adamas agree on 21 checks
+covering positional, block, and named calls, including same-name
+rejection and a direct callee called from an included method (35q1365).
+Named argument, module parameter path, named constructor, and
+installed-prelude hello gates also pass. The combined LavinMQ HIR
+probe crosses `call_next` and reaches `raise(Controller::HaltRequest)`
+with identical application, shard, and installed stdlib input manifests
+(35q1352, 35q1366). Lexical metaclass argument identity remains open
+(35q1363). Refresh after changes to source definition registration,
+candidate scope, or named argument binding.

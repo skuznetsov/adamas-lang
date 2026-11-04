@@ -24276,10 +24276,17 @@ integration, fresh bootstrap, or LavinMQ parity.
   PCRE2 code at field offset 24. The builtin match helper reads the old
   runtime layout with its code at offset zero (35q1350). Qualify both
   literal and dynamic patterns, flags, captures, and match positions.
-- [ ] Reduce the unresolved `call_next` in the ViewsController route
-  closure. The combined experimental build reaches it after the named
-  Regex constructor with byte-identical application, shards, and installed
-  stdlib inputs (35q1352).
+- [x] Resolve included method argument restrictions in the definition's
+  lexical namespace with the concrete receiver bindings. Validate packed
+  named arguments before restoring the caller scope. The combined
+  LavinMQ HIR run passes `call_next` with unchanged inputs (35q1366).
+- [ ] Preserve rooted type-literal identity when binding a lexical
+  `.class` restriction. The wrong nested class literal is still accepted
+  on the installed compiler candidate (35q1360, 35q1363).
+- [ ] Keep chained postfix conditions inside their owning expression.
+  The parser lets the second modifier in
+  `next unless predicate if flag` start a prefix conditional and consume
+  a block delimiter, hiding `Controller::HaltRequest` (35q1367).
 - [x] Use the declared enum field type when lowering a source Symbol
   literal assignment. The installed-prelude JSON first-token probe now
   passes `read_begin_array`, and both Adamas modes match Crystal on

@@ -55851,7 +55851,7 @@ module Adamas::HIR
         end
 
         context = function_context_for_lookup_candidate(input.func_name, candidate_name)
-        candidate_scope = enter_lookup_candidate_scope(context)
+        candidate_scope = enter_lookup_candidate_scope(candidate_name, context)
         compatible = begin
           if mismatch = source_generic_argument_mismatch_for_def(def_node, match_arg_types, context)
             false
@@ -60561,7 +60561,7 @@ module Adamas::HIR
       return nil unless params.size == 1 && params.first.is_splat && !params.first.is_double_splat
 
       context = function_context_for_lookup_candidate(lookup_name, selected_name)
-      saved_scope = enter_lookup_candidate_scope(context)
+      saved_scope = enter_lookup_candidate_scope(selected_name, context)
       compatible = false
       begin
         compatible = params_compatible_with_args?(
@@ -70101,16 +70101,15 @@ module Adamas::HIR
       extra
     end
 
-    # A candidate's restrictions resolve in the scope that declares it. A
-    # top-level def has no owner context, and its `Exception` must stay
-    # ::Exception even when the caller's class nests its own Exception.
-    # Returns the caller scope to restore, or nil when nothing changed.
-    private def enter_lookup_candidate_scope(candidate_context : String?) : Tuple(String?, String?)?
-      return nil if candidate_context
-      return nil unless @current_class || @current_namespace_override
+    # The concrete receiver carries generic bindings and self. A definition
+    # registered on that receiver by an include keeps its own lexical namespace
+    # for constant and type paths in restrictions.
+    private def enter_lookup_candidate_scope(candidate_name : String, candidate_context : String?) : Tuple(String?, String?)?
+      namespace = function_namespace_override_for(candidate_name)
+      return nil if @current_class == candidate_context && @current_namespace_override == namespace
       saved = {@current_class, @current_namespace_override}
-      @current_class = nil
-      @current_namespace_override = nil
+      @current_class = candidate_context
+      @current_namespace_override = namespace
       saved
     end
 
@@ -119105,10 +119104,9 @@ module Adamas::HIR
       if !has_block_call && !has_splat && !has_named_args
         final_def = source_initializer_entry.try(&.def_node) ||
                     selected_call_entry_def || @function_defs[mangled_method_name]?
-        final_context = function_context_for_lookup_candidate(
-          lookup_name, source_initializer_entry.try(&.symbol_name) || selected_call_entry_name || mangled_method_name,
-        )
-        candidate_scope = enter_lookup_candidate_scope(final_context)
+        final_name = source_initializer_entry.try(&.symbol_name) || selected_call_entry_name || mangled_method_name
+        final_context = function_context_for_lookup_candidate(lookup_name, final_name)
+        candidate_scope = enter_lookup_candidate_scope(final_name, final_context)
         begin
           source_rejection = if initializer = source_initializer_entry
                                with_arena(initializer.source_arena || call_arena) do
@@ -127502,7 +127500,7 @@ module Adamas::HIR
         candidate_requires_proc_nil_discard = false
         if arg_types && !unknown_args
           func_context = function_context_for_lookup_candidate(func_name, name)
-          candidate_scope = enter_lookup_candidate_scope(func_context)
+          candidate_scope = enter_lookup_candidate_scope(name, func_context)
           begin
             if collect_source_rejections
               saw_source_candidate = true
@@ -129053,6 +129051,12 @@ module Adamas::HIR
             ctx.all_locals[local_name.lstrip('@')] = value
           end
         end
+
+        bound_types = result.map { |value| enum_tracked_type(ctx, value) }
+        unless params_compatible_with_args?(selected[1], bound_types, context, params, packed_source_slots: true)
+          actual_names = bound_types.map { |type| get_type_name_from_ref(type) }.join(", ")
+          raise LoweringError.new("no overload matches #{strip_type_suffix(func_name)} for bound argument types (#{actual_names})")
+        end
       ensure
         ctx.restore_locals(saved_locals)
         @inline_caller_locals_stack.clear
@@ -129069,11 +129073,6 @@ module Adamas::HIR
         @current_namespace_override = saved_namespace_override
         @type_param_map = saved_type_param_map
         @subst_cache_gen &+= 1
-      end
-      bound_types = result.map { |value| enum_tracked_type(ctx, value) }
-      unless params_compatible_with_args?(selected[1], bound_types, context, params, packed_source_slots: true)
-        actual_names = bound_types.map { |type| get_type_name_from_ref(type) }.join(", ")
-        raise LoweringError.new("no overload matches #{strip_type_suffix(func_name)} for bound argument types (#{actual_names})")
       end
       source_binding_out.try(&.push(SourceCallBinding.new(selected[0], selected[1], def_arena, supplied_types)))
       {result, selected, rest_packed}
