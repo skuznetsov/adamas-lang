@@ -22990,3 +22990,20 @@ argument error (35q1143). Recheck slot identity when declaration collection or
 virtual arena projection changes. The combined experimental LavinMQ HIR run
 passed the previous LZ4 failure and stopped at an `elsif` scope invariant
 (35q1150). Native application and suite parity remain open.
+
+### Restore the caller scope after forwarding a Proc
+
+The detached block that calls a forwarded Proc belongs to a Closure scope.
+`lower_block_pass_proc` used to restore the caller block and locals while
+leaving that scope active. The next enclosing `if` cleanup encountered the
+Closure scope where it expected its own Block scope. The helper now closes
+its exact scope and restores the caller's declaration and typeof state.
+The detached HIR body retains its scope identity and captured operands.
+
+The native branch regression reproduces the owner failure on the parent
+and matches Crystal 1.22.1 in lazy and eager modes (35q1155). Forwarded
+Proc ABI, the selected HIR specs and installed-prelude hello passed on the
+isolated build. Refresh on changes to forwarded Proc materialization or
+HIR scope cleanup. The combined unchanged LavinMQ HIR probe (35q1159)
+clears the prior `SystemD::MemoryPressure` branch and stops in union-arm
+inline yield. The combined probe includes a separate deferred-self patch.

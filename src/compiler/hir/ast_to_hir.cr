@@ -142258,7 +142258,6 @@ module Adamas::HIR
       proc_expr : ExprId,
       param_types : Array(TypeRef)? = nil,
     ) : Tuple(BlockId, ValueId)
-      local_declaration_scope_pushed = false
       @inline_yield_proc_depth += 1
       proc_node = @arena[proc_expr]
       if env_get("DEBUG_BLOCK_PARAMS") && proc_node.is_a?(Adamas::Compiler::Frontend::ProcLiteralNode) == false
@@ -142272,80 +142271,87 @@ module Adamas::HIR
 
       saved_block = ctx.current_block
       saved_locals = ctx.save_locals
-      assigned_vars = Set(String).new
+      saved_declaration_scopes = ctx.save_local_declaration_scopes
       old_typeof_locals = @current_typeof_locals
       old_typeof_local_names = @current_typeof_local_names
-      @current_typeof_locals = old_typeof_locals ? old_typeof_locals.dup : old_typeof_locals
-      @current_typeof_local_names = old_typeof_local_names ? old_typeof_local_names.dup : old_typeof_local_names
+      old_typeof_names_hash = @current_typeof_local_names_hash
+      old_typeof_names_hash_owner = @current_typeof_local_names_hash_owner
+      closure_scope = ctx.push_scope(ScopeKind::Closure)
+      begin
+        ctx.push_local_declaration_scope
+        @current_typeof_locals = old_typeof_locals.try(&.dup)
+        @current_typeof_local_names = old_typeof_local_names.try(&.dup)
+        body_block = ctx.create_block
+        ctx.current_block = body_block
 
-      ctx.push_scope(ScopeKind::Closure)
-      ctx.push_local_declaration_scope
-      local_declaration_scope_pushed = true
-      closure_scope = ctx.current_scope
-      body_block = ctx.create_block
-      ctx.current_block = body_block
-
-      if param_types.nil?
-        if type_desc = @module.get_type_descriptor(ctx.type_of(proc_id))
-          if type_desc.kind == TypeKind::Proc && type_desc.type_params.size > 1
-            param_types = type_desc.type_params[0...-1]
+        if param_types.nil?
+          if type_desc = @module.get_type_descriptor(ctx.type_of(proc_id))
+            if type_desc.kind == TypeKind::Proc && type_desc.type_params.size > 1
+              param_types = type_desc.type_params[0...-1]
+            end
           end
         end
-      end
 
-      source_contract = @module.get_type_descriptor(ctx.type_of(proc_id))
-      param_ids = [] of ValueId
-      if param_types
-        param_types.each_with_index do |param_type, idx|
-          name = "__arg#{idx}"
-          param_val = Parameter.new(ctx.next_id, param_type, idx, name)
-          ctx.emit(param_val)
-          ctx.register_local(name, param_val.id)
-          ctx.register_type(param_val.id, param_type)
-          if source_contract && source_contract.kind == TypeKind::Proc
-            register_proc_source_slot(ctx, param_val.id, source_contract, idx)
+        source_contract = @module.get_type_descriptor(ctx.type_of(proc_id))
+        param_ids = [] of ValueId
+        if param_types
+          param_types.each_with_index do |param_type, idx|
+            name = "__arg#{idx}"
+            param_val = Parameter.new(ctx.next_id, param_type, idx, name)
+            ctx.emit(param_val)
+            ctx.register_local(name, param_val.id)
+            ctx.register_type(param_val.id, param_type)
+            if source_contract && source_contract.kind == TypeKind::Proc
+              register_proc_source_slot(ctx, param_val.id, source_contract, idx)
+            end
+            update_typeof_local(name, param_type)
+            if param_type != TypeRef::VOID
+              update_typeof_local_name(name, get_type_name_from_ref(param_type))
+            end
+            param_ids << param_val.id
           end
-          update_typeof_local(name, param_type)
-          if param_type != TypeRef::VOID
-            update_typeof_local_name(name, get_type_name_from_ref(param_type))
-          end
-          param_ids << param_val.id
         end
+
+        arg_types = param_ids.map { |param_id| ctx.type_of(param_id) }
+        proc_descriptor = @module.get_type_descriptor(ctx.type_of(proc_id))
+        if proc_descriptor && proc_descriptor.kind == TypeKind::Proc && !proc_descriptor.type_params.empty?
+          # A forwarded Proc uses the same intrinsic ABI as an ordinary proc.call.
+          # Looking up the generic stdlib Proc#call first loses its bound result
+          # in the unresolved R of Proc#call(*args : *T).
+          actual_name = "Proc#call"
+          return_type = proc_descriptor.type_params.last
+        else
+          actual_name = resolve_method_call(ctx, proc_id, "call", arg_types, false)
+          return_type = get_function_return_type(actual_name)
+        end
+
+        call = Call.with_receiver(ctx.next_id, return_type, proc_id, actual_name, param_ids)
+        ctx.emit(call)
+        ctx.register_type(call.id, return_type)
+        if proc_descriptor && proc_descriptor.kind == TypeKind::Proc
+          register_proc_source_slot(ctx, call.id, proc_descriptor, proc_descriptor.type_params.size - 1)
+        end
+
+        if ctx.get_block(ctx.current_block).terminator.is_a?(Unreachable)
+          ctx.terminate(Return.new(call.id))
+        end
+
+        @block_captures[body_block] = compute_block_captures(ctx, closure_scope, saved_locals.locals, Set(String).new)
+        unless ctx.current_scope == closure_scope
+          raise LoweringError.new("forwarded Proc lost its owned Closure scope", proc_node)
+        end
+        {body_block, proc_id}
+      ensure
+        ctx.pop_scope if ctx.current_scope == closure_scope
+        ctx.restore_local_declaration_scopes(saved_declaration_scopes)
+        ctx.current_block = saved_block
+        ctx.restore_locals(saved_locals)
+        @current_typeof_locals = old_typeof_locals
+        @current_typeof_local_names = old_typeof_local_names
+        @current_typeof_local_names_hash = old_typeof_names_hash
+        @current_typeof_local_names_hash_owner = old_typeof_names_hash_owner
       end
-
-      arg_types = param_ids.map { |param_id| ctx.type_of(param_id) }
-      proc_descriptor = @module.get_type_descriptor(ctx.type_of(proc_id))
-      if proc_descriptor && proc_descriptor.kind == TypeKind::Proc && !proc_descriptor.type_params.empty?
-        # A forwarded Proc uses the same intrinsic ABI as an ordinary proc.call.
-        # Looking up the generic stdlib Proc#call first loses its bound result
-        # in the unresolved R of Proc#call(*args : *T).
-        actual_name = "Proc#call"
-        return_type = proc_descriptor.type_params.last
-      else
-        actual_name = resolve_method_call(ctx, proc_id, "call", arg_types, false)
-        return_type = get_function_return_type(actual_name)
-      end
-
-      call = Call.with_receiver(ctx.next_id, return_type, proc_id, actual_name, param_ids)
-      ctx.emit(call)
-      ctx.register_type(call.id, return_type)
-      if proc_descriptor && proc_descriptor.kind == TypeKind::Proc
-        register_proc_source_slot(ctx, call.id, proc_descriptor, proc_descriptor.type_params.size - 1)
-      end
-
-      if ctx.get_block(ctx.current_block).terminator.is_a?(Unreachable)
-        ctx.terminate(Return.new(call.id))
-      end
-
-      @block_captures[body_block] = compute_block_captures(ctx, closure_scope, saved_locals.locals, assigned_vars)
-
-      ctx.current_block = saved_block
-      ctx.restore_locals(saved_locals)
-      @current_typeof_locals = old_typeof_locals
-      @current_typeof_local_names = old_typeof_local_names
-      {body_block, proc_id}
     ensure
-      ctx.pop_local_declaration_scope if local_declaration_scope_pushed
       @inline_yield_proc_depth -= 1
     end
 

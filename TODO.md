@@ -24124,10 +24124,15 @@ integration, fresh bootstrap, or LavinMQ parity.
   unrelated-type rejection on Crystal 1.22.1 and the candidate.
 - [x] Pass `raise(LZ4Error)` on unchanged LavinMQ HIR with the experimental
   deferred constant `self` candidate and this fix (35q1150).
-- [ ] Reduce `if elsif branch lost its owned Block scope`, reached next in
-  `SystemD::MemoryPressure.monitor_regular_file` (35q1151). The no-prelude
-  forwarded `&action` repro fails in Adamas and prints `BCE` on Crystal
-  (35q1152). Audit closure-scope ownership in `lower_block_pass_proc`.
+- [x] Restore the caller scope after constructing a forwarded Proc carrier.
+  The synthetic body keeps its Closure scope, while `lower_block_pass_proc`
+  releases that scope before the enclosing branch continues. The native
+  then/elsif/else and post-merge fixture fails on the parent and matches
+  Crystal 1.22.1 in lazy and eager modes (35q1155). Forwarded Proc ABI,
+  27 HIR specs and installed-prelude hello also pass (35q1160–1161).
+- [ ] Reduce `inline-yield lost its owned Block scope` in a concrete union
+  arm. The combined unchanged LavinMQ HIR probe passes the previous
+  `SystemD::MemoryPressure` failure and reaches this invariant (35q1159).
 - [ ] Verify nested `LibNode` source ownership. Module registration now has an
   exact slot, but the lib body resolver still uses arena fit and span heuristics.
 - [ ] Reduce the eager HIR prelude failure `undefined constant ::Time::Instant`
