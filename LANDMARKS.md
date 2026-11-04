@@ -23403,3 +23403,23 @@ and the installed-prelude hello pass. The parser suite adds one passing
 example and retains the parent's exact 101 existing failures (35q1374).
 Refresh when changing keyword operands, binary precedence, or postfix
 modifier ownership.
+
+### Demand the selected body during call result inference
+
+The selected typed overload already has its own registered source Def and
+arena. Requesting the bare family as a second body could start a zero-argument
+lookup and lower a sibling overload that the program never called. Keep the
+request on the selected target when the bare slot lacks that source owner.
+This guard covers body demands. Family return cache provenance and shape
+transport for same-source aliases remain separate questions.
+
+The no-prelude reducer compiles and exits zero on Crystal 1.22.1 and the
+candidate in both HIR modes. The parent rejects the deliberately unreachable
+method call in the typed-rest sibling. A second native fixture covers a real
+empty unrestricted splat, a nonempty splat, and defaulted and typed overloads.
+The installed-prelude tuple reducer and hello compile and run (35q1381).
+The combined unchanged LavinMQ HIR probe reaches Socket error typing after
+both Channel select contexts and the former empty tuple failure (35q1382).
+That probe includes the experimental exact-result replay. Refresh this
+evidence after changes to callsite shape, source registration, or deferred
+body materialization.

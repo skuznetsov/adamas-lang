@@ -111942,6 +111942,22 @@ module Adamas::HIR
       call.id
     end
 
+    # A separately registered target with the selected source already owns
+    # this call. A bare family lookup without that owner may redispatch as an
+    # unrelated zero-argument call when it has no recorded exact inputs.
+    private def unselected_call_family_body?(
+      base_name : String,
+      target_name : String,
+      selected_def : Adamas::Compiler::Frontend::DefNode?,
+    ) : Bool
+      return false if target_name == base_name || selected_def.nil?
+      return false unless @function_defs[target_name]?.try(&.same?(selected_def))
+      return false unless source_arena = @function_def_arenas[target_name]?
+
+      !(@function_defs[base_name]?.try(&.same?(selected_def)) &&
+        @function_def_arenas[base_name]?.try(&.same?(source_arena)))
+    end
+
     # An untyped regular parameter is specialized from the concrete callsite.
     # Once that exact symbol is admitted, also queueing its bare family alias
     # only duplicates work; keep the alias fallback for every ambiguous shape.
@@ -119177,7 +119193,8 @@ module Adamas::HIR
         has_named_args,
         selected_call_entry_def,
       )
-      if !exact_callsite_target_admitted &&
+      unselected_family_body = unselected_call_family_body?(base_method_name, mangled_method_name, selected_call_entry_def)
+      if !exact_callsite_target_admitted && !unselected_family_body &&
          mangled_method_name != base_method_name &&
          (@function_defs.has_key?(base_method_name) ||
          @module.has_function?(base_method_name) ||
@@ -119188,7 +119205,7 @@ module Adamas::HIR
         if def_node = lookup_function_def_for_return(mangled_method_name, base_method_name)
           if def_node.return_type.nil?
             force_lower_function_for_return_type(mangled_method_name)
-            if mangled_method_name != base_method_name
+            if mangled_method_name != base_method_name && !unselected_family_body
               force_lower_function_for_return_type(base_method_name)
             end
           end
@@ -121540,17 +121557,13 @@ module Adamas::HIR
         named_shape = "-" if named_shape.empty?
         STDERR.puts "[CALL_FORCE_IDENTITY] caller=#{ctx.function.name} method=#{method_name} selected_symbol=#{selected_call_entry_name || "none"} selected_def=#{selected_identity} requested1=#{primary_mangled_name} requested2=#{mangled_method_name} requested3=#{base_method_name} args=#{args.size} block=#{has_block_call ? 1 : 0} named=#{named_shape} splat=#{has_splat ? 1 : 0}"
       end
+      unselected_family_body = unselected_call_family_body?(base_method_name, mangled_method_name, selected_call_entry_def)
       refused_before_call_force = @force_lower_depth_refused.size
       if force_return_type_needed &&
          force_pending_call_targets_for_return_type(
-           primary_mangled_name,
+           unselected_family_body && primary_mangled_name == base_method_name ? nil : primary_mangled_name,
            mangled_method_name,
-           # Keep the unspecialized family in the demand queue even when an
-           # admitted exact target owns the return contract.  The base body can
-           # still be the source-backed fallback needed to materialize a
-           # deferred/default-argument path; authority controls which return
-           # value is consumed below, not whether that body is demanded.
-           base_method_name,
+           unselected_family_body ? nil : base_method_name,
            context: "lower_call",
          )
         refreshed = get_function_return_type(mangled_method_name, return_def_arg_count, selected_return_def)
@@ -121622,7 +121635,8 @@ module Adamas::HIR
                               @inline_yield_proc_depth > 0 ||
                               !@inline_yield_name_stack.empty?
         # Try primary name first
-          if function_state(primary_mangled_name).pending?
+        if (!unselected_family_body || primary_mangled_name != base_method_name) &&
+           function_state(primary_mangled_name).pending?
           if debug_force
             STDERR.puts "[FORCE_LOWER] trying primary_mangled=#{primary_mangled_name}"
           end
@@ -121651,9 +121665,9 @@ module Adamas::HIR
             end
           end
         end
-        # Try base name if still no result
+        # Try a source-backed base body if still no result.
         if return_type == TypeRef::VOID && base_method_name != mangled_method_name &&
-           !exact_return_target_authoritative && !base_return_def_foreign
+           !unselected_family_body && !exact_return_target_authoritative && !base_return_def_foreign
           if function_state(base_method_name).pending?
             if debug_force
               STDERR.puts "[FORCE_LOWER] trying base=#{base_method_name}"
@@ -121677,7 +121691,7 @@ module Adamas::HIR
       if unresolved_generic_return_type?(return_type)
         [primary_mangled_name, mangled_method_name, base_method_name].uniq.each do |name|
           next if name.empty?
-          next if (exact_return_target_authoritative || base_return_def_foreign) && name == base_method_name
+          next if (unselected_family_body || exact_return_target_authoritative || base_return_def_foreign) && name == base_method_name
           if function_state(name).pending?
             force_lower_function_for_return_type(name)
           end

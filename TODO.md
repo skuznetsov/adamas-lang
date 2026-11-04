@@ -24328,3 +24328,14 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Trace the class-literal argument to `Log.for(Class)`. Both exact
   LavinMQ probes reject it as an instance of `AMQP::Client::Connection`
   before the deferred File.open path (35q1266, 35q1269).
+- [x] Keep return-type forcing on the registered selected call target when
+  the bare overload family lacks the same source Def and arena. The former
+  lookup could instantiate an unused typed-rest overload with zero arguments.
+  The combined LavinMQ HIR probe passes that boundary (35q1382).
+- [ ] Reject a genuinely empty call to a restricted positional rest parameter.
+  Crystal 1.22.1 rejects `f()` for `def f(*args : Int32)`; Adamas still accepts
+  that shape independently of the unselected-family fix. Verify unrestricted
+  rest, tuple-pattern rest, and explicit splat expansion separately.
+- [ ] Preserve the selected exception type through the installed Socket error
+  factory. The combined LavinMQ HIR probe rejects a
+  `Crystal::System::Socket::Error` argument to `raise` (35q1382).
