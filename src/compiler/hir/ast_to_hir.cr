@@ -55966,6 +55966,7 @@ module Adamas::HIR
       owner : String,
       method_name : String,
       input : CallResolutionInput,
+      exact_target : SelectedCallTarget? = nil,
     ) : Bool
       return false unless owner_directly_declares_instance_method?(owner, method_name)
 
@@ -55984,6 +55985,9 @@ module Adamas::HIR
         next unless owner_names.includes?(normalize_method_owner_name(parts.owner))
         def_node = @function_defs[candidate_name]?
         next unless def_node
+        if exact_target
+          next unless candidate_name == exact_target.symbol_name && def_node.same?(exact_target.def_node)
+        end
         next unless call_target_matches_call_shape?(input, def_node)
 
         arg_types = input.arg_types
@@ -56006,16 +56010,19 @@ module Adamas::HIR
         end
 
         context = function_context_for_lookup_candidate(input.func_name, candidate_name)
+        argument_facts = exact_target ? input.source_argument_facts : nil
         candidate_scope = enter_lookup_candidate_scope(candidate_name, context)
         compatible = begin
           if mismatch = source_generic_argument_mismatch_for_def(def_node, match_arg_types, context)
             false
           elsif candidate_map = lookup_candidate_restriction_param_map(candidate_name, def_node)
             with_type_param_map(candidate_map) do
-              params_compatible_with_args?(def_node, match_arg_types, context, match_param_infos)
+              params_compatible_with_args?(def_node, match_arg_types, context, match_param_infos,
+                source_argument_facts: argument_facts)
             end
           else
-            params_compatible_with_args?(def_node, match_arg_types, context, match_param_infos)
+            params_compatible_with_args?(def_node, match_arg_types, context, match_param_infos,
+              source_argument_facts: argument_facts)
           end
         ensure
           leave_lookup_candidate_scope(candidate_scope)
@@ -56024,6 +56031,27 @@ module Adamas::HIR
       end
 
       false
+    end
+
+    # The included ABI check may reject an unrelated same-name overload.
+    # An already selected class declaration can supersede that rejection only
+    # when its own source restrictions accept the complete positional call.
+    private def selected_class_overload_accepts_call?(
+      receiver_name : String,
+      method_name : String,
+      input : CallResolutionInput,
+      target : SelectedCallTarget,
+    ) : Bool
+      return false if input.has_named || input.has_splat || target.included_origin
+      arg_types = input.arg_types
+      return false unless arg_types && arg_types.none? { |type| type == TypeRef::VOID || unresolved_generic_return_type?(type) }
+
+      parts = parse_method_name_compact(target.symbol_name)
+      return false unless parts.separator == '#' && parts.method == method_name
+      owner = parts.owner
+      return false unless owner == receiver_name || get_parent_chain(receiver_name).includes?(owner)
+
+      direct_class_method_accepts_source_call?(owner, method_name, input, exact_target: target)
     end
 
     # Recover the authoritative included-module body in the same order as
@@ -117360,48 +117388,6 @@ module Adamas::HIR
         raw_positional_count: has_named_args ? raw_call_positional_count : nil,
         source_argument_facts: call_resolution_source_argument_facts(ctx, args, arg_types, has_splat, has_named_args),
       ) : nil
-      if receiver_id &&
-         abi_guard_explicit_arg_count > 0 &&
-         !ctx.type_literal?(receiver_id)
-        receiver_name = normalize_method_owner_name(get_type_name_from_ref(ctx.type_of(receiver_id)))
-        if concrete_included_method_receiver?(ctx.type_of(receiver_id), receiver_name)
-          explicit_arg_types = arg_types[0, abi_guard_explicit_arg_count]
-          if explicit_arg_types.any? { |type_ref| type_ref != TypeRef::VOID }
-            included_origin = find_included_module_def_origin_for_owner(
-              receiver_name,
-              method_name,
-              explicit_arg_types.size,
-              has_block_call,
-              compatible_arg_types: explicit_arg_types,
-              selection_input: m3e_input,
-            )
-            # Select the first source application that accepts these actuals.
-            # If none does, retain the old fail-closed check against the first
-            # source origin instead of silently admitting an incompatible
-            # concrete receiver call.
-            included_origin ||= find_included_module_def_origin_for_owner(
-              receiver_name,
-              method_name,
-              explicit_arg_types.size,
-              has_block_call,
-            )
-            if included_origin
-              if included_module_def_compatible_for_owner?(
-                   receiver_name,
-                   method_name,
-                   included_origin,
-                   explicit_arg_types,
-                   has_block_call,
-                 ) == false
-                raise LoweringError.new(
-                  "cannot safely lower incompatible explicit arguments for concrete generic receiver #{receiver_name}##{method_name}",
-                  node,
-                )
-              end
-            end
-          end
-        end
-      end
       semantic_target = source_initializer_entry || expr_id.invalid? ? nil : semantic_call_target(expr_id, lookup_name)
       if semantic_target && m3e_input && !call_target_matches_call_shape?(m3e_input, semantic_target.def_node, semantic_target.symbol_name)
         semantic_target = nil
@@ -117434,6 +117420,50 @@ module Adamas::HIR
         # settlement. Reconcile them before argument emission so the selected
         # receiver application, Def, and arena remain authoritative.
         selected_target = settle_source_included_call_target(m3e_input, selected_target) || selected_target
+      end
+      if receiver_id &&
+         abi_guard_explicit_arg_count > 0 &&
+         !ctx.type_literal?(receiver_id)
+        receiver_name = normalize_method_owner_name(get_type_name_from_ref(ctx.type_of(receiver_id)))
+        if concrete_included_method_receiver?(ctx.type_of(receiver_id), receiver_name)
+          explicit_arg_types = arg_types[0, abi_guard_explicit_arg_count]
+          if explicit_arg_types.any? { |type_ref| type_ref != TypeRef::VOID }
+            included_origin = find_included_module_def_origin_for_owner(
+              receiver_name,
+              method_name,
+              explicit_arg_types.size,
+              has_block_call,
+              compatible_arg_types: explicit_arg_types,
+              selection_input: m3e_input,
+            )
+            # If the included family has no compatible origin, keep its
+            # diagnostic unless the selected class overload accepts this call.
+            included_origin ||= find_included_module_def_origin_for_owner(
+              receiver_name,
+              method_name,
+              explicit_arg_types.size,
+              has_block_call,
+            )
+            if included_origin
+              if included_module_def_compatible_for_owner?(
+                   receiver_name,
+                   method_name,
+                   included_origin,
+                   explicit_arg_types,
+                   has_block_call,
+                 ) == false
+                unless m3e_input && selected_target &&
+                       m3e_input.arg_count == abi_guard_explicit_arg_count &&
+                       selected_class_overload_accepts_call?(receiver_name, method_name, m3e_input, selected_target)
+                  raise LoweringError.new(
+                    "cannot safely lower incompatible explicit arguments for concrete generic receiver #{receiver_name}##{method_name}",
+                    node,
+                  )
+                end
+              end
+            end
+          end
+        end
       end
       # An implicit class receiver has the same source admission boundary as
       # `Owner.method`. Do not resurrect a rejected call through the later

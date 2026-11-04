@@ -24439,6 +24439,18 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Exercise a late hierarchy change after a terminating guard is narrowed.
   An invalidated proof currently stops before MIR. Probe exact body replay
   before extending this proof to additional virtual call forms.
+- [x] Check an incompatible include against the selected source overload.
+  An untyped include lookup could veto a valid inherited class overload.
+  Run the guard after source selection and require the exact selected class
+  declaration to accept the positional actuals before superseding a mismatch.
+  The previous compiler rejects the inherited call. Crystal 1.22.1 and the
+  candidate both run the inherited and included cases, and both reject an
+  argument accepted by neither (35q1507).
+- [ ] Preserve the runtime receiver of an inherited wrapper during virtual
+  body replay. The call initially selects `Resource#serialize` with the
+  exact inherited Def; later materialization requests `Object#serialize`.
+  A nested self call then fails to see the receiver's included overload
+  (35q1510). Check replay and final repair against the same owner contract.
 - [ ] Extend the exact receiver-arm contract to other call shapes. Probe
   named/default arguments, blocks, inherited methods, a non-returning arm,
   and explicit mixed structural/nonstructural receiver unions separately.
