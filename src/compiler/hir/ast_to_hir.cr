@@ -45299,7 +45299,7 @@ module Adamas::HIR
             end
 
             default_id = with_ivar_default_source(ctx, ivar, class_name) do
-              try_lower_enum_symbol_default(ctx, class_name, ivar.type, default_node) || lower_expr(ctx, default_expr_id)
+              try_lower_enum_symbol_for_ivar(ctx, class_name, ivar.type, default_node) || lower_expr(ctx, default_expr_id)
             end
             # If a struct-typed ivar default degraded to a non-struct scalar — an
             # unresolvable module struct constant (e.g. Arena::INVALID_INDEX) that
@@ -46699,7 +46699,7 @@ module Adamas::HIR
             end
 
             default_id = with_ivar_default_source(ctx, ivar, class_name) do
-              try_lower_enum_symbol_default(ctx, class_name, ivar.type, default_node) || lower_expr(ctx, default_expr_id)
+              try_lower_enum_symbol_for_ivar(ctx, class_name, ivar.type, default_node) || lower_expr(ctx, default_expr_id)
             end
             # If a struct-typed ivar default degraded to a non-struct scalar — an
             # unresolvable module struct constant (e.g. Arena::INVALID_INDEX) that
@@ -47798,7 +47798,7 @@ module Adamas::HIR
       end
     end
 
-    private def try_lower_enum_symbol_default(
+    private def try_lower_enum_symbol_for_ivar(
       ctx : LoweringContext,
       owner_name : String,
       ivar_type : TypeRef,
@@ -140411,9 +140411,20 @@ module Adamas::HIR
       node : Adamas::Compiler::Frontend::AssignNode,
       expr_id : Adamas::Compiler::Frontend::ExprId = Adamas::Compiler::Frontend::ExprId.new(-1),
     ) : ValueId
-      value_id = lower_expr(ctx, node.value)
       target_node = @arena[node.target]
       target_kind = Adamas::Compiler::Frontend.node_kind(target_node)
+      value_id = if target_node.is_a?(Adamas::Compiler::Frontend::InstanceVarNode) &&
+                    (value_node = @arena[node.value]).is_a?(Adamas::Compiler::Frontend::SymbolNode) &&
+                    (owner = @current_class) &&
+                    (ivar_type = get_ivar_type(safe_slice_to_string(target_node.name) || "")) &&
+                    @enum_info.try(&.has_key?(get_type_name_from_ref(ivar_type)))
+                   # The field supplies the contextual enum type. Lower the
+                   # source literal before it becomes an ordinary Symbol ID.
+                   try_lower_enum_symbol_for_ivar(ctx, owner, ivar_type, value_node) ||
+                     raise LoweringError.new("can't autocast #{safe_slice_to_string(value_node.name)} to #{get_type_name_from_ref(ivar_type)}: no matching enum member", value_node)
+                 else
+                   lower_expr(ctx, node.value)
+                 end
 
       case target_kind
       when Adamas::Compiler::Frontend::NodeKind::Identifier
@@ -140575,6 +140586,9 @@ module Adamas::HIR
         value_type = assignment_value_type(ctx, value_id)
         ivar_offset = get_ivar_offset(name)
         ivar_type = get_ivar_type(name)
+        if value_type == TypeRef::SYMBOL && ivar_type && @enum_info.try(&.has_key?(get_type_name_from_ref(ivar_type)))
+          raise LoweringError.new("instance variable '#{name}' must be #{get_type_name_from_ref(ivar_type)}, not Symbol", node)
+        end
         if class_name = @current_class
           if class_info = @class_info[class_name]?
             ivars = class_info.ivars

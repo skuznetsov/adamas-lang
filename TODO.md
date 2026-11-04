@@ -24266,9 +24266,21 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [x] Stop class constructor lookup at the source initializer family.
   An ancestor factory must not shadow a child's synthesized allocator
   or supply a rejected overload through a grandchild (35q1328).
-- [ ] Trace JSON token initialization after constructing `StringBased`.
-  The installed-prelude array probe now reaches `read_begin_array`
-  and raises on the first token (35q1329).
+- [x] Use the declared enum field type when lowering a source Symbol
+  literal assignment. The installed-prelude JSON first-token probe now
+  passes `read_begin_array`, and both Adamas modes match Crystal on
+  valid assignments and strict Symbol rejection (35q1338).
+- [ ] Trace the next token after `read_begin_array`. The extended
+  installed-prelude JSON array probe reaches `read_int` and fails
+  (35q1336).
+- [ ] Preserve the declared enum base width from HIR through MIR layout
+  and LLVM integer representation. Stock Crystal preserves a UInt64
+  member above 32 bits. The parent truncates it even with qualified enum
+  constants and no symbol autocast (35q1337). Qualify signed values, union
+  payloads, and the C ABI separately.
+- [ ] Qualify contextual Symbol assignment to nilable and multi-enum
+  fields, parallel assignments, and class variables. Cover exact Symbol
+  matches and ambiguous or missing enum members.
 - [ ] Resolve the exact source result for `Channel.select` contexts.
   The strict timeout and receive probes now reach `unwait` (35q1286).
 - [ ] Isolate repeated inline activation and sorting after lexical target

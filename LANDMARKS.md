@@ -23287,3 +23287,22 @@ reports the same `Void` return on parent and candidate. The combined
 JSON probe emits the child's allocator and reaches a first-token error
 in `read_begin_array` (35q1329). Refresh after changes to constructor
 registration, inherited factories, or source owner normalization.
+
+### Lower symbol literals in the destination enum field context
+
+An instance-variable assignment lowered its source Symbol into the
+global Symbol ID before consulting the declared field. The enum then
+received an unrelated integer. Exact nominal enum fields now lower
+literal members with the allocator defaults' member resolver and reject
+a missing member or a nonliteral Symbol.
+
+The parent stores the wrong discriminant in the native reducer. Stock
+Crystal 1.22.1 and exact lazy and eager Adamas agree on nine checks
+covering enum aliases, two enums with differently ordered members,
+assignment results, ordinary Symbol fields, and rejection (35q1338).
+With the installed prelude, stock and candidate pass the JSON
+`read_begin_array` boundary and the parent exits 12. Installed-prelude
+hello also passes. The longer JSON array probe still fails at
+`read_int` (35q1336), and the qualified UInt64 member reducer shows a
+separate enum base-width loss on the parent (35q1337). Refresh after
+changes to field typing, contextual literal autocasts, or enum identity.
