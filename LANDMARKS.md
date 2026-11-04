@@ -22921,3 +22921,19 @@ index dispatch for other macro values and annotation expression source
 ownership remain open. The unchanged LavinMQ export still stops at
 Log.for(self) in HIR (35q1034). Bootstrap and LavinMQ runtime/test parity
 remain open.
+
+### Reflected ivar annotation expressions keep their source arena
+
+`MacroAnnotationValue` reads argument IDs from `AnnotationInfo.arena`. For
+structural expressions it returns an arena-backed macro node. Before this,
+reflection converted any nonliteral argument to an identifier with an empty
+spelling. Named arguments and positional arguments share the same conversion.
+The common macro renderer preserves the root marker on paths, including inside
+a proc pointer, and reflection exposes explicit `NilLiteral` and `CharLiteral`.
+
+`regression_tests/macro_annotation_expressions_repro.sh` compares native output
+with Crystal 1.22.1 for same-file and cross-file ivar annotations in lazy and
+eager HIR. The cross-file fixture also asserts the reflected proc-pointer kind
+and the rooted source spelling before interpolation. Installed-prelude `hello`
+compiled and ran on the same compiler build. Changes to annotation registration,
+AST arena lifetime, or macro source rendering require re-running these checks.

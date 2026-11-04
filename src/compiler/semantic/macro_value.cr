@@ -850,7 +850,9 @@ module Adamas
         end
 
         def class_name : String
-          Frontend.node_kind(@arena[@node_id]).to_s
+          node = @arena[@node_id]
+          return "ProcPointer" if node.is_a?(Frontend::UnaryNode) && node.operator == "->".to_slice
+          Frontend.node_kind(node).to_s
         end
 
         def call_method(name : String, args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : MacroValue
@@ -1182,7 +1184,9 @@ module Adamas
           end
           sn_result
           when Frontend::PathNode
-            node_identifier_name(node) || ""
+            left = node.left
+            prefix = left ? stringify_node(@arena[left]) : ""
+            "#{prefix}::#{stringify_node(@arena[node.right])}"
           # Macro arguments retain runtime AST rather than evaluating it.
           # Render structural expression nodes here too, including nested call
           # arguments; an absent literal payload must not erase their source.
@@ -2407,11 +2411,8 @@ module Adamas
       # Annotation value - represents an annotation with args access
       class MacroAnnotationValue < MacroValue
         getter info : AnnotationInfo
-        # Arena reference for evaluating arg expressions
-        property arena : Frontend::ArenaLike?
 
-        def initialize(@info : AnnotationInfo, arena : Frontend::ArenaLike? = nil)
-          @arena = arena || @info.arena
+        def initialize(@info : AnnotationInfo)
         end
 
         def to_macro_output : String
@@ -2459,8 +2460,7 @@ module Adamas
         end
 
         private def expr_to_macro_value(expr_id : Frontend::ExprId) : MacroValue
-          return MacroNilValue.new unless @arena
-          arena = @arena.not_nil!
+          arena = @info.arena || return MacroNilValue.new
           node = arena[expr_id]
 
           case Frontend.node_kind(node)
@@ -2475,15 +2475,16 @@ module Adamas
             MacroStringValue.new(Frontend.node_literal_string(node) || "")
           when .symbol?
             MacroSymbolValue.from_literal(Frontend.node_literal_string(node) || "")
+          when .char?
+            MacroCharValue.new(Frontend.node_literal_string(node) || "")
           when .bool?
             MacroBoolValue.new(Frontend.node_literal_string(node) == "true")
           when Frontend::NodeKind::Nil
-            MacroNilValue.new
+            MacroNilLiteralValue.new
           when .identifier?
             MacroIdValue.new(Frontend.node_literal_string(node) || "")
           else
-            # For complex expressions, return as MacroId
-            MacroIdValue.new(Frontend.node_literal_string(node) || "")
+            MacroNodeValue.new(expr_id, arena)
           end
         end
       end

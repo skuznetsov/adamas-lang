@@ -24088,3 +24088,22 @@ integration, fresh bootstrap, or LavinMQ parity.
   StringLiteral and HashLiteral support that index. Adamas materializes
   macro ranges as arrays in value position and handles rest slicing directly
   for Array and Tuple. A shared range index needs its own AST contract.
+
+### Remaining annotation and proc-pointer contracts
+
+- HIR macro owner reconstruction republishes ivar annotations but currently
+  omits ordinary type declaration annotations. A class annotated in a required
+  file and reopened to call `@type.annotation(...)` yields an empty expansion in
+  Adamas. Preserve the declaring arena in the type annotation publication too.
+- `{{reflected.args[0]}}.call(97)` expands to a proc pointer followed by a call.
+  Stock Crystal parses the postfix outside the pointer. Adamas consumes it in
+  the pointer operand (`undefined constant 97`). Compare direct source and
+  macro expansion when replacing the Pratt unary parser's target boundary.
+- Check collection and block-bearing annotation arguments against the original
+  AST macro API. The current regression covers calls, proc pointers, rooted
+  paths, nil, and chars. `MacroNodeValue` has partial structural rendering and
+  does not yet expose the entire macro method surface for those expressions.
+- Relative multi-segment paths can select a root type despite a nested shadow
+  in the lexical class. The same wrong target occurs in both a
+  reflected argument and a handwritten call, so this belongs in lexical path
+  resolution. Keep separate rooted and relative controls.

@@ -1976,19 +1976,9 @@ module Adamas
                          end
 
               if member == "annotation"
-                if ann = matching.first?
-                  ann_val = MacroAnnotationValue.new(ann)
-                  ann_val.arena ||= @arena
-                  return ann_val
-                end
-                return macro_nil_value
+                return matching.first?.try { |ann| MacroAnnotationValue.new(ann) } || macro_nil_value
               else # annotations
-                arr = matching.map do |ann|
-                  ann_val = MacroAnnotationValue.new(ann)
-                  ann_val.arena ||= @arena
-                  ann_val.as(MacroValue)
-                end
-                return MacroArrayValue.new(arr)
+                return MacroArrayValue.new(matching.map { |ann| MacroAnnotationValue.new(ann).as(MacroValue) })
               end
             end
             return macro_nil_value
@@ -2028,19 +2018,9 @@ module Adamas
                          end
 
               if member == "annotation"
-                if ann = matching.first?
-                  ann_val = MacroAnnotationValue.new(ann)
-                  ann_val.arena ||= @arena
-                  return ann_val
-                end
-                return macro_nil_value
+                return matching.first?.try { |ann| MacroAnnotationValue.new(ann) } || macro_nil_value
               else # annotations
-                arr = matching.map do |ann|
-                  ann_val = MacroAnnotationValue.new(ann)
-                  ann_val.arena ||= @arena
-                  ann_val.as(MacroValue)
-                end
-                return MacroArrayValue.new(arr)
+                return MacroArrayValue.new(matching.map { |ann| MacroAnnotationValue.new(ann).as(MacroValue) })
               end
             end
           end
