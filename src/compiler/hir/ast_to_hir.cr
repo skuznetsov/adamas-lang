@@ -103732,6 +103732,20 @@ module Adamas::HIR
       statically_is_a_type?(member_type, check_type) == false
     end
 
+    # Both case arm forms own their lexical scope until body lowering exits.
+    # A failed body must unwind that scope before its enclosing inline block.
+    private def with_case_branch_scope(ctx : LoweringContext, node : Adamas::Compiler::Frontend::CaseNode, &)
+      branch_scope = ctx.push_scope(ScopeKind::Block)
+      begin
+        yield
+      ensure
+        unless ctx.current_scope == branch_scope
+          raise LoweringError.new("case branch lost its owned Block scope", node)
+        end
+        ctx.pop_scope
+      end
+    end
+
     private def lower_case(ctx : LoweringContext, node : Adamas::Compiler::Frontend::CaseNode) : ValueId
       # Save locals state before case for proper phi merging
       pre_case_locals = ctx.save_locals
@@ -103943,14 +103957,11 @@ module Adamas::HIR
           apply_case_tuple_pattern_narrowing(ctx, subj_expr, when_branch.conditions.first)
         end
 
-        ctx.push_scope(ScopeKind::Block)
-        result = lower_body(ctx, when_branch.body)
-        exit_block = ctx.current_block
-        # Capture branch locals BEFORE pop_scope: pop_scope restores @locals
-        # from the snapshot taken at push_scope, which would wipe any mutations
-        # performed inside the branch body (e.g. `num += 1`). Matches lower_if.
-        post_when_locals = ctx.save_locals.locals
-        ctx.pop_scope
+        result, exit_block, post_when_locals = with_case_branch_scope(ctx, node) do
+          result = lower_body(ctx, when_branch.body)
+          # Snapshot assignments before the scope restores the pre-branch locals.
+          {result, ctx.current_block, ctx.save_locals.locals}
+        end
 
         # Only propagate variables the branch actually *assigned* (via AST
         # inspection). Using the raw @locals snapshot would also capture
@@ -104006,29 +104017,27 @@ module Adamas::HIR
           end
         end
       end
-      ctx.push_scope(ScopeKind::Block)
-      else_result = if subject_exhausted
-                      @control_flow_dead_blocks.add({ctx.function.id, ctx.current_block})
-                      nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
-                      ctx.emit(nil_lit)
-                      nil_lit.id
-                    elsif else_body = node.else_branch
-                      if else_body.empty?
+      else_result, else_exit, post_else_locals = with_case_branch_scope(ctx, node) do
+        else_result = if subject_exhausted
+                        @control_flow_dead_blocks.add({ctx.function.id, ctx.current_block})
                         nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
                         ctx.emit(nil_lit)
                         nil_lit.id
+                      elsif else_body = node.else_branch
+                        if else_body.empty?
+                          nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+                          ctx.emit(nil_lit)
+                          nil_lit.id
+                        else
+                          lower_body(ctx, else_body)
+                        end
                       else
-                        lower_body(ctx, else_body)
+                        nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+                        ctx.emit(nil_lit)
+                        nil_lit.id
                       end
-                    else
-                      nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
-                      ctx.emit(nil_lit)
-                      nil_lit.id
-                    end
-      else_exit = ctx.current_block
-      # Capture before pop_scope (mirrors when-branch handling above).
-      post_else_locals = ctx.save_locals.locals
-      ctx.pop_scope
+        {else_result, ctx.current_block, ctx.save_locals.locals}
+      end
 
       # Filter else branch locals to only the variables it assigned.
       assigned_else = if eb = node.else_branch

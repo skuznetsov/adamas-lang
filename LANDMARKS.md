@@ -23182,3 +23182,18 @@ source rejection of an incompatible callback result (35q1286). Both
 strict Channel.select probes now reach unwait. Repeated inline
 activation, native sort, and full LavinMQ remain open. Refresh after
 changes to inline substitution, lexical caller frames, or Proc capture.
+
+### Release the lexical scope of a case arm on both exits
+
+Case arm lowering opened a Block scope and popped it only after its
+body returned. A rejected call left the arm on the stack and the
+enclosing inline-yield check replaced the actual diagnostic. The arm
+now closes the exact scope it opened and snapshots successful branch
+locals before restoring its entry state.
+
+The no-prelude valid fixture runs on stock Crystal 1.22.1 and exact
+lazy and eager Adamas. Invalid when and else calls preserve the
+incompatible argument diagnostic (35q1302). The installed-prelude
+hello and adjacent case, loop, and lexical callback gates pass.
+Refresh after changes to case arm lowering, branch merges, or
+inline scope ownership.

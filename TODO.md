@@ -24237,6 +24237,9 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [x] Capture the lexical yield target when an inlined callback is
   materialized while its own substitution slot is active. The generic Box
   and installed StaticArray union map oracles match Crystal (35q1286).
+- [x] Release case arm scopes when body lowering unwinds. Both the when
+  and else negative probes now retain the source overload diagnostic.
+  Stock Crystal 1.22.1 and exact lazy and eager Adamas agree (35q1302).
 - [ ] Resolve the exact source result for `Channel.select` contexts.
   The strict timeout and receive probes now reach `unwait` (35q1286).
 - [ ] Isolate repeated inline activation and sorting after lexical target
