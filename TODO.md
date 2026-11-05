@@ -25042,3 +25042,19 @@ integration, fresh bootstrap, or LavinMQ parity.
   Inspection finds no Call-specific name handling in MacroNodeValue
   and indicates that Path#id may discard the root prefix. Reproduce each
   against Crystal before changing conversion.
+
+### 2026-11-04 — Preserve implicit class self through inherited body selection
+
+- [x] Rebase a selected ancestor body to the concrete class for an implicit
+  class call. Retain the original lexical namespace and leave the selected
+  primitive registration available to intrinsic lowering.
+- Exact S1 35q1744 and Crystal 1.22.1 agree on
+  `inherited_class_method_source_identity_repro.sh` (14 positive and 3
+  negative cases). The new fixture exercises repeated calls, a sibling
+  override, and a constant in the ancestor's lexical namespace. The prior
+  35q1729 rejects `Child.make` because it observes the parent's result.
+- The installed-prelude `hello` and the numeric inherited self probe pass
+  on 35q1744. `reference_storage_pre_initialize_repro.sh` and
+  `primitive_annotation_before_macro_repro.sh` guard the separate intrinsic
+  path. Candidate 35q1742 rebased the primitive itself and rejected
+  `Sync::Mutex.unsafe_construct` while compiling `hello`.

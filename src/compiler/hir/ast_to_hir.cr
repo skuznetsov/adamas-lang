@@ -117906,6 +117906,14 @@ module Adamas::HIR
           block_proc_expected_return_type = expected_nil_block_return_type_for_def(entry_name, entry_def)
         end
         concrete_owner_name = class_name_str || type_literal_receiver_owner
+        # Source lookup can choose an ancestor Def for an implicit class call.
+        # Its body still executes with the enclosing method's concrete self.
+        # Intrinsics use the selected primitive key and the caller context.
+        if concrete_owner_name.nil? && receiver_id.nil? && static_class_name && @current_method_is_class &&
+           callee_kind == Adamas::Compiler::Frontend::NodeKind::Identifier && !method_name.includes?('.') &&
+           @module.primitive_for(entry_name).nil?
+          concrete_owner_name = @current_class
+        end
         if concrete_owner_name.nil? && receiver_id && ctx.type_literal?(receiver_id)
           receiver_type_name = get_type_name_from_ref(ctx.type_of(receiver_id))
           unless receiver_type_name.empty? || receiver_type_name == "Void" || receiver_type_name == "Unknown"

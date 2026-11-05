@@ -37,6 +37,7 @@ POSITIVE_CASES=(
   inherited_class_methods
   inherited_generic_class_methods
   inherited_class_self_body
+  inherited_implicit_class_self
   inherited_generic_class_self_body
   same_suffix_child_block_first
   same_suffix_parent_first

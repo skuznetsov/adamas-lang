@@ -23577,3 +23577,17 @@ result type. The previous 35q1721 rejects the reduced direct call with
 a conflicting materialized definition. Refresh after changes to method
 mangling, exact target admission, or deferred callsite materialization.
 Source extend admission and Class#| dispatch remain separate obligations.
+
+### Inherited bodies keep the concrete implicit class receiver
+
+Bare calls from a class method retain the enclosing concrete `self` even
+when overload selection finds a Def in an ancestor. The selected Def keeps
+its own lexical namespace and arena. The ordinary body target specializes
+the selected Def for the concrete receiver. Intrinsics use the selected
+primitive registration and the existing receiver context.
+
+Crystal 1.22.1 and S1 35q1744 emit ABCD in the inherited implicit class self
+fixture. Parent 35q1729 rejects the child specialization. The stock-prelude
+numeric probe agrees on AAA and `hello` runs. The two ReferenceStorage and
+primitive-annotation gates pass on the same binary. Refresh when class
+receiver selection, inherited body identity, or primitive admission changes.
