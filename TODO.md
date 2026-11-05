@@ -25188,3 +25188,32 @@ integration, fresh bootstrap, or LavinMQ parity.
   restrictions and deferred-result ownership while repairing the join.
 - Aggregate Pointer(T), constructor source kinds, full Table default scope,
   fresh bootstrap, and unchanged LavinMQ runtime/test parity remain open.
+- [ ] Preserve explicitly applied unused generic parameters during constructor
+  selection. With `class CarrierPayload(A, T)` and `initialize(@value : T)`,
+  Crystal 1.22.1 executes `CarrierPayload(String, Int32).new(65)` and prints A.
+  Exact S1 35q1825 rejects the same call as undefined new. Both compilers
+  execute the single-parameter `CarrierPayload(T)` control. Evidence is
+  `table-fixture-generic35q1828/result.json` in the external root-cause work
+  directory. This is distinct from source-union carrier admission.
+
+### 2026-11-05 — Preserve source value kinds through constructor selection
+
+- [x] Carry supplied positional argument value-kind facts into initializer
+  admission, ranking, allocator selection, and generated initializer calls.
+  Keep mixed class-object/instance union restrictions distinct in the source
+  definition registry even when their physical carrier types coincide.
+- [x] Retain a known source-kind rejection at the constructor call boundary.
+  Allocator synthesis must not recover a rejected initializer from a broad
+  carrier-only initialization snapshot.
+- Exact S1 35q1845 matches Crystal 1.22.1 on direct and union constructor
+  overloads, mixed-kind phi values, and ordinary method overloads in both
+  declaration orders. Both compilers reject class objects and mixed-kind
+  values passed to an instance-only union, with exit 1 and no executable.
+  The six positive/two negative allocator controls and the generated-allocator
+  prelude/native/rejection gate also pass.
+- [ ] Extend the source-fact contract to named, splat/rest, and block constructor
+  shapes. These routes need facts aligned with their bound source parameters;
+  the positional qualification does not establish those contracts.
+- The applied-reference source-union candidate, unused applied generic
+  parameters, union indexing's final HIR result owner, aggregate Pointer(T),
+  fresh bootstrap, and unchanged LavinMQ runtime/test parity remain open.

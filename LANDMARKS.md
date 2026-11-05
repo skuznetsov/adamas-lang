@@ -23724,3 +23724,33 @@ Test source manifest
 16a6aec163ec3a444f1491a5c422c5e0cbbc84bf68b8a2835f03821bcba91fd5.
 Refresh after source default binding or inference environment/cache changes.
 The full AMQ Table path and LavinMQ remain open pending constructor repair.
+
+### Constructor admission keeps source kinds across carrier collisions
+
+Class objects and instances can share a physical TypeRef. Initializer lookup
+and allocator synthesis previously dropped their source value-kind witnesses.
+Mixed `Payload.class | Int32` and `Payload | Int32` restrictions also collided
+in the source definition registry, replacing one Def before overload selection.
+Source-sensitive keys now distinguish these mixed restrictions. Positional
+constructor admission and generated initializer selection consume the existing
+source-kind matcher and retain the selected Def/arena. A known source-kind
+rejection remains authoritative before carrier-only allocator synthesis.
+
+Exact S1 35q1845 matches Crystal 1.22.1 native ABCDEFFKLGHIJ, including both
+declaration orders and mixed-kind phi values. Both compilers reject the two
+incompatible source-kind fixtures with exit 1 and no executable. Six positive
+and two negative allocator controls pass, as does the generated-allocator
+prelude/native/rejection control. The scoped adversary check found no blocker
+for this positional surface. Build manifest
+d73c470113934de9d55e21215fee5061bba323699766281d7b4fbe5caaa1fac1.
+The original-first scripts are `constructor_source_kind_repro.sh`,
+`allocator_source_contract_repro.sh`, and
+`generated_allocator_source_admission_repro.sh` in `regression_tests`.
+Refresh after source-key generation, argument-fact projection, initializer
+selection, or allocator fallback changes.
+
+Named, splat/rest, and block constructors need separate bound-source witnesses
+and qualification. Explicitly applied unused generic parameters remain a
+distinct constructor defect. The active return pointer is unchanged LavinMQ
+runtime and upstream test parity. This slice establishes no bootstrap or
+full-project runtime result.

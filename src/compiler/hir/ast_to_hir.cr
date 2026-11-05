@@ -44967,6 +44967,7 @@ module Adamas::HIR
       call_has_block : Bool,
       call_has_named_args : Bool,
       call_named_arg_names : Array(String)?,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : Bool
       return false if direct_getter_supersedes_def_candidate?(function_name, function_def)
 
@@ -44993,6 +44994,7 @@ module Adamas::HIR
                               function_def,
                               callsite_types,
                               function_context_from_name(function_name),
+                              source_argument_facts: source_argument_facts,
                             )
       end
       true
@@ -45007,6 +45009,7 @@ module Adamas::HIR
       requested_name : String,
       callsite_types : Array(TypeRef),
       call_has_block : Bool = false,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : Tuple(String, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike)?
       overloads = function_def_overloads(init_base_name)
       if overloads.empty? && init_base_name.starts_with?("::")
@@ -45027,6 +45030,17 @@ module Adamas::HIR
         arity = callsite_types.size
         next if arity < required
         next if !has_splat && !has_double_splat && arity > param_count
+        if source_argument_facts
+          next unless function_def_accepts_call_shape?(
+            candidate_name,
+            candidate_def,
+            callsite_types,
+            call_has_block,
+            false,
+            nil,
+            source_argument_facts,
+          )
+        end
         duplicate = candidates.any? { |(_, existing_def, _)| existing_def.same?(candidate_def) }
         next if duplicate
         arena = @function_def_arenas[candidate_name]? || resolve_arena_for_def(candidate_def, @arena)
@@ -45103,6 +45117,7 @@ module Adamas::HIR
       call_has_block : Bool = false,
       call_has_named_args : Bool = false,
       call_named_arg_names : Array(String)? = nil,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : Tuple(String, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike)?
       if init_def = @function_defs[init_name]?
         # A bare base entry is only a registration alias. For positional
@@ -45119,6 +45134,7 @@ module Adamas::HIR
           call_has_block,
           call_has_named_args,
           call_named_arg_names,
+          source_argument_facts,
         )
         unless (!call_has_named_args && (init_is_bare_alias || init_is_named_only)) || !direct_shape_compatible
           init_arena = @function_def_arenas[init_name]? || resolve_arena_for_def(init_def, @arena)
@@ -45134,6 +45150,7 @@ module Adamas::HIR
            false,
            call_has_named_args,
            call_named_arg_names,
+           source_argument_facts: source_argument_facts,
          )
         resolved_name, resolved_def = resolved
         resolved_name = allocator_initializer_name_with_request_qualifier(
@@ -45151,6 +45168,7 @@ module Adamas::HIR
              init_name,
              callsite_types,
              call_has_block,
+             source_argument_facts,
            )
           return fallback
         end
@@ -45161,7 +45179,16 @@ module Adamas::HIR
       # target that protected definition, so retain the alias for that shape.
       if base_def = @function_defs[init_base_name]?
         stats = function_param_stats(init_base_name, base_def)
-        if call_has_named_args || !stats.has_named_only
+        bare_alias_compatible = !source_argument_facts || function_def_accepts_call_shape?(
+          init_base_name,
+          base_def,
+          callsite_types,
+          call_has_block,
+          call_has_named_args,
+          call_named_arg_names,
+          source_argument_facts,
+        )
+        if bare_alias_compatible && (call_has_named_args || !stats.has_named_only)
           selected_name = allocator_initializer_name_with_request_qualifier(
             init_name,
             init_base_name,
@@ -45190,6 +45217,7 @@ module Adamas::HIR
       call_has_block : Bool = false,
       call_named_arg_names : Array(String)? = nil,
       selected_init_def : Adamas::Compiler::Frontend::DefNode? = nil,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : String
       base_name = allocator_new_name_for(class_name)
       overload_name = mangle_function_name(base_name, call_arg_types, call_has_block)
@@ -45200,12 +45228,14 @@ module Adamas::HIR
           if selected = allocator_initializer_def_for(
                init_base, init_base, call_arg_types, false,
                call_has_named_args, call_named_arg_names,
+               source_argument_facts: source_argument_facts,
              )
             if (function_param_stats(selected[0], selected[1]).param_count > 0 ||
                 allocator_class_requires_union_shape?(class_name)) &&
                function_def_accepts_call_shape?(
                  selected[0], selected[1], call_arg_types, false,
                  call_has_named_args, call_named_arg_names,
+                 source_argument_facts,
                )
               return "#{base_name}$arity0"
             end
@@ -45232,6 +45262,7 @@ module Adamas::HIR
                call_has_block,
                call_has_named_args,
                named_arg_names,
+               source_argument_facts,
              )
             init_def = resolved[1]
           end
@@ -45254,10 +45285,12 @@ module Adamas::HIR
       call_has_block : Bool = false,
       call_named_arg_names : Array(String)? = nil,
       selected_init_target : SelectedCallTarget? = nil,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : String
       source_name = allocator_overload_name_for_call(
         class_name, call_arg_types, call_has_named_args, call_has_block, call_named_arg_names,
         selected_init_target.try(&.def_node),
+        source_argument_facts,
       )
       base_name = allocator_new_name_for(class_name)
       if selected = selected_init_target
@@ -45788,6 +45821,7 @@ module Adamas::HIR
       call_block_return_name : String? = nil,
       selected_initializer : Bool = false,
       selected_init_target : SelectedCallTarget? = nil,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
     )
       allocator_stats_index, allocator_stats_start = begin_lower_method_allocator_stats
       begin
@@ -45829,6 +45863,12 @@ module Adamas::HIR
       if latest = @class_info[class_name]?
         class_info = latest
       end
+      allocator_source_argument_facts = if source_argument_facts && call_arg_types &&
+                                           source_argument_facts.size == call_arg_types.size
+                                          source_argument_facts
+                                        else
+                                          nil
+                                        end
 
       if selected_init_target
         # A source-bound named call already owns its Def, arena and complete
@@ -45838,6 +45878,7 @@ module Adamas::HIR
           class_name, class_info, call_arg_types, call_has_named_args, call_has_block,
           call_named_arg_names, call_block_node, call_block_param_types,
           call_block_return_name, true, selected_init_target,
+          source_argument_facts: allocator_source_argument_facts,
         )
         return
       end
@@ -45851,10 +45892,12 @@ module Adamas::HIR
         if selected_new = lookup_function_def_for_call(
              source_name, source_arg_types.size, call_has_block, source_arg_types,
              false, call_has_named_args, call_named_arg_names,
+             source_argument_facts: allocator_source_argument_facts,
            )
           unless allocator_initializer_precedes_explicit_new?(
                    class_name, source_arg_types, selected_new[0], selected_new[1],
                    call_has_named_args, call_has_block, call_named_arg_names,
+                   allocator_source_argument_facts,
                  )
             return
           end
@@ -45874,6 +45917,7 @@ module Adamas::HIR
           class_name, class_info, call_arg_types, call_has_named_args, call_has_block,
           call_named_arg_names, call_block_node, call_block_param_types,
           call_block_return_name, selected_initializer,
+          source_argument_facts: allocator_source_argument_facts,
         )
         return
       end
@@ -45904,7 +45948,11 @@ module Adamas::HIR
           # a base allocator here would hide its body before the source call
           # reaches overload resolution. Other initialize-backed call shapes
           # can still materialize their own typed allocator overloads.
-          generate_allocator_overload(class_name, class_info, call_arg_types, call_has_named_args, call_has_block, call_named_arg_names, call_block_node, call_block_param_types, call_block_return_name, selected_initializer)
+          generate_allocator_overload(
+            class_name, class_info, call_arg_types, call_has_named_args, call_has_block,
+            call_named_arg_names, call_block_node, call_block_param_types, call_block_return_name,
+            selected_initializer, source_argument_facts: allocator_source_argument_facts,
+          )
           return
         end
       end
@@ -45941,6 +45989,7 @@ module Adamas::HIR
                    call_has_block,
                    call_has_named_args,
                    call_named_arg_names,
+                   source_argument_facts: allocator_source_argument_facts,
                  )
                 init_name = resolved[0]
                 remember_callsite_arg_types(
@@ -45964,7 +46013,11 @@ module Adamas::HIR
               end
             end
           end
-          generate_allocator_overload(class_name, class_info, call_arg_types, call_has_named_args, call_has_block, call_named_arg_names, call_block_node, call_block_param_types, call_block_return_name, selected_initializer)
+          generate_allocator_overload(
+            class_name, class_info, call_arg_types, call_has_named_args, call_has_block,
+            call_named_arg_names, call_block_node, call_block_param_types, call_block_return_name,
+            selected_initializer, source_argument_facts: allocator_source_argument_facts,
+          )
           return
         end
       end
@@ -46003,11 +46056,15 @@ module Adamas::HIR
                  init_base, init_base, allocator_initializer_arg_types,
                  false, base_allocator_has_named_args,
                  base_allocator_has_named_args ? call_named_arg_names : nil,
+                 source_argument_facts: allocator_source_argument_facts.try do |facts|
+                   facts if facts.size == allocator_initializer_arg_types.size
+                 end,
                )
           generate_allocator_overload(
             class_name, class_info, call_arg_types, call_has_named_args, call_has_block,
             call_named_arg_names, call_block_node, call_block_param_types,
             call_block_return_name, selected_initializer,
+            source_argument_facts: allocator_source_argument_facts,
           )
           return
         end
@@ -46381,7 +46438,11 @@ module Adamas::HIR
 
       set_function_state(func_name, FunctionLoweringState::Completed)
 
-      generate_allocator_overload(class_name, class_info, call_arg_types, call_has_named_args, call_has_block, call_named_arg_names, call_block_node, call_block_param_types, call_block_return_name, selected_initializer)
+      generate_allocator_overload(
+        class_name, class_info, call_arg_types, call_has_named_args, call_has_block,
+        call_named_arg_names, call_block_node, call_block_param_types, call_block_return_name,
+        selected_initializer, source_argument_facts: allocator_source_argument_facts,
+      )
       ensure
         finish_lower_method_allocator_stats(allocator_stats_index, allocator_stats_start)
       end
@@ -46402,6 +46463,7 @@ module Adamas::HIR
       call_has_named_args : Bool = false,
       call_has_block : Bool = false,
       call_named_arg_names : Array(String)? = nil,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : Bool
       return false if call_arg_types.size != 1 || call_has_named_args || call_has_block
       actual_type = call_arg_types[0]
@@ -46425,6 +46487,7 @@ module Adamas::HIR
                   end
       initializer = allocator_initializer_def_for(
         init_base, init_name, call_arg_types, false, call_has_named_args, call_named_arg_names,
+        source_argument_facts: source_argument_facts,
       )
       return false unless initializer
       selected_init_name, init_def, _init_arena = initializer.not_nil!
@@ -46436,11 +46499,17 @@ module Adamas::HIR
 
       explicit_context = function_context_for_lookup_candidate(allocator_new_name_for(class_name), explicit_name)
       init_context = function_context_for_lookup_candidate(init_base, selected_init_name)
-      return false unless params_compatible_with_args?(explicit_def, call_arg_types, explicit_context)
-      return false unless params_compatible_with_args?(init_def, call_arg_types, init_context)
+      return false unless params_compatible_with_args?(
+                            explicit_def, call_arg_types, explicit_context,
+                            source_argument_facts: source_argument_facts,
+                          )
+      return false unless params_compatible_with_args?(
+                            init_def, call_arg_types, init_context,
+                            source_argument_facts: source_argument_facts,
+                          )
 
-      init_score = params_match_score(init_def, call_arg_types, init_context, init_params)
-      explicit_score = params_match_score(explicit_def, call_arg_types, explicit_context, explicit_params)
+      init_score = params_match_score(init_def, call_arg_types, init_context, init_params, source_argument_facts)
+      explicit_score = params_match_score(explicit_def, call_arg_types, explicit_context, explicit_params, source_argument_facts)
       return init_score > explicit_score unless init_score == explicit_score
 
       init_arena = @function_def_arenas[selected_init_name]? || resolve_arena_for_def(init_def, @arena)
@@ -46478,12 +46547,14 @@ module Adamas::HIR
       call_has_named_args : Bool = false,
       call_has_block : Bool = false,
       call_named_arg_names : Array(String)? = nil,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : Bool
       base_name = allocator_new_name_for(class_name)
       allocator_named_arg_names = call_has_named_args ? canonical_named_arg_names(call_named_arg_names) : nil
       allow_allocator_overload = single_argument_initializer_precedes_explicit_new?(
         class_name, call_arg_types, explicit_name, explicit_def,
         call_has_named_args, call_has_block, allocator_named_arg_names,
+        source_argument_facts,
       )
 
       if !allow_allocator_overload && base_name.ends_with?(".new") && def_has_untyped_regular_param?(explicit_def)
@@ -46499,8 +46570,15 @@ module Adamas::HIR
 
         if has_proc_arg
           if init_base = resolve_method_with_inheritance(class_name, "initialize")
-            init_match = lookup_function_def_for_call(init_base, call_arg_types.size, call_has_block, call_arg_types, false, true, allocator_named_arg_names)
-            init_match ||= lookup_function_def_for_call(init_base, call_arg_types.size, call_has_block, call_arg_types)
+            init_match = lookup_function_def_for_call(
+              init_base, call_arg_types.size, call_has_block, call_arg_types,
+              false, true, allocator_named_arg_names,
+              source_argument_facts: source_argument_facts,
+            )
+            init_match ||= lookup_function_def_for_call(
+              init_base, call_arg_types.size, call_has_block, call_arg_types,
+              source_argument_facts: source_argument_facts,
+            )
             allow_allocator_overload = !!init_match
           end
         end
@@ -46532,23 +46610,84 @@ module Adamas::HIR
     private def complete_positional_constructor_initializer(
       class_name : String,
       call_arg_types : Array(TypeRef),
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : SelectedCallTarget?
       return nil if call_arg_types.empty? || call_arg_types.any? { |type| type == TypeRef::VOID }
       source_name = allocator_new_name_for(class_name)
-      explicit_new = lookup_function_def_for_call(source_name, call_arg_types.size, false, call_arg_types)
-      return nil unless explicit_new
-      return nil unless allocator_initializer_precedes_explicit_new?(
-        class_name, call_arg_types, explicit_new[0], explicit_new[1],
+      explicit_new = lookup_function_def_for_call(
+        source_name, call_arg_types.size, false, call_arg_types,
+        source_argument_facts: source_argument_facts,
       )
       init_base = resolve_method_with_inheritance(class_name, "initialize")
       return nil unless init_base
       requested_init_name = class_name.starts_with?("::") && !init_base.starts_with?("::") ? "::#{init_base}" : init_base
-      selected = allocator_initializer_def_for(init_base, requested_init_name, call_arg_types, false)
+      selected = allocator_initializer_def_for(
+        init_base, requested_init_name, call_arg_types, false,
+        source_argument_facts: source_argument_facts,
+      )
       return nil unless selected
+      if explicit_new
+        return nil unless allocator_initializer_precedes_explicit_new?(
+          class_name, call_arg_types, explicit_new[0], explicit_new[1],
+          source_argument_facts: source_argument_facts,
+        )
+      elsif !source_call_facts_include_type_literal?(source_argument_facts)
+        # A class-object and instance value can share the same ABI carrier.
+        # Keep the shared allocator when carrier-only lookup agrees with the
+        # exact source selection; otherwise bind the source-selected Def so an
+        # earlier carrier-only materialization cannot own this call.
+        return nil unless source_call_facts_have_complete_value_witness?(source_argument_facts, call_arg_types.size)
+        carrier_selected = allocator_initializer_def_for(
+          init_base, requested_init_name, call_arg_types, false,
+        )
+        if carrier_selected && carrier_selected[0] == selected[0] &&
+           carrier_selected[1].same?(selected[1]) && carrier_selected[2].object_id == selected[2].object_id
+          return nil
+        end
+      end
       stats = function_param_stats(selected[0], selected[1])
       return nil unless stats.param_count == call_arg_types.size && !stats.has_block &&
                         !stats.has_splat && !stats.has_double_splat && !stats.has_named_only
       SelectedCallTarget.new(selected[0], selected[1], selected[2])
+    end
+
+    # A physical allocator can still be synthesized from the carrier type after
+    # exact initializer selection rejects a known class/instance value kind.
+    # Treat that source-kind rejection as authoritative at the call boundary;
+    # otherwise a broad `@init_params` snapshot can resurrect the rejected
+    # initializer under its ABI name.
+    private def allocator_known_source_kind_mismatch_for_call?(
+      class_name : String,
+      call_arg_types : Array(TypeRef),
+      source_argument_facts : Array(SourceCallArgument?)?,
+    ) : Bool
+      facts = source_argument_facts || return false
+      return false unless source_call_facts_include_type_literal?(facts)
+      return false unless facts.size == call_arg_types.size
+      return false if call_arg_types.empty? || call_arg_types.any? { |type| type == TypeRef::VOID }
+      return false unless init_base = resolve_method_with_inheritance(class_name, "initialize")
+
+      requested_init_name = class_name.starts_with?("::") && !init_base.starts_with?("::") ? "::#{init_base}" : init_base
+      source_selected = allocator_initializer_def_for(
+        init_base, requested_init_name, call_arg_types, false,
+        source_argument_facts: facts,
+      )
+      return false if source_selected
+
+      carrier_selected = allocator_initializer_def_for(init_base, requested_init_name, call_arg_types, false)
+      return false unless carrier_selected
+
+      input = CallResolutionInput.new(
+        func_name: init_base,
+        arg_count: call_arg_types.size,
+        arg_types: call_arg_types,
+        has_block: false,
+        has_splat: false,
+        has_named: false,
+        named_names: nil,
+        source_argument_facts: facts,
+      )
+      !call_source_argument_kinds_match?(input, carrier_selected[1], carrier_selected[0])
     end
 
     private def generate_allocator_overload(
@@ -46563,6 +46702,7 @@ module Adamas::HIR
       call_block_return_name : String? = nil,
       selected_initializer : Bool = false,
       selected_init_target : SelectedCallTarget? = nil,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : Nil
       return unless call_arg_types
 
@@ -46571,6 +46711,11 @@ module Adamas::HIR
       # positional materialization must continue to carry nil rather than stale
       # names.
       allocator_named_arg_names = call_has_named_args ? canonical_named_arg_names(call_named_arg_names) : nil
+      allocator_source_argument_facts = if source_argument_facts && source_argument_facts.size == call_arg_types.size
+                                         source_argument_facts
+                                       else
+                                         nil
+                                       end
 
       return if !call_arg_types.empty? && call_arg_types.all? { |t| t == TypeRef::VOID }
 
@@ -46583,6 +46728,7 @@ module Adamas::HIR
       overload_name = allocator_overload_name_for_call(
         class_name, call_arg_types, call_has_named_args, call_has_block,
         allocator_named_arg_names, selected_init_target.try(&.def_node),
+        allocator_source_argument_facts,
       )
       return if overload_name == base_name && selected_init_target.nil?
 
@@ -46618,12 +46764,17 @@ module Adamas::HIR
       # A caller that has already bound its arguments to initialize owns that
       # selection. Rediscovering an explicit .new here can suppress the chosen
       # allocator body and leave the emitted call without a physical target.
-      explicit_match = selected_initializer ? nil : lookup_function_def_for_call(base_name, call_arg_types.size, call_has_block, call_arg_types, false, call_has_named_args, allocator_named_arg_names)
+      explicit_match = selected_initializer ? nil : lookup_function_def_for_call(
+        base_name, call_arg_types.size, call_has_block, call_arg_types,
+        false, call_has_named_args, allocator_named_arg_names,
+        source_argument_facts: allocator_source_argument_facts,
+      )
       if explicit_match
         explicit_name, explicit_def = explicit_match
         allow_allocator_overload = allocator_initializer_precedes_explicit_new?(
           class_name, call_arg_types, explicit_name, explicit_def,
           call_has_named_args, call_has_block, allocator_named_arg_names,
+          allocator_source_argument_facts,
         )
         return unless allow_allocator_overload
       end
@@ -46634,6 +46785,7 @@ module Adamas::HIR
         call_has_named_args,
         call_has_block,
         allocator_named_arg_names, selected_init_target.try(&.def_node),
+        allocator_source_argument_facts,
       )
       return if source_overload_name == base_name && selected_init_target.nil?
       overload_name = allocator_generated_target_name_for_call(
@@ -46642,6 +46794,7 @@ module Adamas::HIR
         call_has_named_args,
         call_has_block,
         allocator_named_arg_names, selected_init_target,
+        allocator_source_argument_facts,
       )
       return if @module.has_function_with_body?(overload_name)
 
@@ -46687,6 +46840,7 @@ module Adamas::HIR
       # forwards the selected initializer's heap/raw lifetime contract below.
       initializer_call_arg_types = call_arg_types
       initializer_has_block = call_has_block
+      initializer_call_source_facts = allocator_source_argument_facts
       forwarded_initializer_block_index : Int32? = nil
       trace_allocator_overload = env_get("ADAMAS_TRACE_ALLOCATOR_OVERLOAD") &&
                                  class_name.includes?(env_get("ADAMAS_TRACE_ALLOCATOR_OVERLOAD").not_nil!)
@@ -46730,10 +46884,18 @@ module Adamas::HIR
                        resolved_init_arena = selected.source_arena || resolve_arena_for_def(selected.def_node, @arena)
                        {selected.symbol_name, selected.def_node}
                      else
-                       lookup_function_def_for_call(init_base, call_arg_types.size, call_has_block, call_arg_types, false, call_has_named_args, allocator_named_arg_names)
+                       lookup_function_def_for_call(
+                         init_base, call_arg_types.size, call_has_block, call_arg_types,
+                         false, call_has_named_args, allocator_named_arg_names,
+                         source_argument_facts: allocator_source_argument_facts,
+                       )
                      end
         if selected_init_target.nil? && init_match.nil? && !call_has_named_args && call_arg_types.size > 0
-          init_match = lookup_function_def_for_call(init_base, call_arg_types.size, call_has_block, call_arg_types, false, true, allocator_named_arg_names)
+          init_match = lookup_function_def_for_call(
+            init_base, call_arg_types.size, call_has_block, call_arg_types,
+            false, true, allocator_named_arg_names,
+            source_argument_facts: allocator_source_argument_facts,
+          )
         end
         # A wrapper can forward `&block` as an explicit trailing Proc argument.
         # The wrapper symbol must keep that Proc-shaped ABI, but initializer
@@ -46753,9 +46915,11 @@ module Adamas::HIR
                false,
                call_has_named_args,
                allocator_named_arg_names,
+               source_argument_facts: allocator_source_argument_facts.try { |facts| facts[0, forwarded_regular_types.size] },
              )
             init_match = forwarded_match
             initializer_call_arg_types = forwarded_regular_types
+            initializer_call_source_facts = allocator_source_argument_facts.try { |facts| facts[0, forwarded_regular_types.size] }
             initializer_has_block = true
             forwarded_initializer_block_index = call_arg_types.size - 1
           end
@@ -46776,6 +46940,7 @@ module Adamas::HIR
                initializer_has_block,
                call_has_named_args,
                allocator_named_arg_names,
+               initializer_call_source_facts,
              )
             init_match = {resolved[0], resolved[1]}
             resolved_init_arena = resolved[2]
@@ -46885,6 +47050,7 @@ module Adamas::HIR
                false,
                initializer_call_arg_types.size > 0,
                allocator_named_arg_names,
+               source_argument_facts: initializer_call_source_facts,
              )
             alt_name, alt_def = alt_match
             if alt_params = alt_def.params
@@ -47235,6 +47401,11 @@ module Adamas::HIR
                initializer_has_block,
                call_has_named_args,
                allocator_named_arg_names,
+                 source_argument_facts: source_facts_for_appended_call_args(
+                   initializer_call_source_facts,
+                   initializer_call_arg_types.size,
+                   init_param_types.size,
+                 ),
              )
             resolved_name = resolved[0]
             init_name = resolved_name if resolved_name.includes?("$arity")
@@ -47248,6 +47419,11 @@ module Adamas::HIR
                initializer_has_block,
                call_has_named_args,
                allocator_named_arg_names,
+                 source_argument_facts: source_facts_for_appended_call_args(
+                   initializer_call_source_facts,
+                   initializer_call_arg_types.size,
+                   init_param_types.size,
+                 ),
              )
             init_name = resolved[0]
           end
@@ -47337,6 +47513,7 @@ module Adamas::HIR
                  false,
                  call_has_named_args,
                  allocator_named_arg_names,
+                 source_argument_facts: initializer_call_source_facts,
                )
               init_def_name, init_def = match
             end
@@ -52773,6 +52950,12 @@ module Adamas::HIR
                                    declared_name
                                  elsif param_type != TypeRef::VOID && proc_annotation_type_literal?(declared_name)
                                    proc_source_type_name(param_type, true)
+                                 elsif param_type != TypeRef::VOID &&
+                                       proc_annotation_has_type_literal_arm?(declared_name)
+                                   # A mixed union keeps literal and instance arms distinct.
+                                   # The all-literal helper above intentionally answers a
+                                   # stronger question and cannot name this source shape.
+                                   split_union_type_name(declared_name).sort.join(" | ")
                                  end
               if restriction_name
                 source_restriction_names ||= Array(String?).new(param_types.size, nil)
@@ -78020,6 +78203,15 @@ module Adamas::HIR
       name.ends_with?(".class") || name.ends_with?(".metaclass")
     end
 
+    private def proc_annotation_has_type_literal_arm?(source_name : String) : Bool
+      name = strip_fully_grouped_type_name(substitute_type_params_in_type_name(source_name.strip))
+      name = resolve_type_alias_chain(name, preserve_abstract_int: true)
+      name = strip_fully_grouped_type_name(name)
+      union_names = split_union_type_name(name)
+      return union_names.any? { |part| proc_annotation_has_type_literal_arm?(part) } if union_names.size > 1
+      name.ends_with?(".class") || name.ends_with?(".metaclass")
+    end
+
     private def proc_source_type_name(type : TypeRef, type_literal : Bool) : String
       name = generic_param_type_name_from_ref(type)
       return name unless type_literal
@@ -78037,11 +78229,37 @@ module Adamas::HIR
       ctx : LoweringContext,
       value : ValueId,
       rest_values : Array(SourceCallArgument)? = nil,
+      preserve_value_facts : Bool = false,
     ) : SourceCallArgument
       facts = source_block_result_value_facts(ctx, value).sort_by { |(type, literal)| {type.id, literal ? 1 : 0} }
       kinds = facts.map(&.[1]).uniq
       SourceCallArgument.new(enum_tracked_type(ctx, value), kinds == [true], rest_values,
-        kinds.size > 1 ? facts : nil)
+        (preserve_value_facts || kinds.size > 1) && !facts.empty? ? facts : nil)
+    end
+
+    private def source_call_facts_include_type_literal?(facts : Array(SourceCallArgument?)?) : Bool
+      return false unless facts
+      facts.not_nil!.any? do |argument|
+        argument && (argument.type_literal || !!argument.value_facts.try(&.any? { |(_, literal)| literal }))
+      end
+    end
+
+    private def source_call_facts_have_complete_value_witness?(
+      facts : Array(SourceCallArgument?)?,
+      arg_count : Int32,
+    ) : Bool
+      return false unless facts && facts.size == arg_count
+      facts.not_nil!.all? do |argument|
+        if value = argument
+          if value_facts = value.value_facts
+            !value_facts.empty?
+          else
+            false
+          end
+        else
+          false
+        end
+      end
     end
 
     # Project only source expressions whose value kind is already known.
@@ -78085,13 +78303,34 @@ module Adamas::HIR
     ) : Array(SourceCallArgument?)?
       return nil if has_splat || has_named || !arg_types || args.size != arg_types.size
       slots = args.map do |value|
-        facts = source_block_result_value_facts(ctx, value)
-        if facts.size == 1
-          actual, literal = facts[0]
-          SourceCallArgument.new(actual, literal) unless actual == TypeRef::VOID
+        facts = source_block_result_value_facts(ctx, value).sort_by { |(type, literal)| {type.id, literal ? 1 : 0} }
+        unless facts.empty?
+          kinds = facts.map(&.[1]).uniq
+          SourceCallArgument.new(enum_tracked_type(ctx, value), kinds == [true], nil,
+            kinds.size > 1 ? facts : nil)
         end
       end
       slots.any? { |facts| !facts.nil? } ? slots : nil
+    end
+
+    # Preserve facts for supplied positional arguments when allocator lowering
+    # appends defaulted slots. These facts describe only the original source
+    # arguments; added ABI slots deliberately remain unknown.
+    private def source_facts_for_appended_call_args(
+      source_argument_facts : Array(SourceCallArgument?)?,
+      source_arg_count : Int32,
+      call_arg_count : Int32,
+    ) : Array(SourceCallArgument?)?
+      return nil unless source_argument_facts
+      return nil if source_arg_count < 0 || call_arg_count < source_arg_count
+      return nil unless source_argument_facts.size == source_arg_count
+      return source_argument_facts if call_arg_count == source_arg_count
+
+      facts = source_argument_facts.dup
+      while facts.size < call_arg_count
+        facts << nil
+      end
+      facts
     end
 
     private def proven_class_argument_matches_param?(
@@ -78101,6 +78340,16 @@ module Adamas::HIR
       formals : Array(String),
     ) : Bool?
       return nil unless argument
+      if value_facts = argument.value_facts
+        return nil if value_facts.empty?
+        matches = [] of Bool?
+        value_facts.each do |(type, literal)|
+          matches << proven_class_argument_matches_param?(param, SourceCallArgument.new(type, literal), context, formals)
+        end
+        return false if matches.any? { |match| match == false }
+        return true if matches.all? { |match| match == true }
+        return nil
+      end
       actual = argument.type_ref
       restriction = param.type_annotation || return nil
       source = restriction.strip
@@ -115632,9 +115881,21 @@ module Adamas::HIR
                 # positional init param).
                 unless call_has_named_args
                   alloc_block = has_block_call ? allocator_call_block_contract(class_name_str, call_arg_types, false, block_expr, block_pass_expr) : nil
+                  constructor_source_facts = unless call_has_splat || has_block_call
+                                              source_class_arguments_before_lowering(ctx, call_args, call_arena)
+                                            end
+                  selected_constructor_target = if !call_has_splat && !call_has_named_args && !has_block_call &&
+                                                    call_arg_types.size == call_args.size
+                                                  complete_positional_constructor_initializer(
+                                                    class_name_str, call_arg_types, constructor_source_facts,
+                                                  )
+                                                end
                   generate_allocator(class_name_str, class_info, call_arg_types, call_has_block: has_block_call,
                     call_block_node: alloc_block.try(&.[0]), call_block_param_types: alloc_block.try(&.[1]),
-                    call_block_return_name: alloc_block.try(&.[2]))
+                    call_block_return_name: alloc_block.try(&.[2]),
+                    selected_initializer: !!selected_constructor_target,
+                    selected_init_target: selected_constructor_target,
+                    source_argument_facts: constructor_source_facts)
                 end
               end
             end
@@ -116422,13 +116683,24 @@ module Adamas::HIR
         end
       end
       abi_guard_explicit_arg_count = args.size
-      source_positional_values = args.map { |value| source_call_argument(ctx, value) }
+      preserve_constructor_value_facts = false
+      if method_name == "new" && !has_named_args && !has_splat && !has_block_call
+        if source_new_name = full_method_name
+          preserve_constructor_value_facts = @class_info.has_key?(method_owner(source_new_name))
+        end
+      end
+      source_positional_values = args.map do |value|
+        source_call_argument(ctx, value, preserve_value_facts: preserve_constructor_value_facts)
+      end
+      source_positional_facts = source_positional_values.map { |argument| argument.as(SourceCallArgument?) }
       if method_name == "new" && source_initializer_entry.nil? &&
          !has_named_args && !has_splat && !has_block_call &&
          (source_new_name = full_method_name) && (source_owner = method_owner(source_new_name)) &&
          @class_info.has_key?(source_owner)
         source_types = args.map { |arg_id| ctx.type_of(arg_id) }
-        if selected_initializer = complete_positional_constructor_initializer(source_owner, source_types)
+        if selected_initializer = complete_positional_constructor_initializer(
+             source_owner, source_types, source_positional_facts,
+           )
           source_initializer_entry = selected_initializer
           prefer_allocator_new_call = true
           constructor_arg_binding_name = strip_type_suffix(selected_initializer.symbol_name)
@@ -118995,6 +119267,7 @@ module Adamas::HIR
             if allocator_initializer_precedes_explicit_new?(
                  class_name, arg_types, explicit_name, explicit_def,
                  allocator_has_named_args, has_block_call, call_named_arg_names,
+                 call_resolution_source_argument_facts(ctx, args, arg_types, false, has_named_args),
                )
               # Drop only this selected explicit candidate; the generated
               # allocator is materialized from the better-matching initializer.
@@ -119003,6 +119276,9 @@ module Adamas::HIR
             end
           end
         end
+        constructor_source_facts_after_lowering = call_resolution_source_argument_facts(
+          ctx, args, arg_types, false, has_named_args,
+        )
         # Default/named binding has already selected a source Def before ABI
         # padding. Settle that choice before allocator materialization: looking
         # up the padded vector can miss a named-only source overload and create
@@ -119010,6 +119286,17 @@ module Adamas::HIR
         unless explicit_match
           if class_name = method_owner(full_method_name)
             if class_info = @class_info[class_name]?
+              if constructor_arg_binding_name && source_initializer_entry.nil? &&
+                 !allocator_has_named_args && !has_block_call && !has_splat &&
+                 allocator_known_source_kind_mismatch_for_call?(
+                   class_name, arg_types, constructor_source_facts_after_lowering,
+                 )
+                actual_names = arg_types.map { |type| get_type_name_from_ref(type) }.join(", ")
+                raise LoweringError.new(
+                  "no overload matches #{full_method_name} for argument types (#{actual_names})",
+                  node,
+                )
+              end
               source_only_allocator = allocator_class_requires_union_shape?(class_name)
               if source_only_allocator && !has_block_call && !has_splat && !has_named_args &&
                  arg_types.any? { |type| is_union_type?(type) }
@@ -119038,6 +119325,7 @@ module Adamas::HIR
                 call_block_return_name: alloc_block.try(&.[2]),
                 selected_initializer: prefer_allocator_new_call,
                 selected_init_target: source_initializer_entry,
+                source_argument_facts: constructor_source_facts_after_lowering,
               )
               allocator_call_shape_target = allocator_generated_target_name_for_call(
                 class_name,
