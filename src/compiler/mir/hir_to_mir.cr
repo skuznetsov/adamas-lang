@@ -208,6 +208,10 @@ module Adamas
       # Statistics
       getter stats : LoweringStats = LoweringStats.new
 
+      # HIR-side census used to keep --no-gc out of fused lowering when a
+      # StaticArray(CStruct)#[] may synthesize a backend value-copy allocation.
+      getter has_static_array_lib_struct_index_get : Bool = false
+
       # Mapping from MIR function index to HIR function index (built during prepare())
       getter mir_to_hir_indices : ::Array(Int32) = [] of Int32
 
@@ -250,6 +254,7 @@ module Adamas
                                 end
         @strict_fallback_counts = {"suffix" => 0, "arity" => 0, "sole" => 0, "legacy" => 0, "unqualified" => 0}
         @strict_fallback_entries = ::Set(String).new
+        @has_static_array_lib_struct_index_get = has_static_array_lib_struct_index_get?
         STDERR.puts "[MIR_INIT] class_parents_indexed" if trace
       end
 
@@ -3790,6 +3795,12 @@ module Adamas
             )
           end
 
+          # This marker is a representation fact, so classify from the exact
+          # HIR owner key. The broader helper below also accepts basename
+          # matches for legacy lookups; that is unsafe when two namespaces
+          # define the same short struct name.
+          mir_type.is_lib_struct = info.is_struct && @hir_module.lib_structs.includes?(class_name)
+
           # Add fields (ivars)
           info.ivars.each do |ivar|
             field_type = convert_type(ivar.type)
@@ -4296,6 +4307,12 @@ module Adamas
       private def container_elem_storage_size_u64(elem_type : Type?) : UInt64
         return pointer_word_bytes_u64 unless elem_type
 
+        # StaticArray(CStruct, N) stores the C-layout payload inline, at the
+        # same byte size used by Pointer(CStruct) arithmetic and stores.
+        if elem_type.is_lib_struct && elem_type.size > 0
+          return elem_type.size
+        end
+
         is_inline = elem_type.kind.primitive? || elem_type.kind.enum?
         if is_inline && elem_type.size > 0
           return elem_type.size
@@ -4336,6 +4353,10 @@ module Adamas
 
       private def container_elem_alignment_u32(elem_type : Type?) : UInt32
         return pointer_word_align_u32 unless elem_type
+
+        if elem_type.is_lib_struct && elem_type.alignment > 0
+          return elem_type.alignment
+        end
 
         is_inline = elem_type.kind.primitive? || elem_type.kind.enum?
         if is_inline && elem_type.alignment > 0
@@ -6498,6 +6519,14 @@ module Adamas
         lib_set.includes?(desc.name) || lib_set.any? { |ls| ls.ends_with?("::#{desc.name}") || desc.name.ends_with?("::#{ls.split("::").last}") }
       end
 
+      # Pointer(T)'s raw byte representation follows the exact semantic owner
+      # fact registered on MIR::Type. Do not use the legacy HIR basename matcher
+      # here: an ordinary User::Block must not inherit LibC::Block's C layout.
+      private def pointer_element_is_lib_struct?(type : Adamas::HIR::TypeRef) : Bool
+        mir_type = @mir_module.type_registry.get(convert_type(type))
+        mir_type.try(&.is_lib_struct) || false
+      end
+
       private def hir_type_lib_struct_size(type : Adamas::HIR::TypeRef) : UInt64
         mir_ref = convert_type(type)
         if mir_type = @mir_module.type_registry.get(mir_ref)
@@ -6537,7 +6566,7 @@ module Adamas
         # heap pointers in Pointer(Tuple)/Array(Tuple) slots, and emit_gep_dynamic
         # has an explicit tuple pointer-slot guard for that ABI.
         return false unless desc.kind == HIR::TypeKind::Struct
-        return false if hir_type_is_lib_struct?(type)
+        return false if pointer_element_is_lib_struct?(type)
         mir_ref = convert_type(type)
         inline_container_struct_type?(@mir_module.type_registry.get(mir_ref))
       end
@@ -6596,10 +6625,51 @@ module Adamas
       # Index Access Lowering
       # ─────────────────────────────────────────────────────────────────────────
 
+      # Detect the exact HIR route whose StaticArray(CStruct) index read lowers
+      # to a value copy allocated in LLVM. This census only disables fused
+      # --no-gc lowering; the post-MIR demand is recorded by lower_index_get.
+      private def has_static_array_lib_struct_index_get? : Bool
+        @hir_module.functions.each do |hir_func|
+          value_types = {} of HIR::ValueId => HIR::TypeRef
+          hir_func.params.each do |param|
+            value_types[param.id] = param.type
+          end
+          hir_func.blocks.each do |block|
+            block.instructions.each do |inst|
+              value_types[inst.id] = inst.type
+            end
+          end
+
+          hir_func.blocks.each do |block|
+            block.instructions.each do |inst|
+              index_get = inst.as?(HIR::IndexGet) || next
+              receiver_type = value_types[index_get.object]?
+              next unless receiver_type
+              receiver_desc = @hir_module.get_type_descriptor(receiver_type)
+              next unless receiver_desc && receiver_desc.name.starts_with?("StaticArray(")
+
+              element_desc = @hir_module.get_type_descriptor(index_get.type)
+              next unless element_desc && element_desc.kind == HIR::TypeKind::Struct
+              return true if @hir_module.lib_structs.includes?(element_desc.name)
+            end
+          end
+        end
+        false
+      end
+
       private def lower_index_get(idx : HIR::IndexGet) : ValueId
         builder = @builder.not_nil!
         obj_ptr = get_value(idx.object)
         index = get_value(idx.index)
+
+        # The backend returns a detached value copy for this exact route and
+        # allocates it through __adamas_malloc64. Keep that synthesized GC demand
+        # visible to the CLI's post-MIR --no-gc guard.
+        if obj_hir_type = @hir_value_types[idx.object]?
+          if hir_type_is_static_array?(obj_hir_type) && pointer_element_is_lib_struct?(idx.type)
+            @mir_module.uses_static_array_lib_struct_value_copy = true
+          end
+        end
 
         # Get element type from context (default to INT32 for now)
         element_type = convert_type(idx.type)
@@ -11572,7 +11642,7 @@ module Adamas
         @mir_module.uses_gc = true
 
         count = get_value(malloc.count)
-        elem_size = if hir_type_is_lib_struct?(malloc.element_type)
+        elem_size = if pointer_element_is_lib_struct?(malloc.element_type)
                        require_lib_struct_byte_size(malloc.element_type).to_i32
                      elsif hir_type_is_inline_pointer_tuple?(malloc.element_type)
                        hir_type_inline_size(malloc.element_type)
@@ -11606,7 +11676,7 @@ module Adamas
           index = get_value(idx)
           elem_mir = pointer_element_mir_type(@hir_value_types[load.pointer]?) || convert_type(load.type)
           elem_hir = pointer_element_hir_type(@hir_value_types[load.pointer]?) || load.type
-          elem_size = if hir_type_is_lib_struct?(elem_hir)
+          elem_size = if pointer_element_is_lib_struct?(elem_hir)
                         require_lib_struct_byte_size(elem_hir)
                       elsif hir_type_is_inline_pointer_tuple?(elem_hir)
                         hir_type_inline_size(elem_hir).to_u64
@@ -11617,7 +11687,7 @@ module Adamas
                       end
           gep_element_type = hir_type_is_inline_pointer_tuple?(elem_hir) ? TypeRef::VOID : elem_mir
           gep = builder.gep_dynamic(ptr, index, gep_element_type, elem_size)
-          if hir_type_is_lib_struct?(elem_hir)
+          if pointer_element_is_lib_struct?(elem_hir)
             # Same ABI as ptr.value: inline C struct at gep; opaque ptr handle, no heap slot load.
             return gep
           end
@@ -11634,7 +11704,7 @@ module Adamas
           builder.load(gep, result_type)
         else
           # ptr.value - direct access
-          if hir_type_is_lib_struct?(load.type)
+          if pointer_element_is_lib_struct?(load.type)
             # C lib structs are stored inline at *ptr. Unlike heap-backed Crystal structs,
             # there is no pointer-sized indirection — *ptr is the struct bytes. The V2 ABI
             # still represents struct "values" as opaque ptr handles; pass the address through.
@@ -11678,7 +11748,7 @@ module Adamas
           # ptr[idx] = val - GEP then store or memcpy for inline C lib structs
           index = get_value(idx)
           elem_hir = pointer_element_hir_type(@hir_value_types[store.pointer]?) || @hir_value_types[store.value]?
-          if elem_hir && hir_type_is_lib_struct?(elem_hir)
+          if elem_hir && pointer_element_is_lib_struct?(elem_hir)
             sz = require_lib_struct_byte_size(elem_hir)
             gep = builder.gep_dynamic(ptr, index, elem_type, sz)
             builder.memcopy(gep, val, sz)
@@ -11703,7 +11773,11 @@ module Adamas
         else
           # ptr.value = val - direct store
           elem_hir = pointer_element_hir_type(@hir_value_types[store.pointer]?) || @hir_value_types[store.value]? || store.type
-          if elem_hir && hir_type_is_inline_pointer_tuple?(elem_hir)
+          if elem_hir && pointer_element_is_lib_struct?(elem_hir)
+            sz = require_lib_struct_byte_size(elem_hir)
+            builder.memcopy(ptr, val, sz)
+            lib_struct_indexed_memcpy = true
+          elsif elem_hir && hir_type_is_inline_pointer_tuple?(elem_hir)
             sz = hir_type_inline_size(elem_hir).to_u64
             builder.memcopy(ptr, val, sz)
             lib_struct_indexed_memcpy = true
@@ -11741,7 +11815,7 @@ module Adamas
         elem_type = convert_type(add.element_type)
         elem_size = add.element_byte_size
         if elem_size == 0_u64
-          if hir_type_is_lib_struct?(add.element_type)
+          if pointer_element_is_lib_struct?(add.element_type)
             elem_size = require_lib_struct_byte_size(add.element_type)
           elsif hir_type_is_inline_pointer_tuple?(add.element_type)
             elem_size = hir_type_inline_size(add.element_type).to_u64
@@ -11772,7 +11846,7 @@ module Adamas
         elem_hir = pointer_element_hir_type(ptr_type)
         elem_mir_ref = pointer_element_mir_type(ptr_type)
 
-        elem_size = if elem_hir && hir_type_is_lib_struct?(elem_hir)
+        elem_size = if elem_hir && pointer_element_is_lib_struct?(elem_hir)
                       require_lib_struct_byte_size(elem_hir).to_i64
                     elsif elem_hir && hir_type_is_inline_pointer_tuple?(elem_hir)
                       hir_type_inline_size(elem_hir).to_i64

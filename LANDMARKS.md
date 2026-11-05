@@ -23754,3 +23754,27 @@ and qualification. Explicitly applied unused generic parameters remain a
 distinct constructor defect. The active return pointer is unchanged LavinMQ
 runtime and upstream test parity. This slice establishes no bootstrap or
 full-project runtime result.
+
+### C-layout container storage uses an exact semantic owner fact
+
+StaticArray(LibC::Kevent, 2) allocated two pointer slots while the C API wrote
+32-byte Kevent payloads. Indexing also used an eight-byte stride and treated
+payload bytes as a pointer. This representation disagreement can corrupt
+memory before any application operation. MIR now preserves exact membership
+in HIR's lib_structs set. StaticArray allocation and access, plus raw
+Pointer(CStruct) stores and arithmetic, consume that fact. Namespace basename
+matches cannot grant C layout to an ordinary same-named struct.
+
+Exact S1 35q1885 has build source manifest
+`eb0ada82549ac1358a71b80f57a46d61231f825189404c63aa598ecf2a3cd25b`.
+`static_array_libstruct_value_contract_repro.sh` matches original Crystal
+1.22.1 native `1111110`. The no-prelude positive returns `0`. Both serial and
+requested fused `--no-gc` routes reject the synthesized StaticArray copy with
+its exact diagnostic, exit 1, and no executable in 35q1887 and final 35q1888.
+The scoped storage/guard adversary found no blocker. Refresh after C-layout
+registration, container stride/access lowering, allocator routing, or MIR
+scheduling changes.
+
+Expanded copy tests retain distinct C-struct local/receiver value-place gaps.
+This storage slice establishes no general plain-struct pointer ABI, Channel
+runtime, bootstrap, or LavinMQ parity result.

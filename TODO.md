@@ -25217,3 +25217,22 @@ integration, fresh bootstrap, or LavinMQ parity.
 - The applied-reference source-union candidate, unused applied generic
   parameters, union indexing's final HIR result owner, aggregate Pointer(T),
   fresh bootstrap, and unchanged LavinMQ runtime/test parity remain open.
+
+### 2026-11-05 — Align C-struct pointer and StaticArray storage
+
+- [x] Carry the exact C-layout owner fact into MIR and use the C payload byte
+  size and alignment for StaticArray allocation, pointer stride, loads, and
+  byte-copy stores. StaticArray indexing returns a detached C-struct value.
+- [x] Expose the backend's synthesized StaticArray value-copy allocation to
+  `--no-gc`, including an explicitly requested fused MIR schedule. The guard
+  rejects with the target diagnostic before an executable is produced.
+- Exact S1 35q1885 matches Crystal 1.22.1 on the 32-byte two-element native
+  fixture (`1111110`). The isolated no-prelude positive and both serial/fused
+  `--no-gc` negative checks pass in 35q1887 and the final 35q1888 runner.
+- [ ] Complete the broader value/place contract for ordinary C-struct local
+  copies and Pointer indexing receivers. The expanded adversary still differs
+  from Crystal on these pre-existing cases. Plain struct inline pointer storage
+  remains separately qualified experimental work.
+- Channel runtime, fresh bootstrap, unchanged LavinMQ execution, and test parity
+  remain open. A Channel program compiles with the combined experimental
+  pointer candidate 35q1886 but its native run times out.

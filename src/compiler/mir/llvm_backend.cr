@@ -27366,6 +27366,17 @@ module Adamas::MIR
         # `StaticArray(Tuple(...), N)#[]` value remains a tuple pointer while
         # the slot itself stays payload bytes (not a pointer word).
         if elem_mir = @module.type_registry.get(inst.element_type)
+          if elem_mir.is_lib_struct && elem_mir.size > 0
+            stride = elem_mir.size
+            emit "%#{base_name}.idx_i64 = sext i32 #{index} to i64"
+            emit "%#{base_name}.byte_off = mul i64 %#{base_name}.idx_i64, #{stride}"
+            emit "%#{base_name}.elem_ptr = getelementptr i8, ptr #{array_ptr}, i64 %#{base_name}.byte_off"
+            emit "#{name} = call ptr @__adamas_malloc64(i64 #{stride}) ; StaticArray C-struct value copy"
+            emit "call void @llvm.memcpy.p0.p0.i64(ptr #{name}, ptr %#{base_name}.elem_ptr, i64 #{stride}, i1 false)"
+            @value_types[inst.id] = effective_element_type_ref
+            record_emitted_type(name, "ptr")
+            return
+          end
           if inline_primitive_tuple_type?(elem_mir)
             stride = elem_mir.size
             emit "%#{base_name}.idx_i64 = sext i32 #{index} to i64"
@@ -27732,6 +27743,18 @@ module Adamas::MIR
         # byte slot; storing the ptr itself would disagree with Slice(Tuple)'s
         # value ABI and make the subsequent fetch copy the pointer word.
         if elem_mir = @module.type_registry.get(inst.element_type)
+          if elem_mir.is_lib_struct && elem_mir.size > 0
+            stride = elem_mir.size
+            emit "%#{base_name}.idx_i64 = sext i32 #{index} to i64"
+            emit "%#{base_name}.byte_off = mul i64 %#{base_name}.idx_i64, #{stride}"
+            emit "%#{base_name}.elem_ptr = getelementptr i8, ptr #{array_ptr}, i64 %#{base_name}.byte_off"
+            if value == "null"
+              emit "call void @llvm.memset.p0.i64(ptr %#{base_name}.elem_ptr, i8 0, i64 #{stride}, i1 false)"
+            else
+              emit "call void @llvm.memcpy.p0.p0.i64(ptr %#{base_name}.elem_ptr, ptr #{value}, i64 #{stride}, i1 false)"
+            end
+            return
+          end
           if inline_primitive_tuple_type?(elem_mir)
             stride = elem_mir.size
             emit "%#{base_name}.idx_i64 = sext i32 #{index} to i64"

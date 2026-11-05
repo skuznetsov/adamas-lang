@@ -250,6 +250,10 @@ module Adamas::MIR
     getter element_type : Type?         # For arrays/pointers
     getter parent_type_id : TypeId?
     property is_closure : Bool = false
+    # Semantic marker for C-layout structs. HIR carries this fact through its
+    # lib_structs set; MIR needs it after lowering to distinguish inline C bytes
+    # from the ordinary pointer-carrier struct representation.
+    property is_lib_struct : Bool = false
 
     # Fixed container-element ABI label (ContainerElemRepr), set ONCE during
     # HIR→MIR after the registry/sizes/fields have settled. Unlike `inline_value?`
@@ -2498,6 +2502,9 @@ module Adamas::MIR
     # the backend consumes this demand for allocator routing and GC_init. Pure
     # stack programs skip it; no-prelude/no-GC modes retain their native boundary.
     property uses_gc : Bool = false
+    # StaticArray(CStruct)#[] emits a value-copy allocation directly in LLVM.
+    # Preserve that demand so the CLI's --no-gc check can see it after MIR.
+    property uses_static_array_lib_struct_value_copy : Bool = false
 
     @next_function_id : FunctionId = 0_u32
     @function_map : ::Hash(String, Function)

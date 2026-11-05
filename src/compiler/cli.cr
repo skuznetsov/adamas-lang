@@ -3265,8 +3265,16 @@ module Adamas
         # Default off — fused mode has correctness issues with worker-side state (symbols,
         # module singletons, etc.) that get lost across fork boundaries.
         # Enable with ADAMAS_FUSED_PARALLEL=1 for experimentation.
-        fused_parallel = (BootstrapEnv.get?("ADAMAS_FUSED_PARALLEL") || "0") != "0"
-        log_codepath_branch("cli.mir", "fused_parallel_requested", fused_parallel, "CLI")
+        fused_parallel_requested = (BootstrapEnv.get?("ADAMAS_FUSED_PARALLEL") || "0") != "0"
+        # The StaticArray(C-struct) IndexGet ABI creates its copied value in
+        # LLVM, after the HIR-only --no-gc allocation scan. Keep such programs
+        # on serial MIR lowering so the synthesized demand is recorded.
+        needs_static_array_copy_audit = options.no_gc && mir_lowering.has_static_array_lib_struct_index_get
+        fused_parallel = fused_parallel_requested && !needs_static_array_copy_audit
+        log_codepath_branch("cli.mir", "fused_parallel_requested", fused_parallel_requested, "CLI")
+        if fused_parallel_requested && !fused_parallel
+          log_codepath_status("cli.mir", "fused_disabled_for_no_gc_static_array_copy_audit", "taken", "CLI")
+        end
 
         if fused_parallel && !options.emit_mir && !BootstrapEnv.enabled?("ADAMAS_STOP_AFTER_MIR")
           log_codepath_status("cli.mir", "fused_parallel", "taken", "CLI")
@@ -3331,6 +3339,11 @@ module Adamas
           mir_lower_start = options.stats ? Time.instant : nil
           mir_lowering.lower_all_bodies(options.progress)
           mir_lowering.synthesize_abstract_method_dispatchers(options.progress)
+          if options.no_gc && mir_module.uses_static_array_lib_struct_value_copy
+            err_io.puts "error: --no-gc requested but StaticArray(C struct) index value-copy lowering requires a GC allocation"
+            emit_timings(options, out_io, timings, total_start)
+            return 1
+          end
           log_generated_stage_memory_phase(
             "cli.mir_bodies_lowered",
             "cli.mir",
