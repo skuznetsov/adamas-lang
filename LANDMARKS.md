@@ -23561,3 +23561,19 @@ Crystal 1.22.1 and exact S1 35q1721 agree on
 a method. Refresh when constant lookup, declaration arenas, or macro
 iteration changes. Declaration-time expansion and loop-carried writes
 from generated statements have separate open reproducers in TODO.md.
+
+### Exact positional targets own source argument kinds
+
+A class object and its instance can have the same ABI TypeRef. Exact
+positional specialization must publish the source kind under the same
+name that owns the body and its argument metadata. The exact-name guard
+reconstructs that name with the source restriction names. The ordinary
+ABI parameter types are unchanged.
+
+Crystal 1.22.1 and S1 35q1729 emit ABABABCDC in
+`exact_call_metaclass_argument_identity_repro.sh`. Forwarding two kinds
+through the same untyped definition preserves the selected overload and
+result type. The previous 35q1721 rejects the reduced direct call with
+a conflicting materialized definition. Refresh after changes to method
+mangling, exact target admission, or deferred callsite materialization.
+Source extend admission and Class#| dispatch remain separate obligations.

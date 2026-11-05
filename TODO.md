@@ -25015,3 +25015,30 @@ integration, fresh bootstrap, or LavinMQ parity.
   LavinMQ HIR probe 35q1722 reached `Config#parse_ini` and stopped at
   `case branch lost its owned Block scope` from a generated Hash#each body.
   The probe includes earlier provisional changes and has no runtime result.
+
+### 2026-11-04: Keep source value kind in exact positional call identity
+
+- [x] Use the source metaclass restriction in the emitted name when an
+  exact positional call specializes a selected definition. Preserve the
+  same key for the body, call metadata, and target admission.
+- Exact S1 35q1729 and Crystal 1.22.1 emit ABABABCDC in
+  `exact_call_metaclass_argument_identity_repro.sh`. The fixture covers
+  forwarding, repeated calls, and distinct UInt8 and Int32 return types.
+  Type-literal receiver, nested block kind, and concrete union dispatch
+  regressions pass on the same compiler.
+- [ ] Resolve class-object argument restrictions against the receiver's
+  source extend relationships. The old compiler admits an aborting target
+  for UInt32.class against Int32.class and Int32 overloads. A candidate
+  that rejects every kind mismatch also rejects the valid
+  IO::ByteFormat::SystemEndian argument to IO#read_bytes. LittleEndian
+  extends ByteFormat.
+- [ ] Resolve the ordinary Class#| source method for class-object
+  receivers. In unchanged LavinMQ 35q1722, the two Config#parse_value
+  sites request Int32.class and (Int32 | Nil).class. The primitive bitwise
+  lowering gives the second type expression the Int32 carrier. Compare
+  the operator and explicit method call with Crystal before rerunning
+  the combined HIR probe.
+- [ ] Qualify raw macro Call node name lookup and absolute Path#id.
+  Inspection finds no Call-specific name handling in MacroNodeValue
+  and indicates that Path#id may discard the root prefix. Reproduce each
+  against Crystal before changing conversion.

@@ -5235,6 +5235,7 @@ module Adamas::HIR
       base_name : String,
       exact_arg_types : Array(TypeRef),
       lookup_expect_block : Bool,
+      source_restriction_names : Array(String?)? = nil,
     ) : Bool
       return false if requested_name.empty? || base_name.empty?
       return false if exact_arg_types.empty? || exact_arg_types.any? { |type| type == TypeRef::VOID }
@@ -5243,7 +5244,9 @@ module Adamas::HIR
       return false unless method_name_codec_concrete_type_suffix?(requested_parts)
       return false unless requested_parts.base == base_name
 
-      mangle_function_name(base_name, exact_arg_types, lookup_expect_block) == requested_name
+      mangle_function_name(
+        base_name, exact_arg_types, lookup_expect_block, source_restriction_names: source_restriction_names,
+      ) == requested_name
     end
 
     private def method_name_codec_exact_lookup_owner_keep_requested_name?(
@@ -112555,6 +112558,7 @@ module Adamas::HIR
       has_splat : Bool,
       has_named_args : Bool,
       selected_def : Adamas::Compiler::Frontend::DefNode?,
+      source_restriction_names : Array(String?)? = nil,
     ) : Bool
       return false unless selected_def
       return false if has_block || has_splat || has_named_args
@@ -112563,6 +112567,7 @@ module Adamas::HIR
         base_name,
         arg_types,
         has_block,
+        source_restriction_names,
       )
       return false unless def_has_untyped_regular_param?(selected_def)
 
@@ -119536,6 +119541,31 @@ module Adamas::HIR
         end
       end
 
+      exact_positional_source_call = false
+      exact_source_argument_names : Array(String?)? = nil
+      if (selected_def = selected_call_entry_def) && !source_default_entry &&
+         !has_block_call && !has_splat && !has_named_args &&
+         method_name_codec_exact_callsite_name?(mangled_method_name, base_method_name, arg_types, false)
+        exact_positional_source_call = def_has_untyped_regular_param?(selected_def) ||
+                                       !prefer_callsite_specialization(
+                                         base_method_name,
+                                         selected_call_entry_name || base_method_name,
+                                         arg_types,
+                                         false,
+                                       ).nil?
+        if exact_positional_source_call && !allocator_explicit_new_call && arg_literals.any?
+          # A type object and its instances can share an ABI TypeRef.
+          # Publish the source kind under the same key that will own the body.
+          exact_source_argument_names = Array(String?).new(arg_types.size) do |index|
+            proc_source_type_name(arg_types[index], true) if arg_literals[index]?
+          end
+          mangled_method_name = mangle_function_name(
+            base_method_name, arg_types, source_restriction_names: exact_source_argument_names,
+          )
+          primary_mangled_name = mangled_method_name
+        end
+      end
+
       # Tuple has implicit splat type param T; map it from concrete tuple elements at the callsite.
       if receiver_id
         if recv_desc = @module.get_type_descriptor(ctx.type_of(receiver_id))
@@ -119709,20 +119739,7 @@ module Adamas::HIR
           )
         elsif (allocator_explicit_new_call && !has_block_call) ||
            (source_named_entry && !has_block_call && same_def_node?(source_named_entry[1], selected_def)) ||
-           (!has_block_call && !has_splat && !has_named_args &&
-           method_name_codec_exact_callsite_name?(
-             mangled_method_name,
-             base_method_name,
-             arg_types,
-             has_block_call,
-           ) &&
-           (def_has_untyped_regular_param?(selected_def) ||
-            !prefer_callsite_specialization(
-              base_method_name,
-              selected_call_entry_name || base_method_name,
-              arg_types,
-              false,
-            ).nil?))
+           exact_positional_source_call
           if existing_def = @function_defs[mangled_method_name]?
             if !same_def_node?(existing_def, selected_def) &&
                @module.has_function_with_body?(mangled_method_name)
@@ -119888,6 +119905,7 @@ module Adamas::HIR
         has_splat,
         has_named_args,
         selected_call_entry_def,
+        exact_source_argument_names,
       )
       unselected_family_body = unselected_call_family_body?(base_method_name, mangled_method_name, selected_call_entry_def)
       if !exact_callsite_target_admitted && !unselected_family_body &&
