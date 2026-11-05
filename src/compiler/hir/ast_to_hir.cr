@@ -8582,6 +8582,7 @@ module Adamas::HIR
     @constant_defs : Set(String)
     @pre_scan_constant_defs : Set(String)
     getter constant_types : Hash(String, TypeRef)
+    @constant_source_value_facts = {} of String => Array({TypeRef, Bool})
     getter constant_literal_values : Hash(String, Adamas::Compiler::Semantic::MacroValue)
     getter constant_literal_owners : Hash(String, String)
     getter constant_literal_names : Hash(String, String)
@@ -9022,6 +9023,7 @@ module Adamas::HIR
       @constant_defs = Set(String).new
       @pre_scan_constant_defs = Set(String).new
       @constant_types = {} of String => TypeRef
+      @constant_source_value_facts.clear
       @constant_literal_values = {} of String => Adamas::Compiler::Semantic::MacroValue
       @macro_constant_collections = {} of String => Tuple(ExprId, Adamas::Compiler::Frontend::ArenaLike)
       @constant_literal_owners = {} of String => String
@@ -9343,6 +9345,7 @@ module Adamas::HIR
       @constant_defs = Set(String).new
       @pre_scan_constant_defs = Set(String).new
       @constant_types = {} of String => TypeRef
+      @constant_source_value_facts.clear
       @constant_literal_values = {} of String => Adamas::Compiler::Semantic::MacroValue
       @macro_constant_collections = {} of String => Tuple(ExprId, Adamas::Compiler::Frontend::ArenaLike)
       @constant_literal_owners = {} of String => String
@@ -28813,9 +28816,9 @@ module Adamas::HIR
             return type_name
           end
         elsif !param_name.empty? && param_name[0].ascii_uppercase?
-          # A single-segment constant (`Enumerable.zip(...)`) also parses as
-          # an identifier; resolve it like a one-segment path.
-          type_name = resolve_type_name_in_context(resolve_path_string_in_context(param_name))
+          binding = resolve_expression_path_item(param_name) || return nil
+          return constant_type_literal_name(binding) if constant_name_exists?(binding)
+          type_name = binding
           type_name = resolve_type_alias_chain(type_name)
           return type_name if type_name_exists?(type_name) || @module_defs.has_key?(type_name) || @generic_templates.has_key?(type_name)
         end
@@ -28839,13 +28842,14 @@ module Adamas::HIR
           end
         end
         path_text = raw_path.not_nil!
+        binding = resolve_expression_path_item(path_text) || return nil
+        return constant_type_literal_name(binding) if constant_name_exists?(binding)
         type_name = if absolute_path
                       # A rooted source path has already chosen its namespace.
                       # Do not reinterpret its bare identity in the caller.
                       resolve_path_type_alias_chain(strip_absolute_name_prefix(path_text), true)
                     else
-                      contextual = resolve_path_string_in_context(path_text)
-                      resolve_type_alias_chain(resolve_type_name_in_context(contextual))
+                      resolve_type_alias_chain(binding)
                     end
         return type_name if type_name_exists?(type_name) || @module_defs.has_key?(type_name) || @generic_templates.has_key?(type_name)
       when Adamas::Compiler::Frontend::GenericNode
@@ -28890,7 +28894,8 @@ module Adamas::HIR
             end
           end
           if text.match(/\A[A-Z][A-Za-z0-9_]*(::[A-Z][A-Za-z0-9_]*)*\z/)
-            resolved = resolve_path_string_in_context(text)
+            resolved = resolve_expression_path_item(text) || return nil
+            return constant_type_literal_name(resolved) if constant_name_exists?(resolved)
             resolved = resolve_type_alias_chain(resolved)
             return resolved if type_name_exists?(resolved) || @module_defs.has_key?(resolved) || @generic_templates.has_key?(resolved)
           end
@@ -28899,6 +28904,8 @@ module Adamas::HIR
         if !node.body.empty?
           return infer_type_literal_name_from_expr(node.body.last)
         end
+      when Adamas::Compiler::Frontend::GroupingNode
+        return infer_type_literal_name_from_expr(node.expression)
       end
 
       nil
@@ -30203,7 +30210,8 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::PathNode
         raw_path = collect_path_string(expr_node)
         absolute = raw_path.starts_with?("::")
-        full_name = absolute ? absolute_path_body(raw_path) : resolve_path_string_in_context(raw_path)
+        binding = resolve_expression_path_item(raw_path)
+        full_name = binding || (absolute ? absolute_path_body(raw_path) : resolve_path_string_in_context(raw_path))
         # Rooted aliases select a canonical owner before value/type inference.
         # Their qualified tail must follow the alias target, not the caller.
         full_name = resolve_path_type_alias_chain(full_name, true) if absolute
@@ -30220,7 +30228,7 @@ module Adamas::HIR
             end
           end
         end
-        resolved_constant = absolute ? (constant_name_exists?(full_name) ? full_name : nil) : resolve_constant_name_in_context(full_name)
+        resolved_constant = binding if binding && constant_name_exists?(binding)
         if resolved = resolved_constant
           if const_type = @constant_types[resolved]?
             return const_type if const_type != TypeRef::VOID
@@ -30587,7 +30595,8 @@ module Adamas::HIR
           return type_ref_for_name(self_type_name)
         end
         if name[0]?.try(&.uppercase?)
-          resolved = resolve_constant_name_in_context(name)
+          binding = resolve_expression_path_item(name)
+          resolved = binding if binding && constant_name_exists?(binding)
           if debug_filter = env_get("DEBUG_INFER_CONST")
             if debug_filter == "1" || name.includes?(debug_filter) || (resolved && resolved.includes?(debug_filter))
               type_name = resolved ? @constant_types[resolved]?.try { |t| get_type_name_from_ref(t) } : nil
@@ -30598,13 +30607,12 @@ module Adamas::HIR
             if const_type = @constant_types[resolved]?
               return const_type if const_type != TypeRef::VOID
             end
+            return nil
           end
-          # Fallback: if the identifier is a known type name, treat as type literal.
-          # Handles patterns like read_bytes(UInt32, format) where UInt32 is
-          # a type value (metaclass argument).
-          qualified = resolve_class_name_in_context(name)
-          if type_name_exists?(qualified)
-            return type_ref_for_name(qualified)
+          # Type inference consumes the same lexical binding as lowering.
+          # A unique short name in an unrelated namespace is still unavailable.
+          if binding && (type_name_exists?(binding) || generic_template_instance_name?(binding))
+            return type_ref_for_name(binding)
           end
         end
         if locals = @current_typeof_locals
@@ -69374,6 +69382,104 @@ module Adamas::HIR
       nil
     end
 
+    # Value expressions share one lexical lookup for types and constants.
+    # Looking up those two registries separately lets an outer type replace
+    # an inner instance constant, or an outer constant replace an inner type.
+    private def resolve_expression_path_item(name : String) : String?
+      absolute = name.starts_with?("::")
+      parts = expression_path_components(absolute ? strip_absolute_name_prefix(name) : name)
+      head = parts.shift?
+      return nil unless head && !head.empty?
+      selected = nil.as(String?)
+      unless absolute
+        substituted_head = substitute_type_params_in_type_name(head)
+        if substituted_head != head
+          head = substituted_head
+          # A bound formal already owns its type. Builtin generic instances
+          # can be used as type values before an instance has been interned.
+          if expression_path_item_exists?(head) || generic_template_instance_name?(head)
+            selected = head
+          end
+        end
+      end
+      unless absolute || selected
+        owner = @current_namespace_override || @current_class
+        while owner
+          candidate = "#{owner}::#{head}"
+          owner_base = strip_generics_simple(owner)
+          base_candidate = "#{owner_base}::#{head}"
+          if expression_path_item_exists?(candidate)
+            selected = candidate
+          elsif owner_base != owner && expression_path_item_exists?(base_candidate)
+            selected = base_candidate
+          elsif last_namespace_component(strip_generics_simple(owner)) == head
+            selected = owner
+          else
+            selected = resolve_constant_in_ancestors(owner, head, nil, include_types: true)
+          end
+          break if selected
+          owner_parts = expression_path_components(owner)
+          owner_parts.pop
+          owner = owner_parts.empty? ? nil : owner_parts.join("::")
+        end
+      end
+      selected ||= head if expression_path_item_exists?(head)
+      return nil unless selected
+
+      parts.each do |part|
+        # Once a path head has selected a namespace, a missing tail cannot
+        # restart lookup in the caller's namespace or at the root.
+        if constant_name_exists?(selected)
+          selected = constant_type_literal_name(selected) || return nil
+        end
+        owner = resolve_type_alias_chain_no_context(selected, preserve_abstract_int: true)
+        candidate = "#{owner}::#{part}"
+        owner_base = strip_generics_simple(owner)
+        base_candidate = "#{owner_base}::#{part}"
+        selected = if expression_path_item_exists?(candidate)
+                     candidate
+                   elsif owner_base != owner && expression_path_item_exists?(base_candidate)
+                     base_candidate
+                   else
+                     resolve_constant_in_ancestors(owner, part, nil, include_types: true)
+                   end
+        return nil unless selected
+      end
+      selected
+    end
+
+    # Namespace separators inside a generic argument belong to that argument.
+    private def expression_path_components(name : String) : Array(String)
+      parts = [] of String
+      start = 0
+      depth = 0
+      index = 0
+      while index < name.bytesize
+        byte = name.byte_at(index)
+        case byte
+        when '('.ord, '['.ord, '{'.ord
+          depth += 1
+        when ')'.ord, ']'.ord, '}'.ord
+          depth -= 1 if depth > 0
+        end
+        if depth == 0 && byte == ':'.ord && index + 1 < name.bytesize && name.byte_at(index + 1) == ':'.ord
+          parts << name.byte_slice(start, index - start)
+          index += 2
+          start = index
+        else
+          index += 1
+        end
+      end
+      parts << name.byte_slice(start, name.bytesize - start)
+      parts
+    end
+
+    private def expression_path_item_exists?(name : String) : Bool
+      constant_name_exists?(name) || type_name_exists?(name) ||
+        @type_aliases.has_key?(name) || @generic_templates.has_key?(name) ||
+        @module_defs.has_key?(name) || @module.is_lib?(name) || name == "Void"
+    end
+
     private def resolve_constant_name_in_context(name : String, before : Array(Int32)? = nil) : String?
       return nil if name.empty?
       # An explicit root path never reopens lexical or receiver lookup.
@@ -69440,7 +69546,9 @@ module Adamas::HIR
     # Original Crystal (Type#lookup_path_item) searches a scope, then the
     # scope's ancestors -- superclasses and included modules, but not their
     # enclosing namespaces -- before moving on to the enclosing namespace.
-    private def resolve_constant_in_ancestors(scope : String, name : String, before : Array(Int32)?) : String?
+    private def resolve_constant_in_ancestors(
+      scope : String, name : String, before : Array(Int32)?, include_types : Bool = false,
+    ) : String?
       queue = [scope]
       visited = Set(String).new
       while owner = queue.shift?
@@ -69449,9 +69557,11 @@ module Adamas::HIR
         if owner != scope
           qualified_name = "#{owner}::#{name}"
           return qualified_name if constant_visible_for_lookup?(qualified_name, before)
+          return qualified_name if include_types && expression_path_item_exists?(qualified_name)
           if owner_base != owner
             qualified_name = "#{owner_base}::#{name}"
             return qualified_name if constant_visible_for_lookup?(qualified_name, before)
+            return qualified_name if include_types && expression_path_item_exists?(qualified_name)
           end
         end
         constant_lookup_included_modules(owner, before).try &.reverse_each { |mod| queue << mod }
@@ -69553,11 +69663,16 @@ module Adamas::HIR
       old_class = @current_class
       old_method = @current_method
       old_method_is_class = @current_method_is_class
+      old_namespace = @current_namespace_override
       @arena = arena
       @current_class = owner_name
+      @current_namespace_override = owner_name
       @current_method = nil
       @current_method_is_class = false
       inferred = begin
+        if literal_name = infer_type_literal_name_from_expr(value_id)
+          @constant_source_value_facts[full_name] = [{type_ref_for_name(literal_name), true}]
+        end
         # Constant registration is not a callsite. Expressions with inline
         # blocks (for example `x.try { |v| ... }`) need caller/block context to
         # infer safely; demanded lowering or deferred runtime init will handle
@@ -69585,6 +69700,7 @@ module Adamas::HIR
         end
         inferred_value
       ensure
+        @current_namespace_override = old_namespace
         @current_method = old_method
         @current_method_is_class = old_method_is_class || false
         @current_class = old_class
@@ -69894,10 +70010,28 @@ module Adamas::HIR
       get = ClassVarGet.new(ctx.next_id, const_type, owner, const_name)
       ctx.emit(get)
       ctx.register_type(get.id, const_type)
+      if facts = @constant_source_value_facts[full_name]?
+        ctx.register_source_value_facts(get.id, facts)
+        ctx.mark_type_literal(get.id) if !facts.empty? && facts.all?(&.[1])
+      end
       get.id
     end
 
-    private def record_lowered_constant_type(full_name : String, value_type : TypeRef) : Nil
+    private def constant_type_literal_name(full_name : String) : String?
+      facts = @constant_source_value_facts[full_name]? || return nil
+      return nil if facts.empty? || facts.any? { |(_, literal)| !literal }
+      type = union_type_for_value_set(facts.map(&.[0])) || return nil
+      get_type_name_from_ref(type)
+    end
+
+    private def record_lowered_constant_type(
+      full_name : String,
+      value_type : TypeRef,
+      source_facts : Array({TypeRef, Bool}),
+    ) : Nil
+      # The initializer owns the source type and value kind. Constant reads
+      # preserve that complete contract even when their ABI carrier is a union.
+      @constant_source_value_facts[full_name] = source_facts.dup
       return if value_type == TypeRef::VOID
 
       if existing = @constant_types[full_name]?
@@ -83454,7 +83588,7 @@ module Adamas::HIR
             value_type = ctx.type_of(value)
             full_name = constant_full_name(owner == "$" ? nil : owner, const_name)
             storage_owner, storage_name = constant_storage_info(full_name)
-            record_lowered_constant_type(full_name, value_type)
+            record_lowered_constant_type(full_name, value_type, source_block_result_value_facts(ctx, value))
             if env_has?("DEBUG_DEFERRED_CONST")
               STDERR.puts "[DEFERRED_CONST] OK #{owner}::#{const_name} → value=#{value} type=#{value_type.id}"
             end
@@ -83547,7 +83681,7 @@ module Adamas::HIR
             value_type = ctx.type_of(value)
             full_name = constant_full_name(owner == "$" ? nil : owner, const_name)
             storage_owner, storage_name = constant_storage_info(full_name)
-            record_lowered_constant_type(full_name, value_type)
+            record_lowered_constant_type(full_name, value_type, source_block_result_value_facts(ctx, value))
             set = ClassVarSet.new(ctx.next_id, value_type, storage_owner, storage_name, value)
             ctx.emit(set)
             deferred_initialized_constant_values << {init_arena.object_id, value_id.index}
@@ -94608,19 +94742,24 @@ module Adamas::HIR
         if enum_member = emit_enum_sibling_member?(ctx, name)
           return enum_member
         end
-        resolved = resolve_type_name_in_context(name)
-        resolved = resolve_type_alias_chain(resolved)
-        resolved = "Slice(UInt8)" if resolved == "Bytes"
-        if env_get("DEBUG_THREAD_NAME") && name == "Thread"
-          STDERR.puts "[DEBUG_THREAD_NAME] name=#{name} resolved=#{resolved} current=#{@current_class || "nil"} ns_override=#{@current_namespace_override || "nil"} type_exists=#{type_name_exists?(resolved)}"
+        binding = resolve_expression_path_item(name)
+        if binding && constant_name_exists?(binding)
+          return emit_constant_get(ctx, binding)
         end
-        # An alias to a generic instance (`alias AG = G(Foo)`) resolves to a
-        # name that is not registered until monomorphized; it is still a type.
-        # Void is predefined by the compiler without a source declaration;
-        # `T.to_s` in `Pointer(Void)#to_s` reads it as a value.
-        if type_name_exists?(resolved) || generic_template_instance_name?(resolved) ||
-           resolved == "Void"
-          return lower_type_literal_from_name(ctx, resolved)
+        if binding
+          resolved = resolve_type_alias_chain(binding)
+          resolved = "Slice(UInt8)" if resolved == "Bytes"
+          if env_get("DEBUG_THREAD_NAME") && name == "Thread"
+            STDERR.puts "[DEBUG_THREAD_NAME] name=#{name} resolved=#{resolved} current=#{@current_class || "nil"} ns_override=#{@current_namespace_override || "nil"} type_exists=#{type_name_exists?(resolved)}"
+          end
+          # An alias to a generic instance (`alias AG = G(Foo)`) resolves to a
+          # name that is not registered until monomorphized; it is still a type.
+          # Void is predefined by the compiler without a source declaration;
+          # `T.to_s` in `Pointer(Void)#to_s` reads it as a value.
+          if type_name_exists?(resolved) || generic_template_instance_name?(resolved) ||
+             resolved == "Void"
+            return lower_type_literal_from_name(ctx, resolved)
+          end
         end
       end
 
@@ -96762,6 +96901,11 @@ module Adamas::HIR
       raw_path = collect_path_string(node)
       substituted_path = substitute_type_params_in_type_name(raw_path)
       full_path = resolve_path_string_in_context(substituted_path)
+      binding = resolve_expression_path_item(substituted_path)
+      if binding && constant_name_exists?(binding)
+        return emit_constant_get(ctx, binding)
+      end
+      full_path = binding if binding
 
       if enum_member = enum_constant_path(full_path)
         enum_name, value = enum_member
@@ -96787,13 +96931,8 @@ module Adamas::HIR
           return lit.id
         end
       end
-      if type_name_exists?(full_path) || @type_aliases.has_key?(full_path) || @generic_templates.has_key?(full_path)
+      if binding && (type_name_exists?(full_path) || @type_aliases.has_key?(full_path) || @generic_templates.has_key?(full_path))
         return lower_type_literal_from_name(ctx, full_path)
-      end
-
-      constant_path = raw_path.starts_with?("::") ? "::#{full_path}" : full_path
-      if full_name = resolve_constant_name_in_context(constant_path)
-        return emit_constant_get(ctx, full_name)
       end
 
       # Program-defined constants (original Crystal: Program#define_crystal_constants).
@@ -113282,6 +113421,7 @@ module Adamas::HIR
       # This fast path already carries an exact source-backed target symbol.
       # Preserve its DefNode so an explicit NoReturn contract can terminate the
       # caller without consulting an equal-arity sibling overload.
+      source_facts = call_resolution_source_argument_facts(ctx, args, arg_types, has_named: has_named_args)
       selected_entry = lookup_function_def_for_call(
         target_name,
         args.size,
@@ -113290,7 +113430,14 @@ module Adamas::HIR
         false,
         has_named_args,
         named_arg_names,
+        source_argument_facts: source_facts,
       )
+      if source_facts && selected_entry.nil? && @function_defs.has_key?(target_name)
+        actual_names = source_facts.map do |argument|
+          argument ? proc_source_type_name(argument.type_ref, argument.type_literal) : "unknown"
+        end
+        raise LoweringError.new("no overload matches #{base_name}(#{actual_names.join(", ")})")
+      end
       selected_def = selected_entry.try { |entry| entry[1] }
       if selected_entry && pad_missing_positional_splat(ctx, selected_entry[0], selected_entry[1], args, arg_types)
         target_name = mangle_function_name(base_name, arg_types, has_block_call)

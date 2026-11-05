@@ -23815,3 +23815,33 @@ store-field-contract35q1943.after.log in the external root-cause work directory.
 The scoped metadata adversary found no blocker. Refresh after MIR Store
 metadata, operand rewriting, or destination-layout selection changes. Native
 exception transport and Channel/LavinMQ execution remain separate obligations.
+
+
+## 2026-11-05 — Expression binding precedes constant value-kind selection
+
+LavinMQ::Log is a runtime constant initialized with ::Log.for. Separate
+constant and type lookups selected the outer Log class in source-sensitive
+call admission. One lexical path resolver now chooses the declaration first.
+The initializer owns the constant's complete source type and value-kind facts,
+and reads and exact bare-call selection consume those facts. Qualified heads,
+lib namespace owners, generic paths, and bound type formals share that lookup.
+
+A strict-lookup adversary found that a unique Foreign::Item made an unavailable
+Item compile. The fallback was removed. A subsequent stock-prelude probe
+exposed an uninterned Tuple type bound to T. The bound formal now supplies that
+exact type before namespace lookup. Separate positive and negative fixtures
+preserve both contracts.
+
+Exact S1 35q1984 matches Crystal 1.22.1 on 12 positive and seven rejection
+constant fixtures. The lexical lookup lazy/eager, constructor source-kind,
+deferred path alias, and constant initializer identity runners pass. Both
+compilers build and execute unchanged stock-prelude hello with output hello.
+The scoped adversary found no blocker after these two counterexamples were
+closed. Build source manifest
+`deb30442d9762e462b5e682a0ca012a44f1a9f908ce5b4fea09513c6f197fac4`.
+Evidence is constant-bound-formal35q1984/result.json and
+prelude-constant-bound-formal35q1984/result.json in the external root-cause
+work directory. DoD is regression_tests/constant_source_value_kind_repro.sh
+with that exact compiler. Refresh after lexical registration, type-formal
+substitution, constant publication, or source admission changes. Channel,
+bootstrap, and unchanged LavinMQ execution/test parity remain open.

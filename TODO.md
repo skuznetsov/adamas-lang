@@ -25267,3 +25267,26 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Qualify volatile memory metadata throughout the native exception
   candidate. Its new memory effects need separate forwarding, rewrite, and
   dead-code checks. Channel and LavinMQ runtime parity remain open.
+
+
+### 2026-11-05 — Preserve lexical constant binding and source value kinds
+
+- [x] Resolve the expression's lexical declaration before selecting type-value
+  or runtime-constant lowering. A selected qualified head owns its tail, lib
+  declarations participate as namespace owners, and generic argument paths
+  preserve their internal namespace separators.
+- [x] Transport the constant initializer's source type and value-kind facts
+  through reads, locals, and exact bare-call admission. Instance constants
+  sharing an outer type's name retain their instance identity. Class-valued
+  and mixed-kind constants retain their respective admission restrictions.
+- [x] Preserve bound applied generic type parameters before interning their
+  concrete instances. Remove the unrelated unique-short-name fallback from
+  expression lowering and inference. Both compilers reject an unavailable Item
+  even when Foreign::Item exists.
+- Exact S1 35q1984 passes the 19 original-first constant fixtures and the lexical
+  lookup lazy/eager, constructor source-kind, deferred alias, and initializer
+  identity regression runners. The unchanged stock-prelude hello compiles and
+  executes with output hello under both compilers.
+- [ ] Complete unchanged LavinMQ compilation, execution, and upstream test parity.
+  Native exception transport and Channel runtime remain separately qualified
+  work. The local constant contract does not close those integration gates.

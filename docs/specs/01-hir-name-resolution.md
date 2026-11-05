@@ -535,3 +535,34 @@ producer source path. This admission covers nonsplat named/block module calls;
 named+splat and substituted generic owners remain separate obligations. Full
 LavinMQ parity remains open. Refresh after fanout/RTA registration, call-shape
 transport, source identity, or mangled-suffix parsing changes.
+
+
+## Constant expression binding and source value kinds (2026-11-05)
+
+A value expression selects its lexical declaration before determining whether
+that declaration denotes a type or a runtime constant. Search the current
+source namespace and its ancestors before the enclosing namespace. An explicit
+root chooses the root scope. A selected qualified head owns every remaining
+component. A missing tail is a source error.
+
+Lib declarations are namespace owners. Namespace separators inside generic
+arguments remain part of the argument. Substitute a source type parameter
+before resolving its qualified members, and retain the generic declaration's
+constant owner when looking through an applied type. A bound formal owns its
+applied type before that instance is interned. A unique short name from an
+unrelated namespace does not establish an available source declaration.
+
+The constant initializer owns the complete source type and value-kind facts.
+Every constant read preserves those facts through local copies and call
+selection. A class-valued constant admits a matching metaclass restriction.
+An instance-valued constant admits its instance restriction. Mixed values must
+satisfy every source arm required by the selected overload. The exact bare-call
+fast path consumes the same source facts before emitting its target.
+
+The DoD command is regression_tests/constant_source_value_kind_repro.sh with
+the exact candidate compiler as its argument. Positive and rejection fixtures
+are first qualified against original Crystal. The lexical lookup, constructor
+source-kind, deferred path alias, and initializer declaration identity runners
+are neighboring guards. Refresh after namespace registration, type parameter
+substitution, constant publication, or source-call admission changes. Full
+LavinMQ execution and test parity remain active integration obligations.
