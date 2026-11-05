@@ -25169,3 +25169,20 @@ integration, fresh bootstrap, or LavinMQ parity.
   environment. Table#to_slice receives a Pointer(Int32) default length while
   a concrete Int32/UInt8 call is correct. Require a reduced oracle before
   changing default binding, including earlier formal references.
+
+### 2026-11-05 — Carry deferred source results through IndexNode
+
+- [x] Apply exact producer/consumer suspension to selected Tuple overrides,
+  static indexing, Range indexing, instance indexing, and the selected
+  non-Tuple union target before unknown-result fallback.
+- Exact S1 35q1821 passes 35 original-first index replay checks, nine
+  force-depth scenarios, the dynamic scalar Tuple gate, the Channel exact
+  HIR gate, and 44 focused HIR examples. Parent 35q1808 rejects the valid
+  index reducer after a depth refusal. The real LavinMQ trace showed
+  Hash#[] losing Upstream to Pointer before Object#dup selection.
+- [ ] Join exact return contracts for every non-generic union indexing
+  target. The paired reducer has a PayloadResult(Int32) producer and a
+  PayloadResult(String) consumer in candidate HIR. Preserve strict source
+  restrictions and deferred-result ownership while repairing the join.
+- Aggregate Pointer(T), constructor source kinds, default lexical scope,
+  fresh bootstrap, and unchanged LavinMQ runtime/test parity remain open.

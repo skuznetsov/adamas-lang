@@ -8,6 +8,16 @@ ADAMAS_BIN="${ADAMAS_BIN:-${1:-$ROOT_DIR/bin/adamas}}"
 ORIGINAL_CRYSTAL_BIN="${ORIGINAL_CRYSTAL_BIN:-$(command -v crystal || true)}"
 CRYSTAL_STDLIB="${CRYSTAL_PATH:-/opt/homebrew/opt/crystal/share/crystal/src}"
 LINK_FLAGS="${ADAMAS_EXTRA_LINK_FLAGS:--lgc -fuse-ld=/usr/bin/ld}"
+CALL_STYLE="${EXACT_RESULT_CALL_STYLE:-call}"
+PRODUCER_METHOD=create
+PRODUCER_CALL='op.create(adjust.call(0))'
+if [[ "$CALL_STYLE" == index ]]; then
+  PRODUCER_METHOD='[]'
+  PRODUCER_CALL='op[adjust.call(0)]'
+elif [[ "$CALL_STYLE" != call ]]; then
+  echo 'ERROR: EXACT_RESULT_CALL_STYLE must be call or index' >&2
+  exit 2
+fi
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/force-depth-inline-exact.XXXXXX")"
 
 cleanup() {
@@ -58,7 +68,7 @@ CRYSTAL
     done
     producer='produce7(marker)'
   fi
-  printf '  def create(marker)\n    context = %s\n' "$producer" >>"$path"
+  printf '  def %s(marker)\n    context = %s\n' "$PRODUCER_METHOD" "$producer" >>"$path"
   cat >>"$path" <<'CRYSTAL'
     self.wait(context)
     context
@@ -108,7 +118,7 @@ CRYSTAL
     if [[ "$invalid" == 1 ]]; then
       echo '    contexts = ops.map { |op| 33 }' >>"$path"
     else
-      echo '    contexts = ops.map { |op| op.create(adjust.call(0)) }' >>"$path"
+      printf '    contexts = ops.map { |op| %s }\n' "$PRODUCER_CALL" >>"$path"
     fi
     echo '    total = ops[0].consume(contexts[0]) &+ ops[1].consume(contexts[1])' >>"$path"
   else
@@ -116,7 +126,7 @@ CRYSTAL
     if [[ "$invalid" == 1 ]]; then
       echo '      context = 33' >>"$path"
     else
-      echo '      context = op.create(adjust.call(0))' >>"$path"
+      printf '      context = %s\n' "$PRODUCER_CALL" >>"$path"
     fi
     echo '      total &+= op.consume(context)' >>"$path"
     echo '    end' >>"$path"
@@ -206,7 +216,7 @@ check_one() {
     for producer in 'Receive(Nil)' Timeout; do
       for event in SUSPENDED RESUMED; do
         if ! rg -F "[FORCE_LOWER_$event] consumer=$consumer_name\$" "$log" | \
-          rg -Fq "producer=$producer#create\$Int32"; then
+          rg -Fq "producer=$producer#$PRODUCER_METHOD\$Int32"; then
           cat "$log" >&2
           echo "FAIL $name $mode missing $event for $producer" >&2
           return 1

@@ -23684,3 +23684,25 @@ receiver/owner chain must be measured. The stock baseline has 208 examples,
 zero failures/errors, and two pending. No candidate LavinMQ executable or
 candidate test-parity result exists yet. Whole-prelude eager scheduling
 and a fresh bootstrap remain open.
+
+### IndexNode participates in exact source-result replay
+
+The measured LavinMQ Object#dup frontier began with an Upstream Hash#[]
+result falling back to Pointer after a depth refusal. Reference inheritance
+lookup was therefore the wrong repair surface for that trace. IndexNode now
+records and suspends on the exact selected source before its fallback,
+using the established replay worklist and publication ownership contract.
+
+Exact S1 35q1821 passes 35 original-first index native/rejection checks,
+nine force-depth scenarios, scalar Tuple native/rejection checks, Channel
+exact HIR checks, and 44 focused HIR examples. Build manifest
+851fdd77669fbc64687f22e04be7e95f518ebe21413f4b3fc45e7fdeedbde2ec.
+Qualification manifest
+43b986aa47b97a7c8b81c1f0d5aee6a73c7e0159868c96def8828180a4d63260.
+The scoped source-owner review found no blocker. Refresh after source
+selection, arena transport, force scheduling, or fallback changes.
+
+A distinct virtual union-return join defect remains reproducible in HIR.
+Channel runtime retains the aggregate Pointer(T) storage obligation. The
+next full-project discriminator is a fresh unchanged LavinMQ probe after
+the separately owned constructor/default-scope repairs are qualified.

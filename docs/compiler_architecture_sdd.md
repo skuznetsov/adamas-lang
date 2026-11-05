@@ -4797,6 +4797,35 @@ test parity remain open. Refresh after force scheduling, source binding,
 result publication, or body-retirement changes. Rollback removes the
 replay, publication journal, and their directly associated tests together.
 
+#### Index expressions retain deferred source-result ownership
+
+`IndexNode` must use the same source-result suspension contract as an
+ordinary call. Capture the refusal mark before selection or forced lowering,
+retain the selected Def and its registered arena, and settle its result
+before applying an unknown-result fallback. This applies to selected Tuple
+overrides, static `[]`, Range indexing, ordinary instance indexing, and the
+selected target in the non-Tuple union path. Receiver and index evaluation
+remain in their existing order.
+
+The parent 35q1808 fails the class, module, and top-level index reducers on
+an incompatible provisional Context argument. Exact S1 35q1821 passes all
+35 original-first native/rejection checks with
+`EXACT_RESULT_CALL_STYLE=index`, nine force-depth scenarios, the scalar
+Tuple native/rejection gate, the Channel(Nil)/Channel(String) exact HIR
+gate, and 44 focused HIR examples. Both source manifests remain unchanged.
+Its build manifest is
+`851fdd77669fbc64687f22e04be7e95f518ebe21413f4b3fc45e7fdeedbde2ec`.
+The runtime qualification manifest is
+`43b986aa47b97a7c8b81c1f0d5aee6a73c7e0159868c96def8828180a4d63260`.
+Scoped source review found no new source-owner or operand-replay blocker.
+
+Joining distinct return types across all virtual union targets is a separate
+open obligation. The paired union-index reducer prints `12\n` under Crystal,
+while candidate HIR retains one variant's return and selects an incompatible
+consumer. Candidate Channel runtime still requires aggregate Pointer(T)
+storage qualification. Requalify these index hooks after changing selection,
+source arena publication, suspension, or unknown-result fallbacks.
+
 
 ### Certify wholly bottom concrete generic union calls (2026-10-16)
 An empty concrete generic class union value-return set admits the existing

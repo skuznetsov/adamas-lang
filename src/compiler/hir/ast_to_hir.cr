@@ -138541,11 +138541,16 @@ module Adamas::HIR
       target = mangle_function_name("#{owner}##{method}", argument_types)
       bind_exact_source_call_target(target, name, def_node, arena, node, "tuple index")
       remember_callsite_arg_types(target, argument_types)
+      refused_before_force = @force_lower_depth_refused.size
       lower_function_if_needed(target)
       result = get_function_return_type(target, 1, def_node)
       if result == TypeRef::VOID
         result = force_lower_pending_index_return_type(target)
       end
+      record_force_lower_result_dependency(ctx, target, def_node, refused_before_force)
+      suspend_depth_refused_source_result(
+        ctx, target, result, def_node, def_node, arena, refused_before_force,
+      )
       call = Call.with_receiver(ctx.next_id, result, receiver, target, [index])
       ctx.emit(call)
       ctx.register_type(call.id, result)
@@ -138767,6 +138772,7 @@ module Adamas::HIR
                       node.indexes.map { |idx| lower_expr(ctx, idx) }
                     end
         arg_types = index_ids.map { |idx| ctx.type_of(idx) }
+        refused_before_force = @force_lower_depth_refused.size
         class_method_base = "#{static_owner_name}.[]"
         full_method_name = class_method_base
         if entry = lookup_function_def_for_call(class_method_base, arg_types.size, false, arg_types, has_index_splat, false)
@@ -138783,6 +138789,12 @@ module Adamas::HIR
         if return_type == TypeRef::VOID
           return_type = force_lower_pending_index_return_type(full_method_name)
         end
+        selected_def = @function_defs[full_method_name]?
+        record_force_lower_result_dependency(ctx, full_method_name, selected_def, refused_before_force)
+        suspend_depth_refused_source_result(
+          ctx, full_method_name, return_type, selected_def, selected_def,
+          @function_def_arenas[full_method_name]?, refused_before_force,
+        )
         if return_type == TypeRef::VOID
           owner_type = type_ref_for_name(static_owner_name)
           return_type = owner_type unless owner_type == TypeRef::VOID
@@ -138885,6 +138897,7 @@ module Adamas::HIR
 
           # Emit a call to [] for range slicing with proper return type inference.
           arg_types = [range_type]
+          refused_before_force = @force_lower_depth_refused.size
           method_name = resolve_method_call(ctx, object_id, "[]", arg_types, false)
           # Ensure the target function is lowered (IndexNode bypasses lower_call).
           object_type = ctx.type_of(object_id)
@@ -138945,6 +138958,12 @@ module Adamas::HIR
               return_type = inferred_return
             end
           end
+          source_def = selected_index_def || @function_defs[call_target_name]?
+          record_force_lower_result_dependency(ctx, call_target_name, source_def, refused_before_force)
+          suspend_depth_refused_source_result(
+            ctx, call_target_name, return_type, source_def, source_def,
+            @function_def_arenas[call_target_name]?, refused_before_force,
+          )
           # Fallback: [] typically returns a value (element or subslice)
           if return_type == TypeRef::VOID
             return_type = TypeRef::POINTER
@@ -139198,11 +139217,18 @@ module Adamas::HIR
         else
           # Union doesn't have tuple variants — fall through to generic method call
           arg_types = index_ids.map { |idx| ctx.type_of(idx) }
+          refused_before_force = @force_lower_depth_refused.size
           method_name = resolve_method_call(ctx, object_id, "[]", arg_types, false)
           return_type = get_function_return_type(method_name)
           if return_type == TypeRef::VOID
             return_type = force_lower_pending_index_return_type(method_name)
           end
+          source_def = @function_defs[method_name]?
+          record_force_lower_result_dependency(ctx, method_name, source_def, refused_before_force)
+          suspend_depth_refused_source_result(
+            ctx, method_name, return_type, source_def, source_def,
+            @function_def_arenas[method_name]?, refused_before_force,
+          )
           if return_type == TypeRef::VOID
             return_type = TypeRef::POINTER
           end
@@ -139280,6 +139306,7 @@ module Adamas::HIR
             end
           end
         end
+        refused_before_force = @force_lower_depth_refused.size
         method_name = resolve_method_call(ctx, object_id, "[]", arg_types, false)
         # Post-resolution guard: if resolve picked a Range overload but the AST
         # index is NOT a RangeNode, the selection is wrong (VOID arg matched Range
@@ -139383,6 +139410,12 @@ module Adamas::HIR
         if ctx.type_of(object_id) == TypeRef::STRING && index_ids.size == 1
           return_type = TypeRef::CHAR
         end
+        source_def = selected_index_def || @function_defs[call_target_name]?
+        record_force_lower_result_dependency(ctx, call_target_name, source_def, refused_before_force)
+        suspend_depth_refused_source_result(
+          ctx, call_target_name, return_type, source_def, source_def,
+          @function_def_arenas[call_target_name]?, refused_before_force,
+        )
         # Fallback: [] typically returns a value (element or subslice)
         if return_type == TypeRef::VOID
           return_type = TypeRef::POINTER
