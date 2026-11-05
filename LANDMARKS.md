@@ -23872,3 +23872,66 @@ wide-main35q2003/result.json under
 constant construction, payload rewriting, or LLVM constant emission changes.
 Macro NumberValue, checked arithmetic effects, native exception transport,
 Channel, bootstrap, and LavinMQ runtime/test parity are separate obligations.
+
+## 2026-11-05 — Installed iyi builds Adamas in debug and release
+
+Frozen committed source 227d11a9 builds with stock Crystal 1.22.1 and installed
+iyi 0.20.1 in Crystal compatibility mode, sharing the stock 1.22.1 stdlib.
+Sequential fresh-cache builds with explicit single-module/one-thread settings
+take 30.54/36.46 seconds in debug and 169.03/270.76 seconds in release, in
+Crystal/iyi order. Each full-build timing has one observation.
+
+Five-repeat compile-and-link medians for the resulting Adamas binaries are
+60.05/61.14 seconds for debug hello with prelude and 8.28/8.45 for release.
+The 100/1000-method no-prelude inputs take 0.20/1.29 seconds in both debug
+profiles and 0.09/0.27 in both release profiles. Original Crystal takes
+0.73/0.12/0.17 seconds on hello/100/1000. All 90 compile/output checks pass.
+Synthetic IR is byte-identical across the four Adamas profiles. Hello IR
+matches after bijective renaming of three private diagnostic symbols and
+retains three abort stubs outside the executed path.
+
+The separate default-module/thread debug control has one complete build pair
+at 28.40/26.35 seconds and 9.47/14.78 GiB peak RSS, plus six passing output
+checks. An extra iyi build takes 28.58 seconds. The paired Crystal repeat is
+stopped after linking by the FD guard at 3,072 descriptors and is excluded
+from timing comparisons. Default-mode repeatability remains limited.
+
+Evidence is iyi-adamas-benchmark35q2052/REPORT.md, verification.json, and
+debug-defaults/verification.json under
+/opt/mldata_ssd/adamas_codex_oct29_rootcause. The scoped read-only adversary
+returns ROBUST for the controlled observations. The source/toolchain/workload
+manifests define their validity and require refresh after corresponding
+changes. Application execution speed, bootstrap, and LavinMQ parity require
+their own measurements. Owned compiler caches and temporary directories were
+removed after the measurements.
+
+### Active compiler continuation after the benchmark
+
+The standing goal remains unchanged LavinMQ execution and upstream test parity.
+Production HEAD remains 227d11a9 for compiler source. The latest private
+LavinMQ HIR probe 35q2034 passes Table binding and stops at pending source
+result Federation::UpstreamStore#create_upstream_set in VHost#apply_parameters.
+The next project probe should enable ADAMAS_TRACE_EXACT_RESULT_REPLAY=all.
+
+Private member-double-splat S1 35q2081 passes eleven stock-first shape controls.
+The original rest source-kind gate 35q2089 qualifies eight stock fixtures, then
+rejects its ninth fixture because its **T annotation leaves T undefined.
+Candidate execution was skipped. Repair and requalify that oracle before
+using the original-nine gate as evidence.
+
+Declared-return S1 35q2077 accepts seven invalid ordinary lower_def returns.
+The source-only successor declared-return-defentry35q2082.patch adds that entry
+point, but yielded/inlined bodies still bypass validation. Qualify the stock
+Void-discard positive and the bad_yield_tail falsifier before promotion.
+Arithmetic per-arm S1 35q2083 still selects a broad source overload for an
+intrinsic UInt32 arm. Test the corresponding scalar call to distinguish the
+common overload inventory from union dispatch.
+
+Pointer candidate pointer-byte-borrowed-access35q2078/export is source-only.
+Its address audit shows that pointerof an ordinary struct local can retain the
+old payload after reassignment. Establish a stable local storage place and
+qualify pointerof_reassigned_struct_local_oracle before integrating it. Channel
+native pointer storage, exception effects, bootstrap, and project parity
+remain open. All private candidate and diagnostic paths above share the same
+external root-cause directory. Preserve the existing HIR-spec and untracked
+source-union regression WIP when resuming.

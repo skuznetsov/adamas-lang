@@ -25308,3 +25308,18 @@ integration, fresh bootstrap, or LavinMQ parity.
   64-bit representation remains a separate contract gap.
 - Checked arithmetic exception effects, native exception transport, Channel
   runtime, bootstrap, and unchanged LavinMQ execution/test parity remain open.
+
+### 2026-11-05 — Compare installed iyi and Crystal as Adamas build hosts
+
+- [x] Build frozen committed Adamas source 227d11a9 in debug and release with
+  Crystal 1.22.1 and iyi 0.20.1 --crystal using the same stock stdlib. Record
+  elapsed build time, RSS, commands, and source/toolchain manifests.
+- [x] Compare resulting compiler compile-and-link time on stock-prelude hello
+  and two no-prelude synthetic programs. The controlled four-build experiment
+  passes 90 compile/output checks with five timed repetitions per workload.
+  A separate default-debug build pair passes six further output checks. Its
+  attempted repeat is incomplete because the FD guard stops Crystal after
+  linking. See LANDMARKS.md and external iyi-adamas-benchmark35q2052/REPORT.md.
+- [ ] Resume the pending source-result, rest source-kind, declared-return,
+  arithmetic overload, and stable pointer-place qualifications recorded in the
+  continuation capsule. Unchanged LavinMQ runtime/test parity remains open.
