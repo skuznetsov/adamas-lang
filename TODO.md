@@ -25058,3 +25058,24 @@ integration, fresh bootstrap, or LavinMQ parity.
   `primitive_annotation_before_macro_repro.sh` guard the separate intrinsic
   path. Candidate 35q1742 rebased the primitive itself and rejected
   `Sync::Mutex.unsafe_construct` while compiling `hello`.
+
+### 2026-11-04: Preserve static results across forced body replay
+
+- [x] Track a depth-refused exact static result and replay its consumer with
+  the exact callsite consumed during materialization. Resolve a selected
+  nilary class method's declared return against the concrete receiver.
+- Exact S1 35q1747 and Crystal 1.22.1 emit ACA and AB in
+  `static_metaclass_return_dependency_repro.sh`. The first fixture
+  exercises two metaclass specializations and a repeated call. The second
+  uses the installed prelude and exercises unseeded and seeded sums over
+  a forwarding Enumerable. Parent 35q1744 emits BBB in the first case.
+  The partial 35q1745 candidate compiled the sum but used only the last
+  item without a seed. All nine force-depth cases match in lazy and eager
+  modes on 35q1747.
+- [ ] Qualify replay when body materialization obtains arguments through
+  an alias or a per-definition lookup. The exact-key regression covers
+  source and arena validation and leaves other argument paths open.
+- [ ] Trace the exact `PrometheusWriter#write` source site in the unchanged
+  LavinMQ HIR probe. Combined 35q1748 reaches a metric with `value: Unknown`
+  and fails the source restriction. The reduced sum has native parity,
+  while the full application still has no linked Adamas binary.

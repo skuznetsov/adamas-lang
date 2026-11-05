@@ -23591,3 +23591,22 @@ fixture. Parent 35q1729 rejects the child specialization. The stock-prelude
 numeric probe agrees on AAA and `hello` runs. The two ReferenceStorage and
 primitive-annotation gates pass on the same binary. Refresh when class
 receiver selection, inherited body identity, or primitive admission changes.
+
+### Replay static result dependencies with the exact consumed callsite
+
+An unannotated static method whose forced lowering hits the depth limit
+leaves a provisional result in its consumer. The worklist can settle the
+callee and rebuild the consumer. The exact callsite must survive that
+rebuild because the parameter carrier alone loses its class-object kind.
+Restore the consumed callsite under the same exact name only while the
+definition and arena still match and there is no competing pending
+callsite.
+
+The inherited `Number.additive_identity : self` result must be resolved
+with the concrete class receiver even when lowering its body is deferred.
+In the reduced forwarding Enumerable, the partial fix emitted a Void
+seed and dropped the accumulator phi. Exact S1 35q1747 and Crystal
+1.22.1 agree on the native result for both seeded and unseeded sums and
+on the two replayed metaclass specializations. Refresh after changes to
+depth refusal, pending argument consumption, or static return lookup.
+The full application probe and non-exact replay paths remain open.

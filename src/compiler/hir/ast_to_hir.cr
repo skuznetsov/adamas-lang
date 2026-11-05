@@ -2034,6 +2034,21 @@ module Adamas::HIR
       source_arena : Adamas::Compiler::Frontend::ArenaLike,
       callsite : CallsiteArgs
 
+    private record ForceLowerReplayCallsite,
+      source_def : Adamas::Compiler::Frontend::DefNode,
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
+      callsite : CallsiteArgs
+
+    private class ForceLowerReplayCapture
+      property binding : ForceLowerReplayCallsite?
+    end
+
+    private record ForceLowerRetryRequest,
+      name : String,
+      refused : Array(String),
+      bypass_inline_yield : Bool,
+      replay_callsite : ForceLowerReplayCallsite?
+
     private record ModuleVirtualFanoutPendingTarget,
       name : String,
       owner : String,
@@ -6573,7 +6588,7 @@ module Adamas::HIR
     # result merely because it can be stored in the return-type cache.
     @force_lower_provisional_dependencies = {} of String => Set(String)
     @force_lower_retry_driver_active = false
-    @force_lower_retry_work = [] of {String, Array(String), Bool}
+    @force_lower_retry_work = [] of ForceLowerRetryRequest
     # When true, skip expensive infer_concrete_return_type_from_body during
     # monomorphization triggered by ensure_monomorphized_type (lowering path).
     # Return types will be inferred lazily when the method is actually called.
@@ -108486,8 +108501,9 @@ module Adamas::HIR
       end
 
       refused_mark = @force_lower_depth_refused.size
+      replay_capture = ForceLowerReplayCapture.new if @pending_arg_types.has_key?(name)
       begin
-        lower_function_if_needed_profiled(name, __LINE__)
+        lower_function_if_needed_profiled(name, __LINE__, replay_capture)
         made_progress = (!requested_body_before && @module.has_function_with_body?(name)) ||
                         useful_force_return_type_change?(module_return_before, @module.function_by_name(name).try(&.return_type)) ||
                         useful_force_return_type_change?(function_return_before, @function_types[name]?) ||
@@ -108518,7 +108534,7 @@ module Adamas::HIR
         while @force_lower_depth_refused.size > refused_mark
           @force_lower_depth_refused.pop
         end
-        if retry_force_lower_after_depth_refusal(name, refused, bypass_inline_yield)
+        if retry_force_lower_after_depth_refusal(ForceLowerRetryRequest.new(name, refused, bypass_inline_yield, replay_capture.try(&.binding)))
           made_progress = true
         end
       end
@@ -108533,12 +108549,8 @@ module Adamas::HIR
     # fit under the limit. Settle them before replaying a provisional consumer,
     # which can discover new producers after argument and receiver types change.
     # Replaying the same consumer against the same producer cannot make progress.
-    private def retry_force_lower_after_depth_refusal(
-      name : String,
-      refused : Array(String),
-      bypass_inline_yield : Bool,
-    ) : Bool
-      request = {name, refused, bypass_inline_yield}
+    private def retry_force_lower_after_depth_refusal(request : ForceLowerRetryRequest) : Bool
+      name = request.name
       if @force_lower_retry_driver_active
         @force_lower_retry_work << request
         return false
@@ -108563,8 +108575,10 @@ module Adamas::HIR
       progress && @module.has_function_with_body?(name) && !@force_lower_provisional_dependencies.has_key?(name)
     end
 
-    private def retry_force_lower_depth_request(request : {String, Array(String), Bool}) : Bool
-      name, refused, bypass_inline_yield = request
+    private def retry_force_lower_depth_request(request : ForceLowerRetryRequest) : Bool
+      name = request.name
+      refused = request.refused
+      bypass_inline_yield = request.bypass_inline_yield
       current = @function_types[name]?
       dependencies = @force_lower_provisional_dependencies[name]?
       if env_has?("DEBUG_FORCE_LOWER_DEPTH")
@@ -108595,6 +108609,12 @@ module Adamas::HIR
         !@force_lower_discharged_edges.includes?({name, callee}) && settled_force_lower_result?(callee)
       end
       return false if discharged.empty?
+      if replay = request.replay_callsite
+        return false unless @function_defs[name]?.try(&.same?(replay.source_def)) &&
+                            @function_def_arenas[name]?.try(&.same?(replay.source_arena))
+        pending = @pending_arg_types[name]?
+        return false if pending && pending != replay.callsite
+      end
       return false unless remove_hir_function(name)
       discharged.each { |callee| @force_lower_discharged_edges.add({name, callee}) }
       if env_has?("DEBUG_FORCE_LOWER_DEPTH")
@@ -108611,6 +108631,9 @@ module Adamas::HIR
         bump_infer_type_cache_version
       end
       clear_function_state(name)
+      if replay = request.replay_callsite
+        @pending_arg_types[name] = replay.callsite
+      end
       replayed = force_lower_function_for_return_type(name, bypass_inline_yield: bypass_inline_yield)
       replayed && @module.has_function_with_body?(name) && !@force_lower_provisional_dependencies.has_key?(name)
     end
@@ -108710,12 +108733,12 @@ module Adamas::HIR
     end
 
     @[AlwaysInline]
-    private def lower_function_if_needed_profiled(name : String, trace_site_line : Int32) : Nil
+    private def lower_function_if_needed_profiled(name : String, trace_site_line : Int32, replay_capture : ForceLowerReplayCapture? = nil) : Nil
       if trace = @lowering_binary_trace
         if trace.request_profile?
           before_state = lowering_request_profile_state(name)
           started_ticks = Crystal::System::Time.ticks
-          lower_function_if_needed_impl(name, trace_site_line)
+          lower_function_if_needed_impl(name, trace_site_line, replay_capture)
           finished_ticks = Crystal::System::Time.ticks
           after_state = lowering_request_profile_state(name)
           duration_ns = finished_ticks >= started_ticks ? finished_ticks - started_ticks : 0_u64
@@ -108731,10 +108754,10 @@ module Adamas::HIR
         end
       end
 
-      lower_function_if_needed_impl(name, trace_site_line)
+      lower_function_if_needed_impl(name, trace_site_line, replay_capture)
     end
 
-    private def lower_function_if_needed_impl(name : String, trace_site_line : Int32) : Nil
+    private def lower_function_if_needed_impl(name : String, trace_site_line : Int32, replay_capture : ForceLowerReplayCapture? = nil) : Nil
       return unless v2_string_readable?(name)
       return if name.empty?
       # Existing bodies and completed states also consume the original source.
@@ -110733,6 +110756,14 @@ module Adamas::HIR
         end
       end
 
+      # Replay owns the exact callsite actually consumed by this lowering.
+      # Family discovery and raw callbacks have separate source bindings.
+      if replay_capture && !callback_source_binding &&
+         (exact_replay_args = @pending_arg_types[name]?) &&
+         @function_defs[name]?.try(&.same?(resolved_func_def)) &&
+         @function_def_arenas[name]?.try(&.same?(arena))
+        replay_capture.binding = ForceLowerReplayCallsite.new(resolved_func_def, arena, exact_replay_args)
+      end
       callsite_args = pop_pending_callsite_args(name, target_name)
       callsite_args = callback_source_binding.callsite if callback_source_binding
       if callsite_args.nil? && resolved_func_def
@@ -142462,7 +142493,11 @@ module Adamas::HIR
                     else
                       mangled_name
                     end
-      return_type = get_function_return_type(actual_name)
+      selected_return_def = @function_defs[actual_name]?
+      if selected_return_def.nil? && args.empty? && member_name != "new"
+        selected_return_def = lookup_function_def_for_call(full_method_name, 0, false, arg_types).try(&.[1])
+      end
+      return_type = get_function_return_type(actual_name, args.size, selected_return_def)
       if member_name == "new" && class_name_str == "Range" && arg_types.size >= 2
         begin_name = get_type_name_from_ref(arg_types[0])
         end_name = get_type_name_from_ref(arg_types[1])
@@ -142491,9 +142526,15 @@ module Adamas::HIR
       if actual_name != mangled_name
         lower_function_if_needed(actual_name)
       end
-      if (source_new_entry || !abstract_numeric_return_constraint_for_function(actual_name).nil?) &&
-         force_pending_call_targets_for_return_type(actual_name, mangled_name, full_method_name, context: "static_member_access")
-        refreshed = get_function_return_type(actual_name)
+      refused_before_force = @force_lower_depth_refused.size
+      if return_type == TypeRef::VOID && selected_source_result_pending?(actual_name, selected_return_def)
+        force_lower_function_for_return_type(actual_name, bypass_inline_yield: true, pending_call_target_context: "static_member_access_exact")
+      elsif source_new_entry || !abstract_numeric_return_constraint_for_function(actual_name).nil?
+        force_pending_call_targets_for_return_type(actual_name, mangled_name, full_method_name, context: "static_member_access")
+      end
+      record_force_lower_result_dependency(ctx, actual_name, selected_return_def, refused_before_force)
+      if return_type == TypeRef::VOID || source_new_entry || !abstract_numeric_return_constraint_for_function(actual_name).nil?
+        refreshed = get_function_return_type(actual_name, args.size, selected_return_def)
         return_type = refreshed unless refreshed == TypeRef::VOID
       end
 
