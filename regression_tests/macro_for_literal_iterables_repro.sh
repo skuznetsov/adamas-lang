@@ -52,8 +52,8 @@ COMPILE_MAX_MEM_MB="${ITERABLE_ADMISSION_COMPILE_MAX_MEM_MB:-8192}"
 RUN_TIMEOUT_SEC="${ITERABLE_ADMISSION_RUN_TIMEOUT_SEC:-5}"
 RUN_MAX_MEM_MB="${ITERABLE_ADMISSION_RUN_MAX_MEM_MB:-512}"
 RUNS_ROOT="${ITERABLE_ADMISSION_RUNS_ROOT:-${TMPDIR:-/tmp}/adamas_macro_for_iterable_admission}"
-POSITIVE_CASES=(tuple_macro_for_class_getters array_macro_for_class_getters empty_array_macro_for_class_getters)
-NEGATIVE_CASES=(noniterable_number_class_macro_for_rejected noniterable_string_class_macro_for_rejected noniterable_bool_class_macro_for_rejected noniterable_nil_class_macro_for_rejected)
+POSITIVE_CASES=(collection_constant_declaration_getters tuple_macro_for_class_getters array_macro_for_class_getters empty_array_macro_for_class_getters)
+NEGATIVE_CASES=(noniterable_constant_class_macro_for_rejected noniterable_number_class_macro_for_rejected noniterable_string_class_macro_for_rejected noniterable_bool_class_macro_for_rejected noniterable_nil_class_macro_for_rejected)
 mkdir -p "$RUNS_ROOT"
 WORK="$(mktemp -d "$RUNS_ROOT/run.XXXXXX")"
 cleanup() {

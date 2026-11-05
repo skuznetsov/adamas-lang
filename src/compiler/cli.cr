@@ -5332,6 +5332,7 @@ module Adamas
           pending_annotations.clear
         when Frontend::ConstantNode
           constant_exprs << {expr_id, arena}
+          @active_source_order_roots.try &.push({expr_id, arena})
           if collect_main_exprs
             packed_main_expr = (packed_arena_index.to_u64 << 32) | expr_id.index.to_u64
             main_exprs << packed_main_expr
@@ -5345,6 +5346,7 @@ module Adamas
         when Frontend::LibNode
           top_level_type_names.add(String.new(node.name))
           lib_nodes << LibEntry.new(node, arena, pending_annotations.dup)
+          @active_source_order_roots.try &.push({expr_id, arena})
           pending_annotations.clear
         when Frontend::AnnotationNode
           pending_annotations << node
@@ -5571,6 +5573,7 @@ module Adamas
                             (target.is_a?(Frontend::IdentifierNode) && constant_identifier_name?(target.name))
           if constant_target
             constant_exprs << {expr_id, arena}
+            @active_source_order_roots.try &.push({expr_id, arena})
           end
           if collect_main_exprs
             packed_main_expr = (packed_arena_index.to_u64 << 32) | expr_id.index.to_u64

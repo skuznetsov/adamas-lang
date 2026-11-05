@@ -23610,3 +23610,22 @@ seed and dropped the accumulator phi. Exact S1 35q1747 and Crystal
 on the two replayed metaclass specializations. Refresh after changes to
 depth refusal, pending argument consumption, or static return lookup.
 The full application probe and non-exact replay paths remain open.
+
+### Declaration macro collection constants follow the invocation's source order
+
+The class, module, and lib declaration passes can run before a preceding
+constant is registered and replay after a later declaration is registered.
+Declaration-time macro loops use the lexical owner and source position of
+the invocation to select constant syntax. The direct declaration index owns
+the initializer ExprId and its arena. The method macro evaluator interprets
+that syntax independently of runtime constant initialization.
+
+Exact S1 35q1757 and Crystal 1.22.1 agree on four positive and five negative
+cases in `macro_for_literal_iterables_repro.sh`. The previous candidate
+35q1755 picked the root namespace over an already visible nested namespace
+and allowed an include after the invocation to shadow a root constant. The
+fixture now discriminates both cases. Three adjacent gates cover method
+collection macros, nested macro begin, and `hello` with the installed prelude.
+Refresh after changes to declaration order, constant paths, include admission,
+or macro source arenas. Generated namespaces and alias-qualified constants
+remain open. The full LavinMQ HIR probe has a later `flat_map` blocker.

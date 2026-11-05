@@ -3421,6 +3421,8 @@ module Adamas::HIR
     @source_declaration_node_order = {} of Tuple(Adamas::Compiler::Frontend::ArenaLike, UInt64) => Array(Int32)
     @source_declaration_order_next : Int32 = 0
     @source_declaration_origin : Array(Int32)? = nil
+    @declaration_macro_namespace_orders = {} of String => Array(Int32)
+    @declaration_macro_constant_sources = {} of String => Tuple(ExprId, Adamas::Compiler::Frontend::ArenaLike, Array(Int32))
     @bound_allocator_targets = {} of Tuple(String, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike) => String
     @allocator_init_name_cache : Hash(String, String) = {} of String => String
     @allocator_init_mangled_prefix_cache : Hash(String, String) = {} of String => String
@@ -9061,6 +9063,8 @@ module Adamas::HIR
       @source_declaration_node_order = {} of Tuple(Adamas::Compiler::Frontend::ArenaLike, UInt64) => Array(Int32)
       @source_declaration_order_next = 0
       @source_declaration_origin = nil
+      @declaration_macro_namespace_orders.clear
+      @declaration_macro_constant_sources.clear
       @bound_allocator_targets = {} of Tuple(String, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike) => String
       @allocator_init_name_cache = {} of String => String
       @allocator_init_mangled_prefix_cache = {} of String => String
@@ -17361,23 +17365,10 @@ module Adamas::HIR
       iter_vars = macro_for_iter_var_names(node)
       return if iter_vars.empty?
 
-      values = macro_for_iterable_values(node.iterable)
-      return unless values
-
-      source = source_for_arena(@arena)
-      program = Adamas::Compiler::Frontend::Program.new(@arena, [] of ExprId)
-      expander = Adamas::Compiler::Semantic::MacroExpander.new(
-        program,
-        @arena,
-        compilation_flags,
-        recovery_mode: true,
-        generated_sources: macro_generated_sources_for(@arena),
-        macro_source: source,
-        macro_source_path: source_path_for(@arena),
-        type_value_resolver: macro_type_value_resolver,
-        type_relation_resolver: macro_type_relation_resolver
-      )
+      expander = macro_expander_for_declaration(node, lib_name)
       owner_type = macro_owner_type_for(lib_name)
+      values = declaration_macro_for_iterable_values(node.iterable, owner_type, expander)
+      return unless values
 
       expanded = String.build do |io|
         values.each_with_index do |value, idx|
@@ -27736,23 +27727,10 @@ module Adamas::HIR
       iter_vars = macro_for_iter_var_names(node)
       return if iter_vars.empty?
 
-      values = macro_for_iterable_values(node.iterable)
-      return unless values
-
-      source = source_for_arena(@arena)
-      program = Adamas::Compiler::Frontend::Program.new(@arena, [] of ExprId)
-      expander = Adamas::Compiler::Semantic::MacroExpander.new(
-        program,
-        @arena,
-        compilation_flags,
-        recovery_mode: true,
-        generated_sources: macro_generated_sources_for(@arena),
-        macro_source: source,
-        macro_source_path: source_path_for(@arena),
-        type_value_resolver: macro_type_value_resolver,
-        type_relation_resolver: macro_type_relation_resolver
-      )
+      expander = macro_expander_for_declaration(node, module_name)
       owner_type = macro_owner_type_for(module_name)
+      values = declaration_macro_for_iterable_values(node.iterable, owner_type, expander)
+      return unless values
 
       expanded = String.build do |io|
         values.each_with_index do |value, idx|
@@ -34339,23 +34317,11 @@ module Adamas::HIR
     private def process_macro_for_in_module(node : Adamas::Compiler::Frontend::MacroForNode, module_name : String)
       iter_vars = macro_for_iter_var_names(node)
       return if iter_vars.empty?
-      values = macro_for_iterable_values(node.iterable)
-      return unless values
 
-      source = source_for_arena(@arena)
-      program = Adamas::Compiler::Frontend::Program.new(@arena, [] of ExprId)
-      expander = Adamas::Compiler::Semantic::MacroExpander.new(
-        program,
-        @arena,
-        compilation_flags,
-        recovery_mode: true,
-        generated_sources: macro_generated_sources_for(@arena),
-        macro_source: source,
-        macro_source_path: source_path_for(@arena),
-        type_value_resolver: macro_type_value_resolver,
-        type_relation_resolver: macro_type_relation_resolver
-      )
+      expander = macro_expander_for_declaration(node, module_name)
       owner_type = macro_owner_type_for(module_name)
+      values = declaration_macro_for_iterable_values(node.iterable, owner_type, expander)
+      return unless values
 
       expanded = String.build do |io|
         values.each_with_index do |value, idx|
@@ -37292,16 +37258,19 @@ module Adamas::HIR
       bootstrap_trace_puts "[CLASS_FRONTIER] enum_macro_for_iter_vars count=#{iter_vars.size}" if trace_frontier_enum_macro_for
       return if iter_vars.empty?
 
-      values = macro_for_iterable_values(node.iterable)
+      expander = macro_expander_for_declaration(node, class_name)
+      owner_type = macro_owner_type_for(class_name)
+      values = declaration_macro_for_iterable_values(node.iterable, owner_type, expander)
       STDERR.puts "[MACRO_FOR_CLASS] class=#{class_name} phase=values count=#{values ? values.size : -1}" if debug_macro_for_class
       bootstrap_trace_puts "[CLASS_FRONTIER] enum_macro_for_values count=#{values ? values.size : -1}" if trace_frontier_enum_macro_for
       unless values
         # A failed iterable extraction is ambiguous: source identifiers and owner
         # reflection may be intentionally deferred, but a concrete scalar macro
         # value is already known to violate MacroFor's iterable contract.
-        if iterable_macro_value = macro_value_for_iterable_admission(node.iterable)
+        if iterable_macro_value = macro_value_for_iterable_admission(node.iterable, class_name, node)
           case iterable_macro_value
           when Adamas::Compiler::Semantic::MacroNilValue,
+               Adamas::Compiler::Semantic::MacroNilLiteralValue,
                Adamas::Compiler::Semantic::MacroBoolValue,
                Adamas::Compiler::Semantic::MacroNumberValue,
                Adamas::Compiler::Semantic::MacroStringValue,
@@ -37316,21 +37285,6 @@ module Adamas::HIR
       end
 
       return if register_char_binary_primitive_macro_for?(class_name, iter_vars, values)
-
-      source = source_for_arena(@arena)
-      program = Adamas::Compiler::Frontend::Program.new(@arena, [] of ExprId)
-      expander = Adamas::Compiler::Semantic::MacroExpander.new(
-        program,
-        @arena,
-        compilation_flags,
-        recovery_mode: true,
-        generated_sources: macro_generated_sources_for(@arena),
-        macro_source: source,
-        macro_source_path: source_path_for(@arena),
-        type_value_resolver: macro_type_value_resolver,
-        type_relation_resolver: macro_type_relation_resolver
-      )
-      owner_type = macro_owner_type_for(class_name)
 
       expanded = String.build do |io|
         idx = 0
@@ -37541,23 +37495,10 @@ module Adamas::HIR
       iter_vars = macro_for_iter_var_names(node)
       return if iter_vars.empty?
 
-      values = macro_for_iterable_values(node.iterable)
-      return unless values
-
-      source = source_for_arena(@arena)
-      program = Adamas::Compiler::Frontend::Program.new(@arena, [] of ExprId)
-      expander = Adamas::Compiler::Semantic::MacroExpander.new(
-        program,
-        @arena,
-        compilation_flags,
-        recovery_mode: true,
-        generated_sources: macro_generated_sources_for(@arena),
-        macro_source: source,
-        macro_source_path: source_path_for(@arena),
-        type_value_resolver: macro_type_value_resolver,
-        type_relation_resolver: macro_type_relation_resolver
-      )
+      expander = macro_expander_for_declaration(node, class_name)
       owner_type = macro_owner_type_for(class_name)
+      values = declaration_macro_for_iterable_values(node.iterable, owner_type, expander)
+      return unless values
 
       expanded = String.build do |io|
         values.each_with_index do |value, idx|
@@ -56466,14 +56407,14 @@ module Adamas::HIR
     # A nil result means this owner has no source target record and permits the
     # legacy registered-relation fallback; an empty array is authoritative.
 
-    private def source_direct_class_includes(owner : String) : Array(String)?
+    private def source_direct_class_includes(owner : String, before : Array(Int32)? = nil) : Array(String)?
       split = split_generic_base_and_args(owner)
       if split
         # For a concrete generic owner, retain the include arguments after the
         # owner's formal parameters have been substituted. The raw include AST
         # still spells those applications with names such as T, which is not a
         # concrete application identity for overload selection.
-        applied = source_generic_class_includes(owner)
+        applied = source_generic_class_includes(owner, before)
         return applied unless applied.empty?
       end
       base = split ? resolve_generic_template_base(split.base) : owner
@@ -56485,6 +56426,7 @@ module Adamas::HIR
       @current_class = owner unless split
       begin
         targets.each do |entry|
+          next if before && !source_declaration_order_after?(before, entry.source_order)
           target_id = entry.target
           target_arena = entry.arena
           target = if split
@@ -69070,30 +69012,33 @@ module Adamas::HIR
       nil
     end
 
-    private def resolve_constant_name_in_context(name : String) : String?
+    private def resolve_constant_name_in_context(name : String, before : Array(Int32)? = nil) : String?
       return nil if name.empty?
       # An explicit root path never reopens lexical or receiver lookup.
       if name.starts_with?("::")
         root_name = strip_absolute_name_prefix(name)
-        return constant_name_exists?(root_name) ? root_name : nil
+        return constant_visible_for_lookup?(root_name, before) ? root_name : nil
       end
       if debug_filter = env_get("DEBUG_CONST_LOOKUP")
         if debug_filter == "1" || name.includes?(debug_filter)
           STDERR.puts "[CONST_LOOKUP] name=#{name} current=#{@current_class || "nil"} override=#{@current_namespace_override || "nil"}"
         end
       end
-      if name.includes?("::")
+      if separator = name.index("::")
+        if before
+          head = name.byte_slice(0, separator)
+          selected = namespace_path_head_in_context(head, before) || head
+          tail = name.byte_slice(separator, name.bytesize - separator)
+          resolved = "#{resolve_type_alias_chain(selected)}#{tail}"
+          return constant_visible_for_lookup?(resolved, before) ? resolved : nil
+        end
+
         return name if constant_name_exists?(name)
         resolved = resolve_path_string_in_context(name)
         return resolved if constant_name_exists?(resolved)
-        return name if constant_name_exists?(name)
-        if !name.starts_with?("Crystal::")
+        unless name.starts_with?("Crystal::")
           crystal_name = "Crystal::#{name}"
           return crystal_name if constant_name_exists?(crystal_name)
-        end
-        if name.starts_with?("::")
-          root_name = name.size > 2 ? name[2..] : ""
-          return root_name if !root_name.empty? && constant_name_exists?(root_name)
         end
         return nil
       end
@@ -69115,25 +69060,25 @@ module Adamas::HIR
           qualified_name = (parts + [name]).join("::")
           if debug_filter = env_get("DEBUG_CONST_LOOKUP")
             if debug_filter == "1" || name.includes?(debug_filter)
-              STDERR.puts "[CONST_LOOKUP] try=#{qualified_name} exists=#{constant_name_exists?(qualified_name)}"
+              STDERR.puts "[CONST_LOOKUP] try=#{qualified_name} exists=#{constant_visible_for_lookup?(qualified_name, before)}"
             end
           end
-          return qualified_name if constant_name_exists?(qualified_name)
-          if inherited = resolve_constant_in_ancestors(parts.join("::"), name)
+          return qualified_name if constant_visible_for_lookup?(qualified_name, before)
+          if inherited = resolve_constant_in_ancestors(parts.join("::"), name, before)
             return inherited
           end
           parts.pop
         end
       end
 
-      return name if constant_name_exists?(name)
+      return name if constant_visible_for_lookup?(name, before)
       nil
     end
 
     # Original Crystal (Type#lookup_path_item) searches a scope, then the
     # scope's ancestors -- superclasses and included modules, but not their
     # enclosing namespaces -- before moving on to the enclosing namespace.
-    private def resolve_constant_in_ancestors(scope : String, name : String) : String?
+    private def resolve_constant_in_ancestors(scope : String, name : String, before : Array(Int32)?) : String?
       queue = [scope]
       visited = Set(String).new
       while owner = queue.shift?
@@ -69141,23 +69086,39 @@ module Adamas::HIR
         owner_base = strip_generics_simple(owner)
         if owner != scope
           qualified_name = "#{owner}::#{name}"
-          return qualified_name if constant_name_exists?(qualified_name)
+          return qualified_name if constant_visible_for_lookup?(qualified_name, before)
           if owner_base != owner
             qualified_name = "#{owner_base}::#{name}"
-            return qualified_name if constant_name_exists?(qualified_name)
+            return qualified_name if constant_visible_for_lookup?(qualified_name, before)
           end
         end
-        if mods = @class_included_modules[owner]?
-          mods.reverse_each { |mod| queue << mod }
-        end
-        if owner_base != owner && (mods = @class_included_modules[owner_base]?)
-          mods.reverse_each { |mod| queue << mod }
+        constant_lookup_included_modules(owner, before).try &.reverse_each { |mod| queue << mod }
+        if owner_base != owner
+          constant_lookup_included_modules(owner_base, before).try &.reverse_each { |mod| queue << mod }
         end
         if parent = parent_name_for_hierarchy_lookup(owner) || parent_name_for_hierarchy_lookup(owner_base) || builtin_hierarchy_parent(owner)
           queue << parent
         end
       end
       nil
+    end
+
+    private def constant_visible_for_lookup?(name : String, before : Array(Int32)?) : Bool
+      return constant_name_exists?(name) unless before
+      source = @declaration_macro_constant_sources[name]? || return false
+      source_declaration_order_after?(before, source[2])
+    end
+
+    private def constant_lookup_included_modules(owner : String, before : Array(Int32)?) : Array(String)?
+      modules = @class_included_modules[owner]?
+      return modules unless before
+      if targets = source_direct_class_includes(owner, before)
+        return targets
+      end
+      modules.try &.select do |mod|
+        order = @direct_module_include_source_order[{owner, mod}]?
+        order && source_declaration_order_after?(before, order)
+      end
     end
 
     private def record_constant_definition(
@@ -69183,6 +69144,10 @@ module Adamas::HIR
       record_constant_global_debug_info(full_name, source_location_for_node(arena, arena[value_id]))
       @constant_defs.add(full_name)
       trace_constant_literal_probe("record_call", full_name, owner_name)
+
+      if order = @source_declaration_node_order[{arena, arena[value_id].object_id.to_u64}]?
+        @declaration_macro_constant_sources[full_name] ||= {value_id, arena, order}
+      end
 
       case arena[value_id]
       when Adamas::Compiler::Frontend::ArrayLiteralNode,
@@ -70207,7 +70172,7 @@ module Adamas::HIR
       nested_type_full_name_in_parents(owner, name, depth, include_private)
     end
 
-    private def namespace_path_head_in_namespace(head : String, namespace : String) : String?
+    private def namespace_path_head_in_namespace(head : String, namespace : String, before : Array(Int32)? = nil) : String?
       return nil if head.empty? || namespace.empty?
       base = if info = split_generic_base_and_args(namespace)
                info.base
@@ -70216,7 +70181,11 @@ module Adamas::HIR
              end
       loop do
         candidate = "#{base}::#{head}"
-        if @module_defs.has_key?(candidate) ||
+        if before
+          if (order = @declaration_macro_namespace_orders[candidate]?) && source_declaration_order_after?(before, order)
+            return candidate
+          end
+        elsif @module_defs.has_key?(candidate) ||
            @class_info.has_key?(candidate) ||
            @generic_templates.has_key?(candidate) ||
            @type_aliases.has_key?(candidate) ||
@@ -70231,10 +70200,10 @@ module Adamas::HIR
       nil
     end
 
-    private def namespace_path_head_in_context(head : String) : String?
+    private def namespace_path_head_in_context(head : String, before : Array(Int32)? = nil) : String?
       return nil if head.empty?
       owner = @current_namespace_override || @current_class
-      owner ? namespace_path_head_in_namespace(head, owner) : nil
+      owner ? namespace_path_head_in_namespace(head, owner, before) : nil
     end
 
     private def nested_shadowed_type_name?(name : String) : Bool
@@ -79088,7 +79057,7 @@ module Adamas::HIR
       projections
     end
 
-    private def source_generic_class_includes(owner : String) : Array(String)
+    private def source_generic_class_includes(owner : String, before : Array(Int32)? = nil) : Array(String)
       result = [] of String
       info = split_generic_base_and_args(owner)
       return result unless info
@@ -79112,6 +79081,7 @@ module Adamas::HIR
       @current_class = owner
       begin
         targets.each do |entry|
+          next if before && !source_declaration_order_after?(before, entry.source_order)
           bindings = param_map.dup
           entry.bindings.each do |name, value|
             bindings[name] = substitute_type_params(value, param_map)
@@ -89637,6 +89607,33 @@ module Adamas::HIR
       false
     end
 
+    private def declaration_macro_for_iterable_values(
+      iterable_id : ExprId,
+      owner_type : Adamas::Compiler::Semantic::ClassSymbol?,
+      expander : Adamas::Compiler::Semantic::MacroExpander,
+    ) : Array(Adamas::Compiler::Semantic::MacroValue)?
+      if values = macro_for_iterable_values(iterable_id)
+        return values
+      end
+
+      node = @arena[iterable_id]
+      case node
+      when Adamas::Compiler::Frontend::MacroExpressionNode, Adamas::Compiler::Frontend::GroupingNode
+        return declaration_macro_for_iterable_values(node.expression, owner_type, expander)
+      when Adamas::Compiler::Frontend::ConstantNode, Adamas::Compiler::Frontend::PathNode, Adamas::Compiler::Frontend::IdentifierNode
+        # Use the same constant interpreter as method-body expansion.
+      else
+        return nil
+      end
+
+      expander.evaluate_for_iterable(
+        iterable_id,
+        variables: {} of String => Adamas::Compiler::Semantic::MacroValue,
+        owner_type: owner_type,
+        scope: owner_type.try(&.scope),
+      )
+    end
+
     private def macro_for_iterable_values(iterable_id : ExprId) : Array(Adamas::Compiler::Semantic::MacroValue)?
       node = @arena[iterable_id]
       if node.is_a?(Adamas::Compiler::Frontend::MacroExpressionNode)
@@ -89785,13 +89782,15 @@ module Adamas::HIR
       end
     end
 
-    private def macro_value_for_iterable_admission(expr_id : ExprId) : Adamas::Compiler::Semantic::MacroValue?
+    private def macro_value_for_iterable_admission(
+      expr_id : ExprId, owner : String, declaration : Adamas::Compiler::Frontend::MacroForNode,
+    ) : Adamas::Compiler::Semantic::MacroValue?
       expr_node = @arena[expr_id]
       case expr_node
       when Adamas::Compiler::Frontend::MacroExpressionNode
-        macro_value_for_iterable_admission(expr_node.expression)
+        macro_value_for_iterable_admission(expr_node.expression, owner, declaration)
       when Adamas::Compiler::Frontend::GroupingNode
-        macro_value_for_iterable_admission(expr_node.expression)
+        macro_value_for_iterable_admission(expr_node.expression, owner, declaration)
       when Adamas::Compiler::Frontend::NilNode
         Adamas::Compiler::Semantic::MacroNilValue.new
       when Adamas::Compiler::Frontend::BoolNode,
@@ -89803,6 +89802,11 @@ module Adamas::HIR
         # fallback branch on unknown conditions could reject a deferred
         # iterable based on a branch that is not actually selected.
         macro_value_for_expr(expr_id)
+      when Adamas::Compiler::Frontend::ConstantNode,
+           Adamas::Compiler::Frontend::IdentifierNode,
+           Adamas::Compiler::Frontend::PathNode
+        name = expr_node.is_a?(Adamas::Compiler::Frontend::PathNode) ? collect_path_string(expr_node) : (Adamas::Compiler::Frontend.node_literal_string(expr_node) || "")
+        macro_declaration_constant_value(name, owner, source_declaration_order_for(declaration, @arena))
       else
         nil
       end
@@ -90833,7 +90837,17 @@ module Adamas::HIR
       end
     end
 
-    private def macro_expander_for_current_context : Adamas::Compiler::Semantic::MacroExpander
+    private def macro_expander_for_declaration(
+      node : Adamas::Compiler::Frontend::MacroForNode, owner : String,
+    ) : Adamas::Compiler::Semantic::MacroExpander
+      order = source_declaration_order_for(node, @arena)
+      resolver = ->(name : String) { macro_declaration_constant_value(name, owner, order) }
+      macro_expander_for_current_context(resolver)
+    end
+
+    private def macro_expander_for_current_context(
+      constant_resolver : Proc(String, Adamas::Compiler::Semantic::MacroValue?) = macro_constant_value_resolver,
+    ) : Adamas::Compiler::Semantic::MacroExpander
       source = source_for_arena(@arena)
       program = Adamas::Compiler::Frontend::Program.new(@arena, [] of ExprId)
       Adamas::Compiler::Semantic::MacroExpander.new(
@@ -90847,7 +90861,7 @@ module Adamas::HIR
         source_provider: ->(block_id : Adamas::Compiler::Frontend::ExprId) { macro_block_text(block_id) },
         type_value_resolver: macro_type_value_resolver,
         type_relation_resolver: macro_type_relation_resolver,
-        constant_value_resolver: macro_constant_value_resolver
+        constant_value_resolver: constant_resolver
       )
     end
 
@@ -90858,17 +90872,31 @@ module Adamas::HIR
       ->(name : String) do
         resolved = resolve_constant_name_in_context(name) || name
         if source = @macro_constant_collections[resolved]?
-          value_id, arena = source
-          previous_arena = @arena
-          @arena = arena
-          begin
-            macro_expander_for_current_context.literal_source_value(value_id)
-          ensure
-            @arena = previous_arena
-          end
+          macro_constant_source_value(source[0], source[1])
         else
           constant_literal_value_for_name(resolved)
         end
+      end
+    end
+
+    # Declaration registration can replay after later constants are known.
+    # Reuse the lexical lookup with the source frontier of the invocation.
+    private def macro_declaration_constant_value(
+      name : String, owner : String, order : Array(Int32),
+    ) : Adamas::Compiler::Semantic::MacroValue?
+      resolved = with_namespace_override(owner) { resolve_constant_name_in_context(name, order) }
+      return nil unless resolved
+      source = @declaration_macro_constant_sources[resolved]
+      macro_constant_source_value(source[0], source[1])
+    end
+
+    private def macro_constant_source_value(value_id : ExprId, arena : Adamas::Compiler::Frontend::ArenaLike)
+      previous_arena = @arena
+      @arena = arena
+      begin
+        macro_expander_for_current_context.literal_source_value(value_id)
+      ensure
+        @arena = previous_arena
       end
     end
 
@@ -127913,6 +127941,7 @@ module Adamas::HIR
       node : Adamas::Compiler::Frontend::Node,
       arena : Adamas::Compiler::Frontend::ArenaLike,
       parent : Array(Int32)? = nil,
+      constant_owner : String? = nil,
     ) : Nil
       node = unwrap_visibility_member_in_arena(node, arena)
       key = {arena, node.object_id.to_u64}
@@ -127920,14 +127949,22 @@ module Adamas::HIR
       order = (parent || [] of Int32) + [@source_declaration_order_next]
       @source_declaration_order_next += 1
       @source_declaration_node_order[key] = order
+      constant_owner = "" unless parent
+      child_constant_owner = nil
       children = [] of ExprId
       case node
       when Adamas::Compiler::Frontend::DefNode
         @source_declaration_order[source_declaration_key(node, arena)] = order
-      when Adamas::Compiler::Frontend::ClassNode, Adamas::Compiler::Frontend::ModuleNode
+      when Adamas::Compiler::Frontend::ClassNode, Adamas::Compiler::Frontend::ModuleNode, Adamas::Compiler::Frontend::LibNode
         node.body.try { |body| children.concat(body) }
+        if constant_owner && (name = safe_slice_to_string(node.name)) && !name.empty?
+          absolute = !node.is_a?(Adamas::Compiler::Frontend::LibNode) && node.absolute
+          child_constant_owner = constant_full_name(absolute ? nil : constant_owner, name)
+          @declaration_macro_namespace_orders[child_constant_owner] ||= order
+        end
       when Adamas::Compiler::Frontend::BeginNode, Adamas::Compiler::Frontend::BlockNode
         children.concat(node.body)
+        child_constant_owner = constant_owner
       when Adamas::Compiler::Frontend::IfNode
         children.concat(node.then_body)
         node.elsifs.try &.each { |branch| children.concat(branch.body) }
@@ -127937,8 +127974,36 @@ module Adamas::HIR
         node.else_body.try { |body| children << body }
       when Adamas::Compiler::Frontend::MacroForNode
         children << node.body
+      when Adamas::Compiler::Frontend::ConstantNode
+        name = constant_name_from_node(node, arena)
+        record_macro_constant_declaration_order(name, node.value, arena, order, constant_owner)
+      when Adamas::Compiler::Frontend::AssignNode
+        target = arena[node.target]
+        if target.is_a?(Adamas::Compiler::Frontend::ConstantNode)
+          record_macro_constant_declaration_order(constant_name_from_node(target, arena), node.value, arena, order, constant_owner)
+        elsif target.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
+          name = safe_slice_to_string(target.name) || ""
+          if !name.empty? && name.byte_at(0).unsafe_chr.ascii_uppercase?
+            record_macro_constant_declaration_order(name, node.value, arena, order, constant_owner)
+          end
+        end
       end
-      children.each { |id| record_source_declaration_order(arena[id], arena, order) unless id.invalid? }
+      children.each { |id| record_source_declaration_order(arena[id], arena, order, child_constant_owner) unless id.invalid? }
+    end
+
+    private def record_macro_constant_declaration_order(
+      name : String, value : ExprId, arena : Adamas::Compiler::Frontend::ArenaLike,
+      order : Array(Int32), owner : String?,
+    )
+      return if value.invalid?
+      @source_declaration_node_order[{arena, arena[value].object_id.to_u64}] = order
+      # Registration visits root and nested declarations in separate passes.
+      # Publish syntax for direct declarations without admitting runtime values
+      # or declarations in unevaluated macro branches.
+      if owner && !name.empty?
+        full_name = constant_full_name(owner, name)
+        @declaration_macro_constant_sources[full_name] ||= {value, arena, order}
+      end
     end
 
     private def source_declaration_order_for(

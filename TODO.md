@@ -25008,9 +25008,10 @@ integration, fresh bootstrap, or LavinMQ parity.
   compiles but prints 0 and 0 instead of 7 and 10. An independent no-prelude
   while loop with a literal macro iterable emits A instead of C on both
   35q1717 and 35q1721.
-- [ ] Give declaration-time collection macro loops the appropriate constant
-  source. The top-level version of the raw constant-element discriminator
-  is rejected by 35q1721 with E4001 before HIR. The method version succeeds.
+- [ ] Give top-level collection macro loops the appropriate constant source.
+  The top-level raw constant-element discriminator is rejected by 35q1721
+  with E4001 before HIR. Method and HIR declaration bodies have separate
+  qualified paths.
 - [ ] Preserve the originating diagnostic at scope boundaries. The combined
   LavinMQ HIR probe 35q1722 reached `Config#parse_ini` and stopped at
   `case branch lost its owned Block scope` from a generated Hash#each body.
@@ -25075,7 +25076,26 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Qualify replay when body materialization obtains arguments through
   an alias or a per-definition lookup. The exact-key regression covers
   source and arena validation and leaves other argument paths open.
-- [ ] Trace the exact `PrometheusWriter#write` source site in the unchanged
-  LavinMQ HIR probe. Combined 35q1748 reaches a metric with `value: Unknown`
-  and fails the source restriction. The reduced sum has native parity,
-  while the full application still has no linked Adamas binary.
+- [x] Trace the exact `PrometheusWriter#write` source site in unchanged
+  LavinMQ. Combined 35q1750 gives the connection sum `Int32` and reaches
+  `cpu_system_time_total` at line 407, where the generated getter is absent.
+
+### 2026-11-04: Resolve collection constants at declaration macro invocation
+
+- [x] Bind declaration macro expansion to the lexical owner and source order
+  of the invocation. Reuse the method macro constant syntax evaluator. Index
+  direct declarations before the separate class and module registration passes.
+- Exact S1 35q1757 and Crystal 1.22.1 pass four positive and five negative
+  cases in `macro_for_literal_iterables_repro.sh`. The new positive fixture
+  emits ABCDEFGHIJ, including relative and absolute names, declarations in
+  an outer module, and shadowing by constants, namespaces, and includes on
+  either side of the invocation. The negative fixture rejects a scalar that
+  shadows a root collection. Method collection macros, nested macro begin,
+  and installed-prelude `hello` pass on the same compiler.
+- [ ] Qualify alias-qualified constants, generated namespaces, and transitive
+  include visibility in a declaration-time macro. Keep top-level expansion
+  and generated writes in runtime loops on their separate tracks.
+- [ ] Trace the unexpected bare Pointer at `Enumerable#flat_map`'s
+  `ary.concat(v)` in unchanged LavinMQ. Combined probe 35q1756 has `Int64`
+  for `Server#sys_time` and `Server#user_time` and reaches this later failure.
+  Reduce the queue's metaclass `select` and nested `compact_map` separately.
