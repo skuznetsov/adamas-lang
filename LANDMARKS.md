@@ -23930,6 +23930,50 @@ This explains a false-positive path, without retroactively promoting earlier
 stopped builds into successful measurements. Refresh after runner sampling,
 lsof grammar, PID coverage, or process-tree changes.
 
+## 2026-11-05 — Measure release rebuilds and separate object reuse
+
+Frozen Adamas source 227d11a9 with private controlled edits is rebuilt using
+persistent per-tool caches and stable source/output paths. Stock Crystal
+1.22.1 and installed iyi 0.20.1 --crystal share stock stdlib. Unchanged release
+rebuild medians are 14.54/8.53 seconds (three samples each); a comment edit takes
+14.73/9.04 seconds. A live CLI VERSION edit takes 170.07/271.50 seconds in
+Crystal/iyi order. All 18 builds pass executed version checks; the nine
+stock/Adamas compile/output qualifications pass. Bitcode/object hashes and
+mtimes prove unchanged/comment reuse and live-edit invalidation. The Boehm
+shell macro disables iyi whole-output skipping, so these are cached-object
+rebuilds that still run the frontend and linker.
+
+The separate stock optimized profile -O3 -Drelease --no-debug, retaining
+per-type LLVM modules, rebuilds the same VERSION edit in 17.12 seconds and
+reuses 2,937 of 2,939 objects. A different executed diagnostic edit in
+ast_to_hir.cr takes 63.12 seconds, changing one object's bytes and the binary;
+the negative input must print the new marker and still reject. No paired
+single-module timing was taken for that lowering edit. Its failed seed and
+an inert first diagnostic edit remain excluded from successful live-edit
+comparisons. Four admitted profile builds pass version checks, and six
+fixture compile/output checks pass across the two edited states.
+
+This profile trades build latency for resulting compiler speed: its hello
+compiles take 17.22/16.76 seconds in the two qualification states, compared
+with the prior normal-release median 8.28. These profile times have one
+observation per source state. It supports targeted small-regression iterations;
+it does not establish a faster overall LavinMQ development loop or replace
+normal release project gates. No native .iyimod artifact path was used.
+
+A separate iyi whole-output counterexample changes source bytes while keeping
+old mtime and size: the stale binary runs until --force; an ordinary write
+invalidates correctly. This metadata assumption does not affect the measured
+Adamas whole-output path, which the Boehm macro already disables.
+
+Evidence is iyi-adamas-rebuild35q2091/REPORT.md, summary.json, the per-build
+manifests/logs, optimized-development qualification receipts, and cleanup.json
+under /opt/mldata_ssd/adamas_codex_oct29_rootcause. The scoped read-only
+benchmark review returns ROBUST with the edit-size and module-partition limits.
+All eight owned cache/tmp directories are removed (358,415,988 bytes), after
+checking their final contents. Refresh after source/toolchain/stdlib/flags,
+module partition, host, cache identity, or workload changes. Compiler bootstrap,
+Channel runtime, and unchanged LavinMQ execution/test parity remain open.
+
 ### Active compiler continuation after the benchmark
 
 The standing goal remains unchanged LavinMQ execution and upstream test parity.

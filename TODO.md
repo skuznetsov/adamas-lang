@@ -25335,3 +25335,23 @@ integration, fresh bootstrap, or LavinMQ parity.
   point is regression_tests/run_safe_fd_count_repro.sh.
 - Earlier stopped build observations stay excluded from timing comparisons.
   This runner repair does not qualify compiler bootstrap or LavinMQ parity.
+
+### 2026-11-05 — Qualify rebuild-cache behavior
+
+- [x] Measure 18 serial release builds with persistent, isolated caches: all
+  version checks and nine stock/Adamas fixture compile/output checks pass.
+  Unchanged medians are Crystal 14.54 s / iyi 8.53 s; a live VERSION edit costs
+  170.07 / 271.50 s. The stock Boehm shell macro disables whole-output skipping.
+- [x] Qualify a separate stock -O3 -Drelease per-type profile: the same VERSION
+  edit takes 17.12 s, and an executed lowering diagnostic edit takes 63.12 s.
+  Four admitted builds and six fixture checks pass; inert/guard-stopped
+  attempts remain excluded. Hello compilation is slower (16.76–17.22 s), so
+  retain normal release gates for large workloads. Lowering has no paired
+  single-module timing; do not generalize the small CLI edit speedup.
+- [x] Reproduce the installed iyi whole-output old-mtime/same-size stale-cache
+  counterexample separately; --force and ordinary-write controls pass.
+- [x] Verify cache/tool/source identities and remove all eight owned cache/tmp
+  directories, 358,415,988 bytes. Evidence is the external
+  iyi-adamas-rebuild35q2091/REPORT.md and cleanup.json.
+- [ ] Resume the standing compiler continuation capsule in LANDMARKS.md;
+  unchanged LavinMQ execution/upstream test parity remains open.
