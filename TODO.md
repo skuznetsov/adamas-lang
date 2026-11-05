@@ -24968,3 +24968,13 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Verify the root selection in fresh self-hosted stages. The
   existing target-specific C binding search still needs target selection
   support before this evidence can generalize to cross compilation.
+
+### 2026-11-04: Expand begin bodies nested inside macro control pieces
+
+- Traverse the matched begin body in the current macro variable and owner
+  context. Parent 35q1697 prints C, omitting the nested loop, while Crystal
+  1.22.1 and S1 35q1710 print ABC. The separate begin-only and nested
+  loop controls also match.
+- [ ] Preserve concrete Tuple reflection in the explicit Tuple constructor
+  branch. The independent `@type.name(generic_args: false)` and size
+  reducer still prints A instead of C on 35q1710.

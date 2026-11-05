@@ -23522,3 +23522,12 @@ regression, including a competing require in a later project root.
 Use the prelude and C bindings layout to identify the configured stdlib
 tree and keep existing per-Def provenance checks. Refresh after changes
 to path expansion, stdlib layout, target selection, or source ownership.
+
+### Expand macro begin in its surrounding control context
+
+The piece scanner matched the closing end of a nested begin and skipped
+the entire body. Expand those pieces with the existing variables, owner,
+and expander, preserving order around the nested control. In
+`nested_macro_begin_expansion_repro.sh`, parent 35q1697 emits C. Crystal
+1.22.1 and 35q1710 emit ABC and leave the unselected branch unexpanded.
+Refresh after changes to macro piece scanning or nested expansion context.

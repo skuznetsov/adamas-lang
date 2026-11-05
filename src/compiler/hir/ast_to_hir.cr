@@ -92195,7 +92195,7 @@ module Adamas::HIR
     end
 
     # Expand an array of MacroPieces to text, handling Text, Expression,
-    # and control structures ({% for %}, {% if %}, {% unless %}).
+    # and control structures ({% for %}, {% begin %}, {% if %}, {% unless %}).
     # For loops use iter_vars/iterable from the ControlStart piece directly,
     # with the body being the subsequent pieces until matching ControlEnd.
     private def expand_pieces_with_vars(
@@ -92255,6 +92255,10 @@ module Adamas::HIR
 
           if keyword == "for"
             expand_for_pieces(piece, body_pieces, vars, owner_type, expander, ctx, builder)
+          elsif keyword == "begin"
+            if body_text = expand_pieces_with_vars(body_pieces, vars, owner_type, expander, ctx)
+              builder << body_text
+            end
           elsif keyword == "if" || keyword == "unless"
             expand_if_pieces(piece, body_pieces, pieces, body_start, body_end, vars, owner_type, expander, ctx, builder)
           end
