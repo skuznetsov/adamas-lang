@@ -25118,3 +25118,22 @@ integration, fresh bootstrap, or LavinMQ parity.
   35q1757 stops at `Channel::LooseReceiveAction(Nil)#unwait`. The later
   `flat_map` failure in combined 35q1756 depends on additional unpromoted
   candidates. Full LavinMQ code generation and test parity remain open.
+
+### 2026-11-04 — Preserve the selected slot for dynamic Tuple indexing
+
+- [x] Derive the runtime index result from all reachable element types and
+  extract each fixed slot using its own type. Preserve signed negative indices,
+  full-width comparisons, and the source `IndexError` path. For one-argument
+  scalar calls, select from the direct Tuple declarations before materializing
+  an overload so a concrete Indexable alias cannot replace a direct definition.
+- Exact S1 35q1776 and installed Crystal 1.22.1 agree on the native scalar and
+  reopened-Tuple fixtures and the five rejection cases in
+  `tuple_scalar_index_repro.sh`. Both bracket syntax and explicit calls pass.
+- [ ] Restore the compile-time rejection of a runtime Range in Tuple brackets.
+  Both 35q1764 and 35q1776 accept `range = 0..1; {1, 2_i64, true}[range]`.
+  The existing `tuple_literal_range_repro.sh` native positive passes on 35q1776
+  before the runtime Range rejection fails. The baseline lowers the Range
+  specialization to `Nil` in HIR. Check why its source macro raise is lost.
+- [ ] Qualify source value kinds for metaclass elements and dispatch over unions
+  of Tuple receivers or integer index types. Check compile-time constant
+  indices against Crystal separately from runtime integer locals.

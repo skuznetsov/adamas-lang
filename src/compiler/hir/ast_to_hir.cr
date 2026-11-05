@@ -11894,9 +11894,10 @@ module Adamas::HIR
       call_arg_count : Int32,
       source_def : Adamas::Compiler::Frontend::DefNode? = nil,
       static_receiver : String? = nil,
+      explicit_receiver : Bool = false,
     ) : Nil
       return unless receiver_id || static_receiver
-      return unless callee_node.is_a?(Adamas::Compiler::Frontend::MemberAccessNode)
+      return unless explicit_receiver || callee_node.is_a?(Adamas::Compiler::Frontend::MemberAccessNode)
       return if explicit_self_receiver
 
       visibility = source_def ? source_def.visibility : function_visibility(target_name, call_arg_count)
@@ -50687,12 +50688,16 @@ module Adamas::HIR
         ctx.register_type(missing.id, TypeRef::NIL)
         return missing.id
       end
-      index = Literal.new(ctx.next_id, TypeRef::INT32, element[0].to_i64)
+      emit_fixed_tuple_element(ctx, receiver_id, element[0], element[1])
+    end
+
+    private def emit_fixed_tuple_element(ctx : LoweringContext, receiver : ValueId, offset : Int32, element_type : TypeRef) : ValueId
+      index = Literal.new(ctx.next_id, TypeRef::INT32, offset.to_i64)
       ctx.emit(index)
       ctx.register_type(index.id, TypeRef::INT32)
-      value = IndexGet.new(ctx.next_id, element[1], receiver_id, index.id)
+      value = IndexGet.new(ctx.next_id, element_type, receiver, index.id)
       ctx.emit(value)
-      ctx.register_type(value.id, element[1])
+      ctx.register_type(value.id, element_type)
       value.id
     end
 
@@ -115948,6 +115953,13 @@ module Adamas::HIR
           return terminal
         end
       end
+      if receiver_id && (method_name == "[]" || method_name == "at") &&
+         args.size == 1 && call_args.size == 1 && !has_named_args && !has_block_call && !has_splat
+        result = with_arena(call_arena) do
+          lower_tuple_scalar_index(ctx, receiver_id, args[0], call_args.first, method_name, node, explicit_self_receiver)
+        end
+        return result if result
+      end
       if receiver_id && !has_block_call && !has_splat && !has_named_args &&
          source_named_entry.nil? && args.size == call_args.size &&
          is_union_type?(ctx.type_of(receiver_id))
@@ -121340,40 +121352,11 @@ module Adamas::HIR
         is_tuple = index_recv_type_desc && (index_recv_type_desc.kind == TypeKind::Tuple ||
                                             index_recv_type_desc.name.starts_with?("Tuple(") ||
                                             index_recv_type_desc.name == "Tuple")
-        if is_tuple
-          td = index_recv_type_desc.not_nil!
-          type_params = td.type_params.reject { |p| p == TypeRef::VOID }
-          # When the descriptor is a bare "Tuple" (generic), try to get concrete
-          # type params from @current_class (set during inline expansion).
-          if type_params.empty? && (current = @current_class)
-            if current.starts_with?("Tuple(")
-              if info = split_generic_base_and_args(current)
-                param_names = split_generic_type_args(info.args).map(&.strip)
-                type_params = param_names.compact_map { |n| r = type_ref_for_name(n); r == TypeRef::VOID ? nil : r }
-              end
-            end
+        if index_receiver_id != receiver_id && is_tuple && no_named_args && !has_block_call && !has_splat
+          result = with_arena(call_arena) do
+            lower_tuple_scalar_index(ctx, index_receiver_id, args[0], call_args.first?, method_name, node, explicit_self_receiver)
           end
-          unless type_params.empty?
-            element_type = TypeRef::INT32 # default fallback
-            arg_id = args[0]
-            # Try to get concrete element type from a literal index value
-            idx_val : Int32? = nil
-            if hir_val = ctx.value_for(arg_id)
-              if hir_val.is_a?(Literal) && hir_val.value.is_a?(Int64)
-                idx_val = hir_val.value.as(Int64).to_i
-              end
-            end
-            if idx_val && idx_val >= 0 && idx_val < type_params.size
-              element_type = type_params[idx_val]
-            else
-              element_type = type_params.first
-            end
-            element_type = TypeRef::INT32 if element_type == TypeRef::VOID
-            index_get = IndexGet.new(ctx.next_id, element_type, index_receiver_id, arg_id)
-            ctx.emit(index_get)
-            ctx.register_type(index_get.id, element_type)
-            return index_get.id
-          end
+          return result if result
         end
 
         # Nilable/union tuple receiver: keep tuple fast-path for expressions like
@@ -128281,7 +128264,11 @@ module Adamas::HIR
 
     # Tuple-producing legacy resolver core. Named args are canonicalized by the
     # lookup_function_def_for_call wrapper.
-    private def resolve_call_tuple(input : CallResolutionInput, source_rejections : Array(Tuple(String, String))? = nil) : Tuple(String, Adamas::Compiler::Frontend::DefNode)?
+    private def resolve_call_tuple(
+      input : CallResolutionInput,
+      source_rejections : Array(Tuple(String, String))? = nil,
+      declaration_keys : Array(String)? = nil,
+    ) : Tuple(String, Adamas::Compiler::Frontend::DefNode)?
       func_name = input.func_name
       arg_count = if input.has_named && input.named_names && input.raw_positional_count
                     input.raw_positional_count.not_nil! + input.named_names.not_nil!.size
@@ -128346,8 +128333,8 @@ module Adamas::HIR
         end
       end
 
-      overload_keys = [] of String
-      if parts = method_parts
+      overload_keys = declaration_keys || [] of String
+      if !declaration_keys && (parts = method_parts)
         if parts.separator && parts.method
           ensure_method_index_built
           base_owner = method_index_owner_key(parts.owner)
@@ -128387,6 +128374,7 @@ module Adamas::HIR
         end
       end
 
+      return nil if declaration_keys && overload_keys.empty?
       if overload_keys.empty?
         if func_name.includes?('#')
           parent_parts = parse_method_name(func_name)
@@ -128812,6 +128800,7 @@ module Adamas::HIR
 
       STDERR.puts "[OVL] PICK func=#{func_name} -> #{best_name.inspect} score=#{best_score}" if ovl_trace
       unless best && best_name
+        return nil if declaration_keys
         if source_constructor_family && (parts = method_parts)
           if application = source_included_constructor_application(parts.owner)
             return lookup_source_named_included_constructor(parts.owner, application, input)
@@ -137908,7 +137897,7 @@ module Adamas::HIR
       nil
     end
 
-    private def tuple_range_int32_literal(expr_id : ExprId) : Int64?
+    private def tuple_int32_literal(expr_id : ExprId) : Int64?
       node = @arena[expr_id]
       if node.is_a?(Adamas::Compiler::Frontend::NumberNode)
         return nil unless node.kind.i32?
@@ -137939,8 +137928,8 @@ module Adamas::HIR
 
       # Only literal Int32 endpoints have the compiler-level Tuple contract.
       # Other Range values must still reach the stdlib's rejection body.
-      first = @arena[range.begin_expr].is_a?(Adamas::Compiler::Frontend::NilNode) ? 0_i64 : tuple_range_int32_literal(range.begin_expr)
-      last = @arena[range.end_expr].is_a?(Adamas::Compiler::Frontend::NilNode) ? types.size.to_i64 - 1 : tuple_range_int32_literal(range.end_expr)
+      first = @arena[range.begin_expr].is_a?(Adamas::Compiler::Frontend::NilNode) ? 0_i64 : tuple_int32_literal(range.begin_expr)
+      last = @arena[range.end_expr].is_a?(Adamas::Compiler::Frontend::NilNode) ? types.size.to_i64 - 1 : tuple_int32_literal(range.end_expr)
       return nil unless first && last
       first += types.size if first < 0
       unless 0 <= first <= types.size
@@ -137972,6 +137961,158 @@ module Adamas::HIR
       ctx.emit(result)
       ctx.register_type(result.id, result_type)
       result.id
+    end
+
+    private def lower_tuple_scalar_index(
+      ctx : LoweringContext, receiver : ValueId, index : ValueId, index_expr : ExprId?,
+      method : String, node : Adamas::Compiler::Frontend::Node, explicit_self : Bool = false,
+    ) : ValueId?
+      return nil if ctx.type_literal?(receiver)
+      descriptor = @module.get_type_descriptor(ctx.type_of(receiver))
+      return nil unless descriptor && descriptor.kind == TypeKind::Tuple
+      elements = descriptor.type_params
+      return nil if elements.any? { |type| type == TypeRef::VOID }
+
+      if method == "[]" && index_expr && (literal = tuple_int32_literal(index_expr))
+        offset = literal < 0 ? literal + elements.size : literal
+        unless 0 <= offset < elements.size
+          raise LoweringError.new("index out of bounds for #{descriptor.name} (#{literal} not in #{-elements.size}..#{elements.size - 1})", node)
+        end
+        return emit_fixed_tuple_element(ctx, receiver, offset.to_i32, elements[offset])
+      end
+
+      index_type = ctx.type_of(index)
+      signed = signed_integer_primitive?(index_type)
+      return index if control_flow_dead_block?(ctx, ctx.current_block)
+      return nil if index_type == TypeRef::VOID || @no_prelude
+
+      owner = descriptor.name
+      argument = source_call_argument(ctx, index)
+      target = lookup_tuple_index_declaration(owner, method, argument)
+      unless target
+        raise LoweringError.new("no overload matches #{owner}##{method} for argument types (#{get_type_name_from_ref(index_type)})", node)
+      end
+      if !stdlib_tuple_index_definition?(target)
+        validate_call_visibility!(ctx, node, node, receiver, method, target[0], explicit_self, 1,
+          source_def: target[1], explicit_receiver: true)
+        return lower_selected_tuple_index_call(ctx, receiver, index, owner, method, target, node)
+      end
+      return nil unless signed || unsigned_integer_type?(index_type)
+
+      if method == "[]"
+        at = lookup_tuple_index_declaration(owner, "at", argument)
+        return nil unless at
+        unless stdlib_tuple_index_definition?(at)
+          return lower_selected_tuple_index_call(ctx, receiver, index, owner, "at", at, node)
+        end
+      end
+      fallback = lookup_tuple_index_declaration(owner, "at", argument, has_block: true)
+      return nil unless fallback && stdlib_tuple_index_definition?(fallback)
+
+      result_type = union_type_for_value_set(elements)
+      return nil unless result_type
+
+      # Widen small indices before comparing with tuple arities. Wider source
+      # indices must retain their full width through the bounds decision.
+      if integer_bit_width(index_type).not_nil! < 32
+        index_type = signed ? TypeRef::INT32 : TypeRef::UINT32
+        cast = Cast.new(ctx.next_id, index_type, index, index_type)
+        ctx.emit(cast)
+        ctx.register_type(cast.id, index_type)
+        index = cast.id
+      end
+
+      merge = ctx.create_block
+      incoming = [] of {BlockId, ValueId}
+      elements.each_with_index do |element, offset|
+        matching = emit_tuple_index_equality(ctx, index, index_type, offset.to_i64)
+        if signed
+          negative = emit_tuple_index_equality(ctx, index, index_type, offset.to_i64 - elements.size)
+          either = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Or, matching, negative)
+          ctx.emit(either)
+          matching = either.id
+        end
+        selected = ctx.create_block
+        following = ctx.create_block
+        ctx.terminate(Branch.new(matching, selected, following))
+        ctx.current_block = selected
+        value = emit_fixed_tuple_element(ctx, receiver, offset, element)
+        value = coerce_value_to_type(ctx, value, result_type)
+        incoming << {ctx.current_block, value}
+        ctx.terminate(Jump.new(merge))
+        ctx.current_block = following
+      end
+
+      span = node.span
+      error = named_collection_identifier(span, "IndexError")
+      error = @arena.add_typed(Adamas::Compiler::Frontend::PathNode.new(span, nil, error))
+      constructor = named_collection_member(span, error, "new")
+      value = @arena.add_typed(Adamas::Compiler::Frontend::CallNode.new(span, constructor, [] of ExprId))
+      lower_raise(ctx, Adamas::Compiler::Frontend::RaiseNode.new(span, value))
+
+      ctx.current_block = merge
+      result = Phi.new(ctx.next_id, result_type, incoming)
+      ctx.emit(result)
+      ctx.register_type(result.id, result_type)
+      result.id
+    end
+
+    private def lookup_tuple_index_declaration(
+      owner : String, method : String, argument : SourceCallArgument, has_block : Bool = false,
+    ) : {String, Adamas::Compiler::Frontend::DefNode}?
+      # Tuple applications share the source declarations on the bare owner.
+      # Materialized include aliases can have more specific physical parameter
+      # types, but do not replace an applicable direct source declaration.
+      base = "Tuple##{method}"
+      rebuild_function_def_overloads if @function_defs_cache_size != @function_defs.size
+      declarations = @function_def_overloads[base]?.try &.reject do |name|
+        function_namespace_override_for(name)
+      end
+      return nil unless declarations
+      input = CallResolutionInput.new(
+        "#{owner}##{method}", 1, [argument.type_ref], has_block, false, false, nil,
+        raw_positional_count: 1, source_argument_facts: [argument.as(SourceCallArgument?)],
+      )
+      resolve_call_tuple(input, declaration_keys: declarations)
+    end
+
+    private def stdlib_tuple_index_definition?(target : {String, Adamas::Compiler::Frontend::DefNode}) : Bool
+      name, def_node = target
+      arena = registered_arena_for_def(def_node) || @function_def_arenas[name]?
+      path = arena.try { |source| source_path_for(source) }
+      stdlib_source_path?(path) && path.try(&.ends_with?("/tuple.cr")) == true
+    end
+
+    private def lower_selected_tuple_index_call(
+      ctx : LoweringContext, receiver : ValueId, index : ValueId, owner : String, method : String,
+      selected : {String, Adamas::Compiler::Frontend::DefNode}, node : Adamas::Compiler::Frontend::Node,
+    ) : ValueId
+      name, def_node = selected
+      arena = registered_arena_for_def(def_node) || @function_def_arenas[name]?
+      unless arena
+        raise LoweringError.new("tuple index target has no source arena: #{name}", node)
+      end
+      argument_types = [ctx.type_of(index)]
+      target = mangle_function_name("#{owner}##{method}", argument_types)
+      bind_exact_source_call_target(target, name, def_node, arena, node, "tuple index")
+      remember_callsite_arg_types(target, argument_types)
+      lower_function_if_needed(target)
+      result = get_function_return_type(target, 1, def_node)
+      if result == TypeRef::VOID
+        result = force_lower_pending_index_return_type(target)
+      end
+      call = Call.with_receiver(ctx.next_id, result, receiver, target, [index])
+      ctx.emit(call)
+      ctx.register_type(call.id, result)
+      call.id
+    end
+
+    private def emit_tuple_index_equality(ctx : LoweringContext, index : ValueId, index_type : TypeRef, expected : Int64) : ValueId
+      literal = Literal.new(ctx.next_id, index_type, expected)
+      ctx.emit(literal)
+      equal = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Eq, index, literal.id)
+      ctx.emit(equal)
+      equal.id
     end
 
     private def lower_index(ctx : LoweringContext, node : Adamas::Compiler::Frontend::IndexNode) : ValueId
@@ -138391,6 +138532,13 @@ module Adamas::HIR
         end
       end
 
+      if index_ids.size == 1 && !has_index_splat
+        if result = lower_tuple_scalar_index(ctx, object_id, index_ids.first, node.indexes.first, "[]", node,
+             obj_node.is_a?(Adamas::Compiler::Frontend::SelfNode))
+          return result
+        end
+      end
+
       # Check if this is an array by looking at the object node (ArrayLiteral check)
       # This is necessary because arrays are typed as POINTER but should use IndexGet
       is_array_literal = obj_node.is_a?(Adamas::Compiler::Frontend::ArrayLiteralNode)
@@ -138546,44 +138694,6 @@ module Adamas::HIR
           end
         else
           element_type = td.type_params.first? || TypeRef::INT32
-        end
-        element_type = TypeRef::INT32 if element_type == TypeRef::VOID
-
-        index_get = IndexGet.new(ctx.next_id, element_type, object_id, index_ids.first)
-        ctx.emit(index_get)
-        ctx.register_type(index_get.id, element_type)
-        index_get.id
-      elsif type_desc && type_desc.kind != TypeKind::Union && (type_desc.kind == TypeKind::Tuple || type_desc.name.starts_with?("Tuple(") ||
-            type_desc.name == "Tuple") && index_ids.size == 1 && !index_is_range
-        td = type_desc.not_nil!
-        type_params = td.type_params.reject { |p| p == TypeRef::VOID }
-        # When the descriptor is bare "Tuple" (generic), resolve concrete type params
-        # from @current_class which is set to the concrete Tuple type during inline expansion.
-        if type_params.empty? && (current = @current_class)
-          tuple_source = current
-          # Also check @type_param_map for T__tuple
-          if tuple_list = @type_param_map["T__tuple"]?
-            tuple_source = "Tuple(#{tuple_list})"
-          end
-          if tuple_source.starts_with?("Tuple(")
-            if info = split_generic_base_and_args(tuple_source)
-              param_names = split_generic_type_args(info.args).map(&.strip)
-              type_params = param_names.compact_map { |n| r = type_ref_for_name(n); r == TypeRef::VOID ? nil : r }
-            end
-          end
-        end
-        # Determine element type from literal index or use first element type
-        element_type = TypeRef::INT32 # default fallback
-        idx_node = @arena[node.indexes.first]
-        if idx_node.is_a?(Adamas::Compiler::Frontend::NumberNode)
-          idx_val = (safe_slice_to_string(idx_node.value) || "").to_i?
-          if idx_val && idx_val >= 0 && idx_val < type_params.size
-            element_type = type_params[idx_val]
-          elsif !type_params.empty?
-            element_type = type_params.first
-          end
-        elsif !type_params.empty?
-          element_type = type_params.first
         end
         element_type = TypeRef::INT32 if element_type == TypeRef::VOID
 
