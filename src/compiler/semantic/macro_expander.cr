@@ -491,8 +491,7 @@ module Adamas
           @depth += 1
           begin
             context = Context.new(variables, {} of String => String, owner_type, @depth, @flags, nil, scope)
-            iterable_node = node_for_expr?(expr_id)
-            result = iterable_node ? evaluate_iterable_to_macro_values(iterable_node, context, expr_id) : nil
+            result = evaluate_iterable_to_macro_values(expr_id, context)
             if result.nil?
               # Roll back diagnostics emitted by an unhandled iterable so the caller's
               # silent fallback behavior is preserved.
@@ -546,6 +545,12 @@ module Adamas
           ensure
             @depth -= 1
           end
+        end
+
+        # Crystal returns the syntax of a constant initializer to macros. A
+        # collection's elements are syntax too, even when they are calls.
+        def literal_source_value(expr_id : ExprId) : MacroValue
+          expr_to_macro_value(expr_id, resolve_names: false)
         end
 
         # Expand a top-level macro control-flow node and reparse the result into AST.
@@ -737,9 +742,7 @@ module Adamas
               return ""
             end
 
-            iterable_node = @arena[node.iterable]
-            pair_iteration = pair_iteration_iterable?(iterable_node, context)
-            elem_values = evaluate_iterable_to_macro_values(iterable_node, context, node.iterable)
+            elem_values = evaluate_iterable_to_macro_values(node.iterable, context)
             return "" unless elem_values
 
             loop_names = iter_vars.map { |name| intern_name(name) }
@@ -750,9 +753,6 @@ module Adamas
               elem_values.each_with_index do |elem_value, idx|
                 if elem_value.is_a?(MacroForEntry)
                   loop_context = context.with_for_entry(loop_names, elem_value, idx)
-                elsif pair_iteration && index_var_name && elem_value.is_a?(MacroTupleValue) && elem_value.elements.size >= 2
-                  loop_context = context.with_variable(value_var_name, elem_value.elements[0])
-                  loop_context = loop_context.with_variable(index_var_name, elem_value.elements[1])
                 elsif index_var_name
                   loop_context = context.with_variable(value_var_name, elem_value)
                   loop_context = loop_context.with_variable(index_var_name, MacroNumberValue.new(idx.to_i64))
@@ -875,16 +875,16 @@ module Adamas
         end
 
         # Convert AST expression to MacroValue (for simple literals only)
-        private def expr_to_macro_value(expr_id : ExprId) : MacroValue
+        private def expr_to_macro_value(expr_id : ExprId, resolve_names : Bool = true) : MacroValue
           node = node_for_expr?(expr_id)
           return macro_nil_value unless node
 
           if node.is_a?(Frontend::MacroExpressionNode)
-            return expr_to_macro_value(node.expression)
+            return expr_to_macro_value(node.expression, resolve_names)
           end
 
           if node.is_a?(Frontend::GroupingNode)
-            return expr_to_macro_value(node.expression)
+            return expr_to_macro_value(node.expression, resolve_names)
           end
 
           case Frontend.node_kind(node)
@@ -903,6 +903,8 @@ module Adamas
           when Frontend::NodeKind::Nil
             MacroNilLiteralValue.new
           when .identifier?, .constant?
+            return MacroNodeValue.new(expr_id, @arena, @string_pool) unless resolve_names
+
             # A macro argument is an unevaluated AST node (original Crystal binds
             # the Path itself), so a bare type name must not become a TypeNode:
             # `record ProfStats` inside `module GC` resolved `ProfStats` to
@@ -911,22 +913,22 @@ module Adamas
             resolve_scoped_macro_value(name, Context.new, resolve_types: false) || MacroIdValue.new(name)
           else
             if node.is_a?(Frontend::ArrayLiteralNode)
-              MacroArrayValue.new(node.elements.map { |elem_id| expr_to_macro_value(elem_id).as(MacroValue) })
+              MacroArrayValue.new(node.elements.map { |elem_id| expr_to_macro_value(elem_id, resolve_names).as(MacroValue) })
             elsif node.is_a?(Frontend::TupleLiteralNode)
-              MacroTupleValue.new(node.elements.map { |elem_id| expr_to_macro_value(elem_id).as(MacroValue) })
+              MacroTupleValue.new(node.elements.map { |elem_id| expr_to_macro_value(elem_id, resolve_names).as(MacroValue) })
             elsif node.is_a?(Frontend::HashLiteralNode)
               MacroHashValue.new(
                 node.entries.map do |entry|
                   {
-                    expr_to_macro_value(entry.key).as(MacroValue),
-                    expr_to_macro_value(entry.value).as(MacroValue),
+                    expr_to_macro_value(entry.key, resolve_names).as(MacroValue),
+                    expr_to_macro_value(entry.value, resolve_names).as(MacroValue),
                   }
                 end
               )
             elsif node.is_a?(Frontend::NamedTupleLiteralNode)
               entries = {} of String => MacroValue
               node.entries.each do |entry|
-                entries[intern_name(entry.key)] = expr_to_macro_value(entry.value)
+                entries[intern_name(entry.key)] = expr_to_macro_value(entry.value, resolve_names)
               end
               MacroNamedTupleValue.new(entries)
             elsif node.is_a?(Frontend::RangeNode)
@@ -934,6 +936,8 @@ module Adamas
             elsif node.is_a?(Frontend::TypeDeclarationNode) || node.is_a?(Frontend::AssignNode) || node.is_a?(Frontend::GenericNode)
               MacroNodeValue.new(expr_id, @arena, @string_pool)
             elsif node.is_a?(Frontend::PathNode)
+              return MacroNodeValue.new(expr_id, @arena, @string_pool) unless resolve_names
+
               name = path_to_string(node)
               name.empty? ? MacroIdValue.new("") : MacroIdValue.new(name)
             else
@@ -1099,7 +1103,7 @@ module Adamas
             elsif node.is_a?(Frontend::TypeDeclarationNode) || node.is_a?(Frontend::GenericNode)
               return MacroNodeValue.new(expr_id, @arena, @string_pool)
             elsif node.is_a?(Frontend::PathNode)
-              name = path_to_string(node)
+              name = path_to_string(node, preserve_root: true)
               if scoped_macro_value = resolve_scoped_macro_value(name, context)
                 return scoped_macro_value
               end
@@ -3680,7 +3684,7 @@ module Adamas
           compare_macro_version_strings(first, second)
         end
 
-        private def path_to_string(node : Frontend::PathNode) : String
+        private def path_to_string(node : Frontend::PathNode, preserve_root : Bool = false) : String
           parts = [] of String
           current = node
           loop do
@@ -3698,7 +3702,8 @@ module Adamas
               break
             end
           end
-          parts.reverse.join("::")
+          name = parts.reverse.join("::")
+          preserve_root && current.left.nil? ? "::#{name}" : name
         end
 
         # Find matching {% end %} for given {% if %} or {% for %}
@@ -4004,16 +4009,7 @@ module Adamas
             return {"", end_index + 1}
           end
 
-          # Evaluate iterable → get MacroValue elements
-          iterable_node = node_for_expr?(iterable_expr)
-          unless iterable_node
-            emit_error("Invalid iterable in {% for %} block")
-            end_index = find_matching_end(pieces, start_index)
-            return {"", end_index + 1}
-          end
-          pair_iteration = pair_iteration_iterable?(iterable_node, context)
-
-          elem_values = evaluate_iterable_to_macro_values(iterable_node, context, iterable_expr)
+          elem_values = evaluate_iterable_to_macro_values(iterable_expr, context)
 
           # Handle error case
           unless elem_values
@@ -4036,13 +4032,6 @@ module Adamas
             elem_values.each_with_index do |elem_value, idx|
               if elem_value.is_a?(MacroForEntry)
                 loop_context = context.with_for_entry(iter_vars, elem_value, idx)
-              elsif pair_iteration && index_var && elem_value.is_a?(MacroTupleValue) && elem_value.elements.size >= 2
-                # Hash/named-tuple iteration: destructure into key + value variables
-                if ENV["DEBUG_MACRO_TYPE"]?
-                  STDERR.puts "[MACRO_FOR_TUPLE] #{value_var}=#{elem_value.elements[0].to_macro_output.inspect} #{index_var}=#{elem_value.elements[1].to_macro_output.inspect}"
-                end
-                loop_context = context.with_variable(value_var, elem_value.elements[0])
-                loop_context = loop_context.with_variable(index_var, elem_value.elements[1])
               elsif index_var
                 # Array iteration with index variable
                 loop_context = context.with_variable(value_var, elem_value)
@@ -4058,92 +4047,15 @@ module Adamas
           return {output, end_index + 1}
         end
 
-        private def pair_iteration_iterable?(iterable_node, context : Context) : Bool
-          case iterable_node
-          when Frontend::HashLiteralNode, Frontend::NamedTupleLiteralNode
-            true
-          when Frontend::IdentifierNode
-            name = Frontend.node_literal_string(iterable_node)
-            macro_val = name ? context.variables[name]? : nil
-            macro_val.is_a?(MacroNamedTupleValue) || macro_val.is_a?(MacroHashValue)
-          else
-            false
+        # Resolve the iterable as a macro value before deciding how to bind
+        # entries. Constants, locals, and expressions share the same contract.
+        private def evaluate_iterable_to_macro_values(location : ExprId, context : Context) : Array(MacroValue)?
+          if values = macro_value_to_iterable(evaluate_to_macro_value(location, context), context)
+            return values
           end
-        end
 
-        # Evaluate an iterable expression to an array of MacroValue
-        private def evaluate_iterable_to_macro_values(iterable_node, context : Context, location : ExprId) : Array(MacroValue)?
-          case iterable_node
-          when Frontend::ArrayLiteralNode
-            # Array literal: [1, 2, 3]
-            iterable_node.elements.map { |elem_id| evaluate_to_macro_value(elem_id, context) }
-          when Frontend::RangeNode
-            range = MacroRangeValue.new(location, @arena, @string_pool)
-            expand_macro_range(range, context)
-          when Frontend::IdentifierNode
-            name = Frontend.node_literal_string(iterable_node)
-            if name && (macro_val = context.variables[name]?)
-              if macro_val.is_a?(MacroRangeValue)
-                expand_macro_range(macro_val, context)
-              elsif macro_val.is_a?(MacroArrayValue)
-                macro_val.elements
-              elsif macro_val.is_a?(MacroHashValue)
-                macro_val.entries.map do |key, value|
-                  MacroTupleValue.new([key, value]).as(MacroValue)
-                end
-              elsif macro_val.is_a?(MacroNamedTupleValue)
-                # Convert NamedTuple entries to array of tuples for iteration
-                if ENV["DEBUG_MACRO_TYPE"]?
-                  STDERR.puts "[MACRO_NAMED_TUPLE_ITER] entries=#{macro_val.entries.keys.inspect}"
-                end
-                macro_val.entries.map do |k, v|
-                  MacroTupleValue.new([MacroSymbolValue.new(k).as(MacroValue), v]).as(MacroValue)
-                end
-              elsif macro_val.is_a?(MacroTupleValue)
-                macro_val.elements
-              elsif macro_val.is_a?(MacroTypeValue) && (type_values = macro_val.tuple_iteration_values)
-                type_values
-              else
-                emit_error("For loop iterable #{name} is not an ArrayLiteral", location)
-                nil
-              end
-            else
-              emit_error("For loop requires ArrayLiteral, Range, or @type.instance_vars/@type.methods", location)
-              nil
-            end
-          when Frontend::HashLiteralNode
-            # Hash literal: {"+" => "adding", "-" => "subtracting"}
-            iterable_node.entries.map do |entry|
-              key = evaluate_to_macro_value(entry.key, context)
-              value = evaluate_to_macro_value(entry.value, context)
-              MacroTupleValue.new([key, value]).as(MacroValue)
-            end
-          when Frontend::NamedTupleLiteralNode
-            # Named tuple: {to_i: Int32, to_u: UInt32}
-            iterable_node.entries.map do |entry|
-              key_name = String.new(entry.key)
-              key = MacroSymbolValue.new(key_name)
-              value = evaluate_to_macro_value(entry.value, context)
-              MacroTupleValue.new([key.as(MacroValue), value]).as(MacroValue)
-            end
-          when Frontend::MemberAccessNode
-            if values = macro_value_to_iterable(evaluate_member_access_to_macro_value(iterable_node, context), context)
-              values
-            else
-              emit_error("For loop requires ArrayLiteral, Range, or @type.instance_vars/@type.methods", location)
-              nil
-            end
-          when Frontend::CallNode
-            if values = macro_value_to_iterable(evaluate_call_to_macro_value(iterable_node, context), context)
-              values
-            else
-              emit_error("For loop requires ArrayLiteral, Range, or @type.instance_vars/@type.methods", location)
-              nil
-            end
-          else
-            emit_error("For loop requires ArrayLiteral, Range, or @type.instance_vars/@type.methods", location)
-            nil
-          end
+          emit_error("For loop requires an array, hash, tuple, named tuple, or range", location)
+          nil
         end
 
         private def macro_value_to_iterable(value : MacroValue, context : Context) : Array(MacroValue)?
@@ -4156,12 +4068,12 @@ module Adamas
             value.elements
           when MacroHashValue
             value.entries.map do |key, entry_value|
-              MacroTupleValue.new([key, entry_value]).as(MacroValue)
+              MacroForEntry.new(key, entry_value).as(MacroValue)
             end
           when MacroNamedTupleValue
             value.entries.map do |key_name, entry_value|
-              key = MacroSymbolValue.new(key_name).as(MacroValue)
-              MacroTupleValue.new([key, entry_value]).as(MacroValue)
+              key = MacroIdValue.new(key_name).as(MacroValue)
+              MacroForEntry.new(key, entry_value).as(MacroValue)
             end
           when MacroTypeValue
             value.tuple_iteration_values
@@ -4273,13 +4185,13 @@ module Adamas
         private def resolve_scoped_macro_value(name : String, context : Context, resolve_types : Bool = true) : MacroValue?
           return nil if name.empty?
 
-          if substituted = substitute_macro_path_head(name, context)
+          if !name.starts_with?("::") && (substituted = substitute_macro_path_head(name, context))
             if value = resolve_scoped_macro_value(substituted, context, resolve_types)
               return value
             end
           end
 
-          if scope = context.scope
+          if !name.starts_with?("::") && (scope = context.scope)
             if value = resolve_path_macro_value_in_table(scope, name, context)
               return value
             end
@@ -4310,7 +4222,7 @@ module Adamas
           # Original interpreter visit(Path): a path naming a type evaluates to
           # a TypeNode. Without this, a bare `Bool` became MacroId("Bool") and
           # `T == Bool` compared a TypeNode with a MacroId (always false).
-          if resolve_types && constant_like_name?(name)
+          if resolve_types && constant_like_name?(name.lchop("::"))
             if value = @type_value_resolver.try(&.call(name))
               return value
             end

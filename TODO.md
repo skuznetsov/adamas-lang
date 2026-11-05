@@ -24992,3 +24992,26 @@ integration, fresh bootstrap, or LavinMQ parity.
   indexing reaches Proc call validation with a Void key in its declared
   signature and a Symbol at the call. Trace the owner at the index site
   and at forced materialization before changing admission.
+
+### 2026-11-04: Iterate collection constants from their declaration source
+
+- [x] Preserve collection initializer syntax and its arena for macro lookup
+  inside method bodies. Bind sequence values and indices separately from
+  mapping keys, values, and indices.
+- Exact S1 35q1721 passes the installed-prelude
+  `macro_constant_iterable_source_repro.sh` against Crystal 1.22.1,
+  including nested begin, root and owner lookup, and generated NamedTuple
+  values. Five related macro gates pass on the same binary. The raw
+  constant-element comparison emits B in both compilers inside a method.
+- [ ] Pass the expanded body to loop assignment discovery, phi type
+  inference, and emission. The original generated statistics reducer now
+  compiles but prints 0 and 0 instead of 7 and 10. An independent no-prelude
+  while loop with a literal macro iterable emits A instead of C on both
+  35q1717 and 35q1721.
+- [ ] Give declaration-time collection macro loops the appropriate constant
+  source. The top-level version of the raw constant-element discriminator
+  is rejected by 35q1721 with E4001 before HIR. The method version succeeds.
+- [ ] Preserve the originating diagnostic at scope boundaries. The combined
+  LavinMQ HIR probe 35q1722 reached `Config#parse_ini` and stopped at
+  `case branch lost its owned Block scope` from a generated Hash#each body.
+  The probe includes earlier provisional changes and has no runtime result.

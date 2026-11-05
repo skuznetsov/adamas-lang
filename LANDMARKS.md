@@ -23546,3 +23546,18 @@ receiver. Crystal 1.22.1 and exact S1 35q1717 agree for two concrete
 receivers and a repeat call and both reject a String block result.
 Refresh after changes to value dispatch, wildcard source binding, or
 late block retargeting. Full LavinMQ and bootstrap parity are open.
+
+### Macro collection iteration consumes declaration syntax
+
+Resolve the collection constant in the lexical macro context and convert
+its initializer with its declaration arena. Runtime constant folding has
+separate authority. A sequence entry binds the entire element and its index.
+A mapping entry binds its key, value, and index. A constant initializer
+retains syntax for elements such as a bare constant path, which Crystal
+passes to the macro loop without evaluating it.
+
+Crystal 1.22.1 and exact S1 35q1721 agree on
+`macro_constant_iterable_source_repro.sh` and the raw element probe inside
+a method. Refresh when constant lookup, declaration arenas, or macro
+iteration changes. Declaration-time expansion and loop-carried writes
+from generated statements have separate open reproducers in TODO.md.

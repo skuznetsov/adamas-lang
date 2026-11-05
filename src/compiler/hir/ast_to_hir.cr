@@ -8899,6 +8899,7 @@ module Adamas::HIR
       @pre_scan_constant_defs = Set(String).new
       @constant_types = {} of String => TypeRef
       @constant_literal_values = {} of String => Adamas::Compiler::Semantic::MacroValue
+      @macro_constant_collections = {} of String => Tuple(ExprId, Adamas::Compiler::Frontend::ArenaLike)
       @constant_literal_owners = {} of String => String
       @constant_literal_names = {} of String => String
       @global_debug_infos = {} of String => DebugGlobalInfo
@@ -9217,6 +9218,7 @@ module Adamas::HIR
       @pre_scan_constant_defs = Set(String).new
       @constant_types = {} of String => TypeRef
       @constant_literal_values = {} of String => Adamas::Compiler::Semantic::MacroValue
+      @macro_constant_collections = {} of String => Tuple(ExprId, Adamas::Compiler::Frontend::ArenaLike)
       @constant_literal_owners = {} of String => String
       @constant_literal_names = {} of String => String
       @global_debug_infos = {} of String => DebugGlobalInfo
@@ -69164,6 +69166,15 @@ module Adamas::HIR
       @constant_defs.add(full_name)
       trace_constant_literal_probe("record_call", full_name, owner_name)
 
+      case arena[value_id]
+      when Adamas::Compiler::Frontend::ArrayLiteralNode,
+           Adamas::Compiler::Frontend::TupleLiteralNode,
+           Adamas::Compiler::Frontend::HashLiteralNode,
+           Adamas::Compiler::Frontend::NamedTupleLiteralNode,
+           Adamas::Compiler::Frontend::RangeNode
+        @macro_constant_collections[full_name] = {value_id, arena}
+      end
+
       if runtime_deferred
         @constant_literal_values.delete(full_name)
       elsif !@constant_literal_values.has_key?(full_name)
@@ -89637,7 +89648,7 @@ module Adamas::HIR
           key_val = macro_value_for_expr(entry.key)
           value_val = macro_value_for_expr(entry.value)
           return nil unless key_val && value_val
-          values << Adamas::Compiler::Semantic::MacroTupleValue.new([key_val, value_val])
+          values << Adamas::Compiler::Semantic::MacroForEntry.new(key_val, value_val)
         end
         values
       when Adamas::Compiler::Frontend::RangeNode
@@ -89668,27 +89679,6 @@ module Adamas::HIR
     ) : Nil
       if value.is_a?(Adamas::Compiler::Semantic::MacroForEntry)
         value.bind(vars, iter_vars, idx)
-        return
-      end
-
-      if iter_vars.size >= 2
-        case value
-        when Adamas::Compiler::Semantic::MacroTupleValue,
-             Adamas::Compiler::Semantic::MacroArrayValue
-          elements = value.elements
-          iter_vars.each_with_index do |name, index|
-            break if index >= elements.size
-            vars[name] = elements[index]
-          end
-          return
-        end
-      end
-
-      if iter_vars.size == 1
-        iter_vars.each_with_index do |name, _index|
-          vars[name] = value
-          break
-        end
         return
       end
 
@@ -90676,24 +90666,13 @@ module Adamas::HIR
       end
 
       case node
-      when Adamas::Compiler::Frontend::IdentifierNode
-        name = Adamas::Compiler::Frontend.node_literal_string(node)
-        if name && (val = vars[name]?)
-          if val.is_a?(Adamas::Compiler::Semantic::MacroArrayValue)
-            return val.elements
-          elsif val.is_a?(Adamas::Compiler::Semantic::MacroTupleValue)
-            return val.elements
-          elsif val.is_a?(Adamas::Compiler::Semantic::MacroTypeValue)
-            return val.tuple_iteration_values
-          end
-        end
       when Adamas::Compiler::Frontend::HashLiteralNode
         values = [] of Adamas::Compiler::Semantic::MacroValue
         node.entries.each do |entry|
           key_val = macro_value_for_expr(entry.key)
           value_val = macro_value_for_expr(entry.value)
           return nil unless key_val && value_val
-          values << Adamas::Compiler::Semantic::MacroTupleValue.new([key_val, value_val])
+          values << Adamas::Compiler::Semantic::MacroForEntry.new(key_val, value_val)
         end
         return values
       when Adamas::Compiler::Frontend::RangeNode
@@ -90743,14 +90722,8 @@ module Adamas::HIR
           end
         end
         return values
-      when Adamas::Compiler::Frontend::MemberAccessNode,
-           Adamas::Compiler::Frontend::CallNode
-        # Type-reflection iterables such as `@type.instance_vars` / `@type.methods`
-        # are not literal nodes; the local cases above cannot evaluate them. Delegate
-        # to the macro expander, which resolves them against owner_type. Without this,
-        # `{% for ivar in @type.instance_vars %}` never iterates, so stdlib
-        # `Struct#==` / `Struct#hash` / `Struct#to_s` silently expand to empty and
-        # auto struct equality/hashing is broken in compiled output.
+      else
+        # The macro evaluator owns constant paths, variables and reflection.
         return expander.evaluate_for_iterable(
           iterable_id,
           variables: vars,
@@ -90758,8 +90731,6 @@ module Adamas::HIR
           scope: owner_type.try(&.scope),
         )
       end
-
-      nil
     end
 
     private def strip_numeric_suffix(literal : String) : String
@@ -90862,13 +90833,24 @@ module Adamas::HIR
       )
     end
 
-    # Constant value hook for HIR-owned MacroExpanders: `{{X}}` / `#{X}` in a
-    # macro statement reads the literal recorded for constant X in the current
-    # lexical context (the expander has no semantic symbol table here).
+    # HIR owns lexical constant resolution. Collection constants retain their
+    # declaration arena independently of runtime initialization and read back as
+    # macro syntax, so reading one cannot fold or change its runtime initializer.
     private def macro_constant_value_resolver : Proc(String, Adamas::Compiler::Semantic::MacroValue?)
       ->(name : String) do
         resolved = resolve_constant_name_in_context(name) || name
-        constant_literal_value_for_name(resolved).as(Adamas::Compiler::Semantic::MacroValue?)
+        if source = @macro_constant_collections[resolved]?
+          value_id, arena = source
+          previous_arena = @arena
+          @arena = arena
+          begin
+            macro_expander_for_current_context.literal_source_value(value_id)
+          ensure
+            @arena = previous_arena
+          end
+        else
+          constant_literal_value_for_name(resolved)
+        end
       end
     end
 
