@@ -18,6 +18,53 @@ private def run_safe_resource_fields(line : String) : Hash(String, String)
   fields
 end
 
+private def run_safe_lsof_fields_case(runner : String, fd_fields : String, rss_kb : Int32 = 10)
+  work = File.join(Dir.tempdir, "adamas_run_safe_lsof_fields_#{Process.pid}_#{Random.rand(1_000_000)}")
+  FileUtils.mkdir_p(work)
+  resource_file = File.join(work, "resource.txt")
+  File.write(File.join(work, "fields.txt"), fd_fields)
+  File.write(File.join(work, "ps"), <<-'SH')
+    #!/bin/sh
+    root="${RUN_SAFE_TARGET_PID:-${RUN_SAFE_SUPERVISOR_PID:?}}"
+    printf '%s 1 %s %s\n' "$root" "$root" "${FAKE_RSS_KB:?}"
+  SH
+  File.write(File.join(work, "lsof"), <<-'SH')
+    #!/bin/sh
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = "-p" ]; then
+        old_ifs="$IFS"
+        IFS=,
+        for pid in $2; do
+          printf 'p%s\n' "$pid"
+          cat "${FAKE_LSOF_FIELDS:?}"
+        done
+        IFS="$old_ifs"
+        exit 0
+      fi
+      shift
+    done
+    exit 2
+  SH
+  %w[ps lsof].each { |tool| File.chmod(File.join(work, tool), 0o755) }
+  stdout = IO::Memory.new
+  stderr = IO::Memory.new
+  begin
+    status = Process.run(
+      runner, ["/bin/sh", "4", "64", "-c", "sleep 2"],
+      env: {
+        "PATH"                   => "#{work}:/usr/bin:/bin",
+        "FAKE_LSOF_FIELDS"       => File.join(work, "fields.txt"),
+        "FAKE_RSS_KB"            => rss_kb.to_s,
+        "RUN_SAFE_RESOURCE_FILE" => resource_file,
+      },
+      output: stdout, error: stderr
+    )
+    {status: status, output: "#{stdout}#{stderr}", fields: run_safe_resource_fields(run_safe_resource_line(resource_file))}
+  ensure
+    FileUtils.rm_rf(work)
+  end
+end
+
 private def run_safe_exit_fence_case(runner : String, target_exits : Bool) : NamedTuple(
   status: Process::Status,
   output: String,
@@ -106,6 +153,56 @@ private def run_safe_exit_fence_case(runner : String, target_exits : Bool) : Nam
 end
 
 describe "run_safe resource metrics" do
+  it "counts numeric descriptors without treating memory mappings as open FDs" do
+    runner = File.expand_path("../../scripts/run_safe.sh", __DIR__)
+    mappings = (0...1100).map { |i| "fM#{i}\n" }.join
+    result = run_safe_lsof_fields_case(runner, "fcwd\nftxt\nfmem\nfmmap\nf0\nf1w\nf2u\n#{mappings}")
+
+    result[:status].success?.should be_true, result[:output]
+    result[:fields]["max_fd"].should eq("3")
+    result[:fields]["fd_available"].should eq("yes")
+    result[:fields]["fd_samples"].to_i.should be > 0
+  end
+
+  it "accepts a validated pseudo-only lsof response as zero numeric descriptors" do
+    runner = File.expand_path("../../scripts/run_safe.sh", __DIR__)
+    result = run_safe_lsof_fields_case(runner, "fcwd\nftxt\nfmem\nfmmap\nfM123\n")
+
+    result[:status].success?.should be_true, result[:output]
+    result[:fields]["max_fd"].should eq("0")
+    result[:fields]["fd_available"].should eq("yes")
+  end
+
+  it "still kills a target with more than 1000 numeric descriptors" do
+    runner = File.expand_path("../../scripts/run_safe.sh", __DIR__)
+    descriptors = (0...1001).map { |i| "f#{i}\n" }.join
+    result = run_safe_lsof_fields_case(runner, "fcwd\nftxt\n#{descriptors}")
+
+    result[:status].success?.should be_false
+    result[:fields]["outcome"].should eq("killed")
+    result[:fields]["reason"].should eq("fd")
+    result[:fields]["max_fd"].should eq("1001")
+  end
+
+  it "rejects malformed lsof fields even alongside valid mapping records" do
+    runner = File.expand_path("../../scripts/run_safe.sh", __DIR__)
+    result = run_safe_lsof_fields_case(runner, "fcwd\nftxt\nfmem\nf0\nfnot-a-descriptor\n")
+
+    result[:status].success?.should be_true, result[:output]
+    result[:fields]["max_fd"].should eq("unknown")
+    result[:fields]["fd_available"].should eq("unknown")
+    result[:fields]["fd_samples"].should eq("0")
+  end
+
+  it "still enforces the RSS limit when mappings do not count as FDs" do
+    runner = File.expand_path("../../scripts/run_safe.sh", __DIR__)
+    result = run_safe_lsof_fields_case(runner, "fcwd\nftxt\nf0\n", rss_kb: 70_000)
+
+    result[:status].success?.should be_false
+    result[:fields]["outcome"].should eq("killed")
+    result[:fields]["reason"].should eq("memory")
+  end
+
   it "emits an aggregate process-tree resource line on success" do
     root = File.expand_path("../..", __DIR__)
     runner = File.join(root, "scripts", "run_safe.sh")

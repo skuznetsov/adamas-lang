@@ -25323,3 +25323,15 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Resume the pending source-result, rest source-kind, declared-return,
   arithmetic overload, and stable pointer-place qualifications recorded in the
   continuation capsule. Unchanged LavinMQ runtime/test parity remains open.
+
+### 2026-11-05 — Count actual FDs in the safe runner
+
+- [x] Validate lsof mapping/text/cwd records without counting them as open FDs.
+  A 1,100-mapping native probe now exits zero with three descriptors; the
+  1,103-open-descriptor control still triggers the existing FD guard.
+- [x] Pass all 24 resource and process-tree examples, including unknown probe
+  evidence, zero numeric descriptors, real FD/RSS limits, and timeout cleanup.
+  The mapping-heavy regression fails before the repair. The focused entry
+  point is regression_tests/run_safe_fd_count_repro.sh.
+- Earlier stopped build observations stay excluded from timing comparisons.
+  This runner repair does not qualify compiler bootstrap or LavinMQ parity.

@@ -23905,6 +23905,31 @@ changes. Application execution speed, bootstrap, and LavinMQ parity require
 their own measurements. Owned compiler caches and temporary directories were
 removed after the measurements.
 
+## 2026-11-05 — Separate open descriptors from lsof mapping records
+
+The release-rebuild experiment exposed a false FD-limit stop. The runner counted
+all accepted lsof f records, including cwd, executable text, and mapped files,
+as open descriptors. A bounded native probe retaining 1,100 distinct mappings
+while closing each file descriptor is killed by the old runner at 1,106 records;
+a simultaneous lsof observation identifies only three numeric descriptors.
+The repaired runner validates the same record grammar and PID coverage but
+counts only numeric descriptor records. The same probe now exits zero with
+max_fd=3. A separate 1,103-open-descriptor control remains killed with reason=fd.
+
+DoD is the resource and process-tree spec command wrapped by
+regression_tests/run_safe_fd_count_repro.sh. Its 24 examples pass, including
+mapping-heavy, pseudo-only, malformed-response, numeric-limit, RSS-limit,
+ancestry, and timeout controls. The new mapping-heavy spec fails against the
+old runner. RSS sampling, topology validation, and the 1,000-descriptor limit
+are unchanged. Missing/malformed observations remain unknown. The scoped
+read-only safety adversary finds no blocker.
+
+Evidence is iyi-adamas-rebuild35q2091/fd-probe/{before,after}.json and
+spec-{before,after}.log under /opt/mldata_ssd/adamas_codex_oct29_rootcause.
+This explains a false-positive path, without retroactively promoting earlier
+stopped builds into successful measurements. Refresh after runner sampling,
+lsof grammar, PID coverage, or process-tree changes.
+
 ### Active compiler continuation after the benchmark
 
 The standing goal remains unchanged LavinMQ execution and upstream test parity.

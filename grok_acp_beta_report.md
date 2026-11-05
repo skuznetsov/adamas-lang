@@ -1486,3 +1486,18 @@ before any answer. No review signal or claim relies on this interaction.
 Luna Max source audit. Repeated recursive yield falsified the initial
 pointer-only bridge and required runtime transport restoration.
 **Cost saved:** none; debugging continued without waiting for authentication.
+
+### Session 58 — 2026-11-05 — Safe runner numeric FD accounting
+
+**Task:** read-only, tool-free critique of the lsof pseudo-record counting
+repair, with the bounded native mapping/open-descriptor controls and strict
+PID/topology validation described in the prompt.
+**Invocation:** grok_acp_delegate.py, default grok-build, no always-approve;
+15-second request and 30-second prompt timeouts; API-key variables omitted.
+**Outcome:** session/new failed with Authentication required before an answer.
+No review signal or claim depends on this interaction. Evidence is
+`iyi-adamas-rebuild35q2091/fd-probe/grok-attempt.log` under the external
+root-cause directory.
+**Fallback evidence:** independently observed before/after native controls,
+24 resource/process-tree examples, and a scoped Luna Max read-only review.
+**Cost saved:** none; local work did not wait for authentication.

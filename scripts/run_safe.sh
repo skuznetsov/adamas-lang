@@ -224,14 +224,17 @@ validated_lsof_count() {
       if ($0 !~ /^f([0-9]+[[:alpha:]]?|cwd|err|jld|ltx|M[0-9]+|m86|mem|mmap|pd|rtd|tr|txt|v86)$/) {
         bad = 1
       } else {
-        fd_count++
+        # lsof also reports mappings, executable text, and cwd as f records.
+        # Only numeric descriptors consume the process FD table.
+        record_count++
+        if ($0 ~ /^f[0-9]+[[:alpha:]]?$/) fd_count++
       }
       next
     }
     NF != 0 { bad = 1 }
     END {
       for (pid in wanted) if (!seen[pid]) bad = 1
-      if (bad || fd_count == 0) exit 1
+      if (bad || record_count == 0) exit 1
       print fd_count + 0
     }
   '
