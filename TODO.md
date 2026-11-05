@@ -25255,3 +25255,15 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Continue Channel timeout/receive integration. Range storage passes, but
   the unchanged Channel program still times out in 35q1925. Exception transport
   and cleanup qualification remain active independent obligations.
+
+### 2026-11-05 — Preserve declared field storage through MIR rewrites
+
+- [x] Retain Store.field_type when copy propagation replaces its pointer or
+  value operand. The backend consumes this contract to select the destination
+  field representation.
+- Both focused spec examples fail before the repair with a missing field type.
+  The repaired focused examples and the existing MIR optimization suite pass
+  together, 48 examples with zero failures under Crystal 1.22.1.
+- [ ] Qualify volatile memory metadata throughout the native exception
+  candidate. Its new memory effects need separate forwarding, rewrite, and
+  dead-code checks. Channel and LavinMQ runtime parity remain open.

@@ -23799,3 +23799,19 @@ still times out, so its runtime frontier remains open.
 DoD command is regression_tests/allocate_record_inline_field_repro.sh with the
 exact candidate compiler as its argument. Build and runtime identity is in
 /opt/mldata_ssd/adamas_codex_oct29_rootcause/build.allocate-field-store-main35q1928.result.json.
+
+## 2026-11-05 — MIR Store rewrites retain declared field types
+
+CopyPropagationPass reconstructed Store after substituting an operand and
+lost field_type. This metadata selects the declared destination layout in the
+LLVM emitter, so operand substitution must retain it. The focused
+spec/mir/store_field_contract_spec.cr fails twice before the repair and passes
+afterward, covering value and pointer substitution. The focused spec plus
+spec/mir/optimizations_spec.cr passes 48 examples under Crystal 1.22.1.
+
+DoD uses scripts/run_safe.sh crystal 120 4096 spec with both spec paths. Exact
+before/after logs are store-field-contract35q1943.before.log and
+store-field-contract35q1943.after.log in the external root-cause work directory.
+The scoped metadata adversary found no blocker. Refresh after MIR Store
+metadata, operand rewriting, or destination-layout selection changes. Native
+exception transport and Channel/LavinMQ execution remain separate obligations.

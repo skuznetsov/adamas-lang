@@ -1513,7 +1513,9 @@ module Adamas::MIR
         ptr = resolve(inst.ptr, replacements, block_id, inst_index, def_blocks, def_index, dominance_info)
         val = resolve(inst.value, replacements, block_id, inst_index, def_blocks, def_index, dominance_info)
         return inst if ptr == inst.ptr && val == inst.value
-        Store.new(inst.id, ptr, val)
+        rewritten = Store.new(inst.id, ptr, val)
+        rewritten.field_type = inst.field_type
+        rewritten
       when GetElementPtr
         base = resolve(inst.base, replacements, block_id, inst_index, def_blocks, def_index, dominance_info)
         return inst if base == inst.base
