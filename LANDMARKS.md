@@ -23706,3 +23706,21 @@ A distinct virtual union-return join defect remains reproducible in HIR.
 Channel runtime retains the aggregate Pointer(T) storage obligation. The
 next full-project discriminator is a fresh unchanged LavinMQ probe after
 the separately owned constructor/default-scope repairs are qualified.
+
+### Registered defaults bind earlier formals in their source local scope
+
+Exact source Def/arena restoration alone did not isolate default inference.
+The parent unit reducer gave `span(pos = 0, length = pos)` a Pointer-typed
+length from the caller's pos. Default inference now enters a fresh local
+map and unique cache epoch, reads only earlier formal bindings supplied
+in source order, and restores the caller's environment on exit.
+
+Exact S1 35q1825 matches Crystal 1.22.1 native AB output in lazy/eager modes
+and passes 14 focused default/arena examples. The failing parent unit
+example and the passing annotated-formal control distinguish local leakage
+from source-arena selection. Build manifest
+b562aebf2b70640bf7a5680542bfa41739ac6f92b85fb73fa88813ba19a69366.
+Test source manifest
+16a6aec163ec3a444f1491a5c422c5e0cbbc84bf68b8a2835f03821bcba91fd5.
+Refresh after source default binding or inference environment/cache changes.
+The full AMQ Table path and LavinMQ remain open pending constructor repair.

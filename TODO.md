@@ -25165,10 +25165,12 @@ integration, fresh bootstrap, or LavinMQ parity.
   LavinMQ HIR 35q1805 reaches a pending Object#dup while lowering
   Federation::UpstreamStore#create_upstream_set. Resolve receiver and owner
   provenance before attributing it to inheritance lookup.
-- [ ] Isolate declaration-default inference from the caller's typeof local
-  environment. Table#to_slice receives a Pointer(Int32) default length while
-  a concrete Int32/UInt8 call is correct. Require a reduced oracle before
-  changing default binding, including earlier formal references.
+- [x] Isolate declaration-default inference from the caller's typeof local
+  environment and bind earlier formals in source order. The reduced parent
+  fails with a Pointer-typed length for `span(pos = 0, length = pos)`.
+  Exact S1 35q1825 matches Crystal's native AB output in lazy/eager modes
+  and passes 14 default/arena examples. Qualify the full Table path after
+  the separately owned constructor repair.
 
 ### 2026-11-05 — Carry deferred source results through IndexNode
 
@@ -25184,5 +25186,5 @@ integration, fresh bootstrap, or LavinMQ parity.
   target. The paired reducer has a PayloadResult(Int32) producer and a
   PayloadResult(String) consumer in candidate HIR. Preserve strict source
   restrictions and deferred-result ownership while repairing the join.
-- Aggregate Pointer(T), constructor source kinds, default lexical scope,
+- Aggregate Pointer(T), constructor source kinds, full Table default scope,
   fresh bootstrap, and unchanged LavinMQ runtime/test parity remain open.

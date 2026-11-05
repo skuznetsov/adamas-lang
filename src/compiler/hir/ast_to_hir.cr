@@ -48313,8 +48313,8 @@ module Adamas::HIR
 
     # Infer a default argument only after re-entering the exact source
     # declaration context. Lazy body lowering can run while an unrelated caller
-    # scope is active; its current class, namespace, type map, and arena are not
-    # evidence for a callee-owned default expression.
+    # scope is active. Resolve defaults in the declaration's class, namespace,
+    # type map, and arena, with earlier formals in a fresh local inference epoch.
     private def infer_registered_method_default_type(
       default_expr : ExprId,
       runtime_owner : String,
@@ -48322,6 +48322,7 @@ module Adamas::HIR
       logical_name : String?,
       fallback_arena : Adamas::Compiler::Frontend::ArenaLike,
       initializer_source : MaterializedInitializerSource?,
+      parameter_bindings : Hash(String, TypeRef) = {} of String => TypeRef,
     ) : TypeRef?
       source_name = initializer_source.try(&.source_name) || logical_name || return nil
       source_def = initializer_source.try(&.source_def) || @function_defs[source_name]?
@@ -48377,9 +48378,17 @@ module Adamas::HIR
       saved_class = @current_class
       saved_namespace = @current_namespace_override
       saved_type_params = @type_param_map
+      saved_locals = @current_typeof_locals
+      saved_local_names = @current_typeof_local_names
+      saved_infer_version = @infer_type_cache_version
       @current_class = declaration_owner
       @current_namespace_override = namespace_override
       @type_param_map = type_params.dup
+      @current_typeof_locals = parameter_bindings.dup
+      @current_typeof_local_names = parameter_bindings.transform_values do |type|
+        get_type_name_from_ref(type)
+      end
+      bump_infer_type_cache_version
       @subst_cache_gen &+= 1
       begin
         with_arena(source_arena) do
@@ -48389,6 +48398,9 @@ module Adamas::HIR
         @current_class = saved_class
         @current_namespace_override = saved_namespace
         @type_param_map = saved_type_params
+        @current_typeof_locals = saved_locals
+        @current_typeof_local_names = saved_local_names
+        @infer_type_cache_version = saved_infer_version
         @subst_cache_gen &+= 1
       end
     end
@@ -48801,6 +48813,7 @@ module Adamas::HIR
         if call_types.empty? || call_types.all? { |t| t == TypeRef::VOID }
           if params = node.params
             inferred = [] of TypeRef
+            default_parameter_bindings = {} of String => TypeRef
             all_defaulted = true
             param_idx = 0
             while param_idx < params.size && all_defaulted
@@ -48820,10 +48833,16 @@ module Adamas::HIR
                   logical_registered_name,
                   @arena,
                   initializer_replay_source,
+                  default_parameter_bindings,
                 )
                 inferred << (inferred_type || TypeRef::VOID)
               else
                 all_defaulted = false
+              end
+              if all_defaulted && (name_slice = param.name)
+                if name = safe_slice_to_string(name_slice)
+                  default_parameter_bindings[name.lstrip('@')] = inferred.last
+                end
               end
             end
             if all_defaulted && inferred.any? { |t| t != TypeRef::VOID }

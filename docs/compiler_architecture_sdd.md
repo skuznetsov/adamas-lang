@@ -4826,6 +4826,29 @@ consumer. Candidate Channel runtime still requires aggregate Pointer(T)
 storage qualification. Requalify these index hooks after changing selection,
 source arena publication, suspension, or unknown-result fallbacks.
 
+#### Default inference owns its lexical local environment
+
+Registered-method default inference enters the exact source declaration
+with a fresh typeof-local map and inference epoch. Earlier formal types
+are added in source order and supplied to later defaults. Restore the
+caller's local maps and cache epoch on exit, together with the existing
+source class, namespace, type parameters, and arena restoration.
+
+The parent reducer materializes `span(pos = 0, length = pos)` with a
+Pointer-typed length while an unrelated caller's Pointer-typed pos is
+active. The corrected reducer retains Int32 for both formals and restores
+the caller environment. `method_default_lexical_scope_repro.sh` also
+compares native AB output under Crystal 1.22.1 and frozen S1 35q1825 in
+lazy/eager modes, then passes 14 source-default and arena examples.
+Its build manifest is
+`b562aebf2b70640bf7a5680542bfa41739ac6f92b85fb73fa88813ba19a69366`.
+The test source manifest is
+`16a6aec163ec3a444f1491a5c422c5e0cbbc84bf68b8a2835f03821bcba91fd5`.
+
+This qualifies default-local isolation. The full Table reducer still needs
+the independent source-union constructor repair. Refresh after default
+ordering, source context, local environment, or inference-cache changes.
+
 
 ### Certify wholly bottom concrete generic union calls (2026-10-16)
 An empty concrete generic class union value-return set admits the existing
