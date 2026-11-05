@@ -4742,41 +4742,60 @@ Refresh after pending-call demand, result typing or completion-guard changes.
 
 ### Separate deferred result discovery from overload rejection (2026-11-04)
 
-Status: PROPOSED. Crystal 1.22.1 accepts a `Channel(Nil)` select with a
-receive and a timeout. In Adamas 35q1642, `Tuple#map` binds both concrete
-action receivers. The inline force depth limit refuses both exact
-`create_context_and_wait` instances, and the resulting unknown tuple
-elements reach the strict `unwait` restriction. A diagnostic force of
-those same bodies yields `SelectContext(Nil)` for both calls (35q1644).
+The qualified frontier covers exact source-result suspension inside an
+inline block and replay of its class, module, or top-level consumer.
+An inline depth refusal records the exact producer Def and arena before
+the unknown operand can reach ordinary overload restriction checks.
+The consumer's captured callsite, entry namespace, and type parameters
+provide its replay recipe. Replay revalidates both source bindings and
+rejects a switch to another overload or source arena.
 
-The exact selected Def, source arena, and specialization own the result.
-A depth refusal is a pending obligation. Capture it after the late inline
-force as well as the ordinary force. A caller consuming that obligation
-must wait for the exact result or remain incomplete. Keep the existing
-depth, recursion and yield guards, and require the ordinary source
-restriction once the operand settles. A family cache, an ABI placeholder
-and an arbitrary depth increase cannot discharge this obligation.
+Each forced generation journals exact and base return-cache publications.
+An aborted generation retracts its own writes. A completed nested
+generation establishes the retained baseline even through an aborted
+intermediate generation, including a same-type publication. Exception
+cleanup retires only the still-current partial Function and restores
+lexical, typeof, enum, closure-cell, and inline-loop context.
 
-Replay requires retirement of the caller generation and its published
-state. Preserve independently settled callees. Cover exact and base
-return entries, call shapes, synthetic closures and lexical scope in the
-retirement contract. The scratch class replay passes a native marker
-(`130`) and rejects a real `Int32` argument. The equivalent module
-method retains a partial body and `InProgress` state on unwind (35q1646).
-Treat the absence of the class body as evidence of retirement of that
-body alone.
+An iterative worklist settles the producer before replaying its consumer.
+Newly discovered dependencies precede the suspended continuation. A
+settled result requires a completed, materialized body, a concrete return,
+and no provisional dependencies. Existing depth, recursion, yield, and
+cycle guards retain their authority. Argument admission still uses the
+ordinary source restrictions after the operand settles.
 
-Admission gate: run the reduced positive and negative cases through
-`scripts/run_safe.sh` against installed Crystal and fresh lazy/eager S1.
-Exercise both class and module owners, a capture before the deferred
-operand, and a second dependency found on replay. The positive cases must
-produce identical native markers and the negative cases must reject the
-same argument after its actual type is known. Retest the existing
-`force_depth_return_dependency_repro.sh`, then stock-prelude select and
-unchanged LavinMQ. The diagnostic select reaches a separate sort
-comparator whose Proc result is a Tuple where `heapify!` expects an
-integer. Refresh the evidence after force scheduling, result publication
-or body retirement changes.
+A nilary included method can have unresolved syntactic return inference
+while its selected body proves NoReturn. Both member access and explicit
+zero-argument calls consume that exact completed result. An unresolved
+hint cannot overwrite it or embed Unknown in a surrounding Tuple.
+
+Exact S1 35q1808 passes 35 original-first inline replay checks in
+`force_depth_inline_exact_result_repro.sh`, all nine scenarios in
+`force_depth_return_dependency_repro.sh`, and 63 focused HIR examples.
+The native checks cover class, module, and top-level owners, captures,
+two producers, nested producer chains, and rejection of an actual Int32
+context. Empty-prelude fixtures qualify lazy and eager scheduling.
+Stock-prelude fixtures qualify lazy scheduling. Whole-prelude eager
+materialization retains a separate parent-reproduced Time::Instant failure.
+
+`channel_select_result_contract_repro.sh` compares the native stock
+Crystal timeout/receive output and checks exact candidate HIR result
+types for Channel(Nil) and Channel(String). Candidate 35q1802 fails this
+gate on the unresolved default-result dependency. Candidate 35q1808
+passes it with the installed, unchanged Crystal 1.22.1 stdlib.
+The build manifest is
+`b167f9447e81feb1e0d02653873348f939cdb37c3e6aece7784b1273e43a57c9`.
+The qualification manifest is
+`533b202fc22d7b3aa0e045a2b2a2c4106113e0e0f54830c4ca4ee3d0a25ed133`.
+Source review found no blocker in exact-source replay and publication
+rollback. The scoped verdict is ROBUST.
+
+Candidate Channel execution still requires a consistent aggregate
+Pointer(T) place/value storage contract in the timer heap. Broader replay
+forms, a fresh bootstrap, full LavinMQ code generation, and functional
+test parity remain open. Refresh after force scheduling, source binding,
+result publication, or body-retirement changes. Rollback removes the
+replay, publication journal, and their directly associated tests together.
 
 
 ### Certify wholly bottom concrete generic union calls (2026-10-16)
@@ -5355,10 +5374,10 @@ expect seven passing examples. Roll back the scope/publication changes and
 their two specs together. Refresh after producer scope, generation retirement,
 function-state or callsite-ownership changes.
 
-This does not qualify exception rollback in every other producer, failure
-before function creation, typed depth-refusal replay, bootstrap or unchanged
-LavinMQ parity. A depth-refused argument remains an obligation rather than an
-ordinary type mismatch; its exact-owner suspension/replay is still open.
+Typed depth-refusal replay now has the separate bounded qualification in
+"Separate deferred result discovery from overload rejection" above.
+Exception rollback in other producers, failure before function creation,
+bootstrap, and unchanged LavinMQ parity remain separate obligations.
 
 
 #### Case type-set narrowing owns its filtered source facts

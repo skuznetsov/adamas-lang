@@ -23650,3 +23650,37 @@ reducer compiles with its `Array(ActiveConsumer)` sink. The neighboring
 have matching diagnostics on both compilers. Refresh after changes to
 include selection, source call shape, exact alias publication, or deferred
 materialization. Packed argument shapes and full LavinMQ parity are open.
+
+### Exact source-result suspension preserves publication ownership
+
+An inline depth refusal can occur before a strict source restriction has
+enough operand information. The suspended consumer retains its exact
+source Def/arena, copied callsite, and entry lexical environment. The
+producer also retains its exact Def/arena. Repeated worklist continuations
+revalidate those bindings and settle newly discovered dependencies before
+replaying the consumer. Existing depth and cycle guards remain active.
+
+The aborted generation retracts its exact/base return-cache writes and
+partial Function. Completed nested generations retain their publications,
+including a same-type publication through an aborted intermediate frame.
+Module/top-level and Array inline-loop state now restore on unwind.
+Unresolved syntactic inference for an included nilary method cannot replace
+a completed body result, including NoReturn, in either call syntax.
+
+Exact S1 35q1808 passes 35 original-first native/rejection checks, nine
+force-depth scenarios, 63 focused HIR examples, and stock-prelude
+Channel(Nil)/Channel(String) exact HIR result checks. Candidate 35q1802
+fails the latter on default_result. Scoped source review of replay source
+pins, publication rollback, and cleanup found no blocker. Refresh after
+changes to source selection, force scheduling, publication, or retirement.
+The build manifest is b167f9447e81feb1e0d02653873348f939cdb37c3e6aece7784b1273e43a57c9.
+
+The active return pointer remains unchanged LavinMQ runtime and upstream
+test parity. Next discriminators are the aggregate Pointer(T) storage
+contract for Channel's timer and original-first constructor/default-scope
+controls. Combined 35q1805 passes the Channel result frontier and reaches
+an unsettled Object#dup in UpstreamStore#create_upstream_set. Its inferred
+receiver/owner chain must be measured. The stock baseline has 208 examples,
+zero failures/errors, and two pending. No candidate LavinMQ executable or
+candidate test-parity result exists yet. Whole-prelude eager scheduling
+and a fresh bootstrap remain open.

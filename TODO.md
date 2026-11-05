@@ -25114,10 +25114,11 @@ integration, fresh bootstrap, or LavinMQ parity.
   prelude.
 - [ ] Qualify aliases for packed arguments, named arguments, and block
   shapes that do not expose one fact per positional argument.
-- [ ] Resolve the pending context result in `Channel#select`. Exact probe
+- [x] Resolve the pending context result in `Channel#select`. Exact probe
   35q1757 stops at `Channel::LooseReceiveAction(Nil)#unwait`. The later
   `flat_map` failure in combined 35q1756 depends on additional unpromoted
   candidates. Full LavinMQ code generation and test parity remain open.
+  The exact source-result replay qualification is recorded below for 35q1808.
 
 ### 2026-11-04 — Preserve the selected slot for dynamic Tuple indexing
 
@@ -25137,3 +25138,34 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Qualify source value kinds for metaclass elements and dispatch over unions
   of Tuple receivers or integer index types. Check compile-time constant
   indices against Crystal separately from runtime integer locals.
+
+### 2026-11-05 — Settle exact source results before strict argument admission
+
+- [x] Suspend an inline consumer on its depth-refused producer, retaining
+  the selected source Def and arena. Settle producers with an iterative
+  worklist and replay the exact consumer callsite and lexical environment.
+- [x] Journal exact and base return publications by generation. Retract an
+  aborted generation's writes while preserving completed descendants,
+  including unchanged-type publications. Restore module/top-level scope
+  and inline Array iteration stacks on suspension.
+- [x] Use a completed included nilary body when syntactic inference remains
+  unresolved. Apply the same ownership rule to member access and calls
+  with explicit parentheses before a surrounding Tuple captures the result.
+- Exact S1 35q1808 passes 35 original-first replay checks, nine force-depth
+  scenarios, 63 focused HIR examples, and the Channel(Nil)/Channel(String)
+  exact-result gate. The stock compiler executes timeout and buffered
+  receive with `timeout\nready\n`. Candidate qualification here checks HIR.
+- [ ] Complete the aggregate Pointer(T) place/value storage contract.
+  The candidate Channel timeout reaches the timer heap with an inline Event
+  payload where generic PointerLoad still expects a boxed carrier. Cover
+  field/local addresses, rebinding, receiver mutation, detached value copies,
+  allocation stride, and container storage together.
+- [ ] Qualify the separate applied-reference source-union constructor
+  candidate with original-first native and rejection controls. Combined
+  LavinMQ HIR 35q1805 reaches a pending Object#dup while lowering
+  Federation::UpstreamStore#create_upstream_set. Resolve receiver and owner
+  provenance before attributing it to inheritance lookup.
+- [ ] Isolate declaration-default inference from the caller's typeof local
+  environment. Table#to_slice receives a Pointer(Int32) default length while
+  a concrete Int32/UInt8 call is correct. Require a reduced oracle before
+  changing default binding, including earlier formal references.
