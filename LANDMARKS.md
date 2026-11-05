@@ -23507,3 +23507,18 @@ default and explicit named arguments and reject an incompatible outer
 block result. Recheck after changes to inline eligibility, continuation
 edge merging, or source block-result validation. Calls that genuinely
 require materialization have their own Proc result ABI.
+
+### Use the configured stdlib source tree for intrinsic provenance
+
+Crystal's default search path starts with the project `lib` directory.
+Require resolution already walks all configured roots, but HIR used the
+first entry alone as its stdlib authority. With the installed stdlib
+later in the list, the signal constants called the ordinary Proc
+constructor and stored the function pointer instead of the Proc carrier.
+LLDB stopped on address 0x9 while reading its environment (35q1715).
+
+Exact S1 35q1716 agrees with Crystal 1.22.1 on the native search-root
+regression, including a competing require in a later project root.
+Use the prelude and C bindings layout to identify the configured stdlib
+tree and keep existing per-Def provenance checks. Refresh after changes
+to path expansion, stdlib layout, target selection, or source ownership.

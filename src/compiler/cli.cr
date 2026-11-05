@@ -103,26 +103,10 @@ module Adamas
         @compile_flags || Runtime.target_flags
       end
 
-      # Resolve stdlib path: CRYSTAL_PATH env var (first component) > compiled-in default.
-      # Deferred to runtime so V2-compiled binaries don't crash in constant init.
       @@stdlib_path : String?
 
       private def stdlib_path : String
-        @@stdlib_path ||= begin
-          if cp = BootstrapEnv.get?("CRYSTAL_PATH")
-            # Avoid .split.first? chain — V2 mishandles Array#first? union return.
-            # Use index + byte_slice for a single allocation.
-            colon = cp.index(':')
-            first = colon ? cp.byte_slice(0, colon) : cp
-            if first.size > 0 && File.directory?(first)
-              first
-            else
-              STDLIB_PATH
-            end
-          else
-            STDLIB_PATH
-          end
-        end
+        @@stdlib_path || STDLIB_PATH
       end
       # Top-level macro variable assignments (e.g., {% nums = %w(Int8 ...) %})
       @macro_text_vars = {} of String => String
@@ -2024,7 +2008,7 @@ module Adamas
         end
         hir_converter.bootstrap_bind_link_libraries(link_libs)
         hir_converter.bootstrap_reset_constructor_tail
-        hir_converter.bootstrap_bind_stdlib_root(File.expand_path(stdlib_path))
+        hir_converter.bootstrap_bind_stdlib_root(stdlib_authority_root)
         bootstrap_trace_puts "[S2_HIR_SETUP] phase=converter_bound"; STDERR.flush
         stage2_debug("[STAGE2_DEBUG] hir converter created", err_io)
         log_generated_stage_memory_phase(
@@ -7382,6 +7366,18 @@ module Adamas
           end
         end
         paths
+      end
+
+      private def stdlib_authority_root : String
+        # Crystal's default search path puts the project's lib directory
+        # before the installed stdlib. Use the same expanded search roots,
+        # with the prelude and C bindings identifying a stdlib source tree.
+        require_search_paths.each do |root|
+          if File.file?(path_join(root, "prelude.cr")) && Dir.exists?(path_join(root, "lib_c"))
+            return File.expand_path(root)
+          end
+        end
+        File.expand_path(stdlib_path)
       end
 
       private def resolve_require_path(req_path : String, base_dir : String, input_base_dir : String) : String | Array(String) | Nil

@@ -24955,3 +24955,16 @@ integration, fresh bootstrap, or LavinMQ parity.
   lookup that requests the broad recursive union initializer. Check source
   Def and arena identity, receiver, and full call shape before reusing the
   already materialized specialization.
+
+### 2026-11-04: Bind stdlib authority from the configured search roots
+
+- Resolve the HIR stdlib source root from the same expanded roots as
+  require resolution. Project entries retain their require priority.
+- Parent 35q1697 compiles the same installed-prelude hello in both
+  configurations. The stock `lib:…/src` list loses raw Proc constructor
+  provenance and crashes during signal setup, while the stdlib-only path
+  prints 7 (35q1715). Exact S1 35q1716 passes
+  `stdlib_search_root_authority_repro.sh` against Crystal 1.22.1.
+- [ ] Verify the root selection in fresh self-hosted stages. The
+  existing target-specific C binding search still needs target selection
+  support before this evidence can generalize to cross compilation.
