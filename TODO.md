@@ -25236,3 +25236,22 @@ integration, fresh bootstrap, or LavinMQ parity.
 - Channel runtime, fresh bootstrap, unchanged LavinMQ execution, and test parity
   remain open. A Channel program compiles with the combined experimental
   pointer candidate 35q1886 but its native run times out.
+
+
+### 2026-11-05 — Share record constructor field storage with FieldSet
+
+- [x] Use finalized registered fields for non-tuple Allocate constructor
+  arguments when all source argument types agree with their declared fields.
+  Inline aggregate payloads and Nil fields now reuse lower_field_store_to_ptr.
+  A raw pointer store had corrupted Range(Time::Span, Nil)'s inline begin value.
+- [x] Qualify allocate_record_inline_field_repro.sh against Crystal 1.22.1
+  with no prelude and with its stock prelude. Two nested aggregate sizes and
+  inclusive/exclusive ranges match. Exact main candidate 35q1928 passes the
+  permanent runner with experimental pointer storage disabled.
+- [ ] Diagnose endless-range parsing at a newline. `range = Time::Span.zero..`
+  followed by `clamped = span.clamp(range)` fails with undefined method range
+  in both 35q1916 and 35q1925. Crystal accepts the same source. The constructor
+  regression uses an explicit Nil endpoint to isolate its storage contract.
+- [ ] Continue Channel timeout/receive integration. Range storage passes, but
+  the unchanged Channel program still times out in 35q1925. Exception transport
+  and cleanup qualification remain active independent obligations.

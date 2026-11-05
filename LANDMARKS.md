@@ -23778,3 +23778,24 @@ scheduling changes.
 Expanded copy tests retain distinct C-struct local/receiver value-place gaps.
 This storage slice establishes no general plain-struct pointer ABI, Channel
 runtime, bootstrap, or LavinMQ parity result.
+
+
+## 2026-11-05 — Record Allocate reuses finalized field storage
+
+The no-prelude Range(Leaf16, Nil) reproduction exits 11 on 35q1916 and prints
+A on 35q1925. The same gate includes a nested 24-byte aggregate and exclusive
+range. A stock-prelude Time::Span#clamp reproduction hangs on 35q1916 and
+prints range_constructor_inline_field_ok on 35q1925 with pointer storage off
+and on. Exact main candidate 35q1928 passes the permanent regression runner
+against Crystal 1.22.1 with pointer storage disabled.
+
+Root cause is a raw constructor argument store into fields whose registered
+layout stores aggregate bytes inline. Allocate now consumes finalized field
+and source argument types and shares FieldSet's store policy. Tuple slots keep
+their separate carrier policy. Revalidate after constructor layout, FieldSet,
+Nil storage, or aggregate representation changes. The Channel integration run
+still times out, so its runtime frontier remains open.
+
+DoD command is regression_tests/allocate_record_inline_field_repro.sh with the
+exact candidate compiler as its argument. Build and runtime identity is in
+/opt/mldata_ssd/adamas_codex_oct29_rootcause/build.allocate-field-store-main35q1928.result.json.

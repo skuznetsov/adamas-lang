@@ -5496,6 +5496,8 @@ module Adamas
           # Pre-compute byte offsets for tuple element types (instead of using field index)
           tuple_byte_offsets : ::Array(UInt32)? = nil
           tuple_elem_types : ::Array(Type)? = nil
+          record_constructor_fields : ::Array(Field)? = nil
+          record_constructor_hir_types : ::Array(HIR::TypeRef)? = nil
           if mir_type = @mir_module.type_registry.get(mir_type_ref)
             if mir_type.kind.tuple? && (elements = mir_type.element_types)
               # Single tuple-layout contract — same byte offsets the tuple index_get
@@ -5507,6 +5509,28 @@ module Adamas
               # For struct types with fields, use field byte offsets
               offsets = fields.map(&.offset)
               tuple_byte_offsets = offsets unless offsets.empty?
+
+              # A non-tuple aggregate constructor uses the registered field order
+              # only when every argument's finalized HIR type agrees with its
+              # corresponding field. This keeps incomplete/provisional records on
+              # the legacy path and gives the store path the same declared type
+              # facts as ordinary FieldSet lowering.
+              if !mir_type.kind.tuple? && fields.size == alloc.constructor_args.size
+                hir_field_types = [] of HIR::TypeRef
+                fields.each_with_index do |field, field_index|
+                  arg_id = alloc.constructor_args.unsafe_fetch(field_index)
+                  arg_hir_type = @hir_value_types[arg_id]?
+                  unless arg_hir_type && convert_type(arg_hir_type) == field.type_ref
+                    hir_field_types.clear
+                    break
+                  end
+                  hir_field_types << arg_hir_type
+                end
+                if hir_field_types.size == fields.size
+                  record_constructor_fields = fields
+                  record_constructor_hir_types = hir_field_types
+                end
+              end
             end
           end
 
@@ -5533,7 +5557,30 @@ module Adamas
               builder.memcopy(copy_ptr, arg_val, elem_mir.size)
               arg_val = copy_ptr
             end
-            store_id = builder.store(field_ptr, arg_val)
+
+            # Non-tuple record constructors share FieldSet's inline-byte
+            # contract. The legacy raw store treats a struct argument as a
+            # pointer carrier even when the registered field stores its bytes
+            # inline (for example Range(Time::Span, Nil).@@begin). Tuple slots
+            # intentionally keep their distinct carrier layout above.
+            store_result = if (fields = record_constructor_fields) &&
+                              (hir_types = record_constructor_hir_types) &&
+                              (field = fields[idx]?) &&
+                              (field_hir_type = hir_types[idx]?) &&
+                              (field_hir_type == HIR::TypeRef::NIL ||
+                               field_store_uses_inline_memcopy?(field_hir_type, mir_type_ref))
+                             lower_field_store_to_ptr(
+                               ptr,
+                               mir_type_ref,
+                               field.name,
+                               field.offset.to_i32,
+                               field_hir_type,
+                               arg_val,
+                               arg_hir_id
+                             )
+                           else
+                             builder.store(field_ptr, arg_val)
+                           end
 
             # rc_inc for reference-typed constructor args: the new object holds a reference.
             # NOTE: Ownership transfer optimization is NOT applied here because
@@ -5549,7 +5596,7 @@ module Adamas
             end
 
             if ENV["DEBUG_ALLOC_ARGS"]?
-              STDERR.puts "[ALLOC_ARGS]   [#{idx}] hir=#{arg_hir_id} mir_val=#{arg_val} byte_offset=#{byte_offset} gep=#{field_ptr} store=#{store_id}"
+              STDERR.puts "[ALLOC_ARGS]   [#{idx}] hir=#{arg_hir_id} mir_val=#{arg_val} byte_offset=#{byte_offset} gep=#{field_ptr} store_result=#{store_result}"
             end
           end
         end
