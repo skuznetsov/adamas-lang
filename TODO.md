@@ -25099,3 +25099,22 @@ integration, fresh bootstrap, or LavinMQ parity.
   `ary.concat(v)` in unchanged LavinMQ. Combined probe 35q1756 has `Int64`
   for `Server#sys_time` and `Server#user_time` and reaches this later failure.
   Reduce the queue's metaclass `select` and nested `compact_map` separately.
+
+### 2026-11-04: Preserve source argument kinds in included overloads
+
+- [x] Use the same source argument facts for included method admission,
+  ranking, packing, and deferred signature materialization. Bind a method's
+  forall restrictions before scoring a class-object argument. Retain the
+  selected include application and source-sensitive positional alias.
+- Exact S1 35q1764 with Crystal 1.22.1 selects the class-object and instance
+  overloads in either declaration order. It also prefers a concrete
+  metaclass restriction over a method forall restriction. Both compilers
+  reject passing an instance to the only `U.class` overload. The reduced
+  `Enumerable#select` call with a typed array sink compiles with the installed
+  prelude.
+- [ ] Qualify aliases for packed arguments, named arguments, and block
+  shapes that do not expose one fact per positional argument.
+- [ ] Resolve the pending context result in `Channel#select`. Exact probe
+  35q1757 stops at `Channel::LooseReceiveAction(Nil)#unwait`. The later
+  `flat_map` failure in combined 35q1756 depends on additional unpromoted
+  candidates. Full LavinMQ code generation and test parity remain open.

@@ -23628,4 +23628,25 @@ fixture now discriminates both cases. Three adjacent gates cover method
 collection macros, nested macro begin, and `hello` with the installed prelude.
 Refresh after changes to declaration order, constant paths, include admission,
 or macro source arenas. Generated namespaces and alias-qualified constants
-remain open. The full LavinMQ HIR probe has a later `flat_map` blocker.
+remain open. Exact LavinMQ HIR probe 35q1757 stops at
+`Channel::LooseReceiveAction(Nil)#unwait`. Combined probe 35q1756 with
+additional unpromoted candidates reaches the later `flat_map` blocker.
+
+### Included positional overloads retain the selected source argument kinds
+
+The same carrier can represent a class object and an instance. An included
+method needs the source kinds when checking and ranking its restrictions,
+including a forall restriction bound at the call. Packing and deferred
+signature materialization consume the same facts. The synthetic alias
+preserves the selected Def, include application, and source kind across
+ABI normalization.
+
+Exact S1 35q1764 and Crystal 1.22.1 produce ABBAA, BACDEEF, and ABAC
+for ordering, specificity, and forwarding. Both reject an instance for
+`U.class` in `included_metaclass_overload_repro.sh`. Parent 35q1757 rejects the valid
+reverse-declared instance overload. The stock-prelude `Enumerable#select`
+reducer compiles with its `Array(ActiveConsumer)` sink. The neighboring
+`included_method_forall_shadow` and `generic_included_module_mro` failures
+have matching diagnostics on both compilers. Refresh after changes to
+include selection, source call shape, exact alias publication, or deferred
+materialization. Packed argument shapes and full LavinMQ parity are open.
