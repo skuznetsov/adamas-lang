@@ -23531,3 +23531,18 @@ and expander, preserving order around the nested control. In
 `nested_macro_begin_expansion_repro.sh`, parent 35q1697 emits C. Crystal
 1.22.1 and 35q1710 emit ABC and leave the unselected branch unexpanded.
 Refresh after changes to macro piece scanning or nested expansion context.
+
+### Keep source struct ownership independent of physical layout
+
+`StaticArray(T, N)` has array storage and declared struct dispatch. A
+module-sourced `map!` body needs the concrete receiver for its `self`
+result. When several wildcard block specializations share the source
+Def, their ABIs belong to their exact emitted targets. Looking up a
+wildcard ABI by the shared source name loses that provenance.
+
+In the stock-prelude native regression, the previous owner-only
+candidate 35q1709 rejects the second specialization of the UInt16
+receiver. Crystal 1.22.1 and exact S1 35q1717 agree for two concrete
+receivers and a repeat call and both reject a String block result.
+Refresh after changes to value dispatch, wildcard source binding, or
+late block retargeting. Full LavinMQ and bootstrap parity are open.

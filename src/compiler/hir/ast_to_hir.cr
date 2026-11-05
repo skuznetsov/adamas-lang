@@ -48922,7 +48922,11 @@ module Adamas::HIR
       packed_splat_param_type : TypeRef? = nil
       use_specialized_runtime_param_types = specialized_runtime_param_types?(effective_full_name_override)
       raw_callback_contract = raw_callback_abi_for(effective_full_name_override) ||
-                              raw_callback_abi_for(logical_registered_name)
+                              raw_callback_abi_for(logical_registered_name).try do |contract|
+                                # One source Def can materialize several wildcard callbacks.
+                                # Their signatures belong to the exact targets.
+                                contract unless contract.wildcard
+                              end
       registered_param_infos = if registered_name = logical_registered_name
                                  function_param_infos(registered_name, node)
                                else
@@ -55872,7 +55876,8 @@ module Adamas::HIR
       return [] of String unless desc.kind == TypeKind::Tuple ||
                                  desc.kind == TypeKind::NamedTuple ||
                                  desc.kind == TypeKind::Struct ||
-                                 desc.kind == TypeKind::Primitive
+                                 desc.kind == TypeKind::Primitive ||
+                                 inherited_value_dispatch_needs_origin?(desc.name)
 
       owners = [] of String
       name = desc.name

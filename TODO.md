@@ -24978,3 +24978,17 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Preserve concrete Tuple reflection in the explicit Tuple constructor
   branch. The independent `@type.name(generic_args: false)` and size
   reducer still prints A instead of C on 35q1710.
+
+### 2026-11-04: Preserve static value owners and exact wildcard callback targets
+
+- Use declared struct ownership for value dispatch even when the layout
+  is an array. Keep an inferred callback ABI on its exact emitted target.
+- Exact S1 35q1717 passes the installed-prelude native
+  `static_value_receiver_wildcard_block_repro.sh` against Crystal 1.22.1.
+  It covers two element types, a repeat call on the first receiver, and
+  rejection of a mismatched block result. The earlier owner-only 35q1709
+  fails the repeated specialization with a foreign wildcard binding.
+- [ ] Follow the next unchanged LavinMQ HIR failure on 35q1711. Hash
+  indexing reaches Proc call validation with a Void key in its declared
+  signature and a Symbol at the call. Trace the owner at the index site
+  and at forced materialization before changing admission.
