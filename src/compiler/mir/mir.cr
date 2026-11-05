@@ -654,15 +654,19 @@ module Adamas::MIR
 
   # Compile-time constant
   class Constant < Value
-    getter value : Int64 | UInt64 | Float64 | Bool | Nil | String
+    getter value : Int64 | UInt64 | Int128 | UInt128 | Float64 | Bool | Nil | String
     getter int_value : Int64
     getter uint_value : UInt64
+    getter int128_value : Int128
+    getter uint128_value : UInt128
     getter float_value : Float64
     getter bool_value : Bool
     getter string_value : String?
 
     property int_value : Int64 = 0_i64
     property uint_value : UInt64 = 0_u64
+    property int128_value : Int128 = 0_i128
+    property uint128_value : UInt128 = 0_u128
     property float_value : Float64 = 0.0
     property bool_value : Bool = false
     property string_value : String? = nil
@@ -687,8 +691,12 @@ module Adamas::MIR
         end
       when TypeRef::NIL, TypeRef::VOID
         io << "nil"
-      when TypeRef::UINT8, TypeRef::UINT16, TypeRef::UINT32, TypeRef::UINT64, TypeRef::UINT128
+      when TypeRef::UINT128
+        io << @uint128_value
+      when TypeRef::UINT8, TypeRef::UINT16, TypeRef::UINT32, TypeRef::UINT64
         io << @uint_value
+      when TypeRef::INT128
+        io << @int128_value
       else
         io << @int_value
       end
@@ -697,12 +705,37 @@ module Adamas::MIR
 
     private def sync_cached_value_fields : Nil
       case v = @value
+      when Int128
+        @int128_value = v
+        @int_value = v.to_i64 if v >= Int64::MIN && v <= Int64::MAX
+        if @type == TypeRef::UINT128 && v >= 0
+          @uint128_value = v.to_u128
+        end
+      when UInt128
+        @uint128_value = v
+        @uint_value = v.to_u64 if v <= UInt64::MAX.to_u128
+        if @type == TypeRef::INT128 && v <= Int128::MAX.to_u128
+          @int128_value = v.to_i128
+        end
       when Int64
         @int_value = v
         @uint_value = v >= 0 ? v.to_u64 : 0_u64
+        # const_int can be asked to materialize a value whose HIR-resolved
+        # TypeRef is wider than the host payload. Populate the exact cache
+        # consumed by LLVM emission as well as the legacy narrow cache.
+        if @type == TypeRef::INT128
+          @int128_value = v.to_i128
+        elsif @type == TypeRef::UINT128 && v >= 0
+          @uint128_value = v.to_u128
+        end
       when UInt64
         @uint_value = v
         @int_value = v <= Int64::MAX.to_u64 ? v.to_i64 : 0_i64
+        if @type == TypeRef::UINT128
+          @uint128_value = v.to_u128
+        elsif @type == TypeRef::INT128
+          @int128_value = v.to_i128
+        end
       when Float64
         @float_value = v
       when Bool
@@ -2698,6 +2731,18 @@ module Adamas::MIR
       emit(constant)
     end
 
+    def const_int128(value : Int128, type : TypeRef = TypeRef::INT128) : ValueId
+      constant = Constant.new(@function.next_value_id, type, value)
+      constant.int128_value = value
+      emit(constant)
+    end
+
+    def const_uint128(value : UInt128, type : TypeRef = TypeRef::UINT128) : ValueId
+      constant = Constant.new(@function.next_value_id, type, value)
+      constant.uint128_value = value
+      emit(constant)
+    end
+
     def const_float(value : Float64, type : TypeRef = TypeRef::FLOAT64) : ValueId
       constant = Constant.new(@function.next_value_id, type, value)
       constant.float_value = value
@@ -2783,7 +2828,11 @@ module Adamas::MIR
       @function.blocks.each do |blk|
         blk.instructions.each do |inst|
           if inst.id == id
-            return inst.is_a?(Constant) ? inst.int_value : nil
+            if constant = inst.as?(Constant)
+              return nil if constant.type == TypeRef::INT128 || constant.type == TypeRef::UINT128
+              return constant.int_value
+            end
+            return nil
           end
         end
       end

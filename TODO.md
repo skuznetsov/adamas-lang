@@ -25290,3 +25290,21 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Complete unchanged LavinMQ compilation, execution, and upstream test parity.
   Native exception transport and Channel runtime remain separately qualified
   work. The local constant contract does not close those integration gates.
+
+
+### 2026-11-05 — Retain exact 128-bit integer literal payloads
+
+- [x] Preserve Int128 and UInt128 values from parser-owned numeric caches through
+  HIR, MIR, and both LLVM constant emission paths. Out-of-range and malformed
+  literals produce diagnostics before executable publication.
+- [x] Initialize wide caches for source-independent HIR/MIR constants constructed
+  with narrow host payloads. Keep 64-bit constant maps from substituting the
+  compatibility cache of a wide literal.
+- Exact S1 35q2001 passes the original-first wide literal runner, 52 focused
+  literal/cache and MIR optimization examples, and stock-prelude hello. Both
+  compilers execute hello with identical output. High-bit retention, signed
+  boundaries, decimal/hex/binary/octal inputs, and rejection controls are covered.
+- [ ] Extend macro NumberValue transport to exact 128-bit payloads. Its legacy
+  64-bit representation remains a separate contract gap.
+- Checked arithmetic exception effects, native exception transport, Channel
+  runtime, bootstrap, and unchanged LavinMQ execution/test parity remain open.

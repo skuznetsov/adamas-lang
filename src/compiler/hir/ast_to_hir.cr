@@ -32253,6 +32253,13 @@ module Adamas::HIR
       return nil if raw.empty?
 
       if signed
+        if bits == 128
+          signed_text = negative ? "-#{raw}" : raw
+          int128_value = signed_text.to_i128?(base)
+          return nil unless int128_value
+          return {TypeRef::INT128, int128_value}
+        end
+
         int_value = raw.to_i64?(base)
         return nil unless int_value
         int_value = -int_value if negative
@@ -32273,6 +32280,11 @@ module Adamas::HIR
       end
 
       return nil if negative
+      if bits == 128
+        uint128_value = raw.to_u128?(base)
+        return nil unless uint128_value
+        return {TypeRef::UINT128, uint128_value}
+      end
       uint_value = raw.to_u64?(base)
       return nil unless uint_value
       type = case bits
@@ -87998,6 +88010,10 @@ module Adamas::HIR
     # ═══════════════════════════════════════════════════════════════════════
 
     private def lower_number(ctx : LoweringContext, node : Adamas::Compiler::Frontend::NumberNode) : ValueId
+      if message = node.integer_parse_error
+        raise LoweringError.new(message)
+      end
+
       type = case node.kind
              when .i8?   then TypeRef::INT8
              when .i16?  then TypeRef::INT16
@@ -88013,6 +88029,18 @@ module Adamas::HIR
              when .f64?  then TypeRef::FLOAT64
              else             TypeRef::INT32
              end
+
+      if node.kind.i128?
+        lit = Literal.new(ctx.next_id, type, node.parsed_int128)
+        lit.int128_value = node.parsed_int128
+        ctx.emit(lit)
+        return lit.id
+      elsif node.kind.u128?
+        lit = Literal.new(ctx.next_id, type, node.parsed_uint128)
+        lit.uint128_value = node.parsed_uint128
+        ctx.emit(lit)
+        return lit.id
+      end
 
       # V2 BOOTSTRAP: Use pre-parsed numeric values from NumberNode.
       # The Slice(UInt8) value field gets corrupted in stage2 (heap-freed struct).

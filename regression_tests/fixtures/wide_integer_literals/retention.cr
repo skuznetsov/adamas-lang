@@ -1,0 +1,25 @@
+lib LibC
+  fun exit(status : Int32) : NoReturn
+end
+
+LibC.exit(11) unless 0x10000000000000000_u128 == 0b10000000000000000000000000000000000000000000000000000000000000000_u128
+LibC.exit(12) unless 0x10000000000000000_u128 == 0o2000000000000000000000_u128
+LibC.exit(13) unless 340282366920938463463374607431768211455_u128 == 0xffffffffffffffffffffffffffffffff_u128
+LibC.exit(14) unless 170141183460469231731687303715884105727_i128 == 0x7fffffffffffffffffffffffffffffff_i128
+LibC.exit(15) unless -170141183460469231731687303715884105728_i128 == -0x80000000000000000000000000000000_i128
+def retain_unsigned(value : UInt128) : UInt128
+  value
+end
+
+def retain_signed(value : Int128) : Int128
+  value
+end
+
+high = retain_unsigned(18446744073709551616_u128)
+high_with_low = retain_unsigned(18446744073709551617_u128)
+LibC.exit(16) if high == 0_u128
+LibC.exit(17) if high_with_low == high
+LibC.exit(18) unless high > 18446744073709551615_u128
+LibC.exit(19) unless retain_signed(-170141183460469231731687303715884105728_i128) < -1_i128
+LibC.exit(20) unless retain_unsigned(340282366920938463463374607431768211455_u128) > 18446744073709551616_u128
+LibC.exit(0)

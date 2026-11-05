@@ -800,13 +800,24 @@ module Adamas
         getter parsed_int : Int64
         getter parsed_uint : UInt64
         getter parsed_float : Float64
+        getter parsed_int128 : Int128
+        getter parsed_uint128 : UInt128
+        getter integer_parse_error : String?
 
         def initialize(@span : Span, @value : Slice(UInt8), @kind : NumberKind)
           text = normalized_numeric_text(String.new(@value))
+          @parsed_int = 0_i64
+          @parsed_uint = 0_u64
+          @parsed_int128 = 0_i128
+          @parsed_uint128 = 0_u128
+          @integer_parse_error = nil
           if @kind.f32? || @kind.f64?
             @parsed_float = parse_float_literal_value(text)
             @parsed_int = 0_i64
             @parsed_uint = 0_u64
+          elsif @kind.i128? || @kind.u128?
+            @parsed_float = 0.0
+            parse_wide_integer_literal(text)
           else
             negative = text.starts_with?("-")
             numeric_text = if negative || text.starts_with?("+")
@@ -835,6 +846,90 @@ module Adamas
                           end
             @parsed_float = 0.0
           end
+        end
+
+        private def parse_wide_integer_literal(text : String) : Nil
+          negative = text.starts_with?("-")
+          signed = negative || text.starts_with?("+")
+          numeric_text = signed ? text[1..] : text
+          base = 10
+          digits = numeric_text
+          if numeric_text.starts_with?("0x") || numeric_text.starts_with?("0X")
+            base = 16
+            digits = numeric_text[2..]
+          elsif numeric_text.starts_with?("0b") || numeric_text.starts_with?("0B")
+            base = 2
+            digits = numeric_text[2..]
+          elsif numeric_text.starts_with?("0o") || numeric_text.starts_with?("0O")
+            base = 8
+            digits = numeric_text[2..]
+          end
+
+          magnitude = if valid_integer_digits?(digits, base)
+                        digits.to_u128?(base)
+                      else
+                        nil
+                      end
+          unless magnitude
+            @integer_parse_error = "invalid or overflowing #{@kind} integer literal"
+            @parsed_int = 0_i64
+            @parsed_uint = 0_u64
+            return
+          end
+
+          if @kind.i128?
+            limit = negative ? Int128::MAX.to_u128 + 1_u128 : Int128::MAX.to_u128
+            if magnitude > limit
+              @integer_parse_error = "#{text} doesn't fit in an Int128"
+              @parsed_int = 0_i64
+              @parsed_uint = 0_u64
+              return
+            end
+
+            @parsed_int128 = if negative && magnitude == Int128::MAX.to_u128 + 1_u128
+                               Int128::MIN
+                             elsif negative
+                               -magnitude.to_i128
+                             else
+                               magnitude.to_i128
+                             end
+            @parsed_int = if @parsed_int128 >= Int64::MIN.to_i128 && @parsed_int128 <= Int64::MAX.to_i128
+                            @parsed_int128.to_i64
+                          else
+                            0_i64
+                          end
+            @parsed_uint = if magnitude <= UInt64::MAX.to_u128
+                             magnitude.to_u64
+                           else
+                             0_u64
+                           end
+          else
+            if negative
+              @integer_parse_error = "invalid negative value #{text} for UInt128"
+              @parsed_int = 0_i64
+              @parsed_uint = 0_u64
+              return
+            end
+            @parsed_uint128 = magnitude
+            @parsed_uint = magnitude <= UInt64::MAX.to_u128 ? magnitude.to_u64 : 0_u64
+            @parsed_int = magnitude <= Int64::MAX.to_u128 ? magnitude.to_i64 : 0_i64
+          end
+        end
+
+        private def valid_integer_digits?(digits : String, base : Int32) : Bool
+          return false if digits.empty?
+
+          digits.each_byte do |byte|
+            digit = case byte
+                    when '0'.ord.to_u8..'9'.ord.to_u8 then byte - '0'.ord.to_u8
+                    when 'a'.ord.to_u8..'f'.ord.to_u8 then byte - 'a'.ord.to_u8 + 10_u8
+                    when 'A'.ord.to_u8..'F'.ord.to_u8 then byte - 'A'.ord.to_u8 + 10_u8
+                    else
+                      return false
+                    end
+            return false if digit >= base.to_u8
+          end
+          true
         end
 
         private def unsigned_integer_kind? : Bool

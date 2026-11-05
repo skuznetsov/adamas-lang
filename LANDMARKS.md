@@ -23845,3 +23845,30 @@ work directory. DoD is regression_tests/constant_source_value_kind_repro.sh
 with that exact compiler. Refresh after lexical registration, type-formal
 substitution, constant publication, or source admission changes. Channel,
 bootstrap, and unchanged LavinMQ execution/test parity remain open.
+
+
+## 2026-11-05 — Wide integer literals own exact payloads through LLVM
+
+The numeric AST, HIR, and MIR cached integer representation retained only
+64 bits. UInt128 literals could silently become zero before runtime arithmetic
+was reached. Exact signed/unsigned 128-bit caches now follow the declared
+TypeRef through both LLVM constant paths. Narrow-payload constant constructors
+initialize the corresponding wide cache. Existing 64-bit folding maps leave
+wide literals intact. Invalid wide text produces parser/lowering diagnostics.
+
+DoD is regression_tests/wide_integer_literal_retention_repro.sh with exact
+S1 35q2001. Original Crystal 1.22.1 qualifies every source first. One retention
+program and three rejection programs pass on both compilers. The strengthened
+retention checks distinguish high-bit values from zero and adjacent values.
+The parser/cache and existing MIR optimization suite passes 52 examples.
+Unchanged stock-prelude hello builds and executes with output hello on both
+compilers. The scoped high-bit/cache/rejection adversary found no blocker.
+
+Build source manifest
+`985c098f8e138fd72b66d0468386cd356896bc5bffc67c24ca8fa65715d93ac4`.
+Evidence is build.wide-literal-main35q2001.result.json and
+wide-main35q2003/result.json under
+/opt/mldata_ssd/adamas_codex_oct29_rootcause. Refresh after numeric parsing,
+constant construction, payload rewriting, or LLVM constant emission changes.
+Macro NumberValue, checked arithmetic effects, native exception transport,
+Channel, bootstrap, and LavinMQ runtime/test parity are separate obligations.

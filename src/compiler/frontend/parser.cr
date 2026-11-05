@@ -3484,7 +3484,15 @@ module Adamas
           return nil unless value
 
           advance
-          @arena.add_typed(NumberNode.new(span, value, kind))
+          add_number_node(span, value, kind)
+        end
+
+        private def add_number_node(span : Span, value : Slice(UInt8), kind : NumberKind) : ExprId
+          node = NumberNode.new(span, value, kind)
+          if message = node.integer_parse_error
+            @diagnostics << Diagnostic.new(message, span)
+          end
+          @arena.add_typed(node)
         end
 
         private def char_literal_source_text_slice(span : Span) : Slice(UInt8)?
@@ -10377,7 +10385,7 @@ module Adamas
             advance
             id
           when Token::Kind::Number
-            id = @arena.add_typed(NumberNode.new(token.span, token.slice, token.number_kind.not_nil!))
+            id = add_number_node(token.span, token.slice, token.number_kind.not_nil!)
             advance
             id
           when Token::Kind::String

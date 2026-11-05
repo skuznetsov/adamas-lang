@@ -423,6 +423,10 @@ module Adamas::MIR
         block.instructions.each do |inst|
           case inst
           when Constant
+            # These folding maps intentionally model only 64-bit integer
+            # payloads. Keep wider literals in MIR instead of inserting their
+            # compatibility cache (which is zero when they do not fit).
+            next if inst.type == TypeRef::INT128 || inst.type == TypeRef::UINT128
             next if address_taken_values.includes?(inst.id)
             case inst.type
             when TypeRef::FLOAT32, TypeRef::FLOAT64
@@ -449,7 +453,9 @@ module Adamas::MIR
           if folded_inst
             new_instructions << folded_inst
             # Update constants map if we created a new constant
-            if folded_inst.is_a?(Constant) && !address_taken_values.includes?(folded_inst.id)
+            if folded_inst.is_a?(Constant) &&
+               folded_inst.type != TypeRef::INT128 && folded_inst.type != TypeRef::UINT128 &&
+               !address_taken_values.includes?(folded_inst.id)
               case folded_inst.type
               when TypeRef::FLOAT32, TypeRef::FLOAT64
                 constants[folded_inst.id] = folded_inst.float_value
@@ -987,7 +993,7 @@ module Adamas::MIR
           block.instructions.each do |inst|
             value_types[inst.id] = inst.type
             value_nodes[inst.id] = inst
-            if inst.is_a?(Constant)
+            if inst.is_a?(Constant) && inst.type != TypeRef::INT128 && inst.type != TypeRef::UINT128
               case inst.type
               when TypeRef::FLOAT32, TypeRef::FLOAT64
                 constants[inst.id] = inst.float_value
@@ -1854,7 +1860,7 @@ module Adamas::MIR
         block.instructions.each do |inst|
           value_types[inst.id] = inst.type
           value_nodes[inst.id] = inst
-          if inst.is_a?(Constant)
+          if inst.is_a?(Constant) && inst.type != TypeRef::INT128 && inst.type != TypeRef::UINT128
             case inst.type
             when TypeRef::FLOAT32, TypeRef::FLOAT64
               constants[inst.id] = inst.float_value

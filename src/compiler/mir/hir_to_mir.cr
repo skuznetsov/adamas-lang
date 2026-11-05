@@ -5337,15 +5337,17 @@ module Adamas
         when HIR::TypeRef::INT8,
              HIR::TypeRef::INT16,
              HIR::TypeRef::INT32,
-             HIR::TypeRef::INT64,
-             HIR::TypeRef::INT128
+             HIR::TypeRef::INT64
           builder.const_int(lit.int_value, convert_type(lit.type))
+        when HIR::TypeRef::INT128
+          builder.const_int128(lit.int128_value, convert_type(lit.type))
         when HIR::TypeRef::UINT8,
              HIR::TypeRef::UINT16,
              HIR::TypeRef::UINT32,
-             HIR::TypeRef::UINT64,
-             HIR::TypeRef::UINT128
+             HIR::TypeRef::UINT64
           builder.const_uint(lit.uint_value, convert_type(lit.type))
+        when HIR::TypeRef::UINT128
+          builder.const_uint128(lit.uint128_value, convert_type(lit.type))
         when HIR::TypeRef::FLOAT32,
              HIR::TypeRef::FLOAT64
           builder.const_float(lit.float_value, convert_type(lit.type))
@@ -5370,6 +5372,8 @@ module Adamas
           case v = lit.value
           when Int64   then builder.const_int(v, convert_type(lit.type))
           when UInt64  then builder.const_uint(v, convert_type(lit.type))
+          when Int128  then builder.const_int128(v, convert_type(lit.type))
+          when UInt128 then builder.const_uint128(v, convert_type(lit.type))
           when Float64 then builder.const_float(v, convert_type(lit.type))
           when Bool    then builder.const_bool(v)
           when String  then builder.const_string(v)
@@ -10058,6 +10062,10 @@ module Adamas
           value == 0_i64
         when UInt64
           value == 0_u64
+        when Int128
+          value == 0_i128
+        when UInt128
+          value == 0_u128
         when Float64
           value == 0.0
         when Char

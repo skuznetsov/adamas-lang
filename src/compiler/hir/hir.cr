@@ -235,12 +235,16 @@ module Adamas::HIR
     # V2's calling convention loses union tags when passing as ptr.
     getter int_value : Int64
     getter uint_value : UInt64
+    getter int128_value : Int128
+    getter uint128_value : UInt128
     getter float_value : Float64
     @str_value_text : String = ""
     @has_str_value : Bool = false
 
     property int_value : Int64 = 0_i64
     property uint_value : UInt64 = 0_u64
+    property int128_value : Int128 = 0_i128
+    property uint128_value : UInt128 = 0_u128
     property float_value : Float64 = 0.0
 
     def initialize(id : ValueId, type : TypeRef, @value : LiteralValue)
@@ -281,8 +285,12 @@ module Adamas::HIR
         io << "nil"
       when TypeRef::BOOL
         io << (@int_value != 0)
-      when TypeRef::UINT8, TypeRef::UINT16, TypeRef::UINT32, TypeRef::UINT64, TypeRef::UINT128
+      when TypeRef::UINT128
+        io << @uint128_value
+      when TypeRef::UINT8, TypeRef::UINT16, TypeRef::UINT32, TypeRef::UINT64
         io << @uint_value
+      when TypeRef::INT128
+        io << @int128_value
       when TypeRef::STRING, TypeRef::SYMBOL
         if @type == TypeRef::SYMBOL
           io << ":" << @str_value_text
@@ -299,14 +307,43 @@ module Adamas::HIR
 
     private def sync_cached_value_fields : Nil
       case v = @value
+      when Int128
+        @int128_value = v
+        @int_value = v.to_i64 if v >= Int64::MIN && v <= Int64::MAX
+        if @type == TypeRef::UINT128 && v >= 0
+          @uint128_value = v.to_u128
+        end
+      when UInt128
+        @uint128_value = v
+        @uint_value = v.to_u64 if v <= UInt64::MAX.to_u128
+        if @type == TypeRef::INT128 && v <= Int128::MAX.to_u128
+          @int128_value = v.to_i128
+        end
       when Int64
         @int_value = v
         # Both caches describe the same integer bits. Enum metadata can carry
         # UInt64's high bit through Int64 before the literal receives its type.
         @uint_value = v.to_u64!
+        # Some source-independent builders hand us a narrow host integer with
+        # an already-resolved wide TypeRef. Keep the cache consumed by HIR→MIR
+        # in sync with that declared representation instead of leaving its
+        # default zero behind.
+        if @type == TypeRef::INT128
+          @int128_value = v.to_i128
+        elsif @type == TypeRef::UINT128 && v >= 0
+          @uint128_value = v.to_u128
+        end
       when UInt64
         @uint_value = v
-        @int_value = v.to_i64!
+        if @type == TypeRef::UINT128
+          @uint128_value = v.to_u128
+          @int_value = v <= Int64::MAX.to_u64 ? v.to_i64 : 0_i64
+        elsif @type == TypeRef::INT128
+          @int128_value = v.to_i128
+          @int_value = v <= Int64::MAX.to_u64 ? v.to_i64 : 0_i64
+        else
+          @int_value = v.to_i64!
+        end
       when Float64
         @float_value = v
       when Bool
@@ -389,7 +426,7 @@ module Adamas::HIR
     end
   end
 
-  alias LiteralValue = Int64 | UInt64 | Float64 | String | Bool | Char | Nil
+  alias LiteralValue = Int64 | UInt64 | Int128 | UInt128 | Float64 | String | Bool | Char | Nil
 
   # ─────────────────────────────────────────────────────────────────────────────
   # Variables

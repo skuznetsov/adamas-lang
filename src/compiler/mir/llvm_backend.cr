@@ -15878,8 +15878,12 @@ module Adamas::MIR
                       nil
                     when TypeRef::NIL, TypeRef::VOID
                       "null"
-                    when TypeRef::UINT8, TypeRef::UINT16, TypeRef::UINT32, TypeRef::UINT64, TypeRef::UINT128
+                    when TypeRef::UINT128
+                      const_inst.uint128_value.to_s
+                    when TypeRef::UINT8, TypeRef::UINT16, TypeRef::UINT32, TypeRef::UINT64
                       const_inst.uint_value.to_s
+                    when TypeRef::INT128
+                      const_inst.int128_value.to_s
                     else
                       const_inst.int_value.to_s
                     end
@@ -18061,8 +18065,12 @@ module Adamas::MIR
                 inst.bool_value ? "1" : "0"
               when TypeRef::NIL, TypeRef::VOID
                 "null"
-              when TypeRef::UINT8, TypeRef::UINT16, TypeRef::UINT32, TypeRef::UINT64, TypeRef::UINT128
+              when TypeRef::UINT128
+                inst.uint128_value.to_s
+              when TypeRef::UINT8, TypeRef::UINT16, TypeRef::UINT32, TypeRef::UINT64
                 inst.uint_value.to_s
+              when TypeRef::INT128
+                inst.int128_value.to_s
               else
                 inst.int_value.to_s
               end

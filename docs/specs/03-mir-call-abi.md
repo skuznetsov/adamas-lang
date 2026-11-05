@@ -77,3 +77,24 @@ Debug value-location metadata is not semantic call ABI. It MAY be opt-in during
 bootstrap when generated-stage hash-backed metadata is not reliable.
 
 Disabling debug metadata MUST NOT change HIR/MIR semantics.
+
+## 8. Exact wide integer literal payloads
+
+An Int128 or UInt128 literal MUST retain its exact payload through the parser,
+HIR Literal, MIR Constant, and LLVM emission. Narrow host-integer builders
+creating a wide typed constant MUST initialize the corresponding wide payload.
+An Int64 or UInt64 compatibility cache cannot supply a wide constant's emitted
+value. Optimizations whose constant domain is limited to 64 bits MUST leave
+wide constants outside that domain.
+
+Malformed digits and values outside the declared integer range MUST produce a
+diagnostic before executable publication. Valid boundary values MUST retain
+their signedness and all 128 bits. Decimal, hexadecimal, binary, and octal
+spellings share this contract.
+
+The original-first wide_integer_literal_retention_repro.sh runner checks
+boundary values, values above 2^64, distinct low bits, signed ordering, and
+rejections. Parser and HIR/MIR cache specs check intermediate ownership.
+Refresh these checks after literal parsing, cached payload construction,
+constant folding, or LLVM constant emission changes. Macro numeric evaluation
+and checked arithmetic have separate contracts and qualification obligations.
