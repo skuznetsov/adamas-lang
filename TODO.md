@@ -25808,3 +25808,24 @@ integration, fresh bootstrap, or LavinMQ parity.
   compiler AST and binary (35q3181); application, shards and stdlib are unchanged.
 - Callback forall, complete prelude, previous_def/initializer replay, fresh
   bootstrap and unchanged LavinMQ execution/upstream parity remain open.
+
+
+### 2026-11-06 — Preserve exact inline callback result owners
+
+- [x] Feed direct anonymous yield normal/next results and named Proc results
+  into one selected invocation owner; derive deferred callback forall return
+  bindings from actual source facts, without changing supplied input bindings.
+- [x] Replace block/return stack-length equality with an exact function/block/
+  slot binding that shadows and restores reentrant owners. Forwarding no longer
+  drops the outer callback result or guesses its break target by stack index.
+- Original-first source_inline_callback_result_repro.sh passes seven runtime
+  controls and one strict method-return rejection on Crystal 1.22.1 and exact
+  S1 35q3223 (35q3236). Four control-flow neighbors pass (35q3229); bounded source
+  adversary is ROBUST. Extended probes preserve a strict class-kind rejection.
+- [ ] Close mixed class/instance next + as(F) and omitted-default Nil binding.
+  Both fail identically on baseline and candidate (35q3225/35q3226 and
+  35q3227/35q3228); the full selected-block-output gate remains open.
+- Unchanged LavinMQ passes FdLock#reference and reaches a Socket::Type versus
+  JSON::Any default-argument restriction (35q3230). Only compiler AST/binary
+  differ from the previous input manifest (35q3235). No object, link, execution,
+  complete prelude, fresh bootstrap or upstream test parity is claimed.

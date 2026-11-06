@@ -214,6 +214,28 @@ explicit invalid generic call also reaches an internal provenance guard before
 its intended source restriction. Passing the bounded return/default corpus
 does not close these probes or establish whole-program compatibility.
 
+### Inline callback result ownership
+
+A selected yielding invocation owns a callback result context containing its
+exact Def, declaration arena/owner, copied source input bindings and actual
+source result facts. Named Proc materialization and direct anonymous yield
+substitution publish into this same context. Merge normal and `next` results
+before deriving callback-output forall bindings for deferred method returns;
+keep `break`, nonlocal return, NoReturn and unresolved Void separate. Actual
+Nil is a source result, not evidence of an unknown or terminal result.
+
+Forwarding can pop the block stack while leaving return contexts active.
+Bind the function, block identity and active block slot to the exact inline
+return context; require that context to remain active, and shadow/restore a
+reentrant slot in the inline frame's ensure. Stack-length equality is not an
+ownership proof. Publish after caller lexical state is restored to the callee.
+
+The original-first source_inline_callback_result_repro.sh gate covers seven
+runtime controls and one strict method-return rejection (35q3236). Mixed
+class/instance `next` plus `as(F)` and omitted-default Nil binding still fail
+identically on baseline and candidate (35q3225/35q3226, 35q3227/35q3228).
+This bounded transport contract does not close either parity obligation.
+
 ## Falsifiers and recovery
 
 Run each script with the exact candidate as its argument. The scripts first
@@ -224,6 +246,7 @@ and check semantic diagnostics and absence of an executable for rejections.
 - `regression_tests/source_return_kind_repro.sh`
 - `regression_tests/source_method_void_result_repro.sh`
 - `regression_tests/source_array_helper_result_repro.sh`
+- `regression_tests/source_inline_callback_result_repro.sh`
 - `regression_tests/nil_source_result_repro.sh`
 - `regression_tests/virtual_source_fact_transport_repro.sh`
 - `regression_tests/module_source_value_kind_repro.sh`

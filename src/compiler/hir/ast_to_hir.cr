@@ -8227,6 +8227,27 @@ module Adamas::HIR
     @block_proc_capture_writebacks = {} of {String, ValueId} => Array(BlockProcCaptureWriteback)
     @block_proc_capture_carriers = {} of {String, ValueId} => Array(BlockProcCaptureCarrier)
 
+    # The selected callback owns one source result set for this inline call.
+    # Proc materialization and direct yield substitution publish into the same
+    # owner; method return/break edges are a separate control-flow channel.
+    class InlineCallbackResultContext
+      getter definition : Adamas::Compiler::Frontend::DefNode
+      getter arena : Adamas::Compiler::Frontend::ArenaLike
+      getter declaration_owner : String?
+      getter input_bindings : Hash(String, String)
+      getter result_facts : Array({TypeRef, Bool})
+
+      def initialize(@definition, @arena, @declaration_owner, input_bindings : Hash(String, String))
+        @input_bindings = input_bindings.dup
+        @result_facts = [] of {TypeRef, Bool}
+      end
+
+      def record(facts : Array({TypeRef, Bool})) : Nil
+        @result_facts.concat(facts)
+        @result_facts.uniq!
+      end
+    end
+
     # Inline return handling for yield-function inlining.
     class InlineReturnContext
       getter exit_block : BlockId
@@ -8236,6 +8257,7 @@ module Adamas::HIR
       getter explicit_return_incoming_indices : Array(Int32)
       getter function_id : FunctionId
       property block_result_contract : SourceBlockResultContract? = nil
+      property callback_result_context : InlineCallbackResultContext? = nil
       property source_declared_return_contract : SourceBlockResultPattern? = nil
       property discards_method_result : Bool = false
 
@@ -8253,6 +8275,12 @@ module Adamas::HIR
     end
 
     @inline_yield_return_stack : Array(InlineReturnContext) = [] of InlineReturnContext
+
+    # A block stack slot is bound to its exact inline invocation. Forwarding
+    # temporarily pops block entries while return contexts stay active, so
+    # equal stack lengths cannot establish ownership. Reentrant slot bindings
+    # shadow and restore the prior owner in the inline frame's ensure.
+    @inline_block_return_owners = {} of {FunctionId, UInt64, Int32} => InlineReturnContext
 
     # `break` inside an inlined block exits the whole call the block was passed
     # to, i.e. it behaves like a non-local return from the inlined callee with
@@ -9014,6 +9042,7 @@ module Adamas::HIR
       @inline_active_caller_locals_index_stack = [] of Int32
       @inline_loop_vars_stack = [] of Set(String)
       @inline_loop_var_backedge_values = {} of String => {Int32, ValueId}
+      @inline_block_return_owners.clear
       @inline_yield_block_stack = [] of Adamas::Compiler::Frontend::BlockNode
       @inline_yield_block_arena_stack = [] of Adamas::Compiler::Frontend::ArenaLike
       @inline_yield_block_param_types_stack = [] of Array(TypeRef)?
@@ -76445,6 +76474,21 @@ module Adamas::HIR
       bindings
     end
 
+    private def inline_callback_result_argument(owner : InlineCallbackResultContext) : SourceCallArgument?
+      facts = owner.result_facts
+      return nil if facts.empty? || facts.any? { |type, _| type == TypeRef::VOID || type.null_ptr? }
+      result_type = union_type_for_value_set(facts.map(&.[0])) || return nil
+      kinds = facts.map(&.[1]).uniq
+      SourceCallArgument.new(result_type, kinds == [true], value_facts: kinds.size > 1 ? facts : nil)
+    end
+
+    private def inline_callback_result_bindings(owner : InlineCallbackResultContext) : Hash(String, String)?
+      result = inline_callback_result_argument(owner) || return nil
+      with_arena(owner.arena) do
+        source_block_output_type_bindings(owner.definition, owner.declaration_owner, result, owner.input_bindings)
+      end
+    end
+
     private def block_return_type_param_name(
       mangled_method_name : String,
       base_method_name : String,
@@ -139977,6 +140021,8 @@ module Adamas::HIR
         pushed_block = false
         pushed_block_owner_frame_index = false
         prev_block_owner_frame_index : Int32? = nil
+        block_return_owner_key : {FunctionId, UInt64, Int32}? = nil
+        previous_block_return_owner : InlineReturnContext? = nil
         previous_block_owner = @block_owner[block.object_id]?
         previous_block_owner_function_id = @block_owner_function_ids[block.object_id]?
         previous_block_owner_self_id = @block_owner_self_ids[block.object_id]?
@@ -140002,6 +140048,9 @@ module Adamas::HIR
         end
         inline_return = InlineReturnContext.new(ctx.create_block, [] of {BlockId, ValueId}, ctx.function.id)
         @inline_yield_return_stack << inline_return
+        block_return_owner_key = {ctx.function.id, block.object_id, (@inline_yield_block_stack.size - 1).to_i32}
+        previous_block_return_owner = @inline_block_return_owners[block_return_owner_key]?
+        @inline_block_return_owners[block_return_owner_key] = inline_return
         @inline_yield_return_caller_locals_stack << ([] of {BlockId, Hash(String, ValueId)})
 
         old_current_class = @current_class
@@ -140252,6 +140301,14 @@ module Adamas::HIR
         deferred_source_return_owner : String? = nil
         apply_inline = -> do
           inline_return.block_result_contract = source_result_contract
+          if callback_contract = source_result_contract
+            unless forall_type_param_names(func_def).empty?
+              inline_return.callback_result_context = InlineCallbackResultContext.new(
+                func_def, callee_arena,
+                return_declaration_owner_for(inline_key, base_inline_name), callback_contract.type_bindings,
+              )
+            end
+          end
           if lexical_inputs = wildcard_inputs
             # Forwarded yields keep the lexical method's contract when a
             # nested inline call rebinds the same type parameter names.
@@ -140387,19 +140444,12 @@ module Adamas::HIR
                     ctx.restore_locals(saved_inline_locals)
                     ctx.register_local(param_name, lowered_proc.value)
                     ctx.register_type(lowered_proc.value, ctx.type_of(lowered_proc.value))
-                    if (callback_contract = source_result_contract) && (facts = lowered_proc.source_result_facts) &&
-                       !forall_type_param_names(func_def).empty?
-                      # A lowered callback owns its result. A source probe used
-                      # to prepare the inline frame can differ from that value.
-                      if facts.none? { |type, _| type == TypeRef::VOID || type.null_ptr? } &&
-                         (result_type = union_type_for_value_set(facts.map(&.[0])))
-                        kinds = facts.map(&.[1]).uniq
-                        result = SourceCallArgument.new(result_type, kinds == [true], value_facts: kinds.size > 1 ? facts : nil)
-                        if bindings = with_arena(callee_arena) {
-                             source_block_output_type_bindings(func_def,
-                               return_declaration_owner_for(inline_key, base_inline_name), result, callback_contract.type_bindings)
-                           }
-                          callback_output_bindings.merge!(bindings)
+                    if (callback_result = inline_return.callback_result_context) &&
+                       (facts = lowered_proc.source_result_facts)
+                      callback_result.record(facts)
+                      if bindings = inline_callback_result_bindings(callback_result)
+                        callback_output_bindings.merge!(bindings)
+                        if result = inline_callback_result_argument(callback_result)
                           @inline_yield_block_return_stack[-1] = proc_source_type_name(result)
                         end
                       end
@@ -140466,6 +140516,11 @@ module Adamas::HIR
 
           if deferred_return = deferred_source_return_name
             return_owner = deferred_source_return_owner || return_declaration_owner_for(inline_key, base_inline_name) || @current_class
+            if callback_result = inline_return.callback_result_context
+              if bindings = inline_callback_result_bindings(callback_result)
+                callback_output_bindings.merge!(bindings)
+              end
+            end
             post_body_bindings = inline_param_map.merge(callback_output_bindings)
             # A method-forall token must be supplied by this selected call's
             # receiver, arguments, or lowered callback. Do not let an ambient
@@ -140591,6 +140646,13 @@ module Adamas::HIR
           @inline_caller_type_param_map_stack.pop?
           @current_inline_def_frame = old_inline_def_frame
           @inline_caller_def_frame_stack.pop?
+          if owner_key = block_return_owner_key
+            if previous_owner = previous_block_return_owner
+              @inline_block_return_owners[owner_key] = previous_owner
+            else
+              @inline_block_return_owners.delete(owner_key)
+            end
+          end
           @inline_yield_block_stack.pop? if pushed_block
           @inline_yield_block_arena_stack.pop? if pushed_block
           @inline_yield_block_param_types_stack.pop? if pushed_block
@@ -140870,6 +140932,18 @@ module Adamas::HIR
       result.id
     end
 
+    private def inline_block_return_owner(
+      ctx : LoweringContext,
+      block : Adamas::Compiler::Frontend::BlockNode,
+    ) : {Int32, InlineReturnContext}?
+      return nil unless @inline_yield_block_stack.last?.try(&.same?(block))
+      key = {ctx.function.id, block.object_id, (@inline_yield_block_stack.size - 1).to_i32}
+      exact_owner = @inline_block_return_owners[key]? || return nil
+      active_index = @inline_yield_return_stack.index { |frame| frame.same?(exact_owner) }
+      return nil unless active_index
+      {active_index, exact_owner}
+    end
+
     private def inline_block_body(
       ctx : LoweringContext,
       yield_node : Adamas::Compiler::Frontend::YieldNode,
@@ -140927,6 +141001,10 @@ module Adamas::HIR
         end
         @inline_yield_return_override_stack << InlineReturnOverride.new(true, base_override)
         pushed_override = true
+
+        callback_return_owner = inline_block_return_owner(ctx, block)
+        owner_return_context = callback_return_owner.try(&.[1])
+        owner_return_index = callback_return_owner.try(&.[0]) || -1
 
         # Lower yield arguments. `yield *args` spreads a tuple into separate
         # block arguments, exactly as a splat call argument does.
@@ -141195,12 +141273,6 @@ module Adamas::HIR
                          # The block body belongs to the *caller* and may itself contain `yield`.
                          # Temporarily disable the current inlined-yield substitution so nested `yield`
                          # in the block body can bind to an outer inlining context (if any).
-                         owner_return_index = @inline_yield_block_stack.size - 1
-                         owner_return_context = if owner_return_index >= 0 &&
-                                                   @inline_yield_block_stack.size == @inline_yield_return_stack.size &&
-                                                   @inline_yield_block_stack.last?.try(&.same?(block))
-                                                  @inline_yield_return_stack[owner_return_index]
-                                                end
                          popped_block = @inline_yield_block_stack.pop?
                          popped_arena = @inline_yield_block_arena_stack.pop?
                          popped_param_types = @inline_yield_block_param_types_stack.pop?
@@ -141433,6 +141505,16 @@ module Adamas::HIR
             result_type = result ? ctx.type_of(result) : TypeRef::VOID
             yield_types = yield_args.map { |arg_id| get_type_name_from_ref(ctx.type_of(arg_id)) }
             STDERR.puts "[INLINE_BLOCK_RESULT] callee=#{inline_name} result=#{get_type_name_from_ref(result_type)} yield=#{yield_types.join(",")}"
+          end
+        end
+
+        # Publish after all normal/next edges have merged and the caller's
+        # lexical block scope has restored the callee. Escape and dead edges
+        # never supply callback output bindings, including placeholder Nil.
+        unless should_stop_sequential_lowering?(ctx)
+          validate_source_block_result(ctx, block, owner_return_context.try(&.block_result_contract), result)
+          if callback_result = owner_return_context.try(&.callback_result_context)
+            callback_result.record(source_block_result_value_facts(ctx, result))
           end
         end
 

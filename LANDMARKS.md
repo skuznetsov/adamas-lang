@@ -24979,3 +24979,59 @@ ast_to_hir.cr: a1b1de28e52c687eeeb2e3fb326a16bb23077538e541a791498f65c679594f8e.
 Refresh after bare-call selection, force ownership/guards, inline lowering,
 result dependencies, defaults or virtual dispatch changes. Rollback is this
 atomic compiler commit. Unrelated existing WIP remains preserved.
+
+
+## 2026-11-06 — Exact inline callback owners retain normal and next results
+
+FdLock#reference(& : -> F) : F failed with unresolved F on unchanged LavinMQ.
+The selected callback had an actual continuing Nil result (35q3200), but only
+named Proc materialization transported lowered results into callback forall
+bindings. Direct anonymous yields did not. A separate forwarding loss came
+from equating block-stack length with return-context-stack length: nested
+forwarding pops blocks while the callee return contexts remain active.
+
+One invocation result owner now retains the selected Def, declaration arena/
+owner, copied source input bindings and actual source facts. Named Proc and
+normal/next inline results feed it. Deferred method return validation consumes
+its complete accumulated facts; it does not mutate a shared forall map after
+an early yield. Function, block identity and block slot bind the exact active
+return context. Inline ensure restores shadowed entries. Publish after caller
+lexical scope restoration; keep break/nonlocal returns and terminal/unknown
+results outside the callback output channel. Do not convert unknown Void to
+Nil or weaken class/instance checks.
+
+Original-first source_inline_callback_result_repro.sh passes all eight cases
+on stock Crystal 1.22.1 and S1 35q3223 (35q3236), including anonymous/named next,
+ensure, assignment conditions, forwarded next and a strict method return
+rejection. Four control neighbors pass (35q3229): receiver forall ownership,
+next continuation, nested nonlocal returns and inline ensure ownership.
+Extended probes pass six positives and a strict class-kind rejection, while
+mixed class/instance next + as(F) fails identically on baseline and candidate
+(35q3225/35q3226). The selected-block-output gate exposes the same pre-existing
+omitted-default Nil-to-T? failure on both (35q3227/35q3228). Both are open parity
+obligations, not included in the passing gate. Source adversary verdict is
+ROBUST for the bounded transport/owner fix; same-lineage review is correlated.
+
+Unchanged LavinMQ passes FdLock#reference and reaches a Socket::Type versus
+JSON::Any default restriction (35q3230). Comparing the previous manifest changes
+only compiler AST and binary (35q3235). This is front-end progress, not an
+object, link or execution result. Complete prelude, recursive/merged forall
+inference, default provenance, previous_def, fresh bootstrap and upstream test
+parity remain open.
+
+Evidence: /opt/mldata_ssd/adamas_codex_oct29_rootcause/
+inline-callback-owner-permanent-gate35q3236/result.json,
+inline-callback-owner-control-neighbors35q3229/result.json,
+inline-callback-owner-final-adversary35q3225/result.json,
+inline-callback-owner-baseline-adversary35q3226/result.json,
+inline-callback-owner-selected-output35q3227/result.json,
+inline-callback-default-provenance-baseline35q3228/result.json,
+lavinmq-inline-callback-owner-final35q3230/result.json, and
+inline-callback-owner-lineage35q3235/result.json.
+All 1,916 compiler files match build.inline-callback-owner-final35q3223.source.json
+(SHA-256 5594feccf75e574d557472652cbcbccb2e82e1b913fb89e4d1a9879d1e317116).
+Compiler SHA-256: 2ce46c3fd3a6c98d1e5c954bc951a3462b6c12c4ee33a238e86350e798851943;
+ast_to_hir.cr: e8d71d8e2bade888129b8e22a916280167760f3ad8adbd5768a77ba83adcebe4.
+Refresh after inline stack ownership, source fact collection, callback result
+validation, forall substitution or default-provenance changes. Rollback is this
+atomic compiler commit. Application, stdlib and unrelated WIP are unchanged.

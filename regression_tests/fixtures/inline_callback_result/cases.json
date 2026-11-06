@@ -1,0 +1,10 @@
+[
+  {"name":"anonymous_ensure_original_pair","source":"anonymous_ensure.cr","ok":true,"expected":"A\n"},
+  {"name":"named_ensure_original_pair","source":"named_ensure.cr","ok":true,"expected":"A\n"},
+  {"name":"anonymous_next_result","source":"anonymous_next_result.cr","ok":true,"expected":"A\n"},
+  {"name":"named_next_result","source":"named_next_result.cr","ok":true,"expected":"A\n"},
+  {"name":"anonymous_assignment_condition_flow","source":"anonymous_assignment_condition.cr","ok":true,"expected":"A\n"},
+  {"name":"named_assignment_condition_flow","source":"named_assignment_condition.cr","ok":true,"expected":"A\n"},
+  {"name":"nested_forwarded_yield_next_flow","source":"nested_forwarded_yield.cr","ok":true,"expected":"A\n"},
+  {"name":"wrong_return_guard","source":"wrong_return_guard.cr","ok":false,"expected":"","exit":1,"diagnostic":"method .*read_wrong must return WrongForallResult.*returning Int32"}
+]
