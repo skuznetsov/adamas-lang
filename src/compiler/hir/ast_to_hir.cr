@@ -7157,7 +7157,12 @@ module Adamas::HIR
         if record_current_arena
           set_function_def_arena_if_missing(name, @arena)
           base = strip_type_suffix(name)
-          set_function_def_arena_if_missing(base, @arena) if base != name
+          # An arena belongs to a source definition, not to a bare family
+          # spelling. A typed/named-only overload must not reserve its base
+          # key before any Def owns that key (or for a different overload).
+          if base != name && @function_defs[base]?.try(&.same?(def_node))
+            set_function_def_arena_if_missing(base, @arena)
+          end
           STDERR.puts "[SET_FDEF] phase=after_set_base_arena_if_missing name=#{name} base=#{base}" if env_has?("DEBUG_REGISTER_DEF_RAW")
         end
       end
@@ -50393,6 +50398,21 @@ module Adamas::HIR
         STDERR.puts "[LOWER_METHOD] enter class=#{class_name} full=#{full_name}"
       end
 
+      # The registered source key and the emitted ABI key can differ, for
+      # example `method$arity1` and `method$Int32` after default inference.
+      # Publish their exact owner before creating or reusing a body. A later
+      # defaulted call must not have to recover authority from an existing body.
+      materialization_source_name = logical_registered_name
+      if materialization_source_name.nil? && !is_class_method &&
+         concrete_named_tuple_receiver_owner(class_info.type_ref) == class_name
+        materialization_source_name = registered_name_for_logical_def("NamedTuple##{method_name}", node)
+      end
+      if source_name = materialization_source_name
+        # A logical match by span is insufficient to own an emitted body. Let
+        # the shared binder reject a mismatched declaration or arena here.
+        bind_exact_source_call_target(full_name, source_name, node, def_arena, node, "method body")
+      end
+
       # Direct lowering paths (class/member passes, allocator fallback, super shims)
       # may revisit the same fully-mangled name after the body was already emitted.
       # create_function reuses the existing Function object, so blindly re-running
@@ -50424,15 +50444,6 @@ module Adamas::HIR
                                      abstract_numeric_return_constraint(node)
                                    end
       return_type = TypeRef::VOID if abstract_return_constraint
-      if !is_class_method && concrete_named_tuple_receiver_owner(class_info.type_ref) == class_name
-        source_name = logical_registered_name || registered_name_for_logical_def("NamedTuple##{method_name}", node)
-        if source_name && @function_defs[source_name]?.try(&.same?(node)) &&
-           @function_def_arenas[source_name]?.try(&.same?(def_arena))
-          # Publish the binding while the lowering still owns the actual
-          # definition and arena. A later union call can then reuse this body.
-          bind_exact_source_call_target(full_name, source_name, node, def_arena, node, "NamedTuple method")
-        end
-      end
       func = @module.create_function(full_name, return_type)
       materializing_function = func
       stop_after_pending_target_lower_method_phase(

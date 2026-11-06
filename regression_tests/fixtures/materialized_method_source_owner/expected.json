@@ -1,0 +1,62 @@
+{
+  "bare_then_member.cr": {
+    "status": 0,
+    "stdout": "AA"
+  },
+  "explicit_then_default_member.cr": {
+    "status": 0,
+    "stdout": "AA"
+  },
+  "paren_then_default_member.cr": {
+    "status": 0,
+    "stdout": "AA"
+  },
+  "self_bare_then_member.cr": {
+    "status": 0,
+    "stdout": "AA"
+  },
+  "parameter_member.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "inherited_member.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "included_member.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "generic_member.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "typed_default_return.cr": {
+    "status": 0,
+    "stdout": "B"
+  },
+  "class_method_default.cr": {
+    "status": 0,
+    "stdout": "AA"
+  },
+  "named_only_default.cr": {
+    "status": 0,
+    "stdout": "AA"
+  },
+  "wrong_default_argument.cr": {
+    "status": 1,
+    "diagnostic_regex": "no overload matches.*emit.*String|argument #1.*(Int32|String)|expected.*Int32.*String"
+  },
+  "wrong_default_return.cr": {
+    "status": 1,
+    "diagnostic_regex": "must return Int32.*returning Bool"
+  },
+  "macro_if_default.cr": {
+    "status": 0,
+    "stdout": "AA"
+  },
+  "macro_generated_default.cr": {
+    "status": 0,
+    "stdout": "AA"
+  }
+}

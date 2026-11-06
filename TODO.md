@@ -25677,7 +25677,33 @@ integration, fresh bootstrap, or LavinMQ parity.
   fallback. Three stock-qualified companions retain these obligations and
   are excluded from candidate success; an earlier wrong-owner argument error
   does not qualify the intended Void-return rejection (35q2915–35q2917).
-- [ ] Repair the wake_scheduler body producer/binding boundary. Preserve
+- [x] Repair the wake_scheduler body producer/binding boundary. Preserve
   exact declaration, arena, and default slots; do not bypass its guard.
   Prelude, initializer replay, previous_def chains, bootstrap and unchanged
   LavinMQ execution/upstream test parity remain open.
+
+### 2026-11-06 — Publish method source owners before body materialization
+
+- [x] Bind each registered method's exact Def/arena to its emitted target
+  before creating or reusing its HIR body, including bare-identifier result
+  forcing and the existing NamedTuple fallback. Keep the binder strict.
+- [x] Seed a stripped-base arena automatically only when that base already
+  has the identical Def. A typed/named-only overload must not reserve an
+  unowned family key. Preserve explicit deferred-module context staging.
+- Original-first materialized_method_source_owner_repro.sh passes 15 main
+  cases on Crystal 1.22.1 and exact-source S1 35q2958 (35q2973), including
+  the formerly failing bare-then-self default call. All 47 default/block-slot
+  and 12 named-forall neighbors pass; NamedTuple source-overload cases pass
+  in lazy/eager modes (35q2969).
+- Actual unchanged LavinMQ passes the previous URI arena and Parallel
+  wake_scheduler binding frontiers, then stops at replacement of an already
+  lowered Tuple(Char x 10)#size by another definition (35q2959). Inputs differ
+  from 35q2899 only in ast_to_hir.cr and compiler binary (35q2971).
+- [ ] Fix the existing inherited named-only-default virtual dispatch error:
+  stock prints A; both HEAD 0e29163b and S1 35q2958 print B (35q2966,
+  35q2965). Keep its stock-qualified open companion excluded from candidate
+  success until the actual selected child executes correctly.
+- [ ] Resolve Tuple#size source selection before body materialization; keep
+  the different-Def replacement guard. Prelude, initializer replay,
+  previous_def chains, bootstrap and LavinMQ execution/upstream parity remain
+  open. No application/stdlib edits or relaxed type checks are included.

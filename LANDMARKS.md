@@ -24679,3 +24679,63 @@ return-result ownership, arena registration, or named/forall binding changes.
 Rollback is this atomic compiler commit. The next discriminating probe records
 the existing wake_scheduler body and its source binding before the strict
 default-target guard; it must add no lookup or materialization.
+
+
+## 2026-11-06 — A method body needs its exact source owner before materialization
+
+The Parallel#wake_scheduler failure came from bare-identifier result forcing,
+not from selection of another default. lower_identifier forced the method
+through force_lower_function_for_return_type into lower_method. The source
+$arity1 key had the exact Def and arena, but the emitted $Int32 key gained a
+completed body without either registry entry (35q2937). Bind the emitted key
+from that exact source before creating or reusing the body. Preserve the
+NamedTuple fallback in this common path and keep all binder checks strict.
+The completed body's return-owner certificate cannot retroactively authorize
+an unregistered source target.
+
+That earlier publication exposed an orphan arena: registering a named-only
+URI::Params#to_s overload automatically seeded the stripped base key despite
+that base having no Def. Later Object#to_s inherited lowering hit the wrong
+arena (35q2955). Limit only this automatic stripped-base seed to an existing
+base Def identical to the registered Def. Explicit saved lazy-module context
+staging remains intact; no conflicting-arena guard is bypassed.
+
+The minimal self_bare_then_member case is a real behavioral falsifier:
+Crystal 1.22.1 prints AA; baseline rejects the missing complete binding
+(35q2942), and exact-source S1 35q2958 prints AA. The original-first
+materialized_method_source_owner_repro.sh passes all 15 main cases, including
+macro-if/generated definitions and strict argument/return errors (35q2973).
+All 47 default/block-slot and 12 named-forall neighbors pass; NamedTuple
+source-overload cases pass in lazy and eager modes (35q2969). The source-only
+Adversary verdict is ROBUST for this bounded owner-publication change.
+
+Actual unchanged LavinMQ passes URI arena and wake_scheduler binding failures,
+then reaches a different-Def replacement guard for Tuple(Char x 10)#size
+(35q2959). Comparison 35q2971 finds no changed project, shard or stdlib input;
+only ast_to_hir.cr and the compiler binary differ from baseline 35q2899.
+This proves front-end progress, not object, link, runtime or upstream parity.
+The next trace 35q2976 shows the old body is direct Tuple#size (tuple.cr:523),
+its lexical namespace is Tuple, and incoming Enumerable#size (enumerable.cr:1698)
+is incorrectly admitted as a replacement. A lexical namespace is not evidence
+that a function is an included-module alias; repair that classification next.
+
+An additional cross-file named-only-default virtual override remains OPEN:
+stock prints A, baseline 0e29163b and S1 35q2958 both print B (35q2966,
+35q2965). The intermediate strict candidate instead hit the orphan arena
+(35q2962). Preserve its stock-qualified companion without changing expected A;
+it is excluded from candidate success. Full prelude, previous_def chains,
+initializer replay, bootstrap and LavinMQ execution/upstream parity remain open.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+materialized-method-source-final-original-first35q2973/result.json,
+materialized-method-source-neighbors35q2969/result.json,
+materialized-method-source-lavinmq-lineage35q2971.json,
+lavinmq-materialized-method-source35q2959/result.json, and
+lavinmq-tuple-size-source-trace35q2976/compile.log.
+All 1,916 compiler files match
+build.materialized-method-source-paired-base35q2958.source.json.
+Compiler SHA-256: 23d3c2290091c3f93094ea70420498908d103cc329df52ddb122620ab8c36a0d;
+ast_to_hir.cr: c66931ee74d884ec0fbfe500d895120c660d642c35ac08eb25cf8f6e4bb10d3d.
+Refresh after Def/arena registration, physical target creation/reuse, default
+binding, generic replay or included-module ownership changes. Rollback is this
+atomic compiler commit. No standard-library or application changes are included.

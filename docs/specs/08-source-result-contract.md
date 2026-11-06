@@ -114,6 +114,20 @@ NoReturn follows the selected declaration rather than a spelling heuristic.
 The bounded lookup repair does not settle source-level Void results or the
 ordinary lowering path's fallback from an incompatible owner overload.
 
+Before creating or reusing a materialized method body, publish the exact
+registered source definition and arena under its emitted target key. The
+logical source key may differ after default inference (`method$arity1` versus
+`method$Int32`); a completed body is not authority to reconstruct a missing
+binding later. Keep the existing NamedTuple source fallback within this same
+publication path and reject a different definition or arena before body reuse.
+
+An automatic stripped-base arena seed requires an existing base definition
+identical to the registered definition. A typed or named-only overload cannot
+reserve a bare family key with only an arena. Explicit saved module contexts
+retain their separate deferred staging path. This registration rule does not
+settle virtual dispatch when a child has omitted named-only defaults; preserve
+the stock-qualified open companion and its expected child implementation.
+
 Known open probes include broad or mixed-kind annotated results consumed
 before their exact body facts are available, callback method-variable defaults,
 unknown external-label admission, and class/instance body reuse through keyword
@@ -139,6 +153,7 @@ and check semantic diagnostics and absence of an executable for rejections.
 - `regression_tests/source_named_forall_contract_repro.sh`
 - `regression_tests/generic_declaration_namespace_repro.sh`
 - `regression_tests/contextual_global_source_result_repro.sh`
+- `regression_tests/materialized_method_source_owner_repro.sh`
 
 Source, toolchain, input manifests, commands, and outcomes belong in the
 corresponding LANDMARK entry. Refresh after result publication, return
