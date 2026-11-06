@@ -25925,3 +25925,23 @@ integration, fresh bootstrap, or LavinMQ parity.
   callback result. Stock 35q3347 rejects same_type(65, "text") with an Int32
   callback; baseline 35q3349 and private callback candidate 35q3348 accept
   it. This predates the parameter-owner repair and remains a strictness gap.
+
+
+### 2026-11-06 — Honor canonical Nil method-result annotations
+
+- [x] Recognize a source-proven canonical Nil return even when nullable
+  substitution retains the spelling Nil?. Keep raw yield values observable
+  inside the callee and discard only at the method result boundary.
+- Original-first nil_method_result_contract_repro.sh passes three runtime
+  effect/result cases and four semantic rejection controls against Crystal
+  1.22.1 and exact S1 35q3433 (35q3448). Nil source-result and declared-return
+  neighbor gates pass (35q3438). Wrong class-object kind, unknown names and
+  non-Nil unions remain rejected.
+- [ ] Qualify call-local binding provenance at each predicate caller with a
+  concrete stock counterexample. The owner-Nil/method-forall proposal is not
+  a rejection oracle: both compilers accept and print A (35q3443/35q3446).
+- [ ] Close the /metrics caller-frame loss. Trace 35q3440 proves report and
+  Time.measure initially save complete maps, then both maps are empty before
+  the first block body executes. Frame indices are correct in this trace;
+  inspect nested Proc/default isolation rather than weakening the callback
+  result contract. Unchanged LavinMQ still fails at Controller#get.

@@ -196,6 +196,14 @@ facts or selecting an outer overload. The body's raw final value is not the
 method's source result. An exact-Def cached result may refresh to Nil; retaining
 an inferred concrete body type would violate that declared result contract.
 
+A nullable annotation that canonically resolves to Nil has the same method
+result discard rule. Require both the canonical Nil carrier and a valid
+source restriction reduced to Nil; a Nil.class value, unknown name or
+non-Nil union cannot authorize discarding. Preserve the callback's raw yield
+value for the callee to consume. The method boundary owns the final discard.
+The original-first nil_method_result_contract_repro.sh gate covers three
+effect/result cases and four semantic rejection controls (35q3448).
+
 Prove Void through the selected declaration's lexical/type-parameter bindings.
 An unknown provisional Void is not evidence of a discard annotation. Nested
 Pointer(Void)/Proc(Void) carriers retain their enclosing type. Pass the owning

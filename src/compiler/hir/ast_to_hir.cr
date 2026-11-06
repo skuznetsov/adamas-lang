@@ -107030,8 +107030,21 @@ module Adamas::HIR
         resolved_name = substitute_type_params_in_type_name(
           resolve_typeof_in_type_string(source_name).strip,
         ).strip
-        restriction = annotation_type_contract_fragment(resolved_name, owner).restriction_name.lchop("::")
-        restriction == "Void" || restriction == "Nil"
+        contract = annotation_type_contract_fragment(resolved_name, owner)
+        restriction = contract.restriction_name.lchop("::")
+        return true if restriction == "Void" || restriction == "Nil"
+
+        # Nullable substitution can canonicalize to Nil (`T?` with T bound to
+        # Nil) even though its source restriction spelling remains `Nil?`.
+        # Require the source-pattern proof as well as the canonical carrier so
+        # Nil.class, unknown names, and non-Nil unions do not become discards.
+        return false unless contract.type_ref == TypeRef::NIL
+
+        pattern = build_source_block_result_pattern(
+          resolved_name, owner, [] of String, @type_param_map,
+        )
+        pattern.valid && !pattern.has_unbound_formal? &&
+          pattern.restriction_name.lchop("::") == "Nil"
       end
     end
 

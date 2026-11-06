@@ -1,0 +1,56 @@
+[
+  {
+    "name": "alias_nil_discards_method_tail",
+    "source": "alias_nil_discards_method_tail.cr",
+    "ok": true,
+    "expected": "AN\\n",
+    "source_sha256": "bfc08388b13afb28b50c9d4827b57d452e8776dcccce5a4db9a1fade2d963e97"
+  },
+  {
+    "name": "nullable_nil_discards_method_tail",
+    "source": "nullable_nil_discards_method_tail.cr",
+    "ok": true,
+    "expected": "AN\\n",
+    "source_sha256": "e86aca2d41fbabe1978b567923c1954087f197a57b8aa73aa656429be1750274"
+  },
+  {
+    "name": "explicit_nil_union_discards_method_tail",
+    "source": "explicit_nil_union_discards_method_tail.cr",
+    "ok": true,
+    "expected": "AN\\n",
+    "source_sha256": "1222586414b3c6cdfaf003d08faed35df2f9b77757c7c903ab6fb823b51564ba"
+  },
+  {
+    "name": "nil_metaclass_wrong_kind",
+    "source": "nil_metaclass_wrong_kind.cr",
+    "ok": false,
+    "expected": "",
+    "diagnostic_contains": "method bad must return Nil.class and Int32",
+    "source_sha256": "1f4de05ef0f027bcda700856f7e7c65c09c310417f566c983d1b9c3400dfd63a"
+  },
+  {
+    "name": "unknown_nullable_return",
+    "source": "unknown_nullable_return.cr",
+    "ok": false,
+    "expected": "",
+    "diagnostic_contains": "undefined constant MissingReturnType",
+    "source_sha256": "32343b1628ccaee20cd29374bd6936afd9c62ed885d06008915a732d689c00ca"
+  },
+  {
+    "name": "nonnil_union_wrong_value",
+    "source": "nonnil_union_wrong_value.cr",
+    "ok": false,
+    "expected": "",
+    "diagnostic_contains": "method bad must return Int32 | Nil and String",
+    "source_sha256": "a7d75f40e6c872e25461806f7b8ab5f20109651f6119afc179b86908d6f30e96"
+  },
+  {
+    "name": "nullable_metaclass_union_wrong_value",
+    "source": "nullable_metaclass_union_wrong_value.cr",
+    "ok": false,
+    "expected": "",
+    "source_sha256": "6e8a083ff126c3a840c44c561273bc3199a3d97fc6019632cb665ee3f6750d53",
+    "purpose": "Nil.class | Nil must reject an Int32 method tail; a nilable class object is not a Nil result annotation.",
+    "oracle_status": "Crystal 1.22.1 rejects semantically in 35q3443; candidate 35q3433 also rejects in 35q3446."
+  }
+]

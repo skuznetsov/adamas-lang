@@ -25263,3 +25263,47 @@ ast_to_hir.cr: 6e997ab6a1548e719c480b912b5e8f7bb3470062d0024219c7bc489ccdbf65dd.
 Refresh after annotation/alias lookup, forall substitution, parameter
 refinement, enum tracking or declaration-owner changes. Rollback is this
 atomic compiler commit. Unrelated WIP remains outside the change.
+
+
+## 2026-11-06 — Canonical Nil owns method-result discard
+
+The return-discard predicate compared only source restriction spellings Nil
+and Void. A nullable annotation such as T? with T bound to Nil can retain
+Nil? as its spelling while its canonical TypeRef is Nil. The body was then
+incorrectly checked as a non-discarding method. Require canonical Nil plus a
+valid source pattern reduced to Nil before applying the existing discard
+rule. No callback/yield value, overload or restriction check is relaxed.
+Crystal's semantic/call.cr check_return_type is the reference boundary.
+
+Original-first nil_method_result_contract_repro.sh passes three runtime
+controls and four semantic rejections on Crystal 1.22.1 and exact S1 35q3433
+(35q3448). Checks preserve body effects and distinguish aliases, nullable Nil,
+Nil-only unions, Nil.class, unknown names and non-Nil unions. Nil source-result
+and declared-return neighbor gates pass (35q3438). The nullable-metaclass
+union is a valid semantic rejection (35q3443/35q3446); the earlier Nil.class?
+spelling was parser-invalid and is excluded. The proposed unbound-method-forall
+negative is refuted as formulated: both compilers accept it and print A.
+Bounded predicate adversary: ROBUST; same-lineage review is correlated.
+Call-map provenance beyond this tested scope remains unproven.
+
+This does not close the current LavinMQ failure. Trace 35q3440 shows complete
+caller maps at report/Time.measure entry, then emptied maps before block
+selection, despite correct indices. The final report cleanup restores a
+truncated map over the correct route locals. Application, shards and installed
+stdlib hashes are unchanged. Nested Proc/default isolation is the next
+falsifier; full prelude, fresh bootstrap, linking, execution and parity remain
+open.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+nil-method-result-final35q3448/result.json,
+canonical-nil-result-neighbors35q3438/result.json,
+nil-method-result-extra-stock35q3443/result.json,
+nil-method-result-extra-candidate35q3446/result.json, and
+lavinmq-inline-caller-frames35q3440/result.json.
+All 1,916 compiler sources match
+build.canonical-nil-method-result35q3433.source.json
+(SHA-256 7d38ae958fd8f90144e867b678787a588f93b3c5096c1715c3d1f22867e1dd3f).
+Compiler SHA-256: 31e081832eb4cdaedbd91c45845260c5cf9575c963e04bc30ee486d7af4c5d46;
+ast_to_hir.cr: 6c8a3dd65db44966874b33f1afc825ce6d95132a3ed1c2404ddbf8fc2ae8d3ef.
+Refresh after return annotation, canonical type, source-pattern or binding
+changes. Rollback is this atomic compiler commit. Unrelated WIP is preserved.
