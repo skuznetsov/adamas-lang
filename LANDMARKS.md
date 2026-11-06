@@ -24261,3 +24261,48 @@ fe633152dc3666e8a1e4a55efcbefdbd6ef9ab183b8a161882cf62a8c68f8265.
 Declared-return publication, default and virtual replay contracts, stock
 prelude, fresh bootstrap, and unchanged LavinMQ execution/upstream parity
 remain open. No stdlib or LavinMQ source change belongs to this correction.
+
+## 2026-11-06 — Generic source declaration availability precedes ABI slots
+
+A concrete generic receiver could defer instance registration while
+register_source_generic_class_family only admitted bare generic owners. Its
+requested .new family was absent during source selection and default expansion,
+then discovered during late body lowering. The call had already assigned the
+callback to initial_capacity and null to the block slot. Removing the legacy
+initialize-arity guard alone did not fix it (35q2443/35q2445); that route was
+rejected and the guard is unchanged.
+
+Resolve the concrete generic owner's existing structured identity back to its
+source template and publish the requested class-method family at the existing
+pre-admission site. The ordinary source resolver retains concrete-owner
+admission. No parameter is invented, no type check is relaxed, and no ABI slot
+repair or source-library workaround is introduced.
+
+Original-first source_default_block_slot_repro.sh passes ten cases against
+Crystal 1.22.1 and exact-source S1 35q2454 (35q2456). The core trap becomes output
+A. Controls cover ordinary and aliased methods, multiple/default/named slots,
+generated allocators and the Time-shaped explicit factory, and reject a block
+used in place of a required ordinary argument. The existing ten alias-result
+cases pass original, lazy and eager phases. The scoped Adversary verdict is
+ROBUST for source-family availability before default/callback slot binding.
+Refresh after generic registration, selected-source ownership, default arity or
+block-slot layout changes.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+source-default-block-slot-family35q2456/result.json and its sibling
+source-default-block-slot-family35q2456.before.json/.after.json retain the gate
+and unchanged twelve test-input hashes. The live 1,916-file compiler source
+matches build.generic-class-source-family35q2454.source.json. Compiler SHA-256:
+55abdf8c47050ed40e3bee6e6903f2dd239cd9e50bf131d962bd0a5a7fc1ebe2;
+ast_to_hir.cr:
+5bf7ed6eddc6492a15e5d4d2a64074f978509323ea2a0a761f5a64158671381b.
+
+The generic-default adversary remains BROKEN separately: G(String) accepts an
+omitted default 65 for parameter T, while an explicit 65 is rejected. This
+acceptance predates this fix (35q2460 baseline and 35q2459 candidate); default
+materialization must bind the concrete source owner and validate the actual
+value, not overwrite its facts with a formal type. The successful callback
+regressions do not certify this obligation. Actual unchanged-input LavinMQ
+35q2461 retains UInt32#to_io(IO, LittleEndian); prelude hello 35q2462 retains
+IO#read_bytes(Int32, ByteFormat). No link, runtime, bootstrap or upstream parity
+is established.

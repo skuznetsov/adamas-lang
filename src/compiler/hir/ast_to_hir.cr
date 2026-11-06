@@ -128938,32 +128938,37 @@ module Adamas::HIR
       end
     end
 
-    # A bare generic namespace has no concrete instance registration. Publish
-    # its requested class-method declarations before overload selection, rather
-    # than discovering an arity-only template body after callback binding has
-    # already happened. The ordinary resolver still owns call admission.
+    # Generic class-method declarations belong to the source template even
+    # when a concrete receiver has deferred its instance registration. Publish
+    # the requested family before source binding and default expansion; the
+    # ordinary resolver still owns admission with the concrete owner context.
     private def register_source_generic_class_family(func_name : String) : Nil
       parts = parse_method_name_compact(func_name)
-      return unless parts.separator == '.' && !parts.owner.includes?('(')
+      return unless parts.separator == '.'
       method_name = parts.method || return
-      template = @generic_templates[parts.owner]? || return
-      base_name = parts.base
+      source_owner = if parts.owner.includes?('(')
+                       generic_owner_info(parts.owner).try(&.base) || return
+                     else
+                       parts.owner
+                     end
+      template = @generic_templates[source_owner]? || return
+      base_name = "#{source_owner}.#{method_name}"
       return unless function_def_overloads(base_name).empty?
       return unless @registering_source_generic_class_families.add?(base_name)
       begin
         templates = [template]
-        @generic_reopenings[parts.owner]?.try { |reopenings| templates.concat(reopenings) }
+        @generic_reopenings[source_owner]?.try { |reopenings| templates.concat(reopenings) }
         templates.each do |declaration|
           next unless body = declaration.node.body
           with_arena(declaration.arena) do
-            with_namespace_override(parts.owner) do
+            with_namespace_override(source_owner) do
               with_isolated_type_param_map({} of String => String) do
                 class_registration_body(body, declaration.arena).each do |expression|
                   member = unwrap_visibility_member_in_arena(declaration.arena[expression], declaration.arena)
                   next unless member.is_a?(Adamas::Compiler::Frontend::DefNode)
                   next unless def_receiver_is_self_from_node(member, declaration.arena)
                   next unless def_method_name_from_node(member, declaration.arena) == method_name
-                  register_type_method_from_def(member, parts.owner, declaration.arena)
+                  register_type_method_from_def(member, source_owner, declaration.arena)
                 end
               end
             end

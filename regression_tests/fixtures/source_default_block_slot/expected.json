@@ -1,0 +1,42 @@
+{
+  "own_alias_source_slot_regression.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "custom_new_omitted_default_block.cr": {
+    "status": 0,
+    "stdout": "H\n"
+  },
+  "custom_new_explicit_default_block.cr": {
+    "status": 0,
+    "stdout": "K\n"
+  },
+  "two_defaults_with_block.cr": {
+    "status": 0,
+    "stdout": "C\n"
+  },
+  "named_default_with_block.cr": {
+    "status": 0,
+    "stdout": "3\n"
+  },
+  "class_alias_and_ordinary_method_with_block.cr": {
+    "status": 0,
+    "stdout": "G\nM\n"
+  },
+  "block_does_not_fill_required_argument.cr": {
+    "status": 1,
+    "diagnostic": "argument"
+  },
+  "allocator_omitted_named_default.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "allocator_positional_default.cr": {
+    "status": 0,
+    "stdout": "ADBC"
+  },
+  "time_shaped_allocator_overload.cr": {
+    "status": 0,
+    "stdout": "AB\n"
+  }
+}

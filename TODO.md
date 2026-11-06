@@ -25469,10 +25469,11 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Audit intrinsic root identity for other source syntax sugar (Tuple,
   StaticArray, and nullable Nil). The pointer shadowing falsifier establishes
   this audit question; it does not establish failures for those siblings.
-- [ ] Repair the separate omitted-default/block ABI slot mismatch exposed by
+- [x] Repair the separate omitted-default/block ABI slot mismatch exposed by
   source_block_result_alias_repro.sh. Both baseline 35q2325 and 35q2375 trap:
   the callback occupies initial_capacity and the block slot is null. Their IR
-  is identical after excluding the two source-identity headers (35q2380).
+  is identical after excluding the two source-identity headers (35q2380). The
+  source-family publication correction below closes this case (35q2456).
 - Declared-return publication, default contracts, virtual replay, stock-prelude
   hello, fresh bootstrap, and unchanged LavinMQ runtime/test parity remain open.
 
@@ -25491,3 +25492,25 @@ integration, fresh bootstrap, or LavinMQ parity.
 - Declared-return ownership, default materialization, virtual replay, stock
   prelude, fresh bootstrap, and unchanged LavinMQ runtime/test parity remain
   open; this shared matcher correction does not close those frontiers.
+
+### 2026-11-06 — Publish generic class source families before callback slots
+
+- [x] Publish a concrete generic receiver's requested class-method family from
+  its source template before overload admission and default expansion. Keep the
+  ordinary resolver responsible for matching the concrete owner and arguments.
+  Late body discovery previously omitted the ordinary default and put the
+  callback in initial_capacity, leaving the actual block slot null.
+- Original-first source_default_block_slot_repro.sh passes all ten cases with
+  Crystal 1.22.1 and exact-source S1 35q2454 (35q2456). Controls include explicit,
+  positional and named-only defaults, aliased/instance methods, generated
+  allocators, a Time-shaped factory, and a strict missing-required-argument
+  rejection. The existing ten-case source_block_result_alias_repro.sh passes in
+  lazy and eager modes. The baseline traps on the core concrete generic case.
+- [ ] Validate a materialized generic default with the concrete owner's type
+  bindings. A default 65 for parameter T is incorrectly admitted for G(String)
+  on both baseline 35q2411 and this candidate (35q2460/35q2459); explicit 65 is
+  rejected. Source-family publication does not close this separate contract.
+- Unchanged-input LavinMQ still stops at UInt32#to_io(IO, LittleEndian)
+  (35q2461); stock-prelude hello still stops at IO#read_bytes(Int32, ByteFormat)
+  (35q2462). Default/return facts, virtual transport, bootstrap, runtime, and
+  upstream test parity remain open.
