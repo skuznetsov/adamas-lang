@@ -25092,3 +25092,56 @@ ast_to_hir.cr: 26cdda094a7ce32635767270d76e1e2f561a1a9df33bf1275359e6c698133cf5.
 Refresh after enum metadata/value lowering, predecessor identity, source result
 publication or integer autocast selection changes. Rollback is this atomic
 compiler commit. No app, shard, stdlib or unrelated WIP is changed.
+
+## 2026-11-06 — Early type visibility shares inherited lookup precedence
+
+UNIXServer#initialize's exact selected Def, arena and default expression were
+correct, and its actual had Socket::Type. Its Type annotation instead resolved
+to JSON::Any::Type (35q3251). The early visibility probe searched lexical
+namespaces only, so an unrelated suffix/contextual alias won before the final
+resolver could find the inherited type. It now reuses the existing full nested
+lookup for both current-class and override contexts. Existing own-type,
+included-module/superclass and enclosing-namespace precedence and source-order
+guards remain; no restriction or fallback admission is broadened.
+
+Original-first inherited_type_source_precedence_repro.sh passes six runtime
+cases and one strict wrong-enum default rejection on Crystal 1.22.1 and S1
+35q3269 (35q3277). Four positives fail on baseline S1 35q3233 (35q3266).
+Ancestor nested-type, generic declaration namespace and source default gates
+also pass (35q3279). Source adversary is ROBUST for this bounded lookup hunk;
+same-lineage review is correlated. Broader alias visibility, annotation
+qualification and private-type access are separate obligations.
+
+Additional stock-qualified controls pass explicit unrelated alias lookup but
+expose inherited builtin-name alias annotation and unrelated bare suffix-alias
+visibility (35q3284). Both failures are identical on baseline and candidate
+(35q3286/35q3285), not regressions from this hunk. Their unchanged sources and
+stock expectations are retained in fixtures/inherited_type_source_precedence_known_open;
+they are excluded explicitly from the bounded passing gate.
+
+Unchanged LavinMQ passes Socket::Type and next rejects HTTP::Server.new with
+Array(LavinMQ::HTTP::Handler) (35q3272). The source explicitly annotates the
+array with ::HTTP::Handler; absolute-path ownership is the next discriminator.
+Comparison 35q3281 preserves project, shard and installed stock stdlib bytes.
+The only compiled-source difference from diagnostic run 35q3251 is
+ast_to_hir.cr plus its binary; the private snapshot also contains one unused
+.orig backup. This establishes front-end progress, not object/link execution,
+complete prelude, bootstrap or upstream-test parity.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+inherited-type-precedence-permanent35q3277/result.json,
+inherited-type-precedence-neighbors35q3279/result.json,
+inherited-type-precedence-controls-stock35q3284/result.json,
+inherited-type-precedence-controls-candidate35q3285/result.json,
+inherited-type-precedence-controls-baseline35q3286/result.json,
+inherited-type-owner-baseline35q3266/result.json,
+lavinmq-selected-default-owner-trace35q3251/result.json,
+lavinmq-inherited-type-precedence35q3272/result.json, and
+inherited-type-precedence-lineage35q3281.json.
+All 1,916 compiler files match build.inherited-type-precedence35q3269.source.json
+(SHA-256 c87f11522293c03245a7d460067f59638d0d8a1e8759c59ebcdfae1e05fe7ffe).
+Compiler SHA-256: 821a76a200d3861e31af77926515c38e56662920cec38d1f499fb5a463442da4;
+ast_to_hir.cr: 0ffe98715775a5b7bb60e9120bc67ce99ba121f919fdb94531a03b6d354db82a.
+Refresh after nested-type precedence, alias lookup, source-order guards,
+annotation qualification or default-owner changes. Rollback is this atomic
+compiler commit. Application, stdlib and unrelated WIP remain unchanged.

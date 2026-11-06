@@ -25854,3 +25854,22 @@ integration, fresh bootstrap, or LavinMQ parity.
   the former Errno#value check and stop at initializer replay source ownership
   for Thread#initialize (35q3258); baseline hello stops at Errno#value
   (35q3261). Complete prelude, bootstrap and LavinMQ execution/parity are open.
+
+### 2026-11-06 — Preserve inherited type precedence in early lookup
+
+- [x] Reuse final nested-type lookup in the early visibility probe, including
+  included modules and superclass types before enclosing namespaces. Preserve
+  existing source-order guards, exact default owners and strict restrictions.
+- Original-first inherited_type_source_precedence_repro.sh passes six runtime
+  cases and a strict wrong-enum default rejection on Crystal 1.22.1 and exact
+  S1 35q3269 (35q3277). Four positives fail on the baseline (35q3266); three
+  namespace/default neighbor gates pass (35q3279).
+- Unchanged LavinMQ passes UNIXServer's Socket::Type default and reaches
+  HTTP::Server.new(Array(LavinMQ::HTTP::Handler)) (35q3272). Its source array
+  explicitly uses ::HTTP::Handler; investigate absolute-path/type publication
+  rather than changing generic variance. Application, shards and stdlib bytes
+  are unchanged (35q3281). No link, runtime, bootstrap or parity claim follows.
+- [ ] Close inherited builtin-name alias annotation and unrelated suffix-alias
+  visibility. The two frozen known-open fixtures are stock-qualified and fail
+  identically on baseline/candidate (35q3284–35q3286); do not count acceptance
+  of an undefined alias as a passing rejection test.

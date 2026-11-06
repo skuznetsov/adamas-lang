@@ -261,6 +261,24 @@ The frozen unsigned counterexample is retained under
 fixtures/enum_value_source_result_known_open with its original C\n oracle;
 its measured I/X outputs are failures, not alternate expectations.
 
+### Inherited type lookup precedence
+
+The early nested-type visibility probe and final type lookup must share the
+same own-type, included-module/superclass, then enclosing-namespace search.
+Otherwise a contextual or suffix alias can replace an inherited source
+restriction before the final resolver sees it. Reuse the existing nested-type
+resolver and its source-order guards; do not relax a default's restriction or
+make an unrelated alias visible as an inherited type.
+
+The original-first inherited_type_source_precedence_repro.sh gate covers six
+runtime cases and one strict wrong-enum default rejection (35q3277). Four
+positives fail on the baseline (35q3266). This bounded repair does not settle
+all alias visibility, annotation qualification or private-type lookup cases.
+Two stock-qualified counterexamples, inherited builtin-name aliases and
+unrelated suffix-alias visibility, fail identically before and after this
+repair (35q3284–35q3286). Preserve their original expectations under
+fixtures/inherited_type_source_precedence_known_open.
+
 ## Falsifiers and recovery
 
 Run each script with the exact candidate as its argument. The scripts first
@@ -273,6 +291,7 @@ and check semantic diagnostics and absence of an executable for rejections.
 - `regression_tests/source_array_helper_result_repro.sh`
 - `regression_tests/source_inline_callback_result_repro.sh`
 - `regression_tests/enum_value_source_result_repro.sh`
+- `regression_tests/inherited_type_source_precedence_repro.sh`
 - `regression_tests/nil_source_result_repro.sh`
 - `regression_tests/virtual_source_fact_transport_repro.sh`
 - `regression_tests/module_source_value_kind_repro.sh`

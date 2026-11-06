@@ -1,0 +1,62 @@
+[
+  {
+    "name": "inherited_enum_default",
+    "source": "fixtures/inherited_type_source_precedence/inherited_enum_default.cr",
+    "ok": true,
+    "expected": "A\n",
+    "source_sha256": "d9593b82744468a8837959b83604bc86a1469496a02458a934ccd5bc28fa84c5",
+    "qualification": "stock q3265 and candidate q3270 passed"
+  },
+  {
+    "name": "inherited_alias_default",
+    "source": "fixtures/inherited_type_source_precedence/inherited_alias_default.cr",
+    "ok": true,
+    "expected": "A\n",
+    "source_sha256": "569116bea725ab87da293135d119a0bb3d84a72f34ec377b70fe5da1a736d615",
+    "qualification": "stock q3265 and candidate q3270 passed"
+  },
+  {
+    "name": "inherited_method_restriction",
+    "source": "fixtures/inherited_type_source_precedence/inherited_method_restriction.cr",
+    "ok": true,
+    "expected": "A\n",
+    "source_sha256": "24383eac6ed34be511b0379807f50be19ace07267bcdc65ef2f6d4a94d720045",
+    "qualification": "stock q3265 and candidate q3270 passed"
+  },
+  {
+    "name": "inherited_type_over_top_level",
+    "source": "fixtures/inherited_type_source_precedence/inherited_type_over_top_level.cr",
+    "ok": true,
+    "expected": "A\n",
+    "source_sha256": "2d0c2a6967dbfd8fdc0006b6484ce64ba795d5bfde618d025464487b0ea46eac",
+    "qualification": "stock q3265 and candidate q3270 passed"
+  },
+  {
+    "name": "own_alias_shadows_parent",
+    "source": "fixtures/inherited_type_source_precedence/own_alias_shadows_parent.cr",
+    "ok": true,
+    "expected": "A\n",
+    "source_sha256": "f62b954b004287d938a1b78c2e78cf3fe935cd89ec13db96ef9a7bbe8212fae8",
+    "qualification": "stock q3265 and candidate q3270 passed"
+  },
+  {
+    "name": "wrong_inherited_enum_default",
+    "source": "fixtures/inherited_type_source_precedence/wrong_inherited_enum_default.cr",
+    "ok": false,
+    "expected": "",
+    "source_sha256": "c1aaa5cee0c6fc25314585421d95c3de8e0bd7fe9282f6536088c7ad82e9a8a6",
+    "qualification": "stock q3265 and candidate q3270 rejected as intended",
+    "expected_diagnostic": {
+      "stock": "can't restrict Int32 to Type",
+      "candidate": "can't restrict Int32 to CarrierBase::Type"
+    }
+  },
+  {
+    "name": "include_nested_type_over_unrelated_alias",
+    "source": "fixtures/inherited_type_source_precedence/include_nested_type_over_unrelated_alias.cr",
+    "ok": true,
+    "expected": "A\n",
+    "source_sha256": "76b294379abe00fbff7813c1dbee76d37d36b0e4e16e6bbbe3a090ef1c22884d",
+    "qualification": "stock q3265 and candidate q3270 passed"
+  }
+]

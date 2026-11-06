@@ -71513,16 +71513,16 @@ module Adamas::HIR
     end
 
     # Check if the current class or namespace override (or any ancestor
-    # namespace) has a nested type with the given short name. Unlike
-    # nested_shadowed_type_name? this does NOT require the name to also be
-    # a top-level type. Walks up the namespace hierarchy so that code
-    # inside Hash::Entry can still see Hash::Entry via the parent Hash.
+    # namespace) has a nested type with the given short name. Share the
+    # actual lookup's own-type, ancestor, then enclosing-namespace order:
+    # a lexical-only probe would let an unrelated suffix alias hide an
+    # inherited type before the full resolver can see it.
     private def current_or_override_has_nested_type?(name : String) : Bool
       if override = @current_namespace_override
-        return true if namespace_chain_has_nested?(override, name)
+        return true if nested_type_full_name_in_namespace_chain(override, name)
       end
       if current = @current_class
-        return true if namespace_chain_has_nested?(current, name)
+        return true if nested_type_full_name_in_namespace_chain(current, name)
       end
       false
     end

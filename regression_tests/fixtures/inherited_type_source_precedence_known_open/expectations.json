@@ -1,0 +1,18 @@
+{
+  "inherited_builtin_alias_and_absolute_global.cr": {
+    "stock_compile_exit": 0,
+    "stock_stdout": "AS\n",
+    "baseline_compile_exit": 1,
+    "candidate_compile_exit": 1,
+    "candidate_diagnostic": "no overload matches TypeSink.accept_int32 for argument types (String)",
+    "sha256": "48f8b52da98664c8809990012ed59f4f68f65b258cb0dccb3ecb06131946936f"
+  },
+  "unrelated_bare_alias_rejected.cr": {
+    "stock_compile_exit": 1,
+    "stock_diagnostic": "undefined constant Orphan",
+    "baseline_compile_exit": 0,
+    "candidate_compile_exit": 0,
+    "candidate_stdout": "",
+    "sha256": "19642baa2a0937474fb2ebdb1fcaccd1332115dd344f5e4703dca7b4cd94630d"
+  }
+}
