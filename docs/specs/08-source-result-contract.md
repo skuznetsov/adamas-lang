@@ -279,6 +279,31 @@ unrelated suffix-alias visibility, fail identically before and after this
 repair (35q3284–35q3286). Preserve their original expectations under
 fixtures/inherited_type_source_precedence_known_open.
 
+## Resolved array elements are canonical identities
+
+An explicit Array element annotation is resolved in its source scope once,
+including the active method-forall substitutions. Early call inference,
+class-ivar inference and literal lowering must consume that resolved name
+through the canonical interner. A later Array constructed from an element
+TypeRef uses the same canonical boundary. Reinterpreting either result as a
+fresh source annotation can bind a global HTTP::Handler to a caller-local
+LavinMQ::HTTP::Handler and choose or reject the wrong overload.
+
+The original-first array_source_type_identity_repro.sh gate covers four
+runtime controls and one strict relative-type rejection (35q3330). These
+include rooted aliases with nilable elements, a rooted applied generic head
+with a source-relative child and specialized [] of T. Three namespace/array
+neighbors pass (35q3304). The canonical API is not permission to use an
+unresolved source fragment after clearing its declaration context.
+
+Keep three stock-qualified counterexamples separate in
+fixtures/array_source_type_identity_known_open: applied Indexable matching,
+inferred rooted constructor results, and class-method forall admission.
+They fail before and after this bounded repair. An extra array TypeRef
+consumer change does not repair an already-rebound constructor result
+(35q3326/35q3327); investigate its earlier producer rather than widening
+Array restrictions or changing variance.
+
 ## Falsifiers and recovery
 
 Run each script with the exact candidate as its argument. The scripts first
@@ -292,6 +317,7 @@ and check semantic diagnostics and absence of an executable for rejections.
 - `regression_tests/source_inline_callback_result_repro.sh`
 - `regression_tests/enum_value_source_result_repro.sh`
 - `regression_tests/inherited_type_source_precedence_repro.sh`
+- `regression_tests/array_source_type_identity_repro.sh`
 - `regression_tests/nil_source_result_repro.sh`
 - `regression_tests/virtual_source_fact_transport_repro.sh`
 - `regression_tests/module_source_value_kind_repro.sh`

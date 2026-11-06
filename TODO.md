@@ -25873,3 +25873,25 @@ integration, fresh bootstrap, or LavinMQ parity.
   visibility. The two frozen known-open fixtures are stock-qualified and fail
   identically on baseline/candidate (35q3284–35q3286); do not count acceptance
   of an undefined alias as a passing rejection test.
+
+### 2026-11-06 — Preserve canonical array element identities
+
+- [x] Resolve explicit source element annotations once, then share canonical
+  interning across early call inference, class-ivar inference and literal
+  lowering. Compose Array from an existing element TypeRef canonically too.
+- Original-first array_source_type_identity_repro.sh passes four runtime
+  controls and one strict relative-type rejection on Crystal 1.22.1 and exact
+  S1 35q3300 (35q3330). Three namespace/array neighbor gates pass (35q3304).
+- Unchanged LavinMQ passes HTTP::Server.new's rooted handler array and next
+  rejects Crystal::System::Socket.set_blocking(Socket::Family, Bool)
+  (35q3303). Trace 35q3307 shows a parent fallback materializing an fd
+  initializer for a family/type/protocol request; locate the first incorrect
+  annotation or selected Def before changing that path. No runtime or parity
+  claim follows from this front-end progress.
+- [ ] Close applied Indexable matching, inferred rooted constructor identity
+  and class-method forall admission. Preserve their original stdout in
+  fixtures/array_source_type_identity_known_open. Baseline and candidate both
+  reject these stock-valid cases (35q3310/35q3329 and 35q3308/35q3322).
+- [ ] Audit other source-name versus canonical-identity boundaries in inferred
+  Tuple, Range and NamedTuple composition. Their stringify/reparse shape is
+  a source-inspection lead, not a reproduced failure or a verified fix.

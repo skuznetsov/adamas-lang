@@ -30442,7 +30442,7 @@ module Adamas::HIR
         if of_type = expr_node.of_type
           if type_str = stringify_type_expr(of_type)
             element_name = normalize_declared_type_name(type_str)
-            return type_ref_for_name("Array(#{element_name})")
+            return type_ref_for_resolved_name("Array(#{element_name})")
           end
         end
         if first_id = expr_node.elements.first?
@@ -82255,7 +82255,7 @@ module Adamas::HIR
             if trace_array_of
               bootstrap_trace_puts "[ARRAY_OF_TRACE] class=#{@current_class || ""} phase=after_stringify expr=#{of_type.index} name=#{type_name}"
             end
-            return type_ref_for_name("Array(#{normalize_declared_type_name(type_name)})")
+            return type_ref_for_resolved_name("Array(#{normalize_declared_type_name(type_name)})")
           end
           if trace_array_of
             bootstrap_trace_puts "[ARRAY_OF_TRACE] class=#{@current_class || ""} phase=after_stringify_nil expr=#{of_type.index}"
@@ -152392,7 +152392,9 @@ module Adamas::HIR
         return nil
       end
 
-      array_type = type_ref_for_name("Array(#{element_type_name})")
+      # The element TypeRef already owns its canonical identity. Re-parsing
+      # it as a source annotation would rebind names in the caller scope.
+      array_type = type_ref_for_resolved_name("Array(#{element_type_name})")
       @array_type_for_element_cache[element_type] = array_type
       array_type
     end
@@ -152413,7 +152415,7 @@ module Adamas::HIR
       element_type = if of_type = node.of_type
                        if type_str = stringify_type_expr(of_type)
                          element_type_name = normalize_declared_type_name(type_str)
-                         type_ref_for_name(element_type_name)
+                         type_ref_for_resolved_name(element_type_name)
                        else
                          element_ids.size > 0 ? ctx.type_of(element_ids.first) : TypeRef::INT32
                        end

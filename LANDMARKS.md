@@ -25145,3 +25145,63 @@ ast_to_hir.cr: 0ffe98715775a5b7bb60e9120bc67ce99ba121f919fdb94531a03b6d354db82a.
 Refresh after nested-type precedence, alias lookup, source-order guards,
 annotation qualification or default-owner changes. Rollback is this atomic
 compiler commit. Application, stdlib and unrelated WIP remain unchanged.
+
+## 2026-11-06 — Array annotations retain canonical source identities
+
+LavinMQ explicitly annotates its handler array with ::HTTP::Handler. Its
+source lookup resolved that name correctly, then early Array inference
+reparsed the unrooted canonical result in LavinMQ::HTTP and produced a
+phantom local handler type. Trace 35q3298 isolates this boundary. Fixing only
+literal-body lowering did not change the error (35q3297); the same contract
+must reach early call and class-ivar inference. All three explicit-of paths
+now use the existing canonical interner after source normalization. Array
+composition from an element TypeRef uses that same boundary. No generic
+variance, source restriction or application code is changed.
+
+Original-first array_source_type_identity_repro.sh passes four runtime
+controls and one strict local-type rejection on Crystal 1.22.1 and exact S1
+35q3300 (35q3330). Controls cover absolute annotation, alias/nilable shadow,
+rooted generic head with relative child and a specialized method [] of T.
+The rooted baseline case fails (35q3293), as do the baseline alias and applied
+head cases (35q3310/35q3329). Three namespace/array neighbor gates pass
+(35q3304). The bounded source adversary returned ROBUST for these four
+canonical consumers. Same-lineage source review is correlated; it does not
+close the separate inferred-array or applied-module failures.
+
+Three original-qualified counterexamples remain open in
+fixtures/array_source_type_identity_known_open. Applied Indexable matching,
+inferred constructor rooting and class-method forall admission all reject
+before and after the repair. An extra early Array TypeRef consumer change
+still fails the inferred case (35q3326); trace 35q3327 shows the constructor
+result already rebinds before Array composition. Do not count these as
+passing controls or weaken the original expected outputs.
+
+Unchanged LavinMQ passes the HTTP handler-array overload, then rejects
+Crystal::System::Socket.set_blocking(Socket::Family, Bool) (35q3303).
+Trace 35q3307 records a parent fallback materializing an fd initializer from
+a family/type/protocol request. This is the next source-owner/selection
+frontier, not evidence of a valid fd conversion. No object, link, runtime,
+complete prelude, fresh bootstrap or upstream-test parity is established.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+array-source-type-final-permanent35q3330/result.json,
+array-source-type-contract-neighbors35q3304/result.json,
+array-source-controls-stock35q3306/result.json,
+array-source-controls-candidate35q3308/result.json,
+array-source-controls-baseline35q3310/result.json,
+array-source-inferred-stock35q3321/result.json,
+array-source-followup-stock35q3319/result.json,
+array-source-followup-candidate35q3322/result.json,
+array-source-followup-baseline35q3329/result.json,
+lavinmq-array-source-type-contract35q3303/result.json,
+lavinmq-socket-source-trace35q3307/result.json, and
+array-source-type-lineage35q3317.json.
+All 1,916 compiler files match build.array-source-type-contract35q3300.source.json
+(SHA-256 bacd8586950af1bda5cf58594710eb3054b954fe4d76a9d29e085ba76d652b56).
+Compiler SHA-256: 344fa37cca36a49f74c5bec05a01e3259b523c6564cb0ff27cc4daec1b36d8cb;
+ast_to_hir.cr: 040adda0ccecbef3a70ee7a3d545fe9120baccf91b18b0e3ea2eef9a4b6750ea.
+Project, shard and installed stdlib input manifests are unchanged; compared
+with 35q3272, only AST, binary and an unused baseline .orig backup differ.
+Refresh after annotation resolution, generic binding, canonical interning,
+array inference or overload matching changes. Rollback is this atomic compiler
+commit. Unrelated WIP remains outside the change.

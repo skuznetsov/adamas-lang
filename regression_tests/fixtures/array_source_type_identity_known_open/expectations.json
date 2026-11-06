@@ -1,0 +1,38 @@
+[
+  {
+    "name": "rooted_generic_relative_child",
+    "source": "rooted_generic_relative_child.cr",
+    "source_sha256": "83000e47c187c4fce2fff0d9d149d9390307379813480348716452362b5b71ff",
+    "stock_stdout": "A\n",
+    "stock": "35q3306",
+    "baseline_compile_exit": 1,
+    "baseline": "35q3310",
+    "candidate_compile_exit": 1,
+    "candidate": "35q3308",
+    "scope": "Rooted applied Array element becomes correct on candidate, but matching Indexable(applied element) remains rejected. Do not count as a passing candidate control."
+  },
+  {
+    "name": "inferred_nonempty_global_element_exact_array",
+    "source": "inferred_nonempty_global_element_exact_array.cr",
+    "source_sha256": "daaf17db5be9409f18ed7941c3f7abdcd0c845c581d3c053fddb324764da7b43",
+    "stock_stdout": "A\n",
+    "stock": "35q3321",
+    "baseline_compile_exit": 1,
+    "baseline": "35q3329",
+    "candidate_compile_exit": 1,
+    "candidate": "35q3322",
+    "scope": "Rooted constructor result is already rebound before Array composition; extra array TypeRef hunk fails too (35q3326/35q3327)"
+  },
+  {
+    "name": "instantiated_method_formal_array_element",
+    "source": "instantiated_method_formal_array_element.cr",
+    "source_sha256": "a3b328398b0bf1f6672c2acda2f450f37057c5968df4f9267c928e74276f59ed",
+    "stock_stdout": "A\n",
+    "stock": "35q3319",
+    "baseline_compile_exit": 1,
+    "baseline": "35q3329",
+    "candidate_compile_exit": 1,
+    "candidate": "35q3322",
+    "scope": "Class-method forall admission rejects Probe.build(Concrete) before its [] of T body is lowered"
+  }
+]

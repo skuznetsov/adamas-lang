@@ -1,0 +1,54 @@
+[
+  {
+    "name": "rooted_array_annotation",
+    "source": "fixtures/array_source_type_identity/rooted_array_annotation.cr",
+    "source_sha256": "ce7af3bedd98bd1f60edf405a9283724471e4db0c83c9fb31131f1b6db63adb4",
+    "ok": true,
+    "expected_stdout": "A\n",
+    "stock_qualification": "stock q3292 passed exact stdout",
+    "candidate_qualification": "q3302 and q3311: exact rooted stdout or strict local-type rejection",
+    "purpose": "An explicit ::HTTP::Handler annotation must retain global-root identity inside LavinMQ::HTTP."
+  },
+  {
+    "name": "relative_array_annotation_rejected",
+    "source": "fixtures/array_source_type_identity/relative_array_annotation_rejected.cr",
+    "source_sha256": "e44b970dc4819cc6c03f955365b4e605c04ff52c9a5469334b1571f8cb4ffada",
+    "ok": false,
+    "expected_stdout": "",
+    "stock_diagnostic": "expected argument #1 to 'HTTP::Server.accept' to be Indexable(HTTP::Handler), not Array(LavinMQ::HTTP::Handler)",
+    "candidate_diagnostic": "no overload matches 'HTTP::Server.accept' with types Array(LavinMQ::HTTP::Handler)",
+    "stock_qualification": "stock q3292 rejected as intended",
+    "candidate_qualification": "q3302 and q3311: exact rooted stdout or strict local-type rejection",
+    "purpose": "An unrooted Handler must resolve to LavinMQ::HTTP::Handler, preserving the strict overload rejection."
+  },
+  {
+    "name": "rooted_alias_nilable_shadow",
+    "source": "fixtures/array_source_type_identity/rooted_alias_nilable_shadow.cr",
+    "source_sha256": "bdd59be98f9a630a15ffe3ee0f63dbb4e7545e96d61e7ccb1915bdf4f58236d3",
+    "ok": true,
+    "expected_stdout": "A\n",
+    "stock_qualification": "q3306 exact stdout A newline",
+    "candidate_qualification": "q3308 exact stdout A newline",
+    "purpose": "Preserve a rooted alias with nilable element despite a same-named local alias and target"
+  },
+  {
+    "name": "direct_array_rooted_generic_relative_child",
+    "source": "fixtures/array_source_type_identity/direct_array_rooted_generic_relative_child.cr",
+    "source_sha256": "e432159a31f9eaac2abef017fd32ef17035d7ac898862818ddd38eed2564dcc4",
+    "ok": true,
+    "expected_stdout": "A\n",
+    "stock_qualification": "35q3319 exact stdout A newline",
+    "candidate_qualification": "35q3322 exact stdout A newline",
+    "purpose": "A rooted generic head retains its global identity while the relative Handler child resolves at the source literal"
+  },
+  {
+    "name": "specialized_method_array_formal",
+    "source": "fixtures/array_source_type_identity/specialized_method_array_formal.cr",
+    "source_sha256": "1589fcca507e10d2ee2be0379b56e5791d3232745f125c159b49f83dcac639da",
+    "ok": true,
+    "expected_stdout": "A\n",
+    "stock_qualification": "35q3325 exact stdout A newline",
+    "candidate_qualification": "35q3328 exact stdout A newline",
+    "purpose": "A specialized method forall T is substituted before canonical interning of [] of T"
+  }
+]
