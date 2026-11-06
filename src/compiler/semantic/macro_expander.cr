@@ -1845,7 +1845,7 @@ module Adamas
           # A block cannot be erased by falling through to the blockless API.
           supported = case receiver
                       when MacroArrayValue
-                        member.in?("map", "select", "reject", "each", "each_with_index")
+                        member.in?("map", "select", "reject", "each", "each_with_index", "all?", "any?")
                       when MacroNamedTupleValue
                         member.in?("map", "select", "reject", "each")
                       else
@@ -1862,6 +1862,8 @@ module Adamas
           case member
           when "map", "select", "reject"
             evaluate_macro_block_map(receiver, member, block, context)
+          when "all?", "any?"
+            evaluate_macro_block_quantifier(receiver.as(MacroArrayValue), member, block, context)
           else
             evaluate_macro_block_each(receiver, member, block, context)
           end
@@ -1979,6 +1981,31 @@ module Adamas
           else
             return macro_nil_value
           end
+        end
+
+        # ArrayLiteral#all? and #any? evaluate the block once per visited
+        # element and stop at the first result that decides the answer. The
+        # block evaluator binds its first formal in the shared macro-variable
+        # map, matching Crystal's interpreter behavior; later formals are left
+        # untouched because these methods yield only one value.
+        private def evaluate_macro_block_quantifier(
+          receiver : MacroArrayValue,
+          member : String,
+          block : Frontend::BlockNode,
+          context : Context
+        ) : MacroValue
+          all = member == "all?"
+
+          receiver.elements.each do |elem|
+            predicate = evaluate_block_body(block, context, [elem] of MacroValue)
+            if all
+              return MacroBoolValue.new(false) unless predicate.truthy?
+            else
+              return MacroBoolValue.new(true) if predicate.truthy?
+            end
+          end
+
+          MacroBoolValue.new(all)
         end
 
         private def evaluate_block_body(
@@ -2868,6 +2895,10 @@ module Adamas
           named_args : Hash(String, MacroValue)?,
           context : Context,
         ) : MacroValue
+          if receiver.is_a?(MacroArrayValue) && member.in?("all?", "any?")
+            raise MacroEvaluationError.new("#{receiver.class_name}##{member} is expected to be invoked with a block, but no block was given")
+          end
+
           if receiver.is_a?(MacroRangeValue)
             if member.in?("begin", "end", "excludes_end?", "to_a")
               check_macro_range_arguments(member, args, named_args)

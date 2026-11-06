@@ -466,6 +466,28 @@ source/error/lookup gates. These checks do not establish every nested type
 grammar rule, canonical rendering of arbitrary ASTs, complete prelude,
 bootstrap or unchanged LavinMQ execution and test parity.
 
+## Macro array predicates and statement diagnostics
+
+ArrayLiteral#all? and #any? require a block and no positional or named arguments.
+Evaluate only the visited elements, through the same shared variable bindings as
+other macro Array operations. Stop at the first decisive predicate; an empty
+array returns true for all? and false for any?. The result is a BoolLiteral.
+Missing block formals remain lazy and preserve an existing outer binding.
+
+Retain every non-output top-level macro directive for compile-time evaluation,
+even when its result is unused, rather than only syntactically recognized raise
+forms. Empty expansion text is valid; an Error diagnostic from
+the macro interpreter must propagate through HIR and reject compilation before
+an executable is emitted. Global unknown-method behavior and remaining macro
+reflection APIs are separate open contracts. Handler-free BeginNode sequences
+in value position remain an observed open evaluator gap (35q3879/35q3880);
+retaining a directive does not certify every node the interpreter can encounter.
+
+The original-first macro_array_predicate_repro.sh gate checks seven runtime
+controls and three strict rejections; the interpolation/block and CLI expansion
+error gates guard shared bindings, lazy branches and rejection propagation.
+These checks do not establish complete prelude, bootstrap or LavinMQ parity.
+
 ## Falsifiers and recovery
 
 Run each script with the exact candidate as its argument. The scripts first
@@ -500,6 +522,7 @@ and check semantic diagnostics and absence of an executable for rejections.
 - `regression_tests/cli_macro_expansion_error_repro.sh`
 - `regression_tests/macro_ordered_registry_repro.sh`
 - `regression_tests/macro_interpolation_expressions_repro.sh`
+- `regression_tests/macro_array_predicate_repro.sh`
 - `regression_tests/macro_source_declaration_repro.sh`
 - `spec/parser/macro_def_parameter_cache_spec.cr`
 - `spec/parser/macro_keyword_type_declaration_spec.cr`

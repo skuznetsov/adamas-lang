@@ -5372,10 +5372,10 @@ module Adamas
           # Statement-position `{% expr %}` (output=false) is compile-time only; it emits no runtime code.
           if node.output
             collect_top_level_nodes(arena, arena_index, node.expression, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena, main_arenas: main_arenas, ordered_type_nodes: ordered_type_nodes)
-          elsif collect_main_exprs && macro_statement_may_raise?(arena, node.expression)
-            # A top-level `{% raise ... %}` must still abort compilation. Lowering
-            # a statement macro runs its compile-time effects and emits only nil,
-            # so routing it through main is runtime-neutral.
+          elsif collect_main_exprs
+            # Every statement directive evaluates at compile time, including an
+            # unused assignment or call that can fail without an explicit raise.
+            # Lowering discards its text and emits only nil at runtime.
             main_exprs << ((packed_arena_index.to_u64 << 32) | expr_id.index.to_u64)
           end
         when Frontend::VisibilityModifierNode
@@ -5798,34 +5798,6 @@ module Adamas
         return nil if length <= 0 || start < 0 || start >= source.bytesize
         length = source.bytesize - start if start + length > source.bytesize
         source.byte_slice(start, length)
-      end
-
-      private def macro_statement_may_raise?(arena : Frontend::ArenaLike, expr_id : Frontend::ExprId, depth : Int32 = 0) : Bool
-        return false if expr_id.invalid? || depth > 8
-        node = arena[expr_id]
-        case node
-        when Frontend::RaiseNode
-          true
-        when Frontend::BeginNode
-          node.body.any? { |stmt| macro_statement_may_raise?(arena, stmt, depth + 1) }
-        when Frontend::IfNode
-          return true if node.then_body.any? { |stmt| macro_statement_may_raise?(arena, stmt, depth + 1) }
-          if elsifs = node.elsifs
-            return true if elsifs.any? { |branch| branch.body.any? { |stmt| macro_statement_may_raise?(arena, stmt, depth + 1) } }
-          end
-          if else_body = node.else_body
-            return true if else_body.any? { |stmt| macro_statement_may_raise?(arena, stmt, depth + 1) }
-          end
-          false
-        when Frontend::UnlessNode
-          return true if node.then_branch.any? { |stmt| macro_statement_may_raise?(arena, stmt, depth + 1) }
-          if else_branch = node.else_branch
-            return true if else_branch.any? { |stmt| macro_statement_may_raise?(arena, stmt, depth + 1) }
-          end
-          false
-        else
-          false
-        end
       end
 
       # Resolve a macro for-loop iterable to a list of string values

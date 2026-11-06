@@ -25687,3 +25687,50 @@ Application/shard/stdlib input-manifest SHA-256:
 Refresh after source-provider ownership, macro projection/formatting, declaration
 grammar or AST-cache changes. Rollback is this atomic compiler commit. Application
 and stdlib are unchanged; unrelated WIP remains untouched.
+
+
+## 2026-11-06 — Macro Array predicates preserve lazy evaluation and errors
+
+ArrayLiteral#all?/any? now share the existing block evaluator and mutable macro
+variable map. They return BoolLiteral, honor empty identities, stop at the first
+result that decides the predicate, and reject a missing block or extra arguments.
+The implementation does not execute unvisited elements or missing formals.
+
+An adversarial unused assignment exposed a second owner boundary: the Array-only
+candidate accepted {% result = [1].all? %} because CLI retained only statement
+forms recognized as explicit raise (35q3864). Retain every non-output directive
+and propagate Error diagnostics from run_macro_statement_effects. Empty text
+remains valid; a known API failure cannot disappear with its unused result.
+Global unknown MacroValue methods, typed owner reflection and raw macro-literal
+collection remain separate work, outside this change.
+
+Original-first macro_array_predicate_repro.sh passes seven runtime controls and
+three strict rejections on stock Crystal 1.22.1 and S1 35q3866 (20 checks,
+35q3868). Exact stdout, diagnostic identity, no executable for rejection and
+run_safe resource/exit evidence are checked. The 44-case interpolation/block and
+four-case CLI expansion-error gates pass on both compilers (35q3869). This is
+bounded macro-interpreter evidence, not full prelude, fresh bootstrap or unchanged
+LavinMQ server execution/test parity.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+macro-array-statement-contract-gate35q3868/result.json,
+macro-array-statement-contract-neighbors35q3869/result.json, and
+macro-array-predicates-isolated-gate35q3864/result.json.
+All 1,916 compiler .cr files match
+build.macro-array-statement-contract35q3866.source.json
+(SHA-256 fed1e8389a6cc6959c25fc6320e9e79aa40808b75a2b02c595b803cc347d933a).
+Compiler SHA-256: 10bc9cd1b70af6b710a7690fe1586f4e96fbf7071f90b1b288ba8460689d79a9.
+Fixture-manifest SHA-256:
+49772908904729ef8dda28f54ff7886bcdc707254c01dc398a145923fd5818c5.
+Refresh after macro directive collection, diagnostic propagation, Array dispatch
+or block binding changes. Rollback is this atomic compiler commit. Application,
+stdlib and unrelated WIP are unchanged.
+
+Bounded Adversary verdict: ROBUST for the measured Array predicate, directive
+retention and direct API-error channel. A separate source-review hypothesis was
+qualified: stock executes a handler-free ordinary begin nested in a macro
+assignment, while S1 35q3866 fails to expose its side effect (35q3879/35q3880).
+This is an open value-evaluator gap, not proof of complete statement semantics.
+The ensure-only concern was retracted as a required capability: stock rejects
+executing ExceptionHandler in a macro. Next: fix handler-free sequence evaluation
+without admitting handlers or changing stdlib.

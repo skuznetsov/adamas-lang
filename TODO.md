@@ -26120,3 +26120,27 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Preserve the selected Def/Arena and original ** call shape through
   remangling, block canonicalization and final emission. Keep positional
   NamedTuple overloads distinct; do not relax pending-result or type guards.
+
+
+### 2026-11-06 — Evaluate macro Array predicates and unused directives
+
+- [x] Implement ArrayLiteral#all?/any? with a BoolLiteral result, empty identities,
+  short circuiting and the shared macro-block variable contract. Require a block
+  and reject positional/named arguments.
+- [x] Retain every non-output top-level macro directive for compile-time
+  evaluation. Propagate interpreter Error diagnostics even when output is empty;
+  an unused assignment cannot suppress a known macro API error.
+- Original-first macro_array_predicate_repro.sh passes ten cases per compiler on
+  Crystal 1.22.1 and exact S1 35q3866 (35q3868). The 44-case interpolation/block
+  gate and four-case CLI expansion-error gate also pass on both (35q3869).
+- The Array-only candidate accepted an unused blockless all? assignment instead
+  of rejecting it (35q3864); retaining directives and carrying diagnostics closes
+  that discriminator without a global unknown-method policy change.
+- [ ] Keep remaining macro API/reflection diagnostics separate from normal
+  runtime constant initialization. Neither may use the other's evaluator as a
+  semantic substitute. No full-prelude, bootstrap or LavinMQ parity claim.
+- [ ] Execute handler-free BeginNode sequences in macro value position, sharing
+  variables and returning the last result. A stock-qualified nested assignment
+  executes its side effect on Crystal but fails on S1 35q3866 (35q3879/35q3880).
+  Stock rejects ensure/rescue ExceptionHandler execution; do not add handler
+  support as a substitute. This is the next bounded evaluator fix.

@@ -93220,6 +93220,12 @@ module Adamas::HIR
         # Assignments and other expressions: evaluate for variable side effects;
         # the produced text is discarded.
         expander.expand_expression(expr_id, variables: vars, owner_type: owner_type)
+        # Empty output is valid, but an interpreter diagnostic is still fatal.
+        if diagnostic = expander.diagnostics.find { |entry| entry.level == Adamas::Compiler::Semantic::DiagnosticLevel::Error }
+          source = source_for_arena(@arena) || ""
+          formatted = Adamas::Compiler::Semantic::DiagnosticFormatter.format(source, diagnostic)
+          raise LoweringError.new("invalid macro statement:\n#{formatted}", node)
+        end
       end
     end
 
