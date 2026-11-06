@@ -1,0 +1,38 @@
+{
+  "class_first.cr": {
+    "status": 0,
+    "stdout": "CICIBL\n"
+  },
+  "instance_first.cr": {
+    "status": 0,
+    "stdout": "ICICBL\n"
+  },
+  "wrong_kind.cr": {
+    "status": 1,
+    "original_diagnostic": "expected argument #1",
+    "candidate_diagnostic": "no overload matches"
+  },
+  "wrong_kind_direct.cr": {
+    "status": 1,
+    "original_diagnostic": "expected argument #1",
+    "candidate_diagnostic": "no overload matches"
+  },
+  "mixed_wrong_kind.cr": {
+    "status": 1,
+    "original_diagnostic": "expected argument #1",
+    "candidate_diagnostic": "no overload matches"
+  },
+  "mixed_wrong_kind_direct.cr": {
+    "status": 1,
+    "original_diagnostic": "expected argument #1",
+    "candidate_diagnostic": "no overload matches"
+  },
+  "pair_argument_order.cr": {
+    "status": 0,
+    "stdout": "A:CI;B:IC\n"
+  },
+  "interleaved_class_objects.cr": {
+    "status": 0,
+    "stdout": "P:AIBIAIB\n"
+  }
+}

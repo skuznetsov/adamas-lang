@@ -24306,3 +24306,45 @@ regressions do not certify this obligation. Actual unchanged-input LavinMQ
 35q2461 retains UInt32#to_io(IO, LittleEndian); prelude hello 35q2462 retains
 IO#read_bytes(Int32, ByteFormat). No link, runtime, bootstrap or upstream parity
 is established.
+
+## 2026-11-06 — Source kind belongs to deferred demand and body identity
+
+Virtual replay retained ABI argument types while dropping the source argument
+facts used for admission. A class object supplied through Extend and an instance
+could therefore share a pending signature or materialized body. Preserve owned
+copies of those facts through demand recording, replay, final repair, and pending
+callsite consumption. Use the same source-kind-sensitive identity for both
+selection and the emitted body. A complete rejected source binding cannot be
+revived through the carrier-only fallback.
+
+The first direct-body candidate still failed instance-first ordering: LLVM IR
+35q2468 shows the top-level shortcut sending the later class-object call to the
+instance body. Decline that shortcut before mutation for the complete positional
+module/type-object shape; the existing selected-source corridor owns its body
+name. No source-library workaround or relaxed restriction is involved.
+
+Original-first virtual_source_fact_transport_repro.sh passes all eight cases
+against Crystal 1.22.1 and exact-source S1 35q2476 (35q2482). Both argument-kind
+orders, two-argument reversal and interleaved class objects produce exact stdout;
+four direct/virtual and mixed-union negatives retain semantic rejection. The
+40-case module gate and selected-source, virtual-overload, named-argument and
+empty-rest neighbors pass (35q2484/35q2478). The scoped Adversary verdict is
+ROBUST for these complete positional source facts. Refresh after source-fact
+projection, pending/replay identity, method mangling or parameter-kind changes.
+Positive incomplete, named/rest/default-transformed and mixed-kind body inputs
+are not certified by these fixtures.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+virtual-source-fact-original-first35q2482/result.json,
+virtual-source-kind-module-guard35q2484/result.json and
+virtual-source-fact-transport-qualified35q2489.json/.files.json. All 1,916 live
+compiler source files match build.virtual-direct-kind-bare-fix35q2476.source.json;
+all eleven new test inputs retain their pre-gate hashes. Compiler SHA-256:
+4f6ac8b7195662f0e40d3dc34a7d130e37e97d0e39f6edce07fc109b72a77085;
+ast_to_hir.cr:
+6bb5e8a82228ca68255fff286f22224e7a50e6a6297986414397d1a12e0e21ba.
+
+Fresh LavinMQ probe 35q2486 retains all 2,582 noncompiler inputs from baseline
+35q2461 and stops at IO#read_bytes(Int32, IO::ByteFormat). Prelude hello 35q2487
+fails at the same call. Neither run establishes linking, runtime, bootstrap or
+upstream test parity; default and declared-result ownership remain open.

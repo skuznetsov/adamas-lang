@@ -25514,3 +25514,22 @@ integration, fresh bootstrap, or LavinMQ parity.
   (35q2461); stock-prelude hello still stops at IO#read_bytes(Int32, ByteFormat)
   (35q2462). Default/return facts, virtual transport, bootstrap, runtime, and
   upstream test parity remain open.
+
+### 2026-11-06 — Retain source argument facts through virtual body replay
+
+- [x] Preserve actual source types and value kinds in virtual-demand and pending
+  callsite snapshots, identity keys, replay selection, and exact body names.
+  Class objects and instances sharing an ABI carrier must not reuse one body.
+  The positional shortcut defers to the existing source-aware corridor when it
+  cannot own that identity; a rejected complete source binding stays rejected.
+- Original-first virtual_source_fact_transport_repro.sh passes all eight cases
+  with Crystal 1.22.1 and exact-source S1 35q2476 (35q2482): both call orders,
+  two-argument reversal, interleaved class objects, and four strict invalid-kind
+  rejections. Module membership's 40-case gate and four neighboring source-call
+  scripts also pass (35q2484/35q2478).
+- [ ] Close transformed/default and declared-result facts. Positive incomplete,
+  named/rest, and mixed-kind body inputs are outside this eight-case contract.
+- Fresh unchanged-input LavinMQ stops at IO#read_bytes(Int32, IO::ByteFormat)
+  (35q2486); stock-prelude hello retains the same blocker (35q2487). These are
+  front-end failures, not link/runtime successes. Bootstrap and upstream parity
+  remain open.

@@ -2058,7 +2058,8 @@ module Adamas::HIR
       has_block : Bool = false,
       has_named_args : Bool = false,
       named_arg_names : Array(String)? = nil,
-      selected_target : String? = nil
+      selected_target : String? = nil,
+      source_argument_facts : Array(SourceCallArgument?)? = nil
 
     # A callback's generated symbol is an identity, not serialized call syntax.
     # Retain the selected source and the actual callshape after pending queues
@@ -8386,7 +8387,12 @@ module Adamas::HIR
     # bare identifier receivers vs top-level function calls).
     @assigned_vars_stack : Array(Set(String)) = [] of Set(String)
     # Track virtual targets so newly-registered subclasses can be lowered later.
-    record VirtualTarget, method_name : String, arg_types : Array(TypeRef), has_block : Bool, has_splat : Bool
+    record VirtualTarget,
+      method_name : String,
+      arg_types : Array(TypeRef),
+      has_block : Bool,
+      has_splat : Bool,
+      source_argument_facts : Array(SourceCallArgument?)? = nil
 
     # Yield legality belongs to the source construct that owns a block, not
     # the generated HIR Function used to execute it. Generated Procs and
@@ -11341,9 +11347,129 @@ module Adamas::HIR
       has_named_args : Bool = false,
       named_arg_names : Array(String)? = nil,
       raw_positional_count : Int32? = nil,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : String
       source_shape = virtual_target_source_shape_key(has_named_args, named_arg_names, raw_positional_count)
-      "#{parent_name}|#{method_name}|#{arg_types.map(&.id).join(",")}|#{has_block ? 1 : 0}|#{has_splat ? 1 : 0}|#{source_shape}"
+      facts_shape = source_argument_facts_shape_key(source_argument_facts)
+      "#{parent_name}|#{method_name}|#{arg_types.map(&.id).join(",")}|#{has_block ? 1 : 0}|#{has_splat ? 1 : 0}|#{source_shape}|#{facts_shape}"
+    end
+
+    private def source_call_argument_fact_key(fact : SourceCallArgument?) : String
+      return "-" unless fact
+
+      rest_key = fact.rest_values.try do |values|
+        values.map { |value| source_call_argument_fact_key(value) }.map { |value| "#{value.bytesize}:#{value}" }.join
+      end || "-"
+      value_key = fact.value_facts.try do |values|
+        values.sort_by { |(type, literal)| {type.id, literal ? 1 : 0} }
+          .map { |(type, literal)| "#{type.id}:#{literal ? 1 : 0}" }
+          .join(",")
+      end || "-"
+      "#{fact.type_ref.id}:#{fact.type_literal ? 1 : 0}:r#{rest_key.bytesize}:#{rest_key}:v#{value_key.bytesize}:#{value_key}"
+    end
+
+    private def source_argument_facts_shape_key(facts : Array(SourceCallArgument?)?) : String
+      return "facts-absent" unless facts
+
+      encoded = facts.map do |fact|
+        token = source_call_argument_fact_key(fact)
+        "#{token.bytesize}:#{token}"
+      end.join
+      "facts-present:#{facts.size}:#{encoded}"
+    end
+
+    private def copy_source_call_argument_facts(
+      facts : Array(SourceCallArgument?)?,
+    ) : Array(SourceCallArgument?)?
+      return nil unless facts
+
+      facts.map { |fact| fact ? copy_source_call_argument_fact(fact) : nil }
+    end
+
+    private def copy_source_call_argument_fact(fact : SourceCallArgument) : SourceCallArgument
+      SourceCallArgument.new(
+        fact.type_ref,
+        fact.type_literal,
+        fact.rest_values.try { |values| values.map { |value| copy_source_call_argument_fact(value) } },
+        fact.value_facts.try(&.dup),
+      )
+    end
+
+    private def virtual_target_callsite_types(
+      arg_types : Array(TypeRef),
+      source_argument_facts : Array(SourceCallArgument?)?,
+    ) : Array(TypeRef)
+      return arg_types unless facts = source_argument_facts
+      return arg_types unless facts.size == arg_types.size
+
+      arg_types.map_with_index do |arg_type, index|
+        if fact = facts[index]?
+          fact.type_ref == TypeRef::VOID ? arg_type : fact.type_ref
+        else
+          arg_type
+        end
+      end
+    end
+
+    private def virtual_target_callsite_literals(
+      source_argument_facts : Array(SourceCallArgument?)?,
+      arg_count : Int32,
+    ) : Array(Bool)?
+      return nil unless facts = source_argument_facts
+      return nil unless facts.size == arg_count
+      return nil if facts.any?(&.nil?)
+
+      facts.map { |fact| fact.not_nil!.type_literal }
+    end
+
+    # A type object and an instance can share the same ABI TypeRef. Virtual
+    # replay must use the source kind in emitted body names as well as in its
+    # demand key, or opposite-kind demands can reuse one materialized body.
+    private def virtual_target_source_restriction_names(
+      source_argument_facts : Array(SourceCallArgument?)?,
+      arg_count : Int32,
+    ) : Array(String?)?
+      return nil unless facts = source_argument_facts
+      return nil unless facts.size == arg_count
+      return nil if facts.any?(&.nil?)
+
+      names = facts.map do |fact|
+        actual = fact.not_nil!
+        if actual.type_literal && actual.type_ref != TypeRef::VOID
+          proc_source_type_name(actual.type_ref, true)
+        end
+      end
+      return nil unless names.any? { |name| !name.nil? }
+
+      names
+    end
+
+    private def virtual_target_mangled_name(
+      base_name : String,
+      arg_types : Array(TypeRef),
+      has_block : Bool,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
+    ) : String
+      mangle_function_name(
+        base_name,
+        arg_types,
+        has_block,
+        source_restriction_names: virtual_target_source_restriction_names(source_argument_facts, arg_types.size),
+      )
+    end
+
+    private def virtual_target_identity_hash(
+      arg_types : Array(TypeRef),
+      source_argument_facts : Array(SourceCallArgument?)?,
+    ) : UInt64
+      h = arg_types_hash(arg_types)
+      return h unless source_argument_facts
+
+      h = (h ^ 0xa5_u64) &* 1099511628211_u64
+      source_argument_facts_shape_key(source_argument_facts).each_byte do |byte|
+        h = (h ^ byte.to_u64) &* 1099511628211_u64
+      end
+      h
     end
 
     private def virtual_target_source_shape_key(
@@ -11388,8 +11514,10 @@ module Adamas::HIR
       has_block : Bool,
       has_splat : Bool,
       caller_token : {String, FunctionId}?,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : Nil
-      key = virtual_target_shape_key(parent_name, method_name, arg_types, has_block, has_splat)
+      key = virtual_target_shape_key(parent_name, method_name, arg_types, has_block, has_splat,
+        source_argument_facts: source_argument_facts)
       remember_virtual_target_caller_for_key(key, caller_token)
     end
 
@@ -11407,8 +11535,10 @@ module Adamas::HIR
       has_block : Bool,
       has_splat : Bool,
       caller_token : {String, FunctionId}? = nil,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : Nil
-      key = virtual_target_shape_key(parent_name, method_name, arg_types, has_block, has_splat)
+      key = virtual_target_shape_key(parent_name, method_name, arg_types, has_block, has_splat,
+        source_argument_facts: source_argument_facts)
       if @virtual_targets_recorded.includes?(key)
         remember_virtual_target_caller_for_key(key, caller_token)
         return
@@ -11418,12 +11548,18 @@ module Adamas::HIR
       @vtr_stats_record_calls &+= 1 if @debug_virtual_target_replay_stats
       record_lowering_trace_virtual_target(parent_name, method_name, arg_types, has_block, caller_token)
 
-      entry = VirtualTarget.new(method_name, arg_types.dup, has_block, has_splat)
+      entry = VirtualTarget.new(
+        method_name,
+        arg_types.dup,
+        has_block,
+        has_splat,
+        copy_source_call_argument_facts(source_argument_facts),
+      )
       (@virtual_targets_by_parent[parent_name] ||= [] of VirtualTarget) << entry
       if env_get("DEBUG_VIRTUAL_TARGETS")
         type_ids = arg_types.map(&.id).join(",")
         current = "#{@current_class || "(nil)"}##{@current_method || "(nil)"}"
-        STDERR.puts "[VIRTUAL_TARGET] record parent=#{parent_name} method=#{method_name} args=[#{type_ids}] block=#{has_block ? 1 : 0} splat=#{has_splat ? 1 : 0} current=#{current}"
+        STDERR.puts "[VIRTUAL_TARGET] record parent=#{parent_name} method=#{method_name} args=[#{type_ids}] block=#{has_block ? 1 : 0} splat=#{has_splat ? 1 : 0} source_facts=#{source_argument_facts_shape_key(source_argument_facts)} current=#{current}"
       end
 
       # If descendants are already known, lower the recorded target for them
@@ -11480,7 +11616,7 @@ module Adamas::HIR
         target = targets.unsafe_fetch(target_idx)
         target_idx += 1
         @vtr_stats_owner_attempts &+= 1 if @debug_virtual_target_replay_stats
-        ah = arg_types_hash(target.arg_types)
+        ah = virtual_target_identity_hash(target.arg_types, target.source_argument_facts)
         flags = 0_u8
         flags |= 1_u8 if target.has_block
         flags |= 2_u8 if target.has_splat
@@ -11519,6 +11655,7 @@ module Adamas::HIR
           target.arg_types,
           target.has_block,
           target.has_splat,
+          source_argument_facts: target.source_argument_facts,
           replay_parent: parent_name,
         )
         if owner_started_at
@@ -11538,9 +11675,19 @@ module Adamas::HIR
       resolved_name : String,
       arg_types : Array(TypeRef),
       has_block_call : Bool,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : String
-      prefer_callsite_specialization(strip_type_suffix(resolved_name), resolved_name, arg_types, has_block_call) ||
-        resolved_name
+      specialized = prefer_callsite_specialization(
+        strip_type_suffix(resolved_name), resolved_name, arg_types, has_block_call,
+      )
+      return resolved_name unless specialized
+
+      virtual_target_mangled_name(
+        strip_type_suffix(specialized),
+        arg_types,
+        has_block_call,
+        source_argument_facts,
+      )
     end
 
     # Both virtual demand and body reuse must keep the same receiver owner
@@ -11606,6 +11753,7 @@ module Adamas::HIR
       arg_types : Array(TypeRef),
       has_block_call : Bool,
       has_splat : Bool,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : Tuple(String, Adamas::Compiler::Frontend::DefNode)?
       replay_parent_base = strip_generic_args(replay_parent)
       get_ancestor_chain(owner).each do |ancestor|
@@ -11619,6 +11767,7 @@ module Adamas::HIR
              has_block_call,
              arg_types,
              has_splat,
+             source_argument_facts: source_argument_facts,
            )
           return resolved unless resolved[1].is_abstract
         end
@@ -11630,6 +11779,16 @@ module Adamas::HIR
              respect_direct_declarations: false,
              compatible_arg_types: arg_types,
              search_parents: false,
+             selection_input: CallResolutionInput.new(
+               "#{ancestor}##{method_name}",
+               arg_types.size,
+               arg_types,
+               has_block_call,
+               has_splat,
+               false,
+               nil,
+               source_argument_facts: source_argument_facts,
+             ),
            )
           unless included[0].is_abstract
             return register_included_module_call_target(
@@ -11638,6 +11797,16 @@ module Adamas::HIR
               arg_types,
               has_block_call,
               included,
+              CallResolutionInput.new(
+                "#{ancestor}##{method_name}",
+                arg_types.size,
+                arg_types,
+                has_block_call,
+                has_splat,
+                false,
+                nil,
+                source_argument_facts: source_argument_facts,
+              ),
             )
           end
         end
@@ -11686,16 +11855,21 @@ module Adamas::HIR
       has_splat : Bool,
       exact_owner_required : Bool = false,
       replay_parent : String? = nil,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : Nil
       # A bare reference-generic template has no concrete layout. Its target
       # shape is replayed for registered instances; a template body could embed
       # an arbitrary instance field offset.
       return if bare_reference_generic_template?(owner)
 
+      call_types = virtual_target_callsite_types(arg_types, source_argument_facts)
+      call_literals = virtual_target_callsite_literals(source_argument_facts, call_types.size)
       base_name = "#{owner}##{method_name}"
-      candidate = mangle_function_name(base_name, arg_types, has_block_call)
+      candidate = virtual_target_mangled_name(base_name, call_types, has_block_call, source_argument_facts)
       replay_trace_source = if @lowering_binary_trace && (parent = replay_parent)
-                              mangle_function_name("#{parent}##{method_name}", arg_types, has_block_call)
+                              virtual_target_mangled_name(
+                                "#{parent}##{method_name}", call_types, has_block_call, source_argument_facts,
+                              )
                             end
 
       # Virtual-target prelower often needs the exact callsite arg signature to
@@ -11703,11 +11877,20 @@ module Adamas::HIR
       # Polling#write). If we collapse directly to an ancestor-owned resolved
       # name here, we can strand the concrete child symbol and later MIR
       # vdispatch falls back to the abstract owner.
-      remember_callsite_family_arg_types(base_name, arg_types, has_block: has_block_call)
-      remember_callsite_arg_types(candidate, arg_types, has_block: has_block_call)
+      remember_callsite_family_arg_types(base_name, call_types, call_literals, has_block: has_block_call,
+        source_argument_facts: source_argument_facts)
+      remember_callsite_arg_types(candidate, call_types, call_literals, has_block: has_block_call,
+        source_argument_facts: source_argument_facts)
 
       primary_lookup_started_at = Time.instant if @debug_virtual_target_replay_stats
-      resolved = lookup_function_def_for_call(base_name, arg_types.size, has_block_call, arg_types, has_splat)
+      resolved = lookup_function_def_for_call(
+        base_name,
+        call_types.size,
+        has_block_call,
+        call_types,
+        has_splat,
+        source_argument_facts: source_argument_facts,
+      )
       if @debug_virtual_target_replay_stats
         @vtr_stats_primary_lookup_calls &+= 1
         @vtr_stats_primary_lookup_time_ns &+= (Time.instant - primary_lookup_started_at.not_nil!).total_nanoseconds.to_i64
@@ -11722,9 +11905,10 @@ module Adamas::HIR
           owner,
           base_name,
           candidate,
-          arg_types,
+          call_types,
           has_block_call,
           has_splat,
+          source_argument_facts: source_argument_facts,
         )
         if @debug_virtual_target_replay_stats
           @vtr_stats_reuse_check_calls &+= 1
@@ -11739,8 +11923,11 @@ module Adamas::HIR
           lower_required_virtual_target_function(candidate, exact_demand: exact_owner_required, replay_source: replay_trace_source)
         elsif !resolved_owner.empty? && strip_generic_args(resolved_owner) != strip_generic_args(owner) &&
               !inherited_wrapper_reusable
-          resolved_name = virtual_replay_specialized_name(resolved_name, arg_types, has_block_call)
-          remember_callsite_arg_types(resolved_name, arg_types, has_block: has_block_call)
+          resolved_name = virtual_replay_specialized_name(
+            resolved_name, call_types, has_block_call, source_argument_facts,
+          )
+          remember_callsite_arg_types(resolved_name, call_types, call_literals, has_block: has_block_call,
+            source_argument_facts: source_argument_facts)
           lower_required_virtual_target_function(resolved_name, exact_demand: true, replay_source: replay_trace_source)
           # Nested replay queues the inherited target instead of materializing
           # it synchronously. Do not mistake that temporary missing body for a
@@ -11752,15 +11939,19 @@ module Adamas::HIR
                    owner,
                    base_name,
                    candidate,
-                   arg_types,
+                   call_types,
                    has_block_call,
                    has_splat,
+                   source_argument_facts: source_argument_facts,
                  )
             lower_required_virtual_target_function(candidate, replay_source: replay_trace_source)
           end
         else
-          selected_target = virtual_replay_specialized_name(resolved_name, arg_types, has_block_call)
-          remember_callsite_arg_types(selected_target, arg_types, has_block: has_block_call)
+          selected_target = virtual_replay_specialized_name(
+            resolved_name, call_types, has_block_call, source_argument_facts,
+          )
+          remember_callsite_arg_types(selected_target, call_types, call_literals, has_block: has_block_call,
+            source_argument_facts: source_argument_facts)
           lower_required_virtual_target_function(selected_target, replay_source: replay_trace_source)
         end
       else
@@ -11774,25 +11965,39 @@ module Adamas::HIR
             owner,
             replay_parent,
             method_name,
-            arg_types,
+            call_types,
             has_block_call,
             has_splat,
+            source_argument_facts,
           )
           if @debug_virtual_target_replay_stats
             @vtr_stats_broad_fallback_lookup_calls &+= 1
             @vtr_stats_broad_fallback_lookup_time_ns &+= (Time.instant - broad_lookup_started_at.not_nil!).total_nanoseconds.to_i64
           end
           if replay_resolved
-            replay_name = virtual_replay_specialized_name(replay_resolved[0], arg_types, has_block_call)
+            replay_name = virtual_replay_specialized_name(
+              replay_resolved[0], call_types, has_block_call, source_argument_facts,
+            )
             # Only an executable selected target owns materialization inputs.
             # Ancestor probes above have no authority to replace sibling input.
-            remember_callsite_arg_types(replay_name, arg_types, has_block: has_block_call)
+            remember_callsite_arg_types(replay_name, call_types, call_literals, has_block: has_block_call,
+              source_argument_facts: source_argument_facts)
             lower_required_virtual_target_function(replay_name, replay_source: replay_trace_source)
           end
           # No compatible implementation is safer than materializing a known
           # incompatible child overload under the requested argument suffix.
           return
         end
+        # A complete source binding is an admission witness, not merely an ABI
+        # hint. If this owner rejects that exact shape, do not revive a bare
+        # candidate from its spelling and let parameter defaults synthesize a
+        # different call. Incomplete legacy shapes retain the old fallback.
+        if source_argument_facts && source_argument_facts.size == call_types.size &&
+           source_argument_facts.all? { |fact| !fact.nil? }
+          return
+        end
+        remember_callsite_arg_types(candidate, call_types, call_literals, has_block: has_block_call,
+          source_argument_facts: source_argument_facts)
         lower_required_virtual_target_function(candidate, replay_source: replay_trace_source)
       end
     end
@@ -11813,24 +12018,41 @@ module Adamas::HIR
       has_block_call : Bool,
       has_splat : Bool,
       replay_parent : String? = nil,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : Nil
+      call_types = virtual_target_callsite_types(arg_types, source_argument_facts)
+      call_literals = virtual_target_callsite_literals(source_argument_facts, call_types.size)
       base_name = "#{owner}##{method_name}"
-      candidate = mangle_function_name(base_name, arg_types, has_block_call)
+      candidate = virtual_target_mangled_name(base_name, call_types, has_block_call, source_argument_facts)
       replay_trace_source = if @lowering_binary_trace && (parent = replay_parent)
-                              mangle_function_name("#{parent}##{method_name}", arg_types, has_block_call)
+                              virtual_target_mangled_name(
+                                "#{parent}##{method_name}", call_types, has_block_call, source_argument_facts,
+                              )
                             end
 
-      remember_callsite_family_arg_types(base_name, arg_types, has_block: has_block_call)
-      remember_callsite_arg_types(candidate, arg_types, has_block: has_block_call)
+      remember_callsite_family_arg_types(base_name, call_types, call_literals, has_block: has_block_call,
+        source_argument_facts: source_argument_facts)
+      remember_callsite_arg_types(candidate, call_types, call_literals, has_block: has_block_call,
+        source_argument_facts: source_argument_facts)
 
-      if resolved = lookup_function_def_for_call(base_name, arg_types.size, has_block_call, arg_types, has_splat)
+      if resolved = lookup_function_def_for_call(
+           base_name,
+           call_types.size,
+           has_block_call,
+           call_types,
+           has_splat,
+           source_argument_facts: source_argument_facts,
+         )
         resolved_name = resolved[0]
         preserve_requested_owner = virtual_target_preserves_requested_owner?(candidate, base_name, resolved_name, resolved[1])
         if preserve_requested_owner
           lower_required_virtual_target_function(candidate, replay_source: replay_trace_source)
         else
-          selected_target = virtual_replay_specialized_name(resolved_name, arg_types, has_block_call)
-          remember_callsite_arg_types(selected_target, arg_types, has_block: has_block_call)
+          selected_target = virtual_replay_specialized_name(
+            resolved_name, call_types, has_block_call, source_argument_facts,
+          )
+          remember_callsite_arg_types(selected_target, call_types, call_literals, has_block: has_block_call,
+            source_argument_facts: source_argument_facts)
           lower_required_virtual_target_function(selected_target, replay_source: replay_trace_source)
         end
       else
@@ -11841,6 +12063,7 @@ module Adamas::HIR
           has_block_call,
           has_splat,
           replay_parent: replay_parent,
+          source_argument_facts: source_argument_facts,
         )
       end
     end
@@ -40269,7 +40492,9 @@ module Adamas::HIR
           if !module_param && call_type_for_param != TypeRef::VOID
             module_param = module_type_ref?(call_type_for_param)
           end
-          ctx.mark_type_literal(hir_param.id) unless module_param
+          # A module-typed formal can carry a class object. Preserve that kind
+          # only when the callsite supplied an explicit literal witness.
+          ctx.mark_type_literal(hir_param.id) if !module_param || (param_literal_flags[idx]? || false)
         end
         # Track enum types for predicate method resolution
         if type_name = param_type_names[idx]?
@@ -50157,7 +50382,9 @@ module Adamas::HIR
           STDERR.puts "[PARAM_TYPES] func=#{full_name} param=#{param_name} id=#{hir_param.id} type=#{type_name}(id=#{param_type.id})"
         end
         if (param_literal_flags[idx]? || param_name.ends_with?("_class")) && param_type != TypeRef::VOID
-          ctx.mark_type_literal(hir_param.id) unless module_type_ref?(param_type)
+          # A module annotation describes the accepted carrier, but a proven
+          # source class-object argument still has literal kind after binding.
+          ctx.mark_type_literal(hir_param.id) unless module_type_ref?(param_type) && !(param_literal_flags[idx]? || false)
         end
         if type_name = param_type_names[idx]?
           track_enum_value(hir_param.id, type_name)
@@ -83533,7 +83760,9 @@ module Adamas::HIR
           bind_splat_param_tuple_local(ctx, param_name, hir_param.id, param_type)
         end
         if (param_literal_flags[idx]? || param_name.ends_with?("_class")) && param_type != TypeRef::VOID
-          ctx.mark_type_literal(hir_param.id) unless module_type_ref?(param_type)
+          # A module annotation describes the accepted carrier, but a proven
+          # source class-object argument still has literal kind after binding.
+          ctx.mark_type_literal(hir_param.id) unless module_type_ref?(param_type) && !(param_literal_flags[idx]? || false)
         end
         # Track enum type for predicate method inlining
         if type_name = param_type_names[idx]?
@@ -84691,6 +84920,7 @@ module Adamas::HIR
             target.arg_types,
             target.has_block,
             target.has_splat,
+            source_argument_facts: target.source_argument_facts,
           )
           caller_tokens = @virtual_target_callers[shape_key]?
           if caller_tokens.nil? || caller_tokens.empty?
@@ -84724,6 +84954,7 @@ module Adamas::HIR
             target.arg_types,
             target.has_block,
             target.has_splat,
+            source_argument_facts: target.source_argument_facts,
           )
           caller_tokens = @virtual_target_callers[shape_key]?
           active_callers = caller_tokens.try do |tokens|
@@ -84844,6 +85075,7 @@ module Adamas::HIR
       has_named_args : Bool = false,
       named_arg_names : Array(String)? = nil,
       raw_positional_count : Int32? = nil,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : Bool
       resolved = lookup_function_def_for_call(
         base_name,
@@ -84854,6 +85086,7 @@ module Adamas::HIR
         has_named_args,
         named_arg_names,
         raw_positional_count,
+        source_argument_facts: source_argument_facts,
       )
       return false unless resolved
 
@@ -84862,7 +85095,9 @@ module Adamas::HIR
       # Materialization chooses this concrete target from the declaration and
       # call inputs. Readiness must consume that same identity; a declaration
       # or bare sibling body cannot certify another specialization's result.
-      selected_target = virtual_replay_specialized_name(resolved_name, arg_types, has_block)
+      selected_target = virtual_replay_specialized_name(
+        resolved_name, arg_types, has_block, source_argument_facts,
+      )
       return false unless @module.has_function_with_body?(selected_target)
 
       resolved_owner = method_owner(resolved_base)
@@ -84892,14 +85127,14 @@ module Adamas::HIR
     end
 
     private def execute_final_repair_virtual_target_requests(
-      requests : Array({String, String, String, Array(TypeRef), Bool, Bool}),
+      requests : Array({String, String, String, Array(TypeRef), Bool, Bool, Array(SourceCallArgument?)?}),
     ) : Int32
       executed = 0
-      requests.each do |owner, replay_parent, method_name, arg_types, has_block, has_splat|
+      requests.each do |owner, replay_parent, method_name, arg_types, has_block, has_splat, source_argument_facts|
         base_name = "#{owner}##{method_name}"
-        candidate = mangle_function_name(base_name, arg_types, has_block)
+        candidate = virtual_target_mangled_name(base_name, arg_types, has_block, source_argument_facts)
         next if @module.has_function_with_body?(candidate)
-        next if repair_resolved_body_available?(owner, base_name, candidate, arg_types, has_block, has_splat)
+        next if repair_resolved_body_available?(owner, base_name, candidate, arg_types, has_block, has_splat, source_argument_facts: source_argument_facts)
 
         lower_final_repair_virtual_target_owner(
           owner,
@@ -84908,6 +85143,7 @@ module Adamas::HIR
           has_block,
           has_splat,
           replay_parent: replay_parent,
+          source_argument_facts: source_argument_facts,
         )
         executed += 1
       end
@@ -84915,7 +85151,7 @@ module Adamas::HIR
     end
 
     private def repair_missing_concrete_virtual_targets : Int32
-      requests = [] of {String, String, String, Array(TypeRef), Bool, Bool}
+      requests = [] of {String, String, String, Array(TypeRef), Bool, Bool, Array(SourceCallArgument?)?}
       target_shapes = 0
       active_shapes = 0
       historical_only = 0
@@ -84953,7 +85189,10 @@ module Adamas::HIR
 
         targets.each do |target|
           target_shapes += 1
-          shape_key = virtual_target_shape_key(parent_name, target.method_name, target.arg_types, target.has_block, target.has_splat)
+          shape_key = virtual_target_shape_key(
+            parent_name, target.method_name, target.arg_types, target.has_block, target.has_splat,
+            source_argument_facts: target.source_argument_facts,
+          )
           has_active_caller = false
           if caller_tokens = @virtual_target_callers[shape_key]?
             caller_tokens.each do |caller_token|
@@ -84969,7 +85208,7 @@ module Adamas::HIR
           end
           active_shapes += 1
 
-          arg_hash = arg_types_hash(target.arg_types)
+          arg_hash = virtual_target_identity_hash(target.arg_types, target.source_argument_facts)
           root_flags = vdispatch_flags(target.has_block)
           root_key = {parent_name, target.method_name, arg_hash, root_flags}
           next unless @virtual_targets_lowered.includes?(root_key)
@@ -84991,13 +85230,21 @@ module Adamas::HIR
             owner_key = {owner, target.method_name, arg_hash, replay_flags}
             next if seen.includes?(owner_key)
 
-            candidate = mangle_function_name("#{owner}##{target.method_name}", target.arg_types, target.has_block)
+            candidate = virtual_target_mangled_name(
+              "#{owner}##{target.method_name}",
+              target.arg_types,
+              target.has_block,
+              target.source_argument_facts,
+            )
             next if @module.has_function_with_body?(candidate)
             # Reserve the owner-only request identity before resolver/body
             # classification so every final request (including a resolved-body
             # skip) is considered at most once across parent roots.
             seen << owner_key
-            if repair_resolved_body_available?(owner, "#{owner}##{target.method_name}", candidate, target.arg_types, target.has_block, target.has_splat)
+            if repair_resolved_body_available?(
+                 owner, "#{owner}##{target.method_name}", candidate, target.arg_types, target.has_block, target.has_splat,
+                 source_argument_facts: target.source_argument_facts,
+               )
               resolved_body_skips += 1
               next
             end
@@ -85032,7 +85279,10 @@ module Adamas::HIR
                 completed += 1
               end
 
-              if resolved = lookup_function_def_for_call("#{owner}##{target.method_name}", target.arg_types.size, target.has_block, target.arg_types, target.has_splat)
+              if resolved = lookup_function_def_for_call(
+                   "#{owner}##{target.method_name}", target.arg_types.size, target.has_block, target.arg_types, target.has_splat,
+                   source_argument_facts: target.source_argument_facts,
+                 )
                 resolved_name = resolved[0]
                 resolved_base = strip_type_suffix(resolved_name)
                 resolved_has_body = @module.has_function_with_body?(resolved_name)
@@ -85074,7 +85324,7 @@ module Adamas::HIR
                 lookup_nil += 1
               end
             end
-            requests << {owner, parent_name, target.method_name, target.arg_types, target.has_block, target.has_splat}
+            requests << {owner, parent_name, target.method_name, target.arg_types, target.has_block, target.has_splat, target.source_argument_facts}
           end
         end
       end
@@ -85092,7 +85342,7 @@ module Adamas::HIR
         probe_body_delta = 0
         probe_function_delta = 0
         while probe_index < requests.size && probe_index < probe_limit
-          owner, replay_parent, method_name, arg_types, has_block, has_splat = requests[probe_index]
+          owner, replay_parent, method_name, arg_types, has_block, has_splat, source_argument_facts = requests[probe_index]
           display_index = probe_index + 1
           STDERR.puts "[VIRTUAL_REPAIR_EXEC_PROBE] START index=#{display_index}/#{requests.size} owner=#{owner} method=#{method_name}"
           started_at = Time.instant
@@ -85105,6 +85355,7 @@ module Adamas::HIR
             has_block,
             has_splat,
             replay_parent: replay_parent,
+            source_argument_facts: source_argument_facts,
           )
           elapsed_ms = (Time.instant - started_at).total_milliseconds
           body_count_delta = virtual_repair_body_count - body_count_before
@@ -107314,6 +107565,7 @@ module Adamas::HIR
       has_named_args : Bool,
       named_arg_names : Array(String)?,
       selected_target : String? = nil,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : UInt64
       h = 1469598103934665603_u64
       arg_types.each do |type_ref|
@@ -107337,6 +107589,9 @@ module Adamas::HIR
       if target = selected_target
         target.each_byte { |byte| h = (h ^ byte.to_u64) &* 1099511628211_u64 }
       end
+      source_argument_facts_shape_key(source_argument_facts).each_byte do |byte|
+        h = (h ^ byte.to_u64) &* 1099511628211_u64
+      end
       h
     end
 
@@ -107348,9 +107603,11 @@ module Adamas::HIR
       has_block : Bool = false,
       has_named_args : Bool = false,
       named_arg_names : Array(String)? = nil,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : Nil
       remember_callsite_arg_types(
         name, arg_types, arg_literals, enum_names, has_block, has_named_args, named_arg_names,
+        source_argument_facts: source_argument_facts,
         record_exact_target: false,
       )
     end
@@ -107363,6 +107620,7 @@ module Adamas::HIR
       has_block : Bool = false,
       has_named_args : Bool = false,
       named_arg_names : Array(String)? = nil,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
       *,
       record_exact_target : Bool = true,
     ) : Nil
@@ -107372,20 +107630,31 @@ module Adamas::HIR
       base_key = base_callsite_key(name)
       canonical_names = canonical_named_arg_names(named_arg_names)
       selected_target = @raw_callback_source_bindings.has_key?(name) ? name : nil
+      call_types = virtual_target_callsite_types(arg_types, source_argument_facts)
+      call_literals = virtual_target_callsite_literals(source_argument_facts, call_types.size) || arg_literals
+      source_facts = copy_source_call_argument_facts(source_argument_facts)
       callsite = CallsiteArgs.new(
-        arg_types.dup,
-        arg_literals ? arg_literals.dup : nil,
+        call_types.dup,
+        call_literals ? call_literals.dup : nil,
         enum_names ? enum_names.dup : nil,
         has_block,
         has_named_args,
         canonical_names ? canonical_names.dup : nil,
         selected_target,
+        source_facts,
       )
       # Family discovery must not replace a physical body's exact inputs.
-      # Keep exact publication before family dedup for a repeated demand.
-      @pending_arg_types[name] = callsite if record_exact_target
+      # Keep a richer source binding when a later replay only knows the ABI
+      # carrier; source-selected value kind is part of the exact body input.
+      if record_exact_target
+        existing = @pending_arg_types[name]?
+        if existing.nil? || existing.source_argument_facts.nil? || existing.source_argument_facts == source_facts
+          @pending_arg_types[name] = callsite
+        end
+      end
       return if base_key.empty?
-      callsite_key = callsite_args_fingerprint(arg_types, arg_literals, has_block, has_named_args, canonical_names, selected_target)
+      callsite_key = callsite_args_fingerprint(call_types, call_literals, has_block, has_named_args,
+        canonical_names, selected_target, source_facts)
       seen_by_arity = @pending_arg_types_seen_by_arity[base_key]? || begin
         new_map = {} of Int32 => Set(UInt64)
         @pending_arg_types_seen_by_arity[base_key] = new_map
@@ -107403,21 +107672,21 @@ module Adamas::HIR
         @pending_arg_types_by_arity[base_key] = new_map
         new_map
       end
-      bucket = by_arity[arg_types.size]? || [] of CallsiteArgs
+      bucket = by_arity[call_types.size]? || [] of CallsiteArgs
       bucket << callsite
-      by_arity[arg_types.size] = bucket
+      by_arity[call_types.size] = bucket
       track_pending_base_key_for_method(base_key)
       if debug_hook_filter_match?(name)
         named_count = canonical_names ? canonical_names.size : 0
         debug_hook(
           "callsite.args",
-          "name=#{name} argc=#{arg_types.size} key=#{callsite_key} named=#{has_named_args} named_count=#{named_count}"
+          "name=#{name} argc=#{call_types.size} key=#{callsite_key} named=#{has_named_args} named_count=#{named_count}"
         )
       end
       if env_get("DEBUG_FROM_IO_CALLSITE") && name.includes?("from_io")
-        STDERR.puts "[FROM_IO_CALLSITE] name=#{name} types=#{arg_types.map(&.id).join(",")}"
+        STDERR.puts "[FROM_IO_CALLSITE] name=#{name} types=#{call_types.map(&.id).join(",")}"
       end
-      if signature = call_signature_for_call(name, arg_types.size, has_block)
+      if signature = call_signature_for_call(name, call_types.size, has_block)
         sig_bucket = @pending_arg_types_by_signature[signature]? || [] of CallsiteArgs
         sig_bucket << callsite
         @pending_arg_types_by_signature[signature] = sig_bucket
@@ -107486,7 +107755,10 @@ module Adamas::HIR
         if callsite = @pending_arg_types[key]?
           @pending_arg_types.delete(key)
           base = base_callsite_key(key)
-          remove_callsite_from_pending_maps(base, callsite.types, callsite.literals, callsite.has_block, callsite.named_arg_names, callsite.selected_target)
+          remove_callsite_from_pending_maps(
+            base, callsite.types, callsite.literals, callsite.has_block, callsite.named_arg_names,
+            callsite.selected_target, callsite.source_argument_facts, true,
+          )
           return callsite
         end
       end
@@ -107548,7 +107820,10 @@ module Adamas::HIR
     end
 
     private def consume_callsite_args(base_key : String, entry : CallsiteArgs) : Nil
-      remove_callsite_from_pending_maps(base_key, entry.types, entry.literals, entry.has_block, entry.named_arg_names, entry.selected_target)
+      remove_callsite_from_pending_maps(
+        base_key, entry.types, entry.literals, entry.has_block, entry.named_arg_names,
+        entry.selected_target, entry.source_argument_facts, true,
+      )
     end
 
     @[AlwaysInline]
@@ -107664,12 +107939,15 @@ module Adamas::HIR
       has_block : Bool,
       named_arg_names : Array(String)?,
       selected_target : String? = nil,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
+      match_source_argument_facts : Bool = false,
     ) : Bool
       return false unless candidate.selected_target == selected_target
       return false unless candidate.types == types
       return false unless candidate.has_block == has_block
       return false unless candidate.named_arg_names == named_arg_names
       return false unless literals.nil? || candidate.literals == literals
+      return false if match_source_argument_facts && candidate.source_argument_facts != source_argument_facts
       true
     end
 
@@ -107681,10 +107959,13 @@ module Adamas::HIR
       has_block : Bool,
       named_arg_names : Array(String)?,
       selected_target : String? = nil,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
+      match_source_argument_facts : Bool = false,
     ) : Int32?
       idx = 0
       while idx < bucket.size
-        return idx if callsite_args_match?(bucket.unsafe_fetch(idx), types, literals, has_block, named_arg_names, selected_target)
+        return idx if callsite_args_match?(bucket.unsafe_fetch(idx), types, literals, has_block, named_arg_names,
+          selected_target, source_argument_facts, match_source_argument_facts)
         idx += 1
       end
       nil
@@ -107697,12 +107978,15 @@ module Adamas::HIR
       has_block : Bool,
       named_arg_names : Array(String)?,
       selected_target : String? = nil,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
+      match_source_argument_facts : Bool = false,
     ) : Nil
       return if base_key.empty?
 
       if by_arity = @pending_arg_types_by_arity[base_key]?
         if bucket = by_arity[types.size]?
-          idx = callsite_bucket_index(bucket, types, literals, has_block, named_arg_names, selected_target)
+          idx = callsite_bucket_index(bucket, types, literals, has_block, named_arg_names, selected_target,
+            source_argument_facts, match_source_argument_facts)
           if idx
             bucket.delete_at(idx)
             by_arity.delete(types.size) if bucket.empty?
@@ -107716,7 +108000,8 @@ module Adamas::HIR
 
       if signature = call_signature_for_base(base_key, types.size, has_block)
         if sig_bucket = @pending_arg_types_by_signature[signature]?
-          idx = callsite_bucket_index(sig_bucket, types, literals, has_block, named_arg_names, selected_target)
+          idx = callsite_bucket_index(sig_bucket, types, literals, has_block, named_arg_names, selected_target,
+            source_argument_facts, match_source_argument_facts)
           if idx
             sig_bucket.delete_at(idx)
             @pending_arg_types_by_signature.delete(signature) if sig_bucket.empty?
@@ -112523,6 +112808,7 @@ module Adamas::HIR
           callsite_args.has_named_args,
           callsite_args.named_arg_names.try(&.dup),
           callsite_args.selected_target,
+          copy_source_call_argument_facts(callsite_args.source_argument_facts),
         )
         replay_capture.binding = ForceLowerReplayCallsite.new(
           resolved_func_def,
@@ -113691,6 +113977,16 @@ module Adamas::HIR
       # Rest packing changes the physical signature. The ordinary path owns
       # deriving and binding that target from this exact source declaration.
       return nil if missing_positional_splat_index(selected.symbol_name, selected_def, args.size)
+      # The ordinary selected-target corridor owns the exact body identity for
+      # module formals receiving a type object. This carrier-only shortcut has
+      # already proved the source Def and arena, but would materialize it under
+      # the ABI candidate before the source-kind-specific name is available.
+      if source_facts && !has_block_call && def_has_module_like_regular_param?(selected_def) &&
+         source_facts.size == arg_types.size &&
+         source_facts.all? { |fact| !fact.nil? && fact.type_ref != TypeRef::VOID && fact.rest_values.nil? } &&
+         source_facts.any? { |fact| fact.try(&.type_literal) }
+        return nil
+      end
 
       callsite_arg_types = arg_types.dup
       callsite_arg_literals = arg_literals.dup
@@ -120784,7 +121080,32 @@ module Adamas::HIR
       exact_positional_source_call = false
       exact_source_argument_names : Array(String?)? = nil
       if (selected_def = selected_call_entry_def) && !source_default_entry &&
+         !has_block_call && !has_splat && !source_has_splat && !has_named_args &&
+         !allocator_explicit_new_call && def_has_module_like_regular_param?(selected_def)
+        if source_facts = m3e_input.try(&.source_argument_facts)
+          if source_facts.size == arg_types.size &&
+             source_facts.all? { |fact| !fact.nil? && fact.type_ref != TypeRef::VOID } &&
+             source_facts.any? { |fact| fact.try(&.type_literal) }
+            # A module restriction admits both a module instance and a class
+            # object supplied through `extend`. They may share an ABI TypeRef,
+            # but lower_method consumes the source literal flag when binding
+            # the parameter. Give that exact selected Def separate body names
+            # so opposite source kinds cannot overwrite one pending signature.
+            exact_source_argument_names = source_facts.map do |fact|
+              actual = fact.not_nil!
+              proc_source_type_name(actual.type_ref, true) if actual.type_literal
+            end
+            mangled_method_name = mangle_function_name(
+              base_method_name, arg_types, source_restriction_names: exact_source_argument_names,
+            )
+            primary_mangled_name = mangled_method_name
+            exact_positional_source_call = true
+          end
+        end
+      end
+      if (selected_def = selected_call_entry_def) && !source_default_entry &&
          !has_block_call && !source_has_splat && !has_named_args &&
+         !exact_positional_source_call &&
          method_name_codec_exact_callsite_name?(mangled_method_name, base_method_name, arg_types, false)
         exact_positional_source_call = def_has_untyped_regular_param?(selected_def) ||
                                        !prefer_callsite_specialization(
@@ -120834,7 +121155,13 @@ module Adamas::HIR
       # lower would see only the broad def name (e.g. `tuple_size$Tuple`) instead of
       # the concrete callsite args.
       if callsite_arg_types.any? { |t| t != TypeRef::VOID }
-        remember_callsite_arg_types(mangled_method_name, callsite_arg_types, callsite_arg_literals, callsite_arg_enum_names, has_block_call, has_named_args, call_named_arg_names)
+        remember_callsite_arg_types(
+          mangled_method_name, callsite_arg_types, callsite_arg_literals, callsite_arg_enum_names,
+          has_block_call, has_named_args, call_named_arg_names,
+          source_argument_facts: if !has_block_call && !has_splat && !source_has_splat && !has_named_args
+                                  m3e_input.try(&.source_argument_facts)
+                                end,
+        )
       end
       has_typed_args = arg_types.any? { |t| t != TypeRef::VOID }
 
@@ -123235,6 +123562,7 @@ module Adamas::HIR
           splat_packed,
           call_named_arg_names,
           raw_call_positional_count,
+          source_argument_facts: call_resolution_source_argument_facts(ctx, args, arg_types, has_splat, has_named_args),
         )
       end
 
@@ -124744,18 +125072,19 @@ module Adamas::HIR
       splat_packed : Bool,
       named_arg_names : Array(String)? = nil,
       raw_positional_count : Int32? = nil,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : Nil
       return unless type_desc = @module.get_type_descriptor(ctx.type_of(receiver_id))
 
       if type_desc.kind == TypeKind::Class
-        ah = arg_types_hash(arg_types)
+        ah = virtual_target_identity_hash(arg_types, source_argument_facts)
         vf = vdispatch_flags(has_block_call)
         key = {type_desc.name, method_name, ah, vf}
         caller_token = virtual_target_caller_token(ctx)
-        remember_virtual_target_caller(type_desc.name, method_name, arg_types, has_block_call, has_splat, caller_token)
+        remember_virtual_target_caller(type_desc.name, method_name, arg_types, has_block_call, has_splat, caller_token, source_argument_facts)
         unless @virtual_targets_lowered.includes?(key)
           @virtual_targets_lowered.add(key)
-          record_virtual_target(type_desc.name, method_name, arg_types, has_block_call, has_splat, caller_token)
+          record_virtual_target(type_desc.name, method_name, arg_types, has_block_call, has_splat, caller_token, source_argument_facts)
           if @lazy_rta_active && broad_virtual_target_root?(type_desc.name)
             # Recording already replays every live descendant through the
             # append-only bucket. Consume the root through the same cursor
@@ -124790,6 +125119,7 @@ module Adamas::HIR
                 has_block_call,
                 has_splat,
                 replay_parent: type_desc.name,
+                source_argument_facts: source_argument_facts,
               )
             end
           end
@@ -125254,6 +125584,7 @@ module Adamas::HIR
       snapshot = CallsiteArgs.new(
         callsite.types.dup, callsite.literals.try(&.dup), callsite.enum_names.try(&.dup),
         callsite.has_block, callsite.has_named_args, callsite.named_arg_names.try(&.dup), callsite.selected_target,
+        copy_source_call_argument_facts(callsite.source_argument_facts),
       )
       RawCallbackSourceBinding.new(source.source_def, source.source_arena, snapshot)
     end
@@ -125267,7 +125598,8 @@ module Adamas::HIR
         arena_map_key(expected.source_arena) == arena_map_key(actual.source_arena) &&
         left.types == right.types && left.literals == right.literals && left.enum_names == right.enum_names &&
         left.has_block == right.has_block && left.has_named_args == right.has_named_args &&
-        left.named_arg_names == right.named_arg_names && left.selected_target == right.selected_target
+        left.named_arg_names == right.named_arg_names && left.selected_target == right.selected_target &&
+        left.source_argument_facts == right.source_argument_facts
     end
 
     private def initializer_callback_abi_matches?(expected : RawCallbackAbi?, actual : RawCallbackAbi?) : Bool
