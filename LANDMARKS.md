@@ -25478,3 +25478,47 @@ eb924e8b792a7e8647abacb6f8e0928193ce91f0dfa2c4c8528a70ac586731fe.
 Refresh after argument transfer, macro diagnostics, expander entry points or
 invalid-result handling changes. Rollback is this atomic compiler commit.
 Unrelated WIP is preserved.
+
+
+## 2026-11-06 — CLI macro literals preserve errors before generated text
+
+The ordinary top-level MacroLiteral path used expand_macro_literal_via_expander,
+which inspected diagnostics only for debug output. An invalid scalar macro-for
+followed by a valid class therefore returned usable partial text, was reparsed
+successfully and compiled to A. Crystal rejects the same source (35q3530), while
+the old compiler accepts it (35q3531). Check the expander's Error channel before
+both the empty-output return and the nonempty generated-text consumer. Keep
+Warning and Info nonfatal. This follows the existing top-level macro-for policy.
+
+Original-first cli_macro_expansion_error_repro.sh passes two runtime controls
+(valid array/empty loops) and two no-executable rejections (partial and empty
+failed output) on Crystal 1.22.1 and exact S1 35q3534 (35q3539). Rejections must
+identify the macro iterable-kind error. HIR expansion-error and command/source
+neighbors pass (35q3540/35q3541). The first neighbor command used a nonexistent
+second script name; the first guard passed and the corrected second invocation
+passed separately. Bounded source adversary: ROBUST; review is correlated.
+SymbolCollector/TypeInference diagnostic collection, shadow-only expansion,
+and macro-condition fallback are separate callers; this hunk does not close them.
+
+LavinMQ still stops at the previously exposed property next reparse failure
+(35q3542). Application/shard/stock stdlib before/after manifests agree. The
+macro-argument grammar and ordered macro-overload candidate repairs are separate.
+No object generation, linking, server execution, complete prelude, fresh
+bootstrap or upstream parity is established by this guard.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+cli-macro-error-stock35q3530/result.json,
+cli-macro-error-baseline35q3531/result.json,
+cli-macro-error-candidate35q3535/result.json,
+cli-macro-expansion-error-permanent35q3539/result.json,
+cli-macro-expansion-error-neighbors35q3540/macro_expansion_error_repro.sh.log,
+cli-macro-command-source-neighbor35q3541/result.json, and
+lavinmq-cli-macro-error35q3542/result.json.
+All 1,916 compiler files match build.cli-macro-expansion-error35q3534.source.json
+(SHA-256 2e505027323382d0f507f42074d7f5bf26bb37a91d43bf00b687268aeb0f7228).
+Compiler SHA-256: c063ca69ca82197d30627351b2607d11bc9a5585689f411404401146008cae22.
+LavinMQ input-manifest SHA-256:
+f256741819ab354783f582851d3e9c7659c1909cef34aefa41aa1257c57e74d1.
+Refresh after CLI literal expansion, expander diagnostics or generated-text
+acceptance changes. Rollback is this atomic compiler commit. Unrelated WIP
+and all application/library sources are preserved.

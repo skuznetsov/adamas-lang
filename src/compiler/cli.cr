@@ -5962,6 +5962,11 @@ module Adamas
           body_id,
           variables: {} of String => Semantic::MacroValue
         )
+        # Valid partial text cannot erase an earlier expansion failure.
+        if diagnostic = expander.diagnostics.find { |entry| entry.level == Semantic::DiagnosticLevel::Error }
+          formatted = Semantic::DiagnosticFormatter.format(source, diagnostic)
+          raise HIR::LoweringError.new("invalid generated macro expansion:\n#{formatted}")
+        end
         if env_enabled?("DEBUG_MACRO_EXPAND")
           bootstrap_trace_puts "[DEBUG_MACRO_EXPAND] expand_literal returned #{expanded.bytesize} bytes, empty=#{expanded.strip.empty?}"
           if expanded.bytesize > 0 && expanded.bytesize < 500

@@ -26017,6 +26017,26 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Preserve caller/definition source provenance when formatting diagnostics
   supplied from a macro block. Failure propagation is established; exact
   cross-arena error snippet and location are not.
-- [ ] Audit the separate CLI literal-expansion and other direct MacroExpander
-  callers. The HIR gate does not establish global macro-path closure, full
-  prelude, a fresh bootstrap, LavinMQ linking/execution or upstream test parity.
+- [x] Close the ordinary CLI literal-expansion error channel. Reject Error
+  diagnostics before accepting either empty or nonempty generated text.
+- [ ] Audit the remaining direct MacroExpander callers separately. The HIR and
+  CLI literal gates do not establish global macro-path closure, full prelude,
+  a fresh bootstrap, LavinMQ linking/execution or upstream test parity.
+
+
+### 2026-11-06 — Preserve CLI macro-literal expansion failures
+
+- [x] Propagate an expander Error before empty-output handling or generated
+  text reparsing. A valid trailing class must not erase an invalid scalar
+  macro-for error. Warning and Info diagnostics remain nonfatal.
+- Original-first cli_macro_expansion_error_repro.sh passes two valid loop
+  controls and two iterable-kind rejections on Crystal 1.22.1 and exact S1
+  35q3534 (35q3539). Stock rejects the partial-output case that the baseline
+  wrongly compiles to A (35q3530/35q3531). HIR expansion-error and macro
+  command/source guards pass (35q3540/35q3541); the first invocation's second
+  script name was wrong and was corrected without repeating its passing guard.
+  Bounded source adversary: ROBUST, correlated lineage.
+- Unchanged LavinMQ still stops at the property next argument transfer
+  (35q3542). This restores failure reporting; it is not a new application
+  compilation milestone. Macro argument grammar and ordered overload selection
+  remain open. No library/application workaround or relaxed type check.

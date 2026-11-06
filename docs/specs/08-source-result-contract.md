@@ -386,6 +386,16 @@ the HIR expansion seam; other MacroExpander entry points and diagnostic source
 locations require separate evidence. A newly exposed transport failure must
 be repaired at its producer, not hidden by restoring silent expansion skips.
 
+## CLI macro literals preserve the diagnostic channel
+
+The ordinary CLI macro-literal boundary must inspect Error diagnostics before
+accepting generated text or treating empty text as an absent expansion. Valid
+partial output cannot erase an earlier failure. Keep warnings nonfatal and keep
+valid empty macro loops accepted. The original-first
+cli_macro_expansion_error_repro.sh gate checks the error channel independently
+of both generated syntax and runtime output. Other expander callers need their
+own scoped evidence; do not infer global closure from this boundary.
+
 ## Falsifiers and recovery
 
 Run each script with the exact candidate as its argument. The scripts first
@@ -417,6 +427,7 @@ and check semantic diagnostics and absence of an executable for rejections.
 - `regression_tests/ivar_default_source_owner_repro.sh`
 - `regression_tests/macro_interpolation_argument_repro.sh`
 - `regression_tests/macro_expansion_error_repro.sh`
+- `regression_tests/cli_macro_expansion_error_repro.sh`
 - `spec/lsp/string_interpolation_source_cache_spec.cr`
 
 Source, toolchain, input manifests, commands, and outcomes belong in the

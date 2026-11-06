@@ -1,0 +1,18 @@
+[
+  {
+    "name": "reject_partial_scalar_loop",
+    "ok": false
+  },
+  {
+    "name": "valid_array_loop",
+    "ok": true
+  },
+  {
+    "name": "valid_empty_loop",
+    "ok": true
+  },
+  {
+    "name": "reject_empty_scalar_loop",
+    "ok": false
+  }
+]
