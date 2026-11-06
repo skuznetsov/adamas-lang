@@ -24032,3 +24032,37 @@ The regression receipt verifies production compiler source matches that frozen
 build. Refresh after pointerof lowering, applied descriptors, or container
 layout/stride changes. Declared-result contract candidates remain private;
 this fix does not close bootstrap or unchanged LavinMQ runtime/test parity.
+
+## 2026-11-05 — A top-level shortcut must consume the selected source target
+
+The early top-level call path resolved an authoritative source Def but emitted
+the original carrier-derived symbol. Int32.class and Int32 share an ABI carrier,
+so the emitted body could belong to a sibling overload. Callsite recording also
+preceded admission. The shortcut now requires the selected Def and arena to be
+the exact owners of its requested symbol before recording or lowering anything.
+Other selections continue through ordinary lowering. Empty-rest packing is
+detected by the same pure shape query used by padding and declines the shortcut
+before mutation. The synthetic C-callback closure guard explicitly binds its
+concrete ::raise target before consuming this stricter helper.
+
+S1 35q2143 passes the original-first top-level regression (ABCDAEF), the existing
+pointerof source-identity regression, the captured-Proc C-callback guard, and a
+named inline-yield class-object control. Baseline 35q2123 prints BBCCB for the core
+ABCDA case. The scoped read-only adversary returns ROBUST for shortcut admission
+and target ownership. It does not qualify ordinary rest materialization: an
+instance-first rest overload prints I rather than A, and an incompatible rest
+call is accepted on both baseline and successor. Those are separate open roots.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+top-level-target-baseline35q2136, top-level-selected-target35q2144,
+top-level-rest-candidate35q2149, and top-level-rest-baseline35q2150.
+S1 35q2143 SHA-256 is
+288ed95f06de3dac403a0ee4f8d53203a165acd988d22feec365e9f3a1397da3;
+ast_to_hir.cr SHA-256 is
+487d960ee72063ba287d680c7bb7949f7b806294c0b66e0cc95aa50c66cadfba.
+Refresh after call admission, selected-target binding, argument packing, or
+deferred materialization changes. A hello execution timed out in 35q2144;
+subsequent repeated runs pass and the compared IR differs only in diagnostic
+symbol names (hello-rest-path-diff35q2146 and hello-runtime-repeat-five35q2148).
+That runtime failure remains unexplained. Bootstrap and unchanged LavinMQ
+execution/upstream test parity remain open.

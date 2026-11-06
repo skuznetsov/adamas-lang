@@ -94339,8 +94339,17 @@ module Adamas::HIR
       end
       raise_base = strip_type_suffix(raise_entry[0])
       raise_target = mangle_function_name(raise_base, argument_types, false)
+      raise_arena = @function_def_arenas[raise_entry[0]]?
+      unless raise_arena
+        raise LoweringError.new("C callback closure guard has no source arena for ::raise")
+      end
+      bind_exact_source_call_target(raise_target, raise_entry[0], raise_entry[1], raise_arena,
+        binding_context: "C callback closure guard")
       raised = emit_top_level_bare_call(ctx, "raise", raise_target, [message.id], argument_types,
         [true], nil, false, false, nil)
+      unless raised
+        raise LoweringError.new("C callback closure guard lost the selected ::raise source binding")
+      end
       unless get_type_name_from_ref(ctx.type_of(raised)) == "NoReturn" ||
              selected_call_noreturn?(raise_target, raise_entry[1])
         raise LoweringError.new("::raise must be of NoReturn return type!")
@@ -113450,7 +113459,38 @@ module Adamas::HIR
       has_block_call : Bool,
       has_named_args : Bool,
       named_arg_names : Array(String)?,
-    ) : ValueId
+    ) : ValueId?
+      base_name = strip_type_suffix(target_name)
+      # A carrier-derived symbol is only a shortcut candidate: Int32 values
+      # and Int32.class share a carrier. Admit it only when the source resolver
+      # selects the same Def and arena, before recording any callsite facts.
+      source_facts = call_resolution_source_argument_facts(ctx, args, arg_types, has_named: has_named_args)
+      selected = resolve_call_target(CallResolutionInput.new(
+        func_name: target_name,
+        arg_count: args.size,
+        has_block: has_block_call,
+        has_splat: false,
+        arg_types: arg_types,
+        has_named: has_named_args,
+        named_names: canonical_named_arg_names(named_arg_names),
+        source_argument_facts: source_facts,
+      ))
+      if source_facts && selected.nil? && @function_defs.has_key?(target_name)
+        actual_names = source_facts.map do |argument|
+          argument ? proc_source_type_name(argument.type_ref, argument.type_literal) : "unknown"
+        end
+        raise LoweringError.new("no overload matches #{base_name}(#{actual_names.join(", ")})")
+      end
+      return nil unless selected
+      selected_def = selected.def_node
+      selected_arena = selected.source_arena
+      return nil unless selected_arena &&
+                        @function_defs[target_name]?.try(&.same?(selected_def)) &&
+                        @function_def_arenas[target_name]?.try(&.same?(selected_arena))
+      # Rest packing changes the physical signature. The ordinary path owns
+      # deriving and binding that target from this exact source declaration.
+      return nil if missing_positional_splat_index(selected.symbol_name, selected_def, args.size)
+
       callsite_arg_types = arg_types.dup
       callsite_arg_literals = arg_literals.dup
       callsite_arg_enum_names = arg_enum_names.try(&.dup)
@@ -113464,35 +113504,6 @@ module Adamas::HIR
           has_named_args,
           named_arg_names
         )
-      end
-
-      base_name = strip_type_suffix(target_name)
-      # This fast path already carries an exact source-backed target symbol.
-      # Preserve its DefNode so an explicit NoReturn contract can terminate the
-      # caller without consulting an equal-arity sibling overload.
-      source_facts = call_resolution_source_argument_facts(ctx, args, arg_types, has_named: has_named_args)
-      selected_entry = lookup_function_def_for_call(
-        target_name,
-        args.size,
-        has_block_call,
-        arg_types,
-        false,
-        has_named_args,
-        named_arg_names,
-        source_argument_facts: source_facts,
-      )
-      if source_facts && selected_entry.nil? && @function_defs.has_key?(target_name)
-        actual_names = source_facts.map do |argument|
-          argument ? proc_source_type_name(argument.type_ref, argument.type_literal) : "unknown"
-        end
-        raise LoweringError.new("no overload matches #{base_name}(#{actual_names.join(", ")})")
-      end
-      selected_def = selected_entry.try { |entry| entry[1] }
-      if selected_entry && pad_missing_positional_splat(ctx, selected_entry[0], selected_entry[1], args, arg_types)
-        target_name = mangle_function_name(base_name, arg_types, has_block_call)
-      end
-      if selected_def.nil? && strip_type_suffix(target_name) != target_name
-        selected_def = @function_defs[target_name]?
       end
       lower_function_if_needed(target_name)
       return_type = get_function_return_type(target_name, args.size, selected_def)
@@ -118331,7 +118342,7 @@ module Adamas::HIR
             self_id_dbg = ctx.lookup_local("self")
             STDERR.puts "[TOPLEVEL_CALL_SHAPE] stage=early_emit func=#{ctx.function.name} method=#{method_name} target=#{top_level_target} self=#{self_id_dbg || "nil"}"
           end
-          return emit_top_level_bare_call(
+          if emitted = emit_top_level_bare_call(
             ctx,
             method_name,
             top_level_target,
@@ -118343,6 +118354,11 @@ module Adamas::HIR
             has_named_args,
             call_named_arg_names
           )
+            return emitted
+          end
+          # Let the ordinary selected-target corridor specialize this source;
+          # the carrier-derived shortcut may belong to a sibling overload.
+          full_method_name = method_name
         end
       end
       if debug_env_filter_match?("DEBUG_BASE_METHOD", method_name, method_name, full_method_name || "")
@@ -130350,13 +130366,11 @@ module Adamas::HIR
     # A call that supplies no argument for the selected def's positional splat
     # binds that splat to an empty Tuple(). Every call-emission path must pad the
     # same way, otherwise the call targets a name that is never lowered.
-    private def pad_missing_positional_splat(
-      ctx : LoweringContext,
+    private def missing_positional_splat_index(
       entry_name : String,
       entry_def : Adamas::Compiler::Frontend::DefNode,
-      args : Array(ValueId),
-      arg_types : Array(TypeRef),
-    ) : Bool
+      arg_count : Int32,
+    ) : Int32?
       splat_index : Int32? = nil
       param_index = 0
       function_param_infos(entry_name, entry_def).each do |param|
@@ -130367,7 +130381,18 @@ module Adamas::HIR
         end
         param_index += 1
       end
-      return false unless splat_index && args.size <= splat_index
+      splat_index if splat_index && arg_count <= splat_index
+    end
+
+    private def pad_missing_positional_splat(
+      ctx : LoweringContext,
+      entry_name : String,
+      entry_def : Adamas::Compiler::Frontend::DefNode,
+      args : Array(ValueId),
+      arg_types : Array(TypeRef),
+    ) : Bool
+      splat_index = missing_positional_splat_index(entry_name, entry_def, args.size)
+      return false unless splat_index
       while args.size < splat_index
         nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
         ctx.emit(nil_lit)

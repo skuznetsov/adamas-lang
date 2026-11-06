@@ -25370,3 +25370,22 @@ integration, fresh bootstrap, or LavinMQ parity.
   primitive element qualification does not establish aggregate stride.
 - Strict declared-result contracts, bootstrap, and unchanged LavinMQ execution
   and upstream test parity remain open.
+
+### 2026-11-05 — Preserve source selection in fast top-level calls
+
+- [x] Admit a carrier-derived shortcut only when the structured resolver selects
+  its exact Def and declaration arena. Decline before mutation when empty rest
+  packing would change the physical signature; ordinary lowering owns that path.
+- The original-first top_level_selected_source_target_repro.sh passes with S1
+  35q2143, including both declaration orders, qualified calls, an inline-yield
+  class object, repeated untyped calls, and rejection of an incompatible class
+  object. The previous compiler prints BBCCB instead of ABCDA on the core case.
+- [x] Preserve the synthetic C-callback guard's exact ::raise source binding.
+  Its captured-Proc control and pointerof_source_identity_repro.sh pass.
+- [ ] Repair ordinary empty-rest source selection separately: the instance-first
+  class-object call prints I instead of A, and an incompatible rest overload is
+  accepted. Both failures reproduce on baseline S1 35q2123 and successor 35q2143.
+- [ ] Investigate the single stock-prelude hello runtime timeout in 35q2144.
+  The compared IR differs only in diagnostic symbol names, and six subsequent
+  executions of each compared binary pass. The initial timeout remains open;
+  neither bootstrap nor unchanged LavinMQ execution/test parity is qualified.
