@@ -1,0 +1,26 @@
+{
+  "generic_field_owner_ivar_default_positive.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "nested_generic_owner_ivar_default_positive.cr": {
+    "status": 0,
+    "stdout": "B"
+  },
+  "included_module_generic_ivar_default_positive.cr": {
+    "status": 0,
+    "stdout": "C"
+  },
+  "generic_field_incompatible_return_negative.cr": {
+    "status": 1,
+    "diagnostic_regex": "method Box\\(Int32\\)#entry must return Other::Entry\\(Int32\\).*returning Box::Entry\\(Int32\\)"
+  },
+  "generic_field_lexical_owner_positive.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "included_module_field_lexical_owner_positive.cr": {
+    "status": 0,
+    "stdout": "B"
+  }
+}

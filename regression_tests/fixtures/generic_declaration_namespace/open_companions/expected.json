@@ -1,0 +1,14 @@
+{
+  "generic_field_unrelated_type_negative.cr": {
+    "status": 1,
+    "diagnostic_regex": "expected argument #1 to 'Box\\(Int32\\).new' to be Box::Entry\\(Int32\\), not Other::Entry\\(Int32\\)"
+  },
+  "rooted_reopening_one_level_positive.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "rooted_reopening_nested_owner_positive.cr": {
+    "status": 0,
+    "stdout": "B"
+  }
+}

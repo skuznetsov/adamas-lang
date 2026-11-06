@@ -1173,7 +1173,8 @@ module Adamas::HIR
     type_params : Array(String),                   # ["T"] or ["K", "V"]
     node : Adamas::Compiler::Frontend::ClassNode,  # Original AST node for re-lowering
     arena : Adamas::Compiler::Frontend::ArenaLike, # Arena for looking up body ExprIds
-    is_struct : Bool = false
+    is_struct : Bool = false,
+    declaration_namespace : String? = nil
 
   # Context saved when module method registration is deferred (lazy mode).
   # Stores enough information to register a single method from a module on demand.
@@ -41101,7 +41102,14 @@ module Adamas::HIR
             bootstrap_trace_puts "[CLASS_FRONTIER] generic_before_params #{class_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
             param_names = type_params.map { |p| safe_slice_to_string(p) || "" }
             bootstrap_trace_puts "[CLASS_FRONTIER] generic_after_params #{class_name} count=#{param_names.size}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
-            new_template = GenericClassTemplate.new(class_name, param_names, node, @arena, is_struct)
+            new_template = GenericClassTemplate.new(
+              class_name,
+              param_names,
+              node,
+              @arena,
+              is_struct,
+              @current_namespace_override,
+            )
             (@generic_declarations_in_source_order[class_name] ||= [] of GenericClassTemplate) << new_template
             bootstrap_trace_puts "[CLASS_FRONTIER] generic_after_template #{class_name}" if env_has?("ADAMAS_TRACE_CLASS_FRONTIER")
 
@@ -41270,7 +41278,9 @@ module Adamas::HIR
       end
       begin
         @arena = template.arena
-        register_concrete_class(template.node, name, template.is_struct)
+        with_namespace_override_or_clear(template.declaration_namespace) do
+          register_concrete_class(template.node, name, template.is_struct)
+        end
         # Publishing a new source declaration also revokes results derived
         # from its predecessor. An updated Def table alone cannot replace an
         # already completed body under the same physical symbol.

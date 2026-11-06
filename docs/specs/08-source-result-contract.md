@@ -96,6 +96,14 @@ arguments need no class-object suffix. Transport requires the exact Def and
 arena, complete actual slots, matching TypeRefs, and matching source value
 facts; it cannot substitute an ABI-only type for the source contract.
 
+Each generic class or struct declaration also owns its registration namespace.
+Capture that namespace with the template's source node and arena, including
+nil as an instruction to clear a caller override. Replay each declaration and
+reopening in that scope before publishing field types and layout facts. A
+namespace inherited from the demand site cannot own a nested field annotation.
+Included-module declarations still resolve their fields in the module's own
+lexical scope.
+
 Known open probes include broad or mixed-kind annotated results consumed
 before their exact body facts are available, callback method-variable defaults,
 unknown external-label admission, and class/instance body reuse through keyword
@@ -119,6 +127,7 @@ and check semantic diagnostics and absence of an executable for rejections.
 - `regression_tests/source_default_contract_repro.sh`
 - `regression_tests/source_default_block_slot_repro.sh`
 - `regression_tests/source_named_forall_contract_repro.sh`
+- `regression_tests/generic_declaration_namespace_repro.sh`
 
 Source, toolchain, input manifests, commands, and outcomes belong in the
 corresponding LANDMARK entry. Refresh after result publication, return

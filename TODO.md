@@ -25634,3 +25634,28 @@ integration, fresh bootstrap, or LavinMQ parity.
   baseline and candidate; its stock-qualified fixture is explicitly excluded
   from candidate success. Callback-inferred defaults, keyword-rest body reuse,
   prelude, bootstrap and unchanged LavinMQ runtime/upstream parity remain open.
+
+### 2026-11-06 — Own generic declaration replay namespaces
+
+- [x] Capture the declaration namespace with each generic class/struct source
+  template and restore it around concrete registration, including nil-clear.
+  The first Hash field write had resolved Entry(K,V) under Log::Builder and
+  saved that caller namespace for subsequent layout refreshes.
+- Original-first generic_declaration_namespace_repro.sh passes six cases,
+  including a strict incompatible-return rejection; the named-forall gate
+  still passes all 12 cases (exact-source S1 35q2815, 35q2840/35q2831).
+  Two ivar-default reproducers reject caller-owned Entry before the fix and
+  execute correctly afterward (35q2824/35q2825).
+- Actual unchanged LavinMQ advances from Hash::Entry/Log::Entry to String#[]
+  returning Char | Void (35q2817). Removing only this namespace fix restores
+  the Hash failure (35q2818). No object/link/runtime parity is established.
+- [ ] Fix the pre-existing unrelated Entry constructor-argument acceptance
+  (stock rejects; baseline accepts). Its stock-qualified fixture is excluded
+  from candidate success. The neighboring generic-reopening suite also has a
+  pre-existing `new` failure for ReopeningBareBox(::String); nine other cases
+  pass in lazy and eager modes (35q2821/35q2822). Two rooted generic
+  reopenings compile on stock but report Pointer instead of Int32 both before
+  and after this fix (35q2836–35q2838). All three OPEN fixtures are qualified
+  on stock and excluded from candidate success (35q2840). Preserve these obligations.
+- [ ] Close callback bottom/result ownership and initializer replay, then
+  refresh stock prelude, bootstrap, LavinMQ execution and upstream test parity.

@@ -24569,3 +24569,56 @@ ast_to_hir.cr: 6c0a2e46279d269184fdf361ad3e71428a3fdc59519f36b9dbc9b3c1c1c57fe2.
 Refresh after named projection, method-forall substitution, exact source-call
 binding, body demand, arena ownership or source value-kind changes. Rollback
 is this atomic compiler commit.
+
+## 2026-11-06 — Generic field publication belongs to the declaration namespace
+
+The LavinMQ Hash::Entry/Log::Entry failure began at the first field write,
+before get_entry lowering: generic Hash registration inherited Log::Builder
+or Log::BroadcastBackend as its namespace override. Entry(K,V) resolved under
+Log and the field's saved namespace retained that mistake during authoritative
+layout refreshes (35q2802). The method's own annotation was correctly scoped;
+clearing only its lowering context would not repair the published field.
+
+GenericClassTemplate now stores its declaration namespace alongside its exact
+node and arena. Concrete registration replays that scope, including nil-clear,
+and restores the surrounding override afterward. Each source-order reopening
+keeps its own declaration context. Included-module field resolution remains
+lexically scoped rather than globally clearing annotation namespaces.
+
+The six original-first generic_declaration_namespace_repro.sh cases pass on
+Crystal 1.22.1 and exact-source S1 35q2815 (35q2840). Two class-body ivar-default
+cases reject with caller-owned Entry before the fix, then execute A/B after it
+(35q2823/35q2824/35q2825). The strict Box#entry return negative rejects the
+incompatible Other::Entry on both compilers. All 12 named-forall neighboring
+cases also pass (35q2831). The scoped Adversary verdict is ROBUST for these
+namespace publication cases and the actual Hash frontier.
+
+The actual unchanged LavinMQ front-end probe now reaches String#[] returning
+Char | Void (35q2817). A matched named-only compiler restores the original
+Hash::Entry/Log::Entry failure (35q2818), isolating this namespace change.
+Neither probe emits an object or establishes runtime/upstream test parity.
+
+Do not report the whole generic-reopening gate as passing: bare_class_methods
+fails at `new` for ReopeningBareBox(::String) in both lazy/eager modes; the
+baseline reproduces the same failure (35q2821/35q2822). Nine other source cases
+pass in both candidate modes. An unrelated Entry constructor-argument negative
+is also accepted before this fix; it is qualified on stock and excluded from
+candidate success. Two rooted generic reopenings compile on stock, but both
+before and after this fix report Pointer instead of Int32 at the outer method
+result (35q2836–35q2838). All three OPEN companions are qualified on stock and
+excluded from candidate success (35q2840). These remain separate compiler
+obligations. Macro-generated reopening contexts, full prelude, bootstrap and
+LavinMQ runtime remain open.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+generic-namespace-final-original-first35q2840/result.json,
+generic-namespace-named-neighbor35q2831/result.json,
+generic-declaration-namespace-lavinmq35q2817/result.json and
+named-only-lavinmq-namespace-ablation35q2818/result.json.
+All 1,916 compiler files match
+build.current-generic-declaration-namespace35q2815.source.json.
+Compiler SHA-256: d724f18b7214550d6a91669f2f76c7f02cfba2cab14d9cf583552d1b52580a5d;
+ast_to_hir.cr: 8d2508d9c8bd78694d90733f3a67249111e76535f15b5dd013348d23ee514fff.
+Refresh after template capture/replay, namespace lookup, generic reopening,
+field-type publication or layout refresh changes. Rollback is this atomic
+compiler commit. No standard-library or application changes are included.
