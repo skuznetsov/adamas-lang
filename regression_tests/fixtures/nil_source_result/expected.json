@@ -1,0 +1,26 @@
+{
+  "deferred_nil_both_paths.cr": {
+    "status": 0,
+    "stdout": "AA\n"
+  },
+  "deferred_nil_explicit_return.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "nil_after_bool_if_yield.cr": {
+    "status": 0,
+    "stdout": "IA\n"
+  },
+  "nil_result_does_not_satisfy_int32.cr": {
+    "diagnostic": "must return",
+    "status": 1
+  },
+  "nil_union_return_if_yield.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "wrong_union_return_if_yield.cr": {
+    "diagnostic": "must return",
+    "status": 1
+  }
+}

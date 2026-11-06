@@ -51808,7 +51808,9 @@ module Adamas::HIR
     # of the called function (which may not have been lowered yet).
     @[AlwaysInline]
     private def weak_callsite_arg_type?(type : TypeRef) : Bool
-      type == TypeRef::VOID || type == TypeRef::POINTER || type == TypeRef::NIL
+      # Nil is a concrete source result. Recovering it from a generic callee
+      # declaration can replace an owned Nil result with an unresolved T.
+      type == TypeRef::VOID || type == TypeRef::POINTER
     end
 
     private def refine_void_args_from_source_calls(

@@ -25552,11 +25552,26 @@ integration, fresh bootstrap, or LavinMQ parity.
   corpus, not all consumers of source result facts. See specification 08.
 - [ ] Demand completed broad/union result facts before an outer overload
   consumes them. Three falsifiers fail on the previous compiler too (35q2629).
-- [ ] Locate the consumer that changes a callback-bound Nil result back into
-  unresolved T at outer overload admission; the previous compiler also fails
-  the matched Nil control (35q2609).
+- [x] Locate and remove the consumer that changes a callback-bound Nil result
+  back into unresolved T at outer overload admission (35q2649/35q2661 below).
+  The previous compiler also fails the matched Nil control (35q2609).
 - [ ] Preserve and validate actual default-argument types and kinds. The
   unchanged LavinMQ and prelude probes still reject IO#read_bytes because the
   LittleEndian default is retagged ByteFormat.class (35q2612/35q2613/35q2615).
 - Fresh bootstrap, unchanged LavinMQ execution, and upstream test parity remain
   open. No standard-library or application workaround belongs to these repairs.
+
+### 2026-11-06 — Preserve concrete Nil at callsite argument refinement
+
+- [x] Stop treating Nil as a weak callsite placeholder. The deferred call and
+  its LoweringContext both retained Nil, but refine_void_args_from_source_calls
+  replaced the separate argument-type vector with an unresolved T from a fresh
+  function-return lookup. Void and pointer recovery remain unchanged.
+- Original-first nil_source_result_repro.sh passes six explicit/implicit,
+  nullable and negative-return controls; source_return_kind_repro.sh passes
+  its 14 neighboring cases (35q2661, exact-source S1 35q2657). The earlier
+  matched Nil controls failed before this one-line correction.
+- [ ] The separate wrong_outer_early_return falsifier still diagnoses an
+  unresolved T before the intended incompatible-return check. It is not part
+  of the Nil-consumer closure. Broad-result demand, default contracts, stock
+  prelude, bootstrap and unchanged LavinMQ runtime/test parity remain open.

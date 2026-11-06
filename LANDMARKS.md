@@ -24399,3 +24399,36 @@ still stop at IO#read_bytes. Trace 35q2615 shows the default LittleEndian class
 object overwritten by its formal ByteFormat carrier. No linking, runtime,
 bootstrap fixed point or upstream parity is established. Specification 08
 records the remaining contracts; no stdlib or LavinMQ files are changed.
+
+## 2026-11-06 — Nil is a concrete result, not a weak argument placeholder
+
+Value-ID tracing 35q2649 separates a real context mutation from a second type
+owner: the deferred call returns ValueId 4 typed Nil; lower_expr and the outer
+call's initial argument vector both retain Nil. A later callsite refiner changes
+only that vector to T while the same ValueId and context still report Nil.
+weak_callsite_arg_type? classified Nil as provisional, then
+refine_void_args_from_source_calls replaced it from a function-return lookup.
+Remove Nil from the placeholder predicate; leave Void and pointer recovery
+unchanged. No source annotation, ABI carrier or overload check is weakened.
+
+Original-first nil_source_result_repro.sh (six cases) and the 14-case
+source_return_kind_repro.sh pass on Crystal 1.22.1 and exact-source S1 35q2657
+(35q2661). Explicit and implicit callback-bound Nil choose the proper overload,
+nullable results retain their returning arms, and incompatible integer/union
+returns still fail semantically without an executable. The six earlier probes
+also pass (35q2658); the unrelated wrong_outer_early_return still reaches an
+unresolved-T diagnostic and is not certified as repaired.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+nil-source-result-original-first35q2661/result.json and
+nil-source-result-qualified35q2664.json/.files.json. The 1,916 live compiler
+source files match build.current-return-nil-owned-fact35q2657.source.json.
+Compiler SHA-256:
+a0b180ae991dea42f1a4c7cb2c2b35726816a4e4a255743d69fa1c074a10abcf;
+ast_to_hir.cr:
+bd56896c7f1e2b430bad2c4743ff440d89f09c7bb70e4f5c895afb1539359aa7.
+The scoped Adversary verdict is ROBUST for preserving concrete Nil at this
+argument-refinement boundary. Refresh after weak-type classification,
+source-call refinement, callback result publication or return lookup changes.
+Broad annotated-result demand, default materialization, stock prelude, fresh
+bootstrap and unchanged LavinMQ runtime/upstream parity remain open.

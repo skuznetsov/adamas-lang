@@ -1,7 +1,7 @@
 # Source Result Ownership — Frontier SDD
 
 Status: IN_PROGRESS, 2026-11-06. The bounded return-owner implementation passes
-the four original-first gates below against Crystal 1.22.1 (116 fixtures,
+four original-first gates against Crystal 1.22.1 (116 fixtures,
 35q2635). Result-consumer precision, stock-prelude compilation, fresh bootstrap,
 and unchanged LavinMQ execution and upstream test parity remain open.
 
@@ -53,8 +53,12 @@ The source matcher uses the canonical parent chain, including the built-in
 Reference-to-Object and Struct-to-Value edges. Opposite-direction rejection
 controls remain required.
 
-Known open probes include a callback-bound Nil result whose outer overload
-still reads an unresolved T, broad or mixed-kind annotated results consumed
+A concrete Nil is not a return-inference placeholder. The callsite argument
+refiner must retain it rather than replacing it with a declaration lookup's
+unresolved method formal. Six original-first Nil/union controls and the
+14-case source-kind gate pass after this consumer correction (35q2661).
+
+Known open probes include broad or mixed-kind annotated results consumed
 before their exact body facts are available, and defaults whose actual type
 is overwritten by their formal restriction. These failures were reproduced on
 the previous compiler as well. Passing the bounded return corpus does not
@@ -68,6 +72,7 @@ and check semantic diagnostics and absence of an executable for rejections.
 
 - `regression_tests/declared_return_contract_repro.sh`
 - `regression_tests/source_return_kind_repro.sh`
+- `regression_tests/nil_source_result_repro.sh`
 - `regression_tests/virtual_source_fact_transport_repro.sh`
 - `regression_tests/module_source_value_kind_repro.sh`
 
