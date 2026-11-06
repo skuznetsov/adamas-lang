@@ -1,0 +1,218 @@
+{
+  "bad_builtin_hierarchy_reject_int32_as_reference.cr": {
+    "diagnostic": "must return",
+    "status": 1
+  },
+  "bad_builtin_hierarchy_reject_reference_instance_as_value.cr": {
+    "diagnostic": "must return",
+    "status": 1
+  },
+  "bad_class_method_self_explicit_return.cr": {
+    "diagnostic": "must return",
+    "status": 1
+  },
+  "bad_class_method_self_receiver.cr": {
+    "diagnostic": "must return",
+    "status": 1
+  },
+  "bad_class_method_self_tail.cr": {
+    "diagnostic": "must return",
+    "status": 1
+  },
+  "bad_def_explicit_return.cr": {
+    "diagnostic": "must return Bool",
+    "status": 1
+  },
+  "bad_def_tail.cr": {
+    "diagnostic": "must return Bool",
+    "status": 1
+  },
+  "bad_method_explicit_return.cr": {
+    "diagnostic": "must return Bool",
+    "status": 1
+  },
+  "bad_method_tail.cr": {
+    "diagnostic": "must return Bool",
+    "status": 1
+  },
+  "bad_pending_generic_family_return.cr": {
+    "diagnostic": "must return",
+    "status": 1
+  },
+  "bad_pending_nilable_return.cr": {
+    "diagnostic": "must return",
+    "status": 1
+  },
+  "bad_unknown_generic_return.cr": {
+    "diagnostic": "undefined constant MissingReturnBox",
+    "status": 1
+  },
+  "bad_unknown_nested_generic_return.cr": {
+    "diagnostic": "undefined constant MissingReturnLeaf",
+    "status": 1
+  },
+  "bad_unknown_return.cr": {
+    "diagnostic": "undefined constant MissingReturnType",
+    "status": 1
+  },
+  "bad_yield_class_explicit_return.cr": {
+    "diagnostic": "must return Bool",
+    "status": 1
+  },
+  "bad_yield_class_tail.cr": {
+    "diagnostic": "must return Bool",
+    "status": 1
+  },
+  "bad_yield_concrete_int_no_widen.cr": {
+    "diagnostic": "must return Int64",
+    "status": 1
+  },
+  "bad_yield_explicit_return.cr": {
+    "diagnostic": "must return Bool",
+    "status": 1
+  },
+  "bad_yield_nil_return.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "bad_yield_noreturn.cr": {
+    "diagnostic": "must return NoReturn",
+    "status": 1
+  },
+  "bad_yield_tail.cr": {
+    "diagnostic": "must return Bool",
+    "status": 1
+  },
+  "bad_yielding_class_method_self_explicit_return.cr": {
+    "diagnostic": "must return",
+    "status": 1
+  },
+  "bad_yielding_class_method_self_receiver.cr": {
+    "diagnostic": "must return",
+    "status": 1
+  },
+  "bad_yielding_class_method_self_tail.cr": {
+    "diagnostic": "must return",
+    "status": 1
+  },
+  "good_builtin_hierarchy_reference_object_accept_reference_instance.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "good_builtin_hierarchy_user_base_accepts_derived.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "good_builtin_hierarchy_value_accepts_class_literal.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "good_builtin_hierarchy_value_accepts_int32.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "good_builtin_hierarchy_value_accepts_struct.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "good_class_method_bool.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "good_class_method_self_factory.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "good_def_bool.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "good_def_nil_discard.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "good_def_nil_explicit_return.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "good_def_void_discard.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "good_empty_named_tuple_return.cr": {
+    "status": 0,
+    "stdout": ""
+  },
+  "good_empty_tuple_return.cr": {
+    "status": 0,
+    "stdout": ""
+  },
+  "good_method_bool.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "good_method_nil_explicit_return.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "good_method_void_explicit_return.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "good_nil_yield_discard.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "good_nonlocal_caller_return.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "good_pending_generic_family_return.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "good_pending_nilable_return.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "good_void_explicit_return.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "good_void_yield_discard.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "good_yield_abstract_float.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "good_yield_abstract_int.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "good_yield_class_nil_discard.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "good_yield_class_void_discard.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "good_yield_explicit_return.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "good_yield_generic_return.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "good_yield_tail.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "good_yielding_class_method_self_factory.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  }
+}

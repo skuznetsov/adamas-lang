@@ -1,0 +1,58 @@
+{
+  "early_class_return.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "mixed_class_value_rejected.cr": {
+    "status": 1,
+    "diagnostic": "must return Int32.class"
+  },
+  "nonreturn_branch.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "return_other_class.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "return_other_instance.cr": {
+    "status": 0,
+    "stdout": "X\n"
+  },
+  "explicit_concrete_class.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "class_bound_return.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "alias_class_return.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "unannotated_result.cr": {
+    "status": 0,
+    "stdout": "AX\n"
+  },
+  "nullable_class_return.cr": {
+    "status": 0,
+    "stdout": "AN\n"
+  },
+  "generic_owner_return_kind.cr": {
+    "status": 0,
+    "stdout": "AX\n"
+  },
+  "invalid_alias_class_return_kind.cr": {
+    "status": 1,
+    "diagnostic": "must return Int32.class"
+  },
+  "class_union_return.cr": {
+    "status": 0,
+    "stdout": "IS\n"
+  },
+  "cross_call_class_binding.cr": {
+    "status": 0,
+    "stdout": "IS\n"
+  }
+}
