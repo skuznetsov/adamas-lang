@@ -7899,6 +7899,10 @@ module Adamas::HIR
     # has ended. Its physical name is only an index: the exact Def and arena
     # must still authorize the retained lexical provider.
     @method_body_super_sources = {} of String => {Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike, String}
+    # A declaration's source kind belongs to its exact Def and arena. Lexical
+    # namespace overrides also name classes and enclosing modules and cannot
+    # authorize include alias replacement or module-formal substitution.
+    @module_instance_def_owners = {} of {Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike} => String
     # `K.m_super_from_P` body name => ancestor `P` whose class method it lowers,
     # so a `super` inside that body continues above `P` instead of re-entering it.
     @class_method_super_owners = Hash(String, String).new
@@ -27930,6 +27934,7 @@ module Adamas::HIR
                       @included_initializer_def_origins[{member, member_arena}] = module_full_name
                     end
                     register_function_type(full_name, return_type)
+                    record_module_instance_def_owner(member, member_arena, module_full_name)
                     set_function_def_entry(full_name, member)
                     set_function_def_arena(full_name, member_arena)
                     if env_get("DEBUG_ARENA_WRITE") && (class_name.includes?("Slice") && method_name == "hash")
@@ -33723,7 +33728,51 @@ module Adamas::HIR
         return false if existing_node.same?(node) && existing_arena.same?(arena)
       end
       entries << {node, arena}
+      record_module_instance_def_owners(module_name, node.body, arena)
       true
+    end
+
+    private def record_module_instance_def_owner(
+      definition : Adamas::Compiler::Frontend::DefNode,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+      owner : String,
+    ) : Nil
+      owner = strip_generic_args(owner)
+      key = {definition, arena}
+      if previous = @module_instance_def_owners[key]?
+        unless previous == owner
+          raise LoweringError.new("module instance source owner changed from #{previous} to #{owner}", definition)
+        end
+      else
+        @module_instance_def_owners[key] = owner
+      end
+    end
+
+    # Index only this module's own instance declarations. A class or module
+    # nested in its lexical body owns a separate declaration scope.
+    private def record_module_instance_def_owners(
+      owner : String,
+      body : Array(ExprId)?,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Nil
+      return unless body
+      body.each do |expr_id|
+        member = unwrap_visibility_member_in_arena(arena[expr_id], arena)
+        case member
+        when Adamas::Compiler::Frontend::DefNode
+          next if (receiver = member.receiver) && class_method_receiver_text?(safe_slice_to_string(receiver) || "")
+          record_module_instance_def_owner(member, arena, owner)
+        when Adamas::Compiler::Frontend::BeginNode, Adamas::Compiler::Frontend::BlockNode
+          record_module_instance_def_owners(owner, member.body, arena)
+        end
+      end
+    end
+
+    private def module_instance_def_owner(
+      definition : Adamas::Compiler::Frontend::DefNode,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : String?
+      @module_instance_def_owners[{definition, arena}]?
     end
 
     # A module's child ExprIds belong to the arena that owns this declaration.
@@ -34393,7 +34442,7 @@ module Adamas::HIR
                   set_function_def_arena(full_name, member_arena)
                 end
               else
-                register_type_method_from_def(member, module_name)
+                register_type_method_from_def(member, module_name, module_source_owner: module_name)
               end
             when Adamas::Compiler::Frontend::GetterNode
               next unless member.is_class?
@@ -35377,11 +35426,14 @@ module Adamas::HIR
                             @module_extend_self.includes?(module_name)
                           end
         unless is_class_method
-          register_type_method_from_def(member, module_name)
+          register_type_method_from_def(member, module_name, module_source_owner: module_name)
           return
         end
         base_name = "#{module_name}.#{method_name}"
         member_arena = registration_member_arena_for(base_name, member)
+        # `extend self` exposes an implicit instance declaration as a module
+        # class method too; its source kind still belongs to this exact pair.
+        record_module_instance_def_owner(member, member_arena, module_name) unless member.receiver
         return_type = nil.as(TypeRef?)
         param_types = [] of TypeRef
         has_block = false
@@ -36875,6 +36927,7 @@ module Adamas::HIR
       known_arena : Adamas::Compiler::Frontend::ArenaLike? = nil,
       prefer_source_yield_scan : Bool = false,
       record_source_accessor_order : Bool = false,
+      module_source_owner : String? = nil,
     )
       source_declaration_order_for(member, known_arena || @arena)
       method_name = def_method_name_from_node(member, known_arena || @arena) || return
@@ -36908,6 +36961,11 @@ module Adamas::HIR
                      end
       if recovered = source_recovered_def_for(effective_member, member_arena)
         effective_member = recovered
+      end
+      if module_source_owner && !is_class_method
+        # Macro expansion can recover a new Def or arena. Publish source kind
+        # only after this registration has selected the pair it will retain.
+        record_module_instance_def_owner(effective_member, member_arena, module_source_owner)
       end
       if filter = env_get("DEBUG_SET_FTYPE")
         if base_name.includes?(filter)
@@ -39303,7 +39361,7 @@ module Adamas::HIR
                 # module, as for a top-level module body: a call on a value of
                 # the module type (`ExecutionContext.each(&.stack_pool?)` in
                 # `module Fiber::ExecutionContext`) needs the source family.
-                register_type_method_from_def(member, full_name)
+                register_type_method_from_def(member, full_name, module_source_owner: full_name)
                 next
               end
               bootstrap_trace_puts "[CLASS_FRONTIER] nested_module_def_after_class_method #{full_name}.#{method_name}" if trace_nested_float_def
@@ -50257,6 +50315,7 @@ module Adamas::HIR
             raise LoweringError.new("module super provider changed for #{full_name}", node)
           end
         end
+        record_module_instance_def_owner(node, def_arena, module_owner)
         @method_body_super_sources[full_name] = {node, def_arena, module_owner}
       else
         @method_body_super_sources.delete(full_name)
@@ -57069,12 +57128,14 @@ module Adamas::HIR
       candidates.concat(function_def_overloads("#{base_owner}##{method_name}")) if base_owner != owner
 
       candidates.each do |candidate_name|
-        next if function_namespace_override_for(candidate_name)
         parts = parse_method_name_compact(strip_type_suffix(candidate_name))
         next unless parts.separator == '#' && parts.method == method_name
         next unless owner_names.includes?(normalize_method_owner_name(parts.owner))
         def_node = @function_defs[candidate_name]?
         next unless def_node
+        if candidate_arena = @function_def_arenas[candidate_name]?
+          next if module_instance_def_owner(def_node, candidate_arena)
+        end
         if exact_target
           next unless candidate_name == exact_target.symbol_name && def_node.same?(exact_target.def_node)
         end
@@ -57573,9 +57634,10 @@ module Adamas::HIR
           # Eager registration can leave an earlier include's body under the
           # receiver's synthetic name. Replace it only when this exact source
           # is the winner under the receiver's normal include MRO and the
-          # existing target is itself a module-owned materialization. A direct
-          # class definition has no module namespace override and still wins.
-          existing_module = function_namespace_override_for(included_target_name)
+          # existing target's exact Def and arena came from a module. A
+          # lexical namespace alone says nothing about that source kind.
+          existing_arena = @function_def_arenas[included_target_name]?
+          existing_module = existing_arena.try { |arena| module_instance_def_owner(existing_def, arena) }
           mro_found = if existing_module
                         recheck_arg_count = arg_types.size
                         recheck_has_block = has_block_call
@@ -57634,6 +57696,7 @@ module Adamas::HIR
       if method_name == "initialize"
         @included_initializer_def_origins[{found[0], found[1]}] = module_owner
       end
+      record_module_instance_def_owner(found[0], found[1], module_owner)
       set_function_def_entry(included_target_name, found[0], false)
       set_function_def_arena(included_target_name, found[1])
       # The selected source owns where `super` resumes as well as its body and
@@ -57831,9 +57894,10 @@ module Adamas::HIR
       selected_receiver_module = false
       receiver_base = strip_generic_args(receiver_name)
       if selected_owner == receiver_name || selected_owner == receiver_base
-        selected_module = function_namespace_override_for(selected_target.symbol_name)
-        # Receiver-owned entries with no module namespace are direct class
-        # definitions. Preserve their priority over every included module.
+        selected_arena = selected_target.source_arena || @function_def_arenas[selected_target.symbol_name]?
+        selected_module = selected_arena.try { |arena| module_instance_def_owner(selected_target.def_node, arena) }
+        # Only a module source receipt authorizes rebasing a receiver alias.
+        # A direct class method may have a class or enclosing module namespace.
         return nil unless selected_module
         include_owners = [receiver_name] of String
         include_owners << receiver_base unless receiver_base == receiver_name
@@ -77028,113 +77092,55 @@ module Adamas::HIR
       included_module_param_map = {} of String => String
       included_method_forall_names = [] of String
       included_forall_call_map = {} of String => String
-      if registered_map = registered_param_map
-        if module_owner = function_namespace_override_for(resolved_mangled, resolved_base)
-          declared_names = declared_module_type_param_names(module_owner)
-          if debug_block_params
-            STDERR.puts "[BLOCK_PARAMS] provenance declared_module owner=#{module_owner} declared=#{declared_names.join(",")} registered=#{registered_map.keys.sort.join(",")}"
-          end
-          if !declared_names.empty? && receiver_type_value != TypeRef::VOID
-            if receiver_desc = @module.get_type_descriptor(receiver_type_value)
-              include_map = if exact_origin = exact_included_origin
-                              if strip_generic_args(exact_origin[2]) == strip_generic_args(module_owner)
-                                selected_origin_param_map
-                              else
-                                included_module_type_param_map_for_origin(
-                                  receiver_desc.name, module_owner, exact_origin[3],
-                                )
-                              end
-                            else
-                              included_module_type_param_map(receiver_desc.name, strip_generic_args(module_owner))
-                            end
-              if exact_included_origin && !declared_names.empty? && include_map.nil?
-                raise LoweringError.new(
-                  "selected block source include has unresolved type parameters",
-                  call_node,
-                )
-              end
-              if include_map
-                has_registered_module_binding = declared_names.any? do |name|
-                  registered_map.has_key?(name) && include_map.has_key?(name)
-                end
-                if debug_block_params
-                  STDERR.puts "[BLOCK_PARAMS] provenance legacy_gate owner=#{module_owner} declared=#{declared_names.join(",")} registered=#{registered_map.keys.sort.join(",")} include=#{include_map} accepted=#{has_registered_module_binding}"
-                end
-                if has_registered_module_binding
-                  included_module_param_names = declared_names
-                  declared_names.each do |name|
-                    if value = include_map[name]?
-                      included_module_param_map[name] = value
-                    end
-                  end
-
-                  if selected_def = func_def
-                    included_method_forall_names = forall_type_param_names(selected_def)
-                    included_forall_call_map = included_method_forall_call_map(
-                      resolved_mangled,
-                      selected_def,
-                      included_method_forall_names,
-                      call_arg_types_for_infer,
-                      call_has_named_args,
-                    )
-                  end
-                end
-              end
+      selected_module_owner = exact_included_origin.try(&.[2])
+      if selected_module_owner.nil? && (selected_def = func_def)
+        if selected_arena = @function_def_arenas[resolved_mangled]? || @function_def_arenas[resolved_base]?
+          selected_module_owner = module_instance_def_owner(selected_def, selected_arena)
+        end
+      end
+      source_module_param_names = selected_module_owner.try { |owner| declared_module_type_param_names(owner) } || [] of String
+      # The declaration owns its formal names even before an exact include
+      # application is available. Receiver aliases, the ambient caller map,
+      # and a physical target shared by multiple applications cannot supply
+      # missing bindings. Only the selected include application restores them.
+      if map = param_map
+        source_module_param_names.each { |name| map.delete(name) }
+      end
+      # The exact selected Def, arena and include application already
+      # authorize this map. Do not additionally require a physical target's
+      # cached map: that cache can be absent or belong to another application.
+      if exact_origin = exact_included_origin
+        if include_map = selected_origin_param_map
+          declared_names = declared_module_type_param_names(exact_origin[2])
+          included_module_param_names = declared_names.empty? ? include_map.keys : declared_names
+          included_module_param_names.each do |name|
+            if value = include_map[name]?
+              included_module_param_map[name] = value
             end
           end
         end
-      end
-
-      # Some exact included-module declarations retain their source DefNode
-      # and include-site map even when declared_module_type_param_names cannot
-      # recover the generic names from the stripped namespace key. In that
-      # case, the receiver's include-chain candidate is authoritative only if
-      # it is the very same DefNode selected for this call; a same-name method
-      # from another module is not sufficient provenance.
-      if included_module_param_names.empty? && func_def && receiver_type_value != TypeRef::VOID
-        if receiver_desc = @module.get_type_descriptor(receiver_type_value)
-          if receiver_desc.kind != TypeKind::Union && receiver_desc.kind != TypeKind::Module &&
-             receiver_desc.kind != TypeKind::Generic
-            if candidate_method = method_part(resolved_base)
-              if exact_origin = exact_included_origin
-                if func_def.same?(exact_origin[0])
-                  exact_module_owner = exact_origin[2]
-                  if exact_include_map = included_module_type_param_map_for_origin(
-                       receiver_desc.name, exact_module_owner, exact_origin[3],
-                     )
-                    included_module_param_names = exact_include_map.keys
-                    included_module_param_map = exact_include_map
-                    included_method_forall_names = forall_type_param_names(func_def)
-                    included_forall_call_map = included_method_forall_call_map(
-                      resolved_mangled,
-                      func_def,
-                      included_method_forall_names,
-                      call_arg_types_for_infer,
-                      call_has_named_args,
-                    )
-
-                    if debug_block_params
-                      STDERR.puts "[BLOCK_PARAMS] provenance exact_include_owner=#{exact_module_owner} def=#{func_def.object_id} names=#{included_module_param_names.join(",")} map=#{included_module_param_map} forall=#{included_method_forall_names.join(",")} forall_call=#{included_forall_call_map}"
-                    end
-                  end
-                elsif debug_block_params
-                  STDERR.puts "[BLOCK_PARAMS] provenance exact_include_rejected selected_def=#{func_def.object_id} candidate_def=#{exact_origin[0].object_id} owner=#{exact_origin[2]}"
-                end
-              elsif debug_block_params
-                STDERR.puts "[BLOCK_PARAMS] provenance exact_include_candidate=<none> receiver=#{receiver_desc.name} method=#{candidate_method}"
-              end
-            end
-          end
+        if selected_def = func_def
+          included_method_forall_names = forall_type_param_names(selected_def)
+          included_forall_call_map = included_method_forall_call_map(
+            resolved_mangled,
+            selected_def,
+            included_method_forall_names,
+            call_arg_types_for_infer,
+            call_has_named_args,
+          )
+        end
+        if debug_block_params
+          STDERR.puts "[BLOCK_PARAMS] provenance exact_include_owner=#{exact_origin[2]} application=#{exact_origin[3]} names=#{included_module_param_names.join(",")} map=#{included_module_param_map} forall=#{included_method_forall_names.join(",")} forall_call=#{included_forall_call_map}"
         end
       end
 
       receiver_type_map = {} of String => String
       if receiver_type_value != TypeRef::VOID
         receiver_type_map = type_param_map_for_receiver_type(receiver_type_value)
-        unless included_module_param_names.empty? && included_method_forall_names.empty?
+        unless source_module_param_names.empty? && included_module_param_names.empty? && included_method_forall_names.empty?
           filtered_receiver_map = {} of String => String
           receiver_type_map.each do |key, value|
-            next if included_module_param_names.includes?(key) || included_method_forall_names.includes?(key)
+            next if source_module_param_names.includes?(key) || included_module_param_names.includes?(key) || included_method_forall_names.includes?(key)
             filtered_receiver_map[key] = value
           end
           receiver_type_map = filtered_receiver_map
@@ -77154,10 +77160,11 @@ module Adamas::HIR
       end
 
       if !@type_param_map.empty?
+        ambient_map = @type_param_map.reject { |key, _| source_module_param_names.includes?(key) }
         if param_map && !param_map.empty?
-          param_map = @type_param_map.merge(param_map)
+          param_map = ambient_map.merge(param_map)
         else
-          param_map = @type_param_map.dup
+          param_map = ambient_map
         end
       end
 
@@ -77236,7 +77243,10 @@ module Adamas::HIR
         return fallback_block_param_types(resolved_base, receiver_type_value)
       end
 
-      if receiver_type_value != TypeRef::VOID
+      # A module declaration with formals needs the exact selected include
+      # application. Receiver-wide include searches and element-type guesses
+      # cannot reconstruct that application, including inside nested types.
+      if receiver_type_value != TypeRef::VOID && source_module_param_names.empty?
         needs_fallback = param_map.nil? || param_map.empty? ||
                          input_names.any? do |name|
                            next false if included_module_param_names.includes?(name) || included_method_forall_names.includes?(name)
@@ -77303,7 +77313,7 @@ module Adamas::HIR
       if target = self_target_name
         resolved_names = resolved_names.map { |name| name == "self" ? target : name }
       end
-      if receiver_type_value != TypeRef::VOID
+      if receiver_type_value != TypeRef::VOID && source_module_param_names.empty?
         if recv_desc = @module.get_type_descriptor(receiver_type_value)
           if elem_name = element_type_for_type_name(recv_desc.name)
             resolved_names = resolved_names.map do |name|
@@ -109883,6 +109893,7 @@ module Adamas::HIR
               member_name = (safe_slice_to_string(member.name) || "")
               next unless member_name == method_base
               effective_member = source_recovered_def_for(member, mod_arena) || member
+              record_module_instance_def_owner(effective_member, mod_arena, module_name)
 
               actual_param_count = 0
               required_param_count = 0
@@ -113575,7 +113586,7 @@ module Adamas::HIR
       # params, recorded at registration, name the body's own bindings, so
       # they are re-applied over the receiver map.
       if (module_params = function_type_param_map_for(target_name, base_target_name, name)) &&
-         (module_owner = function_namespace_override_for(target_name, base_target_name, name))
+         (module_owner = module_instance_def_owner(resolved_func_def, arena))
         module_keys = declared_module_type_param_names(module_owner)
         declared = module_params.select { |key, _| module_keys.includes?(key) }
         unless declared.empty?

@@ -128,6 +128,22 @@ retain their separate deferred staging path. This registration rule does not
 settle virtual dispatch when a child has omitted named-only defaults; preserve
 the stock-qualified open companion and its expected child implementation.
 
+A lexical namespace does not prove that a method originated in a module.
+Record module instance source ownership on the exact definition and arena,
+including effective macro-generated definitions and implicit extend-self.
+Exclude nested declaration scopes and explicit class methods. Only that
+receipt authorizes replacing or rebasing an included-module alias; a direct
+class or Tuple declaration retains its normal precedence even when it has a
+namespace override. Keep the different-definition body replacement guard.
+
+A module source receipt identifies its formal names, not an include
+application. Remove those names from physical-target caches, receiver aliases,
+and ambient caller substitutions. Restore them only from the exact selected
+Def, arena and include application; an absent registered map or a module-like
+receiver cannot invalidate that exact application. Broad receiver include or
+element-type guesses cannot reconstruct missing module bindings. Method-forall
+bindings retain their separately validated source call ownership.
+
 Known open probes include broad or mixed-kind annotated results consumed
 before their exact body facts are available, callback method-variable defaults,
 unknown external-label admission, and class/instance body reuse through keyword
@@ -154,6 +170,7 @@ and check semantic diagnostics and absence of an executable for rejections.
 - `regression_tests/generic_declaration_namespace_repro.sh`
 - `regression_tests/contextual_global_source_result_repro.sh`
 - `regression_tests/materialized_method_source_owner_repro.sh`
+- `regression_tests/source_module_method_owner_repro.sh`
 
 Source, toolchain, input manifests, commands, and outcomes belong in the
 corresponding LANDMARK entry. Refresh after result publication, return

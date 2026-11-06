@@ -1,0 +1,88 @@
+{
+  "tuple_direct.cr": {
+    "source_sha256": "4fb8b444d9c8026277b14e253eda8a680bfddb9597fab92491e6edd7320bc1bb",
+    "status": 0,
+    "stdout": "A"
+  },
+  "tuple_typed_receiver.cr": {
+    "source_sha256": "8ee1b4d82ca9ed38675e5554e3a73fff0beb6a1ec6fa3fcb2e68ea0292561de1",
+    "status": 0,
+    "stdout": "A"
+  },
+  "tuple_repeated.cr": {
+    "source_sha256": "2cde7ea1cdbe7c2ab86b47f8eaa6f06413948e7f71891386b7bf7156f4b90c5a",
+    "status": 0,
+    "stdout": "AA"
+  },
+  "tuple_own_then_included_self_call.cr": {
+    "source_sha256": "8d3257602aabb14c68fdca39191fcb4430c5a176721d4e893c1ce37b59bf0e6b",
+    "status": 0,
+    "stdout": "AA"
+  },
+  "generic_direct.cr": {
+    "source_sha256": "e55afcc1c0076bf1fd53bc6c64ed95eb4bc5a0d70f437451438c420d1cd80ec5",
+    "status": 0,
+    "stdout": "A"
+  },
+  "generic_direct_lexical_module.cr": {
+    "source_sha256": "21717ec9776221cb12f829094fb46088a31d15cac5e1d09c925cbb5db7b8772a",
+    "status": 0,
+    "stdout": "A"
+  },
+  "ordinary_direct_lexical_module.cr": {
+    "source_sha256": "c60964c909db45e7b07dbd120ca07389aabf76dba49d06093623d25c41143fc4",
+    "status": 0,
+    "stdout": "A"
+  },
+  "incompatible_direct_overload.cr": {
+    "source_sha256": "cbdca7f21e79410d40d6b17b00ff09f5429b8cd95b591d9f63889b77a467e494",
+    "status": 0,
+    "stdout": "A"
+  },
+  "latest_included.cr": {
+    "source_sha256": "dd6a2e095797b0f0d7d592424ffd28ca159574963dfe5ac69918e7ee73569fb8",
+    "status": 0,
+    "stdout": "A"
+  },
+  "direct_generic_reopened.cr": {
+    "source_sha256": "6e0ab788115020137a90c94fe2f9661a151647a9fa4465ac47cd2baf32316b2a",
+    "status": 0,
+    "stdout": "A"
+  },
+  "wrong_direct_argument.cr": {
+    "source_sha256": "50b3f4fe2f7bee4938d6d102ba658de2702cf65c945610523c8414729dcb6e69",
+    "status": 1,
+    "diagnostic_category": "argument-type",
+    "note": "Must reject the selected method's Bool argument as a semantic type error.",
+    "original_diagnostic_regex": "expected argument #1 to 'SizeBox\\(Int32\\)#code' to be Int32, not Bool",
+    "candidate_diagnostic_regex": "no overload matches SizeBox\\(Int32\\)#code: expected argument restriction Int32, got Bool"
+  },
+  "wrong_direct_return.cr": {
+    "source_sha256": "0ba5ffccbfa32a59f5482276c5d2e7e9968508991962847c6cdb76d2db017be1",
+    "status": 1,
+    "diagnostic_category": "method-return",
+    "note": "Must reject the method body return type, not fail with an unrelated compiler error.",
+    "original_diagnostic_regex": "method SizeBox\\(Int32\\)#size must return Int32 but it is returning Bool",
+    "candidate_diagnostic_regex": "method SizeBox\\(Int32\\)#size must return Int32, but it is returning Bool"
+  },
+  "module_macro_if_defs.cr": {
+    "source_sha256": "0fafe8d31ae7e6fc9564bf886ecb6692b5083c477410a339342833fcd5e1ee25",
+    "status": 0,
+    "stdout": "AA"
+  },
+  "module_macro_for_defs.cr": {
+    "source_sha256": "0e964f53173bf55541574ac173900a1c592dac0cb5b824d07bc3b8b3f91b042c",
+    "status": 0,
+    "stdout": "AA"
+  },
+  "module_macro_call_generated_defs.cr": {
+    "source_sha256": "5946976250599ed09babbd465866b2de3f35052c084ca44d0eb70c15225078e2",
+    "status": 0,
+    "stdout": "AA"
+  },
+  "implicit_extend_self_module_and_include.cr": {
+    "source_sha256": "f64cac7f71d99bdf572af21cf7002d3424d99b53b1124cf625bea12ba3c0bfbd",
+    "status": 0,
+    "stdout": "BAA"
+  }
+}

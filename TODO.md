@@ -25703,7 +25703,32 @@ integration, fresh bootstrap, or LavinMQ parity.
   stock prints A; both HEAD 0e29163b and S1 35q2958 print B (35q2966,
   35q2965). Keep its stock-qualified open companion excluded from candidate
   success until the actual selected child executes correctly.
-- [ ] Resolve Tuple#size source selection before body materialization; keep
+- [x] Resolve Tuple#size source selection before body materialization; keep
   the different-Def replacement guard. Prelude, initializer replay,
   previous_def chains, bootstrap and LavinMQ execution/upstream parity remain
   open. No application/stdlib edits or relaxed type checks are included.
+
+### 2026-11-06 — Separate module source ownership from lexical namespaces
+
+- [x] Record module instance source kind on the exact Def/arena, including
+  effective macro-generated declarations and implicit extend-self. Preserve
+  direct class/Tuple precedence and the strict different-Def body guard.
+- [x] Use exact selected include applications for module-formal substitution.
+  Do not infer provenance from lexical namespaces or recover missing module
+  bindings from physical-target caches, receiver aliases, or ambient callers.
+- Original-first source_module_method_owner_repro.sh passes all 16 cases on
+  Crystal 1.22.1 and exact-source S1 35q3018 (35q3028), including macros and
+  specific argument/return rejections. The decisive Tuple fixture fails on
+  baseline S1 35q2958 (35q3034). Five neighboring scripts pass (35q3026).
+- Actual unchanged LavinMQ passes Tuple#size and reaches Isolated#start_thread
+  returning Nil | Thread (35q3031). Comparison 35q3033 finds only compiler AST
+  and binary changes; project, shard and stock stdlib bytes are unchanged.
+- [ ] Preserve generated allocator targets through block canonicalization.
+  The default + stored-callback Token repro fails before the fix (35q3024,
+  35q3032); final emission calls initialize without a receiver, attaches its
+  Nil facts, and omits the generated new target. A fact-only override is unsafe.
+- [ ] Probe conflicting generic module-formal reopenings, e.g. M(T) then M(U).
+  Source review found no registration-time check; runtime/compiler parity is
+  unqualified. Keep this separate from the verified ownership repair.
+- Prelude, initializer replay, previous_def chains, bootstrap and unchanged
+  LavinMQ execution/upstream parity remain open. No stdlib/application edits.

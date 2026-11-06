@@ -1,0 +1,17 @@
+lib C
+  fun putchar(value : Int32) : Int32
+end
+module SizeTrait
+  def size : Int32
+    66
+  end
+end
+class SizeBox(T)
+  include SizeTrait
+end
+class SizeBox(T)
+  def size : Int32
+    65
+  end
+end
+C.putchar(SizeBox(Int32).new.size)

@@ -24739,3 +24739,74 @@ ast_to_hir.cr: c66931ee74d884ec0fbfe500d895120c660d642c35ac08eb25cf8f6e4bb10d3d.
 Refresh after Def/arena registration, physical target creation/reuse, default
 binding, generic replay or included-module ownership changes. Rollback is this
 atomic compiler commit. No standard-library or application changes are included.
+
+
+## 2026-11-06 — Module source kind belongs to the exact declaration, not its namespace
+
+The Tuple#size collision came from treating a namespace override as proof of
+an included-module source. Its existing body was direct Tuple#size, but the
+namespace Tuple caused direct lookup to skip it and permitted Enumerable#size
+to replace it after lowering (35q2976). Keep the replacement guard; repair the
+source classification at its producers and consumers.
+
+Record module instance ownership on the exact Def and arena and reject a
+changed owner for that pair. Index direct/eager/included and effective macro
+sources, including implicit extend-self, while excluding nested declaration
+scopes and explicit class methods. Use that receipt for direct-method priority,
+include alias replacement/rebasing and pending module context. A lexical class
+or enclosing module namespace is not a source-kind certificate.
+
+The receipt owns formal names, not a generic include application. Block
+inference removes module formals from the physical target's shared cache,
+receiver aliases and ambient caller map, then restores only the validated
+selected Def/arena/include application. Remove both registered-map overlap and
+receiver-kind gates on that exact restoration. Known module formals cannot be
+reconstructed from broad receiver include/element guesses. Exact method-forall
+call bindings retain their separate authority.
+
+The original-first source_module_method_owner_repro.sh gate passes all 16
+fixtures on Crystal 1.22.1 and exact-source S1 35q3018 (35q3028): builtin Tuple,
+generic and lexical owners, direct/include precedence, macro if/for/call defs,
+implicit extend-self, and specific semantic argument/return rejections with no
+executable. The exact own-then-included-self-call fixture rejects on baseline
+S1 35q2958 (35q3034) and prints AA on stock and candidate. All five neighboring
+scripts pass (35q3026). Source-only adversarial review returns ROBUST for the
+bounded ownership producers and substitution boundary; it is correlated review,
+not an independent compiler implementation.
+
+Actual unchanged LavinMQ passes the Tuple collision and reaches
+Fiber::ExecutionContext::Isolated#start_thread returning Nil | Thread
+(35q3031). Comparison 35q3033 against 35q2959 finds changes only in compiler AST
+and binary, with identical project, shard and stock stdlib inputs. Both actual
+probes leave inputs unchanged. This is front-end progress, not object, link,
+runtime or upstream parity. Full-prelude included_block_result_owner_repro.sh
+still fails at the Errno#value return frontier on an earlier candidate
+(35q2998); it is excluded from the passing neighboring set.
+
+The next minimal discriminator stores a callback in initialize and omits its
+default ordinary parameter. Crystal passes all four direct/or/default controls
+(35q3023); S1 35q3018 rejects the two default variants as returning Nil
+(35q3024). The exact trace 35q3032 shows final emission targets Token#initialize
+without a receiver, while the Call ABI says Token and its source facts say Nil.
+Preserve generated allocator identity and its callback ABI; attaching instance
+facts alone would mask a missing allocation. Explicit source self.new owns its
+actual result and must not inherit this generated-constructor rule.
+
+Conflicting generic module-formal reopenings remain a source-review parity gap:
+M(T) followed by M(U) has not been probed. The declaration receipt does not
+establish reopening validation. Virtual omitted named-only defaults, initializer
+replay, previous_def, prelude, bootstrap and LavinMQ runtime/parity remain open.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+module-source-owner-final-original-first35q3028/result.json,
+module-source-owner-qualified-neighbors35q3026/result.json,
+module-source-owner-final-fixture-before35q3034/result.json,
+module-source-owner-lavinmq-lineage35q3033.json, and
+lavinmq-module-source-owner-final35q3031/result.json.
+All 1,916 compiler files match
+build.module-source-owner-formal-boundary35q3018.source.json.
+Compiler SHA-256: 654c6a6ffd88d49e7d08a8faa94cda773b34b4201efec3ef3cbe0f74d72c1eb9;
+ast_to_hir.cr: 6e7e88fc916481a5b105d8c83c1e83199b08d0bf811c6b66fb9cb2e2d67389b2.
+Refresh after source ownership, Def/arena recovery, include MRO/application,
+module-formal substitution, macro registration or materialization changes.
+Rollback is this atomic compiler commit. No stdlib or application edits.
