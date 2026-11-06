@@ -1,0 +1,66 @@
+[
+  {
+    "name": "all_short_circuits_at_first_false",
+    "ok": true
+  },
+  {
+    "name": "any_short_circuits_at_first_true",
+    "ok": true
+  },
+  {
+    "name": "empty_identities_and_no_block_evaluation",
+    "ok": true
+  },
+  {
+    "name": "yielded_formal_is_shared_and_missing_formal_preserves_outer",
+    "ok": true
+  },
+  {
+    "name": "unused_missing_formal_is_lazy",
+    "ok": true
+  },
+  {
+    "name": "result_is_bool_literal",
+    "ok": true
+  },
+  {
+    "name": "missing_block_rejected",
+    "ok": false,
+    "original_diagnostic": [
+      "ArrayLiteral#all?",
+      "expected to be invoked with a block"
+    ],
+    "candidate_diagnostic": [
+      "ArrayLiteral#all?",
+      "expected to be invoked with a block"
+    ]
+  },
+  {
+    "name": "extra_positional_argument_rejected",
+    "ok": false,
+    "original_diagnostic": [
+      "ArrayLiteral#all?",
+      "wrong number of arguments"
+    ],
+    "candidate_diagnostic": [
+      "ArrayLiteral#all?",
+      "expects no arguments"
+    ]
+  },
+  {
+    "name": "named_argument_rejected",
+    "ok": false,
+    "original_diagnostic": [
+      "no parameter named 'unexpected'",
+      ".any?(unexpected: true)"
+    ],
+    "candidate_diagnostic": [
+      "ArrayLiteral#any?",
+      "expects no arguments"
+    ]
+  },
+  {
+    "name": "short_circuit_preserves_exact_shared_write_counts",
+    "ok": true
+  }
+]
