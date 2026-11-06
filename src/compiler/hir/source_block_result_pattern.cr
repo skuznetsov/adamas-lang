@@ -133,6 +133,26 @@ class Adamas::HIR::AstToHir
       return source_block_result_union(flattened, owner)
     end
 
+    # `T*` is the source spelling of `Pointer(T)`. The Crystal parser lowers
+    # that base through a global path, so keep it rooted during lexical lookup.
+    # Normalize it into the same pattern shape used by an explicit Pointer(T)
+    # annotation so contract matching and type-ref resolution share one identity.
+    if source.ends_with?('*') && source.bytesize > 1
+      inner = source.byte_slice(0, source.bytesize - 1).strip
+      child = source_block_result_pattern_for(
+        inner, owner, formals, bindings, active_bindings, allow_value_literal: false,
+      )
+      pointer_base = source_block_result_canonical_base("::Pointer", owner) ||
+                     return invalid_source_block_result_pattern(source)
+      return source_block_result_composite(
+        SourceBlockResultPattern::Kind::Generic,
+        pointer_base,
+        [child],
+        owner,
+        source_labels: [] of String,
+      )
+    end
+
     if allow_value_literal && value_literal_name?(source)
       return SourceBlockResultPattern.new(SourceBlockResultPattern::Kind::Value, source)
     end

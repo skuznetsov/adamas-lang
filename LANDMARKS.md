@@ -24189,3 +24189,41 @@ ast_to_hir.cr: 4046db0f53d98703c6e5e9a2ede1331a0688c4b178fbb48a1b3dcf240e37c8da.
 Declared-return and omitted-default source contracts, virtual replay transport,
 fresh bootstrap, and unchanged LavinMQ execution/upstream test parity remain
 open. This commit does not establish those capabilities.
+
+## 2026-11-05 — Postfix pointer restrictions use intrinsic source identity
+
+The shared source-result contract parser classified `T*` as structural but
+never parsed that postfix operator. Typed yielding callbacks with an Int32*
+result were rejected while equivalent Pointer(Int32) contracts passed. Parse
+the pointee recursively and construct the existing generic Pointer pattern;
+the matcher and its strict kind/argument rules remain unchanged.
+
+The first candidate resolved Pointer lexically. A counterexample declaring
+PointerShadow::Pointer(T) rejected a valid Int32* callback: Crystal's parser
+instead constructs Path.global("Pointer") for this syntax. The admitted fix
+roots that lookup before canonicalizing the existing generic identity. This
+also preserves the declaration scope for the pointee itself.
+
+Original-first source_pointer_result_contract_repro.sh passes 12 cases with
+stock Crystal 1.22.1 and exact-source S1 35q2375 (35q2376), including the
+shadowing counterexample, Proc/Tuple pointees, owner parameters, nullable and
+union results, and two semantic rejections. The four existing Proc-arrow
+pointer controls also pass (35q2378). The scoped Adversary verdict is ROBUST
+for these pointer restriction forms; refresh after structural parsing,
+canonical namespace resolution, source-kind, or generic matching changes.
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause includes
+source-pointer-contract-original-first35q2376/result.json and
+build.source-postfix-pointer-global35q2375.source.json. Compiler SHA-256:
+2df52dc10cd2012db844f261f664bd6077c1741a1f32b322c1d6083c89c30337;
+source_block_result_pattern.cr:
+bf924fad55326ac5113d661d72b11b4ec012e12df46b5c830a361dc4b80b111b.
+
+The neighboring source_block_result_alias_repro.sh remains broken on both
+baseline 35q2325 and this candidate (35q2378/35q2379). Its own_alias case
+passes a callback in the omitted initial_capacity slot and null in the block
+slot, then traps. IR comparison 35q2380 excludes exactly the leading ModuleID
+and source_filename headers; every remaining byte matches. This is a separate
+source-arity/physical-slot bug, not a qualified alias regression success.
+Intrinsic identity for sibling Tuple/StaticArray/nullable syntax remains an
+audit question. Declared-return, default and virtual replay contracts, stock
+prelude, bootstrap, and unchanged LavinMQ execution/test parity remain open.

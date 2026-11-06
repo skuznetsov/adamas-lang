@@ -25454,3 +25454,24 @@ integration, fresh bootstrap, or LavinMQ parity.
   target ownership for this shortcut; deferred body/receiver and omitted-default
   contracts remain separate open work.
 - Unchanged LavinMQ runtime/upstream tests and a fresh bootstrap remain open.
+
+### 2026-11-05 — Parse postfix pointer source result contracts
+
+- [x] Parse `T*` recursively into the existing Pointer generic restriction.
+  Root the intrinsic Pointer lookup, as Crystal's parser does, so a lexical
+  Pointer declaration cannot capture the postfix syntax. Keep generic argument
+  and source value-kind checks unchanged.
+- The original-first source_pointer_result_contract_repro.sh passes all 12
+  cases with stock Crystal 1.22.1 and exact-source S1 35q2375 (35q2376): nested
+  pointers, nullable/union/alias results, owner parameters, Proc/Tuple pointees,
+  lexical shadowing, and two strict wrong-pointee rejections. The existing
+  proc_arrow_pointer_annotation_repro.sh also passes (35q2378).
+- [ ] Audit intrinsic root identity for other source syntax sugar (Tuple,
+  StaticArray, and nullable Nil). The pointer shadowing falsifier establishes
+  this audit question; it does not establish failures for those siblings.
+- [ ] Repair the separate omitted-default/block ABI slot mismatch exposed by
+  source_block_result_alias_repro.sh. Both baseline 35q2325 and 35q2375 trap:
+  the callback occupies initial_capacity and the block slot is null. Their IR
+  is identical after excluding the two source-identity headers (35q2380).
+- Declared-return publication, default contracts, virtual replay, stock-prelude
+  hello, fresh bootstrap, and unchanged LavinMQ runtime/test parity remain open.

@@ -1,0 +1,50 @@
+{
+  "postfix_result.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "generic_result.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "nullable_result.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "wrong_pointee.cr": {
+    "status": 1,
+    "diagnostic": "not Pointer(Int32)"
+  },
+  "double_postfix.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "union_postfix.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "alias_postfix.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "owner_formal.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "lexical_pointer_shadow.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "pointer_proc_slot.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "pointer_tuple_slot.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "wrong_nested_pointee.cr": {
+    "status": 1,
+    "diagnostic": "not Pointer(Tuple(Int32))"
+  }
+}
