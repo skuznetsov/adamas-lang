@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Original-first regression for direct source module membership admission.
+# Original-first regression for source module membership and bounded values.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -42,6 +42,11 @@ cases=(
   forall_projection_conflict nested_generic_invariance
   nested_class_namespace qualified_class_namespace nested_module_namespace
   nested_class_generic_module
+  bounded_module_field bounded_nullable_module_field bounded_generic_module_field
+  bounded_wrong_generic_module_field bounded_unrelated_module_field
+  bounded_module_value_is_not_instance bounded_include_class_is_not_instance
+  bounded_returned_module_value_negative
+  bounded_annotated_returned_module_value_negative bounded_mixed_module_value_negative
 )
 
 for phase in original candidate; do
@@ -69,7 +74,11 @@ for phase in original candidate; do
       same_short_name_namespace_negative|namespace_alias_negative|\
       macro_selected_extend_instance_negative|named_extended_instance|\
       named_included_class|positional_extended_instance|positional_included_class|\
-      forall_projection_conflict|nested_generic_invariance)
+      forall_projection_conflict|nested_generic_invariance|\
+      bounded_wrong_generic_module_field|bounded_unrelated_module_field|\
+      bounded_module_value_is_not_instance|bounded_include_class_is_not_instance|\
+      bounded_returned_module_value_negative|\
+      bounded_annotated_returned_module_value_negative|bounded_mixed_module_value_negative)
         if [[ "$status" != 1 || -e "$output" ]] || \
           ! grep -Eiq '(^|[[:space:]])error:' "$log" || \
           grep -Eiq 'internal compiler error|segmentation fault|unhandled exception' "$log"; then
@@ -100,7 +109,8 @@ for phase in original candidate; do
       generic_extend_positive|extend_self_identity|named_alias_class|\
       named_extended_class|named_included_instance|positional_alias_class|\
       positional_extended_class|positional_included_instance|nested_class_namespace|\
-      qualified_class_namespace|nested_module_namespace|nested_class_generic_module)
+      qualified_class_namespace|nested_module_namespace|nested_class_generic_module|\
+      bounded_module_field|bounded_nullable_module_field|bounded_generic_module_field)
         expected_stdout=$'A\n'
         ;;
       *)

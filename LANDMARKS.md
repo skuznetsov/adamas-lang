@@ -24227,3 +24227,37 @@ source-arity/physical-slot bug, not a qualified alias regression success.
 Intrinsic identity for sibling Tuple/StaticArray/nullable syntax remains an
 audit question. Declared-return, default and virtual replay contracts, stock
 prelude, bootstrap, and unchanged LavinMQ execution/test parity remain open.
+
+## 2026-11-06 — Source module restrictions preserve reflexive instance bounds
+
+The Include/Extend-aware matcher searched only membership edges. An actual
+instance type already bounded by module M therefore failed restriction M: no
+M-includes-M edge exists. Crystal returns the same type for an identical
+restriction (Type#restrict in restrictions.cr). Preserve the actual module
+application as a candidate only for instance-kind facts, then run the existing
+module-application matcher. This keeps generic arguments and unique binding
+validation under the same owner and does not infer Extend membership.
+
+Original-first module_source_value_kind_repro.sh passes 40 cases with stock
+Crystal 1.22.1 and exact-source S1 35q2411 (35q2413). The baseline rejects the
+three added valid field-bound callbacks. Seven new semantic-rejection controls
+cover wrong generics, unrelated modules, module/class values, method-forwarded
+class values, and a mixed-kind branch. The harness requires compiler exit 1,
+no executable, a semantic diagnostic, and no compiler crash for each negative.
+The scoped Adversary verdict is ROBUST for reflexive module-instance bounds.
+Refresh after source-kind propagation, module identity, generic matching, or
+return-fact publication changes.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+module-bound-reflexivity-original-first35q2413/result.json and its sibling
+module-bound-reflexivity-original-first35q2413.files.json retain the gate and
+all 40 fixture hashes. build.module-bound-reflexivity-only35q2411.source.json
+binds the compiler to all 1,916 source files; the live source matches it.
+Compiler SHA-256:
+dbe9bba4e183a601ff98495930bb791818a339e32e1ad8349c47ed68dfb6872b;
+source_block_result_pattern.cr:
+fe633152dc3666e8a1e4a55efcbefdbd6ef9ab183b8a161882cf62a8c68f8265.
+
+Declared-return publication, default and virtual replay contracts, stock
+prelude, fresh bootstrap, and unchanged LavinMQ execution/upstream parity
+remain open. No stdlib or LavinMQ source change belongs to this correction.

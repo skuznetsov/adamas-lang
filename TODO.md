@@ -25475,3 +25475,19 @@ integration, fresh bootstrap, or LavinMQ parity.
   is identical after excluding the two source-identity headers (35q2380).
 - Declared-return publication, default contracts, virtual replay, stock-prelude
   hello, fresh bootstrap, and unchanged LavinMQ runtime/test parity remain open.
+
+### 2026-11-06 — Admit an already bounded module instance reflexively
+
+- [x] Feed an actual module-instance restriction into the existing source
+  module-application matcher. A value already typed as M satisfies M without
+  requiring a synthetic self-include edge. Generic arguments retain the
+  existing exact projection and binding checks; module class values still
+  require Extend membership.
+- Original-first module_source_value_kind_repro.sh passes all 40 cases against
+  Crystal 1.22.1 and exact-source S1 35q2411 (35q2413). The ten new controls
+  cover typed fields, nullable and generic module bounds, wrong generic or
+  unrelated bounds, class values returned through methods, and a mixed-kind
+  branch. The baseline rejects all three new valid bounded-field cases.
+- Declared-return ownership, default materialization, virtual replay, stock
+  prelude, fresh bootstrap, and unchanged LavinMQ runtime/test parity remain
+  open; this shared matcher correction does not close those frontiers.

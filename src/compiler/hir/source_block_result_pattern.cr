@@ -500,6 +500,12 @@ class Adamas::HIR::AstToHir
     end
 
     applications = [] of String
+    # An instance already bounded by a module satisfies that same restriction.
+    # Module class values still require an explicit extend edge, while generic
+    # arguments are checked by the existing module-application matcher below.
+    if !actual_literal && macro_module_definition_key(actual_identity)
+      applications << actual_identity
+    end
     owners.each do |owner|
       direct = source_direct_module_memberships(owner, membership_kind) || next
       direct.each do |application|
