@@ -24004,3 +24004,31 @@ native pointer storage, exception effects, bootstrap, and project parity
 remain open. All private candidate and diagnostic paths above share the same
 external root-cause directory. Preserve the existing HIR-spec and untracked
 source-union regression WIP when resuming.
+
+## 2026-11-05 — Keep StaticArray pointee identity at pointerof
+
+StaticArray's compiler-provided @buffer is absent from ordinary ivar metadata.
+The pointerof fallback consequently emitted a bare Pointer. Later annotation
+coercion or dereference could conceal the loss, so a direct .value round trip
+was not a discriminating regression. An unannotated buffer_address passed
+directly to Pointer(UInt64), Pointer(UInt8), and bare Pointer overloads is:
+Crystal 1.22.1 and S1 35q2123 print AB; baseline S1 35q2001 prints XX.
+
+The repair obtains the first type parameter from the exact applied struct's
+StaticArray descriptor and uses its inline buffer at offset zero. It adds no
+synthetic ivar or type registry. The source-first regression and the existing
+pointerof_source_identity_repro.sh both pass. A separate unchanged stock-stdlib
+StaticArray control executes UInt8/UInt64 reads and writes with output AB.
+The scoped read-only adversary returns ROBUST for this applied primitive-element
+contract. Nested aggregate stride remains an explicit unqualified boundary.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause is
+staticarray-type-oracle35q2125, staticarray-pointerof-root35q2123, and
+staticarray-regressions35q2126/result.json. S1 35q2123 binary SHA-256 is
+209b1bb4cb4daad4922de7baadfa99041f049404ddc4c15dd9e0aed3a0d8928e;
+ast_to_hir.cr SHA-256 is
+daa54ade32f46dddbf9927b66558abda0403e273b34ced9a0b7ad90faeb37a32.
+The regression receipt verifies production compiler source matches that frozen
+build. Refresh after pointerof lowering, applied descriptors, or container
+layout/stride changes. Declared-result contract candidates remain private;
+this fix does not close bootstrap or unchanged LavinMQ runtime/test parity.

@@ -93809,6 +93809,27 @@ module Adamas::HIR
                              break
                            end
                          end
+                         # StaticArray's @buffer is compiler-provided rather than
+                         # an ordinary registered ivar. Its storage is the inline
+                         # element sequence at offset zero, so pointerof(@buffer)
+                         # must use the applied StaticArray(T, N) descriptor to
+                         # preserve the source pointee type.
+                         if !found && ivar_name == "@buffer"
+                           if class_info = @class_info[class_name]?
+                             desc = @module.get_type_descriptor(class_info.type_ref)
+                             if class_info.is_struct && desc &&
+                                desc.kind == TypeKind::Array &&
+                                desc.name.starts_with?("StaticArray(")
+                               if element_type = desc.type_params.first?
+                                 unless element_type == TypeRef::VOID
+                                   ivar_offset = 0
+                                   ivar_type = element_type
+                                   found = true
+                                 end
+                               end
+                             end
+                           end
+                         end
                          # Fallback for other implicit fields at the end of known ivars.
                          if !found && (ci = @class_info[@current_class]?) && !ci.ivars.empty?
                            ivar_offset = ci.size

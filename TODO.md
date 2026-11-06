@@ -25355,3 +25355,18 @@ integration, fresh bootstrap, or LavinMQ parity.
   iyi-adamas-rebuild35q2091/REPORT.md and cleanup.json.
 - [ ] Resume the standing compiler continuation capsule in LANDMARKS.md;
   unchanged LavinMQ execution/upstream test parity remains open.
+
+### 2026-11-05 — Preserve the source element type of StaticArray buffer addresses
+
+- [x] Resolve the compiler-provided @buffer field from the exact applied
+  StaticArray(T, N) descriptor before generic unknown-field fallback. Preserve
+  Pointer(T) at the pointerof producer instead of relying on a later annotation
+  or dereference to recover its element type.
+- The original-first static_array_pointerof_source_identity_repro.sh passes
+  with S1 35q2123. The baseline chooses the bare Pointer overload and prints XX;
+  Crystal and the repaired compiler print AB. The neighboring pointerof source
+  identity regression and an unchanged-stdlib UInt8/UInt64 runtime control pass.
+- [ ] Qualify pointer stride for nested StaticArray elements separately. The
+  primitive element qualification does not establish aggregate stride.
+- Strict declared-result contracts, bootstrap, and unchanged LavinMQ execution
+  and upstream test parity remain open.
