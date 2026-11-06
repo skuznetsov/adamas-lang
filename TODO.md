@@ -25829,3 +25829,28 @@ integration, fresh bootstrap, or LavinMQ parity.
   JSON::Any default-argument restriction (35q3230). Only compiler AST/binary
   differ from the previous input manifest (35q3235). No object, link, execution,
   complete prelude, fresh bootstrap or upstream test parity is claimed.
+
+
+### 2026-11-06 — Preserve enum primitive predecessor carriers
+
+- [x] Give implicit Enum#value its concrete registered carrier and a fresh
+  source value without nominal enum facts. Demand exact real previous_def
+  results and bare abstract-numeric helper results; remove enum return-check
+  exemptions rather than weakening the Int restriction.
+- [x] Retain exact positional integer-autocast selection when body demand makes
+  an actual already equal to its admitted target; preserve physical, nominal
+  and type-object guards on both paths.
+- Original-first enum_value_source_result_repro.sh passes six runtime controls
+  and one strict enum-identity rejection on Crystal 1.22.1 and S1 35q3233
+  (35q3267). All 48 source-autocast cases plus abstract-result and candidate-
+  identity neighbors pass (35q3240); bounded source adversary is ROBUST.
+- [ ] Preserve full unsigned enum payloads in metadata and parsing. The frozen
+  UInt64 > Int64::MAX case prints C on stock, I on baseline, X on candidate
+  (35q3254/35q3259/35q3255); LLVM receives zero before the value method. Keep
+  this counterexample in fixtures/enum_value_source_result_known_open.
+- [ ] Close separate previous_def chain/alias ownership failures. The bounded
+  value gate does not include the three baseline failures in 35q3216/35q3234.
+- Both stock prelude controls pass (35q3256). Candidate hello/Array#shift pass
+  the former Errno#value check and stop at initializer replay source ownership
+  for Thread#initialize (35q3258); baseline hello stops at Errno#value
+  (35q3261). Complete prelude, bootstrap and LavinMQ execution/parity are open.

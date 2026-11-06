@@ -236,6 +236,31 @@ class/instance `next` plus `as(F)` and omitted-default Nil binding still fail
 identically on baseline and candidate (35q3225/35q3226, 35q3227/35q3228).
 This bounded transport contract does not close either parity obligation.
 
+### Enum primitive predecessor results
+
+An implicit Enum#value predecessor owns the concrete enum base type. Its Int
+annotation is a source restriction, not an Int32 ABI choice. Emit a fresh
+non-checking cast to the registered carrier even when self already has that
+physical type: a primitive integer result must shed nominal enum facts. A real
+source previous_def takes precedence, including nonzero-argument predecessors;
+resolve its exact body/result instead of substituting the implicit primitive.
+Bare helpers with abstract numeric returns demand their completed concrete
+result before publishing a source call.
+
+Positional integer-autocast admission retains the exact selected Def. After
+body demand, an actual may already have the selected target type despite a
+stale pre-inference source hint. Accept that value only when its physical and
+nominal source types both equal the target and it is not a type object;
+otherwise require the existing source-integer proof before coercion. Do not
+reselect a different overload or reuse this rule in unrelated call paths.
+
+The original-first enum_value_source_result_repro.sh gate covers six runtime
+controls and a strict enum-identity rejection (35q3267). General previous_def
+chains, enum alias dispatch and UInt64 payloads above Int64::MAX remain open.
+The frozen unsigned counterexample is retained under
+fixtures/enum_value_source_result_known_open with its original C\n oracle;
+its measured I/X outputs are failures, not alternate expectations.
+
 ## Falsifiers and recovery
 
 Run each script with the exact candidate as its argument. The scripts first
@@ -247,6 +272,7 @@ and check semantic diagnostics and absence of an executable for rejections.
 - `regression_tests/source_method_void_result_repro.sh`
 - `regression_tests/source_array_helper_result_repro.sh`
 - `regression_tests/source_inline_callback_result_repro.sh`
+- `regression_tests/enum_value_source_result_repro.sh`
 - `regression_tests/nil_source_result_repro.sh`
 - `regression_tests/virtual_source_fact_transport_repro.sh`
 - `regression_tests/module_source_value_kind_repro.sh`

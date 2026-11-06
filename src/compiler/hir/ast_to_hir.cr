@@ -50434,9 +50434,7 @@ module Adamas::HIR
         end
       end
 
-      abstract_return_constraint = if !(method_name == "value" && !enum_base_type_by_name?(class_name).nil?)
-                                     abstract_numeric_return_constraint(node)
-                                   end
+      abstract_return_constraint = abstract_numeric_return_constraint(node)
 
       # Registration resolves explicit annotations while the defining source
       # arena is still authoritative. Lazy lowering may later receive a
@@ -50539,9 +50537,7 @@ module Adamas::HIR
         return
       end
 
-      abstract_return_constraint = if !(method_name == "value" && !enum_base_type_by_name?(class_name).nil?)
-                                     abstract_numeric_return_constraint(node)
-                                   end
+      abstract_return_constraint = abstract_numeric_return_constraint(node)
       return_type = TypeRef::VOID if abstract_return_constraint
       func = @module.create_function(full_name, return_type)
       materializing_function = func
@@ -96194,7 +96190,9 @@ module Adamas::HIR
             # tuple extraction likewise needs the completed concrete layout.
             tuple_return = get_type_name_from_ref(return_type).starts_with?("Tuple(")
             source_def = bare_self_source_entry.try(&.[1]) || @function_defs[full_name]?
-            if return_type == TypeRef::VOID || tuple_return || selected_source_result_pending?(full_name, source_def)
+            if return_type == TypeRef::VOID || tuple_return ||
+               !abstract_numeric_return_constraint_for_function(full_name).nil? ||
+               selected_source_result_pending?(full_name, source_def)
               refused_before_call_force = @force_lower_depth_refused.size
               # A bare implicit-self call has the same exact yield-free demand
               # as `name()`. Keep the inline recursion guards owned by the force
@@ -98050,19 +98048,33 @@ module Adamas::HIR
 
       # Get return type (fallback to VOID if unknown)
       return_type = @function_types[previous_method_name]? || TypeRef::VOID
+      previous_source_def = @function_defs[previous_method_name]?
+      if previous_source_def
+        # A real predecessor owns its body and result even when its abstract
+        # numeric annotation has no concrete carrier at registration time.
+        lower_function_if_needed(previous_method_name)
+        if !@module.has_function_with_body?(previous_method_name) &&
+           (return_type == TypeRef::VOID ||
+            !abstract_numeric_return_constraint_for_function(previous_method_name).nil? ||
+            selected_source_result_pending?(previous_method_name, previous_source_def))
+          force_lower_function_for_return_type(previous_method_name)
+        end
+        return_type = get_function_return_type(previous_method_name, args.size, previous_source_def)
+      end
 
-      if return_type == TypeRef::VOID && method_name == "value"
-        enum_owner = class_name == "Enum" ? "Enum" : (class_name ? resolve_enum_name(class_name) : nil)
-        if enum_owner
-          self_id = emit_self(ctx)
-          desired = ctx.function.return_type
-          if desired != ctx.type_of(self_id)
-            cast = Cast.new(ctx.next_id, desired, self_id, desired)
+      if previous_source_def.nil? && return_type == TypeRef::VOID && method_name == "value" && args.empty? && !invocation_context.method_is_class
+        if enum_owner = resolve_enum_name(class_name)
+          if carrier = enum_base_type_by_name?(enum_owner)
+            # Crystal generates Enum#value's predecessor with the concrete
+            # enum base type. `Int` is only the source restriction, never an
+            # Int32 ABI choice. A fresh value also sheds nominal enum facts
+            # when its physical carrier already equals self's type.
+            self_id = emit_self(ctx)
+            cast = Cast.new(ctx.next_id, carrier, self_id, carrier, safe: false)
             ctx.emit(cast)
-            ctx.register_type(cast.id, desired)
+            ctx.register_type(cast.id, carrier)
             return cast.id
           end
-          return self_id
         end
       end
 
@@ -132966,11 +132978,14 @@ module Adamas::HIR
                 # Pre-inference proposes a conversion; the emitted source value
                 # must prove its runtime type and preserve nominal provenance.
                 # A type object or enum carrier is never an integer argument.
-                if ctx.type_literal?(value_id) || ctx.type_of(value_id) != arg_types[idx] ||
-                   enum_tracked_type(ctx, value_id) != arg_types[idx]
-                  raise LoweringError.new("no overload matches #{func_name}: integer autocast requires a runtime #{get_type_name_from_ref(arg_types[idx])} value")
+                unless !ctx.type_literal?(value_id) && ctx.type_of(value_id) == target_type &&
+                       enum_tracked_type(ctx, value_id) == target_type
+                  if ctx.type_literal?(value_id) || ctx.type_of(value_id) != arg_types[idx] ||
+                     enum_tracked_type(ctx, value_id) != arg_types[idx]
+                    raise LoweringError.new("no overload matches #{func_name}: integer autocast requires a runtime #{get_type_name_from_ref(arg_types[idx])} value")
+                  end
+                  value_id = coerce_value_to_type(ctx, value_id, target_type)
                 end
-                value_id = coerce_value_to_type(ctx, value_id, target_type)
               end
             end
             result << value_id

@@ -25035,3 +25035,60 @@ ast_to_hir.cr: e8d71d8e2bade888129b8e22a916280167760f3ad8adbd5768a77ba83adcebe4.
 Refresh after inline stack ownership, source fact collection, callback result
 validation, forall substitution or default-provenance changes. Rollback is this
 atomic compiler commit. Application, stdlib and unrelated WIP are unchanged.
+
+
+## 2026-11-06 — Enum primitive results keep their declared integer carrier
+
+The implicit previous_def fallback for Enum#value borrowed the enclosing
+function's ABI type (or returned self). An abstract Int annotation therefore
+selected Int32, truncated large Int64 payloads, or retained nominal enum facts
+on an integer result. The implicit primitive now uses the registered concrete
+enum carrier and a fresh unchecked Cast. A real registered source predecessor
+owns its exact body/result instead; it is never replaced by the primitive.
+Abstract-numeric bare helpers demand the completed result, and Enum#value no
+longer bypasses the ordinary abstract Int return check.
+
+The completed body can also invalidate a positional autocast's pre-inference
+Int32 hint: an Int64 actual may already match the admitted target. Accept that
+only for a runtime value whose physical and nominal types both equal the exact
+selected target. Otherwise retain the prior source-integer proof and coercion.
+Exact-Def selection, representability checks and type-object exclusion remain.
+Named and super calls use different evidence order and are not broadened.
+
+Original-first enum_value_source_result_repro.sh passes six positives and one
+strict identity rejection on Crystal 1.22.1 and S1 35q3233 (35q3267). Controls
+include UInt8/Int64 overloads, a large Int64 payload, a real argument-bearing
+previous_def and a non-enum abstract numeric result. All 48 source-autocast
+cases, the abstract-return gate and exact candidate identity gate pass
+(35q3240). Source adversary verdict is ROBUST for this bounded contract;
+same-lineage review is correlated, stock behavior is the semantic oracle.
+
+The UInt64 payload counterexample remains open: stock C, baseline I, candidate
+X (35q3254/35q3259/35q3255). Candidate LLVM passes zero before Enum#value. Source
+audit identifies Int64-only enum metadata/parsing and a failed explicit parse
+falling back to the first ordinal. The exact C\n source/expectation is retained
+in fixtures/enum_value_source_result_known_open. Three previous_def chain/alias
+failures remain baseline and candidate failures (35q3216/35q3234).
+
+Stock hello/Array#shift with the installed unmodified prelude pass (35q3256).
+Candidate passes the earlier Errno#value check and stops at Thread#initialize
+replay ownership (35q3258); baseline hello fails earlier at Errno#value
+(35q3261). This is not prelude execution, bootstrap or LavinMQ test parity.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+enum-value-permanent-gate35q3267/result.json,
+enum-source-actual-autocast-neighbors35q3240/result.json,
+enum-source-actual-autocast-gate35q3234/result.json,
+enum-value-wide-stock35q3254/result.json,
+enum-value-wide-baseline35q3259/result.json,
+enum-value-wide-candidate35q3255/result.json,
+prelude-owner-stock35q3256/result.json,
+prelude-owner-enum35q3258/result.json, and
+prelude-owner-hello-baseline35q3261/result.json.
+All 1,916 compiler files match build.enum-source-actual-autocast35q3233.source.json
+(SHA-256 8ab91b04eac5b5168dd0dba1bcc27bc5d02500fbe8c550b1f92361b501dc6bd3).
+Compiler SHA-256: 6c0f11f4714b0eb7dca806bd8a6147977223735287aa680607bccb6af7862f6f;
+ast_to_hir.cr: 26cdda094a7ce32635767270d76e1e2f561a1a9df33bf1275359e6c698133cf5.
+Refresh after enum metadata/value lowering, predecessor identity, source result
+publication or integer autocast selection changes. Rollback is this atomic
+compiler commit. No app, shard, stdlib or unrelated WIP is changed.

@@ -1,0 +1,55 @@
+[
+  {
+    "name": "default_int32_bare_value",
+    "source": "fixtures/enum_value_source_result/default_int32_bare_value.cr",
+    "ok": true,
+    "expected": "A\n",
+    "qualification": "stock q3212 and candidate q3234 passed"
+  },
+  {
+    "name": "uint8_bare_value",
+    "source": "fixtures/enum_value_source_result/uint8_bare_value.cr",
+    "ok": true,
+    "expected": "B\n",
+    "qualification": "stock q3212 and candidate q3234 passed"
+  },
+  {
+    "name": "int64_bare_value",
+    "source": "fixtures/enum_value_source_result/int64_bare_value.cr",
+    "ok": true,
+    "expected": "C\n",
+    "qualification": "stock q3212 and candidate q3234 passed"
+  },
+  {
+    "name": "enum_identity_must_not_leak",
+    "source": "fixtures/enum_value_source_result/enum_identity_must_not_leak.cr",
+    "ok": false,
+    "expected": "",
+    "expected_diagnostic": {
+      "stock": "expected argument #1 to 'select_enum' to be EnumIdentityGuard, not Int32",
+      "candidate": "no overload matches select_enum for argument types (Int32)"
+    },
+    "qualification": "stock q3212 and candidate q3234 rejected as intended"
+  },
+  {
+    "name": "enum_user_previous_def_with_args",
+    "source": "fixtures/enum_value_source_result/enum_user_previous_def_with_args.cr",
+    "ok": true,
+    "expected": "CPR\n",
+    "qualification": "stock q3212 and candidate q3234 passed"
+  },
+  {
+    "name": "int64_high_payload_preserved",
+    "source": "fixtures/enum_value_source_result/int64_high_payload_preserved.cr",
+    "ok": true,
+    "expected": "C\n",
+    "qualification": "stock q3212 and candidate q3234 passed"
+  },
+  {
+    "name": "non_enum_abstract_numeric_bare",
+    "source": "fixtures/enum_value_source_result/non_enum_abstract_numeric_bare.cr",
+    "ok": true,
+    "expected": "A\n",
+    "qualification": "stock q3212 and candidate q3234 passed"
+  }
+]

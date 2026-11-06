@@ -1,0 +1,8 @@
+[
+  {
+    "name": "uint64_full_payload",
+    "source": "uint64_full_payload.cr",
+    "ok": true,
+    "expected": "C\n"
+  }
+]
