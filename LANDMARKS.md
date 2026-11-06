@@ -24157,3 +24157,35 @@ or source-kind proof. Bare and explicit call paths expose different failures
 (35q2292 and 35q2295); this remains open. Named target/body ownership, forall
 returns, receiver transport, bootstrap, and unchanged LavinMQ runtime/upstream
 test parity also remain open.
+
+## 2026-11-05 — Named source selection owns the emitted top-level target
+
+The named source resolver correctly selected the Int32.class overload, but
+emit_top_level_bare_call repeated selection after named arguments had been
+normalized to formal order. Its carrier-only shortcut selected the Int32
+sibling and emitted that body. SourceCallBinding was correct at the handoff;
+the optimization consumed a shape for which it had no ownership proof.
+
+The shortcut now declines named calls before any mutation. Ordinary lowering
+consumes the existing selected source binding; positional shortcut guards stay
+unchanged. This restricts an optimization's admitted input domain without
+weakening admission or introducing a second named-call classifier.
+
+Original-first named_source_argument_kind_repro.sh passes nine cases with
+Crystal 1.22.1 and exact-source S1 35q2325 (35q2327). The baseline core case
+prints X, stock and candidate print A. Both declaration orders, qualified and
+nested calls, reordered equal carriers, and two strict rejection controls pass.
+Three neighboring named admission/autocast/positional-target scripts also pass
+(35q2331). The scoped Adversary verdict is ROBUST for shortcut ownership;
+refresh after named normalization, source binding consumption, or shortcut
+selection changes. Evidence is under
+/opt/mldata_ssd/adamas_codex_oct29_rootcause:
+named-shortcut-original-first35q2327/result.json,
+named-shortcut-neighbors35q2331/result.json, and
+build.top-level-named-shortcut-falsifier35q2325.source.json. Compiler SHA-256:
+6aebf6be8aaea007ef117defea1cf5c8f2e32517e24250122f638f3c322c640e;
+ast_to_hir.cr: 4046db0f53d98703c6e5e9a2ede1331a0688c4b178fbb48a1b3dcf240e37c8da.
+
+Declared-return and omitted-default source contracts, virtual replay transport,
+fresh bootstrap, and unchanged LavinMQ execution/upstream test parity remain
+open. This commit does not establish those capabilities.

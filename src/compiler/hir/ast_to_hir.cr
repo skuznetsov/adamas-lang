@@ -113660,6 +113660,7 @@ module Adamas::HIR
       has_named_args : Bool,
       named_arg_names : Array(String)?,
     ) : ValueId?
+      return nil if has_named_args
       base_name = strip_type_suffix(target_name)
       # A carrier-derived symbol is only a shortcut candidate: Int32 values
       # and Int32.class share a carrier. Admit it only when the source resolver

@@ -25415,9 +25415,9 @@ integration, fresh bootstrap, or LavinMQ parity.
   a class-only positive, equal-carrier keyword reordering, and two strict
   rejection cases. Baseline 35q2180 accepts the invalid instance and mixed-kind
   calls. The existing named admission and integer-autocast scripts also pass.
-- [ ] Repair the separate ordinary named target/body mismatch: an instance-first
-  Int32 / Int32.class overload pair still prints X instead of Crystal's A for
-  choose(value: Int32). Admission does not establish emitted target ownership.
+- [x] Repair the separate ordinary named target/body mismatch: an instance-first
+  Int32 / Int32.class overload pair previously printed X instead of Crystal's A
+  for choose(value: Int32). The qualified shortcut fix is recorded below.
 - [ ] Close omitted-default forall inference, named/rest body and receiver
   transport, declared-result facts, bootstrap, and unchanged LavinMQ runtime
   and upstream test parity.
@@ -25438,3 +25438,19 @@ integration, fresh bootstrap, or LavinMQ parity.
 - Fresh unchanged-input LavinMQ front-end probe 35q2300 passes the former
   IO#write_bytes blocker and stops at UInt32#to_io(IO, LittleEndian). No link,
   runtime, bootstrap, or upstream test parity is established.
+
+### 2026-11-05 — Keep normalized named calls out of the positional shortcut
+
+- [x] Decline the top-level bare-call shortcut for named arguments. The ordinary
+  path retains the selected source Def and its formal-order argument facts;
+  the shortcut previously repeated selection from ABI carriers and could emit
+  the instance sibling after source admission selected a class-object overload.
+- The original-first named_source_argument_kind_repro.sh passes all nine cases
+  with exact-source S1 35q2325 and Crystal 1.22.1 (35q2327), including both
+  declaration orders, qualified/nested calls, keyword reordering, and strict
+  invalid-kind rejection. The baseline prints X instead of A on the core case.
+- Existing source named admission, named integer autocast, and positional
+  top-level source-target regressions pass (35q2331). This closes emitted
+  target ownership for this shortcut; deferred body/receiver and omitted-default
+  contracts remain separate open work.
+- Unchanged LavinMQ runtime/upstream tests and a fresh bootstrap remain open.

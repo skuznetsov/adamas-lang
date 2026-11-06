@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Named argument admission retains source kinds through formal-slot reordering.
+# Named admission and emission retain the same source kinds and selected target.
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 COMPILER="${ADAMAS_BIN:-${1:-$ROOT_DIR/bin/adamas}}"
@@ -26,6 +26,8 @@ if [[ "$(uname -s)" == Darwin ]]; then
 fi
 cases=(
   positive_class_only reordered_equal_carriers
+  instance_first_top_level class_first_top_level absolute_named_top_level
+  nested_named_top_level reordered_instance_first
   reject_named_instance reject_named_mixed_kind
 )
 for phase in original candidate; do
@@ -68,4 +70,4 @@ for phase in original candidate; do
     diff -u "$WORK_DIR/expected.stdout" "$output.stdout"
   done
 done
-echo 'PASS: named argument admission preserves source value kinds'
+echo 'PASS: named arguments preserve source value kinds and selected targets'
