@@ -1,0 +1,42 @@
+{
+  "abstract_call_result.cr": {
+    "status": 0,
+    "stdout": "ATF"
+  },
+  "abstract_captured_write.cr": {
+    "status": 0,
+    "stdout": "AB"
+  },
+  "abstract_deep_override.cr": {
+    "status": 0,
+    "stdout": "AB"
+  },
+  "abstract_direct_nonlocal_return.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "abstract_module_nonlocal_return.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "abstract_two_implementations.cr": {
+    "status": 0,
+    "stdout": "AB"
+  },
+  "concrete_module_control.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "concrete_wrong_return.cr": {
+    "diagnostic": "must return Bool.*returning Int32",
+    "status": 1
+  },
+  "inherited_runtime_arm.cr": {
+    "status": 0,
+    "stdout": "XM\nXM\nXD\nN\n"
+  },
+  "nonlocal_wrong_return.cr": {
+    "diagnostic": "must return Bool.*returning Int32",
+    "status": 1
+  }
+}

@@ -24432,3 +24432,48 @@ argument-refinement boundary. Refresh after weak-type classification,
 source-call refinement, callback result publication or return lookup changes.
 Broad annotated-result demand, default materialization, stock prelude, fresh
 bootstrap and unchanged LavinMQ runtime/upstream parity remain open.
+
+## 2026-11-06 — Abstract callback declarations cannot become inline bodies
+
+The stock-prelude candidate reaches Scheduler#quick_dequeue? with a Fiber?
+outer return contract, but its nested EventLoop#lock? carries Bool. Trace
+35q2696 shows the inliner selecting the empty abstract EventLoop declaration,
+then validating Nil as that method's Bool result. This is incorrect source
+body selection, not a reason to relax the return restriction.
+
+Select each concrete runtime implementation before inlining a closed
+zero-ordinary-argument class block call. Retain the selected Def and registered
+arena, check most-specific descendants first, and reuse the established union
+callback merge for normal return/capture branches. Guard every runtime arm,
+including the last; decline a snapshot when reachable generic templates can
+add owners. Abstract declarations left without a concrete selection fail
+explicitly instead of supplying an empty body.
+
+Crystal 1.22.1 and exact-source S1 35q2715 pass all ten original-first cases
+in class_block_source_dispatch_repro.sh (35q2732). Two strict negative cases
+reject actual Bool/Int32 return mismatches without an executable. The inherited
+module-only runtime arm, a direct override and a no-yield sibling also agree
+byte-for-byte (35q2727/35q2728). Neighboring distinct-owner and shared-module
+union-yield gates pass (35q2717). Source review compared the HIR owner walk
+with MIR subclasses_for and checked branch-local restoration and flowing-exit
+merges; the scoped Adversary verdict is ROBUST for this closed class corpus.
+Late generic descendants and ordinary argument forwarding remain outside it.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+class-block-ten-case-gate35q2732/result.json,
+class-block-durable-gate35q2717/result.json, and
+class-block-source-dispatch-qualified35q2734.json/.files.json.
+The 1,916 indexed compiler files match the standalone build manifest
+build.head-class-yield-dispatch35q2715.source.json. Compiler SHA-256:
+8e5b450a37d25a829206e1d97e52d00c81ed7f6cb8d19c42f1ff90d808f41f50;
+ast_to_hir.cr:
+055c9a2b4ece0b764c1dc143e0f1552905760a43d8540117407579bf8b92a2e4.
+Refresh after runtime-owner closure, template reachability, method selection,
+source arena ownership, callback inlining or branch/capture merge changes.
+
+The combined private prelude candidate advances to an initializer-replay
+source-identity guard for Thread#initialize (35q2707). This does not establish
+full-prelude compilation on the standalone commit. Actual LavinMQ 35q2669
+still fails at the Hash::Entry versus Log::Entry result contract. Defaults,
+broad-result demand, fresh bootstrap and upstream execution/test parity remain
+open; no stdlib or application workaround belongs to this fix.

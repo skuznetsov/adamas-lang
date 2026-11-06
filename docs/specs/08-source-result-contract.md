@@ -58,6 +58,17 @@ refiner must retain it rather than replacing it with a declaration lookup's
 unresolved method formal. Six original-first Nil/union controls and the
 14-case source-kind gate pass after this consumer correction (35q2661).
 
+An abstract callback declaration supplies restrictions, not an executable body.
+For zero-ordinary-argument block calls through a closed class family, select
+each concrete runtime implementation and retain its exact definition and
+arena before inlining. Test deeper descendants before ancestors, including
+inherited module implementations. Only normal branch exits contribute values
+and capture writeback to the merge. Every runtime arm is checked; an unknown
+runtime owner cannot execute an unchecked final implementation. Decline this
+closed-family path when a reachable generic template can add runtime owners.
+Ten original-first class-dispatch cases pass (35q2732); argument forwarding
+and late generic descendant completeness are outside that bounded gate.
+
 Known open probes include broad or mixed-kind annotated results consumed
 before their exact body facts are available, and defaults whose actual type
 is overwritten by their formal restriction. These failures were reproduced on
@@ -75,6 +86,7 @@ and check semantic diagnostics and absence of an executable for rejections.
 - `regression_tests/nil_source_result_repro.sh`
 - `regression_tests/virtual_source_fact_transport_repro.sh`
 - `regression_tests/module_source_value_kind_repro.sh`
+- `regression_tests/class_block_source_dispatch_repro.sh`
 
 Source, toolchain, input manifests, commands, and outcomes belong in the
 corresponding LANDMARK entry. Refresh after result publication, return

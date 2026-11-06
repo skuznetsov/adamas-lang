@@ -25575,3 +25575,21 @@ integration, fresh bootstrap, or LavinMQ parity.
   unresolved T before the intended incompatible-return check. It is not part
   of the Nil-consumer closure. Broad-result demand, default contracts, stock
   prelude, bootstrap and unchanged LavinMQ runtime/test parity remain open.
+
+### 2026-11-06 — Select concrete callback bodies for class receivers
+
+- [x] Dispatch zero-ordinary-argument block calls through a closed class family
+  before inlining. An abstract declaration owns restrictions, not a body.
+  Retain each selected concrete Def and arena, test descendants first, and
+  merge only flowing return/capture branches. Keep an explicit unmatched-owner
+  guard and decline reachable generic-template descendants.
+- Original-first class_block_source_dispatch_repro.sh passes ten cases on
+  Crystal 1.22.1 and exact-source S1 35q2715 (35q2732): included, direct and
+  inherited-only bodies, deeper overrides, callback results, captured writes,
+  non-local returns, and two strict incompatible-return rejections. Existing
+  distinct-owner and shared-module union-yield gates pass too (35q2717).
+- [ ] Close default materialization and broad-result consumers, then refresh
+  stock prelude, bootstrap and unchanged LavinMQ. The latest actual LavinMQ
+  probe (35q2669) still stops at Hash#get_entry returning Log::Entry instead
+  of Hash::Entry. This bounded callback gate establishes no runtime or upstream
+  test parity for LavinMQ and introduces no stdlib/application changes.

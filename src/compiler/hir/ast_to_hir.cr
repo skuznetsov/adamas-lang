@@ -138759,6 +138759,62 @@ module Adamas::HIR
         first_definition[1], definitions, source_binding)
     end
 
+    # A class-typed block receiver still dispatches by its runtime class.
+    # Abstract declarations supply restrictions, never an executable body.
+    # Freeze only a closed nongeneric descendant set; every branch selects
+    # and owns its concrete source declaration before lowering the callback.
+    private def inline_class_yield_dispatch(
+      ctx : LoweringContext,
+      inline_key : String,
+      receiver_id : ValueId?,
+      call_args : Array(ValueId),
+      block : Adamas::Compiler::Frontend::BlockNode,
+      block_param_types : Array(TypeRef)?,
+      source_binding : SourceCallBinding? = nil,
+    ) : ValueId?
+      return nil unless receiver_id && call_args.empty?
+      parts = parse_method_name(strip_type_suffix(inline_key))
+      return nil unless parts.separator == '#' && parts.method
+      receiver_type = ctx.type_of(receiver_id)
+      descriptor = @module.get_type_descriptor(receiver_type)
+      return nil unless descriptor && descriptor.kind == TypeKind::Class
+      return nil unless registered_abstract_class_name?(descriptor.name) ||
+                        class_has_subclasses?(descriptor.name)
+      owners = included_forall_virtual_runtime_owners(descriptor.name) || return nil
+      return nil if owners.empty?
+      return nil if included_forall_virtual_template_descendant?(descriptor.name, owners)
+      owners.sort_by! { |owner| -get_ancestor_chain(owner).size }
+
+      definitions = {} of String => Tuple(Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike)
+      variants = owners.map do |owner|
+        type_ref = included_forall_class_type_ref(owner) || return nil
+        base_name = "#{owner}##{parts.method}"
+        entry = lookup_function_def_for_call(base_name, 0, true, [] of TypeRef)
+        if entry.nil? || entry[1].is_abstract
+          if origin = find_included_module_def_origin_for_owner(
+               owner, parts.method.not_nil!, 0, true, compatible_arg_types: [] of TypeRef)
+            entry = register_included_module_call_target(owner, parts.method.not_nil!, [] of TypeRef, true, origin)
+          end
+        end
+        unless entry && !entry[1].is_abstract
+          entry = lookup_concrete_broad_replay_ancestor(owner, descriptor.name,
+            parts.method.not_nil!, [] of TypeRef, true, false)
+        end
+        return nil unless entry && !entry[1].is_abstract
+        key, definition = entry
+        arena = registered_arena_for_def(definition) || @function_def_arenas[key]?
+        return nil unless arena
+        stats = function_param_stats(key, definition)
+        return nil unless stats.has_block && stats.param_count == 0
+        definitions[key] = {definition, arena}
+        {type_ref, 0, key}
+      end
+      first_definition = definitions[variants.first[2]]
+      inline_union_yield_variants(ctx, inline_key, first_definition[0], receiver_id,
+        receiver_type, variants, call_args, block, block_param_types,
+        first_definition[1], definitions, source_binding, class_dispatch: true)
+    end
+
     private def inline_union_yield_variants(
       ctx : LoweringContext,
       inline_key : String,
@@ -138772,6 +138828,8 @@ module Adamas::HIR
       callee_arena : Adamas::Compiler::Frontend::ArenaLike,
       variant_definitions : Hash(String, Tuple(Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike))? = nil,
       source_binding : SourceCallBinding? = nil,
+      *,
+      class_dispatch : Bool = false,
     ) : ValueId
       pre_locals = ctx.save_locals
       pre_inline_locals = @inline_caller_locals_stack.map(&.dup)
@@ -138781,8 +138839,12 @@ module Adamas::HIR
       branch_inline_locals = [] of {BlockId, Array(Hash(String, ValueId))}
       variants.each_with_index do |(type_ref, variant_id, concrete_key), index|
         next_variant : BlockId? = nil
-        if index < variants.size - 1
-          test = UnionIs.new(ctx.next_id, receiver_id, variant_id, receiver_type)
+        if class_dispatch || index < variants.size - 1
+          test = if class_dispatch
+                   IsA.new(ctx.next_id, receiver_id, type_ref)
+                 else
+                   UnionIs.new(ctx.next_id, receiver_id, variant_id, receiver_type)
+                 end
           ctx.emit(test)
           ctx.register_type(test.id, TypeRef::BOOL)
           variant_block = ctx.create_block
@@ -138792,7 +138854,11 @@ module Adamas::HIR
         end
         ctx.restore_locals(pre_locals)
         @inline_caller_locals_stack = pre_inline_locals.map(&.dup)
-        concrete = UnionUnwrap.new(ctx.next_id, type_ref, receiver_id, variant_id, false)
+        concrete = if class_dispatch
+                     Cast.new(ctx.next_id, type_ref, receiver_id, type_ref, false)
+                   else
+                     UnionUnwrap.new(ctx.next_id, type_ref, receiver_id, variant_id, false)
+                   end
         ctx.emit(concrete)
         ctx.register_type(concrete.id, type_ref)
         concrete_block_types = if concrete_key == inline_key
@@ -138813,7 +138879,8 @@ module Adamas::HIR
           concrete_binding = SourceCallBinding.new(concrete_key, concrete_def, concrete_arena, [] of SourceCallArgument?)
         end
         value = inline_yield_function(ctx, concrete_def, concrete_key, concrete.id,
-          call_args, block, concrete_block_types, concrete_arena, concrete_binding)
+          call_args, block, concrete_block_types, concrete_arena, concrete_binding,
+          receiver_dispatch_selected: class_dispatch)
         exit_block = ctx.current_block
         if ctx.get_block(exit_block).terminator.is_a?(Unreachable) &&
            !control_flow_dead_block?(ctx, exit_block)
@@ -138825,6 +138892,12 @@ module Adamas::HIR
         if next_variant
           ctx.current_block = next_variant
         end
+      end
+      if class_dispatch
+        # No unchecked final arm: a runtime class outside the certified set
+        # must never execute an arbitrary descendant's implementation.
+        ctx.terminate(Unreachable.new)
+        @control_flow_dead_blocks.add({ctx.function.id, ctx.current_block})
       end
       ctx.current_block = merge_block
       ctx.restore_locals(pre_locals)
@@ -138884,6 +138957,7 @@ module Adamas::HIR
       source_binding : SourceCallBinding? = nil,
       *,
       source_class_receiver : String? = nil,
+      receiver_dispatch_selected : Bool = false,
     ) : ValueId
       caller_source_yield_context = @source_yield_context
       entry_local_declaration_scopes = ctx.save_local_declaration_scopes
@@ -138897,6 +138971,15 @@ module Adamas::HIR
         # owner before building contracts or choosing an inline/fallback path.
         callee_arena = registered_arena_for_def(func_def) || resolve_arena_for_def(func_def, callee_arena)
         block_source_yield_context = captured_block_source_yield_context(func_def, callee_arena) || caller_source_yield_context
+        unless receiver_dispatch_selected
+          if dispatched = inline_class_yield_dispatch(ctx, inline_key, receiver_id,
+               call_args, block, block_param_types, source_binding)
+            return dispatched
+          end
+        end
+        if func_def.is_abstract
+          raise LoweringError.new("abstract method #{inline_key} has no selected concrete callback body", func_def)
+        end
         if debug_env_filter_match?("DEBUG_INLINE_PICK", inline_key)
           stats = function_param_stats(inline_key, func_def)
           STDERR.puts "[INLINE_PICK] key=#{inline_key} named_required=#{stats.named_required} has_named_only=#{stats.has_named_only} params=#{stats.param_count} required=#{stats.required} caller=#{ctx.function.name}"
