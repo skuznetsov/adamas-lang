@@ -1,0 +1,92 @@
+{
+  "annotated_helper.cr": {
+    "source_sha256": "a81648294d89a5f3a12bd965a50c3fa7de10de51cd010b3490e2b30ee7908ca3",
+    "status": 0,
+    "stdout": "A\n",
+    "run_exit": 0,
+    "purpose": "Qualified helper with an explicit T return annotation.",
+    "candidate_status": 0
+  },
+  "demand_inline_first.cr": {
+    "source_sha256": "cf4310a011118d8d6572d940e192041f3839ec8b6adf359ad1c0d4a03fbb827f",
+    "status": 0,
+    "stdout": "AA\n",
+    "run_exit": 0,
+    "purpose": "Qualified block-bearing then ordinary demand order.",
+    "candidate_status": 0
+  },
+  "demand_ordinary_first.cr": {
+    "source_sha256": "aa77275ebd51641699a6352c6dc7d564f06441a4042deb85608f70c331ad0e7c",
+    "status": 0,
+    "stdout": "AA\n",
+    "run_exit": 0,
+    "purpose": "Qualified ordinary-first then block-bearing demand order.",
+    "candidate_status": 0
+  },
+  "helper_void_return.cr": {
+    "source_sha256": "226d9531a31aee1be33024e89e480ba61c58f791aa7203971ce13ca76efd7e91",
+    "status": 1,
+    "diagnostic_category": "method-return",
+    "original_diagnostic_regex": "method PointerHelperTailAfterBranch\\(Int32\\)#shift must return Int32,? but it is returning (Void|Nil(?: \\| Void)?)",
+    "candidate_diagnostic_regex": "method PointerHelperTailAfterBranch\\(Int32\\)#shift must return Int32,? but it is returning (Void|Nil(?: \\| Void)?)",
+    "purpose": "Explicit source Void helper must not satisfy the outer Int32 return contract or act as bottom.",
+    "candidate_status": 1
+  },
+  "helper_without_mutation_branch.cr": {
+    "source_sha256": "f92170e2b2ca8675b82c69c8f6df4dfae213f423fd45d82987b686d3891bb8d2",
+    "status": 0,
+    "stdout": "A\n",
+    "run_exit": 0,
+    "purpose": "Qualified tail local without branch mutation.",
+    "candidate_status": 0
+  },
+  "helper_wrong_return.cr": {
+    "source_sha256": "0f4a17f06a3bf6f29c3d5aa0675391671a3fcecc6e145aed3b8ec5e4fd27c68d",
+    "status": 1,
+    "diagnostic_category": "method-return",
+    "original_diagnostic_regex": "method PointerHelperTailAfterBranch\\(Int32\\)#shift_when_not_empty must return String,? but it is returning Int32",
+    "candidate_diagnostic_regex": "method PointerHelperTailAfterBranch\\(Int32\\)#shift_when_not_empty must return String,? but it is returning Int32",
+    "purpose": "The helper annotation must reject the actual Int32 pointer element result.",
+    "candidate_status": 1
+  },
+  "inline_pointer_tail.cr": {
+    "source_sha256": "b495bdbbd68685fdc5800b2d067e3cc499d34bbd96f7cd416ed92ffeae0e2909",
+    "status": 0,
+    "stdout": "A\n",
+    "run_exit": 0,
+    "purpose": "Qualified direct pointer-element tail in the inline branch.",
+    "candidate_status": 0
+  },
+  "ordinary_helper_call.cr": {
+    "source_sha256": "7c14f14d62091a53db5c54b3dfab0436c69f55b4a133b079a376ba4ebfbb67c8",
+    "status": 0,
+    "stdout": "A\n",
+    "run_exit": 0,
+    "purpose": "Qualified ordinary helper call, independent of block inlining.",
+    "candidate_status": 0
+  },
+  "parenthesized_helper.cr": {
+    "status": 0,
+    "stdout": "A\n",
+    "run_exit": 0,
+    "purpose": "Stock- and candidate-qualified parenthesized helper call; preserves the bare-identifier result behavior.",
+    "source_sha256": "146c584fa82e870717962c39e7abbbdc8c64ebfacfd6c006d8e5ba9db5d0e303",
+    "candidate_status": 0
+  },
+  "pointer_element_read.cr": {
+    "source_sha256": "c2e5f45d2886bb7689282adc24e8c1bceb35fcd1863d1c74a4201b89c9f9b0c8",
+    "status": 0,
+    "stdout": "A\n",
+    "run_exit": 0,
+    "purpose": "Qualified no-prelude Pointer(T) element read.",
+    "candidate_status": 0
+  },
+  "pointer_helper_tail_after_branch.cr": {
+    "source_sha256": "c6556580cdf078d5316ac28089af7545e8b70e80f0c4ad817249a6a332d2ace2",
+    "status": 0,
+    "stdout": "A\n",
+    "run_exit": 0,
+    "purpose": "Qualified pointer-element helper under a block-bearing shift wrapper.",
+    "candidate_status": 0
+  }
+}

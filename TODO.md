@@ -25777,9 +25777,34 @@ integration, fresh bootstrap, or LavinMQ parity.
   uses the official primitives prelude. All 74 cases in three return-contract
   neighbors pass (35q3160). The baseline fails the generic overload witness
   (35q3159) and falsely accepts both invalid Int32 wrappers (35q3142).
-- [ ] Close bare implicit-self helper demand inside inline lowering. The first
+- [x] Close bare implicit-self helper demand inside inline lowering. The first
   such candidate exposed this pre-existing Void result leak; do not bypass the
   source return check or infer Nil from an unresolved annotation.
 - Recursive yield-result inference, callback forall results, prelude,
   previous_def/initializer replay, fresh bootstrap and unchanged LavinMQ
   execution/upstream parity remain open. No app/stdlib changes are included.
+
+
+### 2026-11-06 — Demand selected bare helper results during inline lowering
+
+- [x] Make bare implicit-self identifiers use the selected force API inside
+  actual inline contexts, matching parenthesized calls. Preserve yield-free,
+  depth/recursion and in-progress-body guards, defaults and source dependencies.
+- Original-first source_array_helper_result_repro.sh passes all 14 main cases
+  on Crystal 1.22.1 and exact-source S1 35q3170 (35q3172), including two strict
+  return rejections, both demand orders, local shadowing, defaults and virtual
+  child dispatch. The composed eight-case Void result plus C-ABI HIR guard also
+  passes (35q3175). Baseline ordinary-first passes while inline-first fails;
+  parenthesized syntax passes both (35q3121/35q3130).
+- [ ] Solve the separate recursive yield-result inference obligation. Its
+  unchanged known-open fixture passes stock, fails baseline and candidate
+  (35q3153/35q3151), and is explicitly stock-only by default. Do not weaken its
+  A\n expectation or turn unknown Void into Nil/bottom.
+- The actual Array#shift full-prelude mini passes its former result check but
+  reaches Errno#value returning Errno against Int (35q3143). Enum previous_def
+  source identity is an unverified next discriminator, not a runtime result.
+- Unchanged LavinMQ now reaches Crystal::FdLock#reference with unresolved
+  callback result F (35q3177). Input comparison with 35q3090 changes only the
+  compiler AST and binary (35q3181); application, shards and stdlib are unchanged.
+- Callback forall, complete prelude, previous_def/initializer replay, fresh
+  bootstrap and unchanged LavinMQ execution/upstream parity remain open.

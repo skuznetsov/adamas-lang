@@ -96152,7 +96152,21 @@ module Adamas::HIR
             source_def = bare_self_source_entry.try(&.[1]) || @function_defs[full_name]?
             if return_type == TypeRef::VOID || tuple_return || selected_source_result_pending?(full_name, source_def)
               refused_before_call_force = @force_lower_depth_refused.size
-              force_pending_call_targets_for_return_type(full_name, context: "bare_self")
+              # A bare implicit-self call has the same exact yield-free demand
+              # as `name()`. Keep the inline recursion guards owned by the force
+              # path, rather than publishing its provisional Void result here.
+              in_inline_yield_now = @inline_yield_function_depth > 0 ||
+                                    @inline_yield_block_body_depth > 0 ||
+                                    @inline_yield_proc_depth > 0 ||
+                                    !@inline_yield_name_stack.empty?
+              if !full_name.empty? && !@module.has_function_with_body?(full_name)
+                force_lower_function_for_return_type(
+                  full_name,
+                  bypass_inline_yield: in_inline_yield_now,
+                  pending_call_target_slot: 1,
+                  pending_call_target_context: "bare_self",
+                )
+              end
               record_force_lower_result_dependency(ctx, full_name, source_def, refused_before_call_force)
               return_type = get_function_return_type(full_name, bare_self_args.size, source_def)
               if return_type == TypeRef::VOID && full_name != class_method_base

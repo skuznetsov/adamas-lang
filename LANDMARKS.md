@@ -24929,3 +24929,53 @@ ast_to_hir.cr: 07aa055fb9a7c10b1b7bcc7f177c37c02d0085db75db655faaa9d2622839e670.
 Refresh after annotation resolution, result publication, cache ownership,
 return normalization, generic substitution or fun/FFI lowering changes.
 Rollback is this atomic compiler commit. Unrelated existing WIP is preserved.
+
+
+## 2026-11-06 — Bare implicit-self helper demand preserves inline source results
+
+An inline-first bare helper failed with provisional Void while ordinary-first
+and parenthesized calls passed (35q3121/35q3130). The bare identifier path used
+the generic force wrapper, which rejects inline contexts; it never demanded the
+selected yield-free body. Use the same exact force API as the parenthesized
+call, with its inline bypass enabled only in a real inline context. Retain the
+force owner's recursion, depth, yield-free and in-progress guards, selected
+Def/arena, defaults, dependency recording and runtime dispatch. A local with the
+same name still wins. Do not infer Nil from unresolved Void or loosen returns.
+
+Original-first source_array_helper_result_repro.sh passes all 14 main cases on
+Crystal 1.22.1 and exact-source S1 35q3170 (35q3172): runtime demand-order and
+parentheses controls, pointer helpers, local shadowing, defaults, child virtual
+dispatch and two strict return rejections. The composed eight-case source Void
+suite plus C-ABI HIR guard also passes (35q3175). The bounded source adversary
+verdict is ROBUST; review is correlated, stock execution is the semantic oracle.
+The recursive-yield companion passes stock but fails both baseline and the
+candidate (35q3153/35q3151); it retains its source and A\n expectation and is
+explicitly stock-only by default. RUN_KNOWN_OPEN=1 exercises that open candidate
+obligation. Fourteen candidate passes do not include that companion.
+
+Unchanged LavinMQ now passes Array(String)#shift and reaches unresolved forall F
+in Crystal::FdLock#reference(& : -> F) : F (35q3177), not an object or runtime
+result. Comparing all input keys with 35q3090 changes only compiler ast_to_hir.cr
+and its binary (35q3181); application, shards and stock stdlib are unchanged.
+The full-prelude Array mini passes its former return check and reaches Errno#value
+returning Errno against Int (35q3143). Recursive result inference, callback forall,
+complete prelude, fresh bootstrap and LavinMQ upstream parity remain open.
+
+Audit the other bare main/global/getter demand paths only with an exact selected
+Def/arena witness and a stock-first falsifier; do not enable their bypasses by
+analogy. The yield-free predicate's fallback across a method family is also an
+open owner audit, not permission to force an arbitrary body.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+bare-self-final-14-guards35q3172/result.json,
+bare-helper-void-composition35q3175/result.json,
+bare-helper-final-lineage35q3181.json,
+lavinmq-bare-helper-void-final35q3177/result.json,
+array-stock-stdlib-inline-fix35q3143/result.json, and the stock-qualified known-open
+fixture in regression_tests/fixtures/array_helper_result_known_open.
+All 1,916 compiler files match build.bare-self-void-final35q3170.source.json.
+Compiler SHA-256: fd39d079f29981f068fe4af48232ec40006165557e966ba24be99b883d1bb7fe;
+ast_to_hir.cr: a1b1de28e52c687eeeb2e3fb326a16bb23077538e541a791498f65c679594f8e.
+Refresh after bare-call selection, force ownership/guards, inline lowering,
+result dependencies, defaults or virtual dispatch changes. Rollback is this
+atomic compiler commit. Unrelated existing WIP remains preserved.

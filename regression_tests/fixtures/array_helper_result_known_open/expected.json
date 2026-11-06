@@ -1,0 +1,11 @@
+{
+  "yielding_reentrant_helper.cr": {
+    "qualification": "STOCK_1_22_1_35q3145",
+    "status": 0,
+    "candidate_status": 0,
+    "stdout": "A\n",
+    "run_exit": 0,
+    "source_sha256": "0f5ac82b9bdef73a66f9b565dc271e5c0bbfc36b2e5811fdd31e6a858ebda8d9",
+    "purpose": "recursive helper demand through a yielding relay terminates at a bounded instance-state base case."
+  }
+}

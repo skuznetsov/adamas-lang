@@ -1,0 +1,29 @@
+{
+  "defaulted_bare_helper.cr": {
+    "candidate_status": 0,
+    "purpose": "bare implicit-self result demand must apply the helper default exactly once.",
+    "qualification": "STOCK_1_22_1_35q3145",
+    "run_exit": 0,
+    "source_sha256": "d21a817018e59dc7ecb96c2f1a24f683a1d871070d26ed6c5fecde16b00b213f",
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "local_name_shadow.cr": {
+    "candidate_status": 0,
+    "purpose": "a local with the helper method name must remain the captured/local value inside the block-expanded method body.",
+    "qualification": "STOCK_1_22_1_35q3145",
+    "run_exit": 0,
+    "source_sha256": "76cede0064f3fa64aa794688dc9ca979056fa0db677a5510f08496aa0b08f847",
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "virtual_child_override.cr": {
+    "candidate_status": 0,
+    "purpose": "a base-typed receiver must dispatch the bare helper call to the runtime child override.",
+    "qualification": "STOCK_1_22_1_35q3145",
+    "run_exit": 0,
+    "source_sha256": "08ede63a34826356d2c86e058a8a76158dc370ca005f9c87eb5cd4f011733389",
+    "status": 0,
+    "stdout": "B\n"
+  }
+}

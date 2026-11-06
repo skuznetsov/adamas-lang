@@ -173,6 +173,22 @@ Typed-local coercion, `typeof` result ownership, and source Void callbacks also
 remain separate open obligations. This contract does not establish complete
 prelude, bootstrap, application linking, runtime, or upstream-test parity.
 
+A bare implicit-self method identifier is a selected call, not a provisional
+local value. If its result is pending inside inline/yield lowering, demand the
+same exact yield-free target as the parenthesized call path before consuming
+its type. Use the force API's inline bypass only in an actual inline context;
+its depth, recursion, in-progress-body and yield-free guards remain authoritative.
+Defaults, selected Def/arena, result dependencies and runtime virtual dispatch
+retain their existing owners. A local of the same name must still win lookup.
+
+The bounded source_array_helper_result_repro.sh corpus covers both demand
+orders, direct pointer results, parentheses, annotations and strict return
+rejections. Its separately stock-qualified recursive-yield companion remains
+open on both baseline and candidate and is excluded explicitly by default;
+RUN_KNOWN_OPEN=1 runs that unresolved candidate obligation without changing
+its original source or expected output. This local repair does not establish
+recursive SCC result inference or full-prelude execution.
+
 A source method whose exact return annotation resolves to Void has a Nil
 call result, as in Crystal's check_return_type. Normalize that declaration at
 signature/result resolution and body materialization, before publishing source
@@ -207,6 +223,7 @@ and check semantic diagnostics and absence of an executable for rejections.
 - `regression_tests/declared_return_contract_repro.sh`
 - `regression_tests/source_return_kind_repro.sh`
 - `regression_tests/source_method_void_result_repro.sh`
+- `regression_tests/source_array_helper_result_repro.sh`
 - `regression_tests/nil_source_result_repro.sh`
 - `regression_tests/virtual_source_fact_transport_repro.sh`
 - `regression_tests/module_source_value_kind_repro.sh`
