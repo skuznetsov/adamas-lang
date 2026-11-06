@@ -25992,7 +25992,7 @@ integration, fresh bootstrap, or LavinMQ parity.
   invalid generated code as a valid empty expansion/Nil. Preserve genuinely
   empty output and legitimate nil arguments. The separate CLI literal-expansion
   path also needs its own audit; a HIR-only fix does not cover it.
-- [ ] Preserve ordered macro overload candidates and selected-definition
+- [x] Preserve ordered macro overload candidates and selected-definition
   parameter metadata. Stock 35q3486 versus baseline 35q3488 reproduces an
   overwritten from_errno overload changing evaluation order; do not rank by
   invented specificity or weaken from_os_error argument checks.
@@ -26040,3 +26040,23 @@ integration, fresh bootstrap, or LavinMQ parity.
   (35q3542). This restores failure reporting; it is not a new application
   compilation milestone. Macro argument grammar and ordered overload selection
   remain open. No library/application workaround or relaxed type check.
+
+
+### 2026-11-06 — Ordered macro candidates retain their declaration owner
+
+- [x] Replace the name-to-single-macro registry with ordered candidates. Replace
+  a matching signature in its original slot and select the first matching call
+  shape using that definition's parameters and arena. Preserve ordinary-method
+  stops and search Object before the global scope.
+- Original-first macro_ordered_registry_repro.sh passes 15 runtime controls and
+  five strict rejections on Crystal 1.22.1 and exact S1 35q3608 (35q3610). The
+  source audit exposed a pre-existing Object/global precedence error; the
+  stock-qualified module/class controls fail before and pass after the repair
+  (35q3597/35q3599/35q3600). No specificity ranking or relaxed argument checks.
+- Persist all MacroParamDecl metadata, including bare-splat named-only state,
+  in AST-cache version 12. Two focused cache examples pass (35q3585); the cache
+  implementation and unit source are unchanged in the final candidate.
+- Bounded source adversary: ROBUST for registry, matcher and Object-before-global
+  helper. Same-lineage review is correlated. The ** plus &identifier prepass,
+  macro default AST evaluation, special hooks and literal/source APIs remain
+  separate open boundaries. No full prelude, bootstrap or LavinMQ parity claim.

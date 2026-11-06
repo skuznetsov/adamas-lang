@@ -396,6 +396,23 @@ cli_macro_expansion_error_repro.sh gate checks the error channel independently
 of both generated syntax and runtime output. Other expander callers need their
 own scoped evidence; do not infer global closure from this boundary.
 
+## Macro overload selection owns its declaration metadata
+
+Keep macro candidates in registration order, paired with their definition
+arena and full parameter declarations. Same-signature replacement preserves
+the original slot. Match the original positional/named/block call shape and
+select the first admissible candidate; never reuse a name-level parameter map
+or invent a specificity ranking. Preserve named-only, external-label, default,
+splat, double-splat and block metadata through the AST cache.
+
+Lookup searches owner/included/parent scopes, then implicit Object, then the
+global scope. An ordinary method stops that search; Object fallback cannot
+bypass the stop. The original-first macro_ordered_registry_repro.sh gate checks
+selection, evaluation order, owner precedence and strict no-executable rejects.
+The focused macro_def_parameter_cache_spec.cr checks metadata round-trip and
+old-header rejection. This does not close default-expression evaluation,
+special-hook accumulation or block-pass normalization before the ** prepass.
+
 ## Falsifiers and recovery
 
 Run each script with the exact candidate as its argument. The scripts first
@@ -428,6 +445,8 @@ and check semantic diagnostics and absence of an executable for rejections.
 - `regression_tests/macro_interpolation_argument_repro.sh`
 - `regression_tests/macro_expansion_error_repro.sh`
 - `regression_tests/cli_macro_expansion_error_repro.sh`
+- `regression_tests/macro_ordered_registry_repro.sh`
+- `spec/parser/macro_def_parameter_cache_spec.cr`
 - `spec/lsp/string_interpolation_source_cache_spec.cr`
 
 Source, toolchain, input manifests, commands, and outcomes belong in the

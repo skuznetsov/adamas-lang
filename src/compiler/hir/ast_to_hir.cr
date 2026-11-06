@@ -7965,10 +7965,9 @@ module Adamas::HIR
     @lower_method_time_stack : Array(LowerMethodTiming)
     @lower_method_stats_stack : Array(LowerMethodStats)
 
-    # Macro definitions (name -> {MacroDefNode, arena})
-    @macro_defs : Hash(String, {Adamas::Compiler::Frontend::MacroDefNode, Adamas::Compiler::Frontend::ArenaLike})
-    # Macro parameter lists (name -> MacroParamInfo)
-    @macro_params : Hash(String, Array(MacroParamInfo))
+    # Macro definitions retain declaration order. The selected AST node and
+    # arena travel together so overload parameter metadata has the same owner.
+    @macro_defs : Hash(String, Array({Adamas::Compiler::Frontend::MacroDefNode, Adamas::Compiler::Frontend::ArenaLike}))
 
     # Class-level accessors (full method name -> entry)
     @class_accessor_entries : Hash(String, ClassAccessorEntry)
@@ -8888,8 +8887,7 @@ module Adamas::HIR
       @method_inheritance_cache_module_version = 0
       @type_param_map = Hash(String, String).new(initial_capacity: 4096)
       @published_source_module_names = Set(String).new
-      @macro_defs = {} of String => {Adamas::Compiler::Frontend::MacroDefNode, Adamas::Compiler::Frontend::ArenaLike}
-      @macro_params = {} of String => Array(MacroParamInfo)
+      @macro_defs = {} of String => Array({Adamas::Compiler::Frontend::MacroDefNode, Adamas::Compiler::Frontend::ArenaLike})
       @class_accessor_entries = {} of String => ClassAccessorEntry
       @module_defs = {} of String => Array({Adamas::Compiler::Frontend::ModuleNode, Adamas::Compiler::Frontend::ArenaLike})
       @hierarchy = TypeHierarchy.new(@class_info, @module_defs)
@@ -10141,10 +10139,14 @@ module Adamas::HIR
       return false if expr_id.null_ptr? || expr_id.invalid?
 
       node = unwrap_visibility_member_in_arena(arena[expr_id], arena)
+      macro_call_args = [] of ExprId
+      macro_named_args : Array(Adamas::Compiler::Frontend::NamedArgument)? = nil
       method_name = case node
                     when Adamas::Compiler::Frontend::IdentifierNode
                       safe_slice_to_string(node.name) || ""
                     when Adamas::Compiler::Frontend::CallNode
+                      macro_call_args = node.args
+                      macro_named_args = node.named_args
                       callee = arena[node.callee]
                       if callee.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
                         safe_slice_to_string(callee.name) || ""
@@ -10159,7 +10161,10 @@ module Adamas::HIR
                     end
       return false if method_name.empty?
 
-      lookup = lookup_macro_entry_with_inheritance(method_name, owner)
+      lookup = lookup_macro_entry_with_inheritance(
+        method_name, owner, call_args: macro_call_args,
+        named_args: macro_named_args, call_arena: arena
+      )
       return false unless lookup
       macro_def, macro_arena = lookup[0]
       macro_body = macro_arena[macro_def.body]
@@ -15185,8 +15190,19 @@ module Adamas::HIR
     def register_macro(node : Adamas::Compiler::Frontend::MacroDefNode, scope_name : String? = nil)
       macro_name = (safe_slice_to_string(node.name) || "")
       key = scope_name ? "#{scope_name}::#{macro_name}" : macro_name
-      @macro_defs[key] = {node, @arena}
-      @macro_params[key] = extract_macro_params(node)
+      candidates = @macro_defs[key]? || begin
+        created = [] of {Adamas::Compiler::Frontend::MacroDefNode, Adamas::Compiler::Frontend::ArenaLike}
+        @macro_defs[key] = created
+        created
+      end
+
+      # Match Crystal's ordered macro registry: a new signature is appended,
+      # while a later declaration with the same signature replaces in place.
+      if index = candidates.index { |(existing, _)| macro_signature_overrides?(node, existing) }
+        candidates[index] = {node, @arena.as(Adamas::Compiler::Frontend::ArenaLike)}
+      else
+        candidates << {node, @arena.as(Adamas::Compiler::Frontend::ArenaLike)}
+      end
     end
 
     def pre_register_class_scoped_macros(node : Adamas::Compiler::Frontend::ClassNode)
@@ -15310,22 +15326,39 @@ module Adamas::HIR
       end
     end
 
-    private def lookup_macro_entry(method_name : String, scope_name : String? = nil, allow_global : Bool = true)
+    private def lookup_macro_entry(
+      method_name : String,
+      scope_name : String? = nil,
+      allow_global : Bool = true,
+      call_args : Array(ExprId)? = nil,
+      named_args : Array(Adamas::Compiler::Frontend::NamedArgument)? = nil,
+      call_arena : Adamas::Compiler::Frontend::ArenaLike? = nil,
+    )
       if scope = scope_name
         scoped = "#{scope}::#{method_name}"
         if env_get("DEBUG_RECORD_LOOKUP") && method_name == "record"
           STDERR.puts "[DEBUG_RECORD_LOOKUP] scope=#{scope} scoped=#{scoped} has_scoped=#{@macro_defs.has_key?(scoped)} has_global=#{@macro_defs.has_key?(method_name)}"
         end
-        if entry = @macro_defs[scoped]?
-          return {entry, scoped}
+        if candidates = @macro_defs[scoped]?
+          if entry = select_macro_candidate(candidates, scoped, call_args, named_args, call_arena || @arena)
+            return entry
+          end
         end
+        # Crystal checks a type's own definitions after its macros and before
+        # walking parent scopes or falling back to global macros. An ordinary
+        # class method therefore shadows inherited/global macros when no
+        # same-scope macro candidate matches this call shape.
+        return nil if scoped_macro_shadowed_by_class_method?(method_name, scope)
       end
       if allow_global
-        if entry = @macro_defs[method_name]?
-          if env_get("DEBUG_RECORD_LOOKUP") && method_name == "record"
-            STDERR.puts "[DEBUG_RECORD_LOOKUP] scope=(none) has_global=true"
+        if candidates = @macro_defs[method_name]?
+          entry = select_macro_candidate(candidates, method_name, call_args, named_args, call_arena || @arena)
+          if entry
+            if env_get("DEBUG_RECORD_LOOKUP") && method_name == "record"
+              STDERR.puts "[DEBUG_RECORD_LOOKUP] scope=(none) has_global=true"
+            end
+            return entry
           end
-          return {entry, method_name}
         end
       end
       if env_get("DEBUG_RECORD_LOOKUP") && method_name == "record"
@@ -15334,53 +15367,190 @@ module Adamas::HIR
       nil
     end
 
-    # Crystal's `Macro#matches?` rejects a macro whose mandatory parameters the
-    # call cannot cover; the call then resolves as an ordinary method. Without
-    # this, `spawn do ... end` expands `macro spawn(call, ...)` instead of
-    # calling `def spawn(*, ..., &block)`, and the macro body's own
-    # `spawn do ... end` recurses until the compiler stack overflows.
-    #
-    # The parser drops a bare `*` from the declaration, so parameters after it
-    # look positional here; that only ever admits more calls, never fewer.
-    private def macro_call_misses_mandatory_param?(
+    private def select_macro_candidate(
+      candidates : Array({Adamas::Compiler::Frontend::MacroDefNode, Adamas::Compiler::Frontend::ArenaLike}),
+      key : String,
+      call_args : Array(ExprId)?,
+      named_args : Array(Adamas::Compiler::Frontend::NamedArgument)?,
+      call_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Tuple(Tuple(Adamas::Compiler::Frontend::MacroDefNode, Adamas::Compiler::Frontend::ArenaLike), String)?
+      # A registry lookup without the original call shape cannot safely pick
+      # an overload. All lowering call sites provide it; fail closed if a new
+      # caller forgets rather than reverting to scalar/first-entry behavior.
+      return nil unless call_args
+      candidates.each do |entry|
+        return {entry, key} if macro_call_shape_matches?(entry[0], call_arena, call_args, named_args)
+      end
+      nil
+    end
+
+    private def macro_positional_params(
+      macro_def : Adamas::Compiler::Frontend::MacroDefNode,
+    ) : Array(Adamas::Compiler::Frontend::MacroDefNode::MacroParamDecl)
+      macro_def.params.select { |param| param.prefix != "**" && param.prefix != "&" }
+    end
+
+    private def macro_param_external_name(param : Adamas::Compiler::Frontend::MacroDefNode::MacroParamDecl) : String
+      param.external_name || param.name
+    end
+
+    private def macro_has_double_splat?(macro_def : Adamas::Compiler::Frontend::MacroDefNode) : Bool
+      macro_def.params.any? { |param| param.prefix == "**" }
+    end
+
+    private def macro_call_shape_matches?(
       macro_def : Adamas::Compiler::Frontend::MacroDefNode,
       call_arena : Adamas::Compiler::Frontend::ArenaLike,
       call_args : Array(ExprId),
       named_args : Array(Adamas::Compiler::Frontend::NamedArgument)?,
     ) : Bool
-      params = macro_def.params
-      return false if params.empty?
-      call_args.each do |arg|
-        return false if node_for_call_expr(call_arena, arg).is_a?(Adamas::Compiler::Frontend::SplatNode)
+      params = macro_positional_params(macro_def)
+      args = call_args
+      if last_id = args.last?
+        last_node = call_arena[last_id]
+        if last_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
+          args = args[0...-1]
+        elsif last_node.is_a?(Adamas::Compiler::Frontend::UnaryNode) &&
+              (safe_slice_to_string(last_node.operator) || "") == "&" &&
+              call_arena[last_node.operand].is_a?(Adamas::Compiler::Frontend::BlockNode)
+          args = args[0...-1]
+        end
       end
 
-      positional_index = 0
-      after_splat = false
-      params.each do |param|
-        case param.prefix
-        when "*"
-          after_splat = true
-          next
-        when "**", "&"
-          next
-        end
-        covered_positionally = !after_splat && positional_index < call_args.size
-        positional_index += 1 unless after_splat
-        next if covered_positionally || param.default_source
-        external = param.external_name || param.name
-        covered_by_name = named_args.try(&.any? { |named| named.name == external.to_slice }) || false
-        return true unless covered_by_name
+      # A bare `*` is represented on the first following named parameter by
+      # the parser. That boundary accepts no positional arguments after it.
+      bare_splat_boundary = params.index(&.named_only)
+      splat_index = params.index { |param| param.prefix == "*" }
+      default_index = params.index { |param| !param.default_source.nil? }
+      if boundary = bare_splat_boundary
+        min_args_size = max_args_size = boundary
+      elsif splat = splat_index
+        min_args_size = default_index || params.size
+        # Crystal's regular named splat reduces the minimum positional count
+        # unconditionally, including when a default appears before the splat.
+        min_args_size -= 1
+        max_args_size = Int32::MAX
+      else
+        min_args_size = default_index || params.size
+        max_args_size = params.size
       end
-      false
+
+      # A required formal after a regular splat can only be supplied by name.
+      # Without named arguments, Crystal rejects the shape unless every formal
+      # after the splat is defaulted.
+      if splat = splat_index
+        if params.size > splat + 1 && named_args.nil?
+          return false unless (splat + 1...params.size).all? { |index| !params[index].default_source.nil? }
+        end
+      end
+
+      return false if args.size > max_args_size
+      return false if named_args.nil? && args.size < min_args_size
+
+      provided = Array(Bool).new(params.size, false)
+      args.each_with_index do |_arg, index|
+        if splat = splat_index
+          provided[index] = true if index < splat
+        else
+          provided[index] = true if index < params.size
+        end
+      end
+
+      if named_args
+        seen_names = Set(String).new
+        named_args.each do |named_arg|
+          name = safe_slice_to_string(named_arg.name) || ""
+          return false if seen_names.includes?(name)
+          seen_names.add(name)
+          found_index = params.index { |param| macro_param_external_name(param) == name }
+          if found_index
+            return false if found_index == splat_index
+            return false if provided[found_index]
+            provided[found_index] = true
+          else
+            return false unless macro_has_double_splat?(macro_def)
+          end
+        end
+      end
+
+      # As in Macro#matches?, required-formal completeness is checked when the
+      # caller supplied named arguments. The parser represents bare `*` without
+      # a parameter node, so retain the explicit required-name check for that
+      # shape even when there is no named-argument list.
+      if named_args || bare_splat_boundary
+        params.each_with_index do |param, index|
+          next if index == splat_index
+          next unless param.default_source.nil?
+          return false unless provided[index]
+        end
+      end
+      true
     end
 
-    private def lookup_macro_entry_with_inheritance(method_name : String, scope_name : String, allow_global : Bool = true)
-      if entry = lookup_macro_entry(method_name, scope_name, allow_global)
-        return entry
+    private def macro_signature_splat_index(
+      macro_def : Adamas::Compiler::Frontend::MacroDefNode,
+      params : Array(Adamas::Compiler::Frontend::MacroDefNode::MacroParamDecl),
+    ) : Int32?
+      params.index(&.named_only) || params.index { |param| param.prefix == "*" }
+    end
+
+    private def macro_signature_param_count(
+      macro_def : Adamas::Compiler::Frontend::MacroDefNode,
+      params : Array(Adamas::Compiler::Frontend::MacroDefNode::MacroParamDecl),
+    ) : Int32
+      params.size + (params.any?(&.named_only) ? 1 : 0)
+    end
+
+    private def macro_required_named_signature(
+      macro_def : Adamas::Compiler::Frontend::MacroDefNode,
+      params : Array(Adamas::Compiler::Frontend::MacroDefNode::MacroParamDecl),
+    ) : Array(String)?
+      splat_index = macro_signature_splat_index(macro_def, params)
+      return nil unless splat_index && splat_index < macro_signature_param_count(macro_def, params) - 1
+
+      start_index = params.any?(&.named_only) ? splat_index : splat_index + 1
+      params[start_index..].select { |param| param.default_source.nil? }
+        .map { |param| macro_param_external_name(param) }
+        .sort
+    end
+
+    private def macro_signature_overrides?(
+      new_def : Adamas::Compiler::Frontend::MacroDefNode,
+      old_def : Adamas::Compiler::Frontend::MacroDefNode,
+    ) : Bool
+      new_params = macro_positional_params(new_def)
+      old_params = macro_positional_params(old_def)
+      new_splat = macro_signature_splat_index(new_def, new_params)
+      old_splat = macro_signature_splat_index(old_def, old_params)
+      return false if macro_signature_param_count(new_def, new_params) != macro_signature_param_count(old_def, old_params) ||
+                      new_splat != old_splat ||
+                      macro_has_double_splat?(new_def) != macro_has_double_splat?(old_def)
+
+      new_named = macro_required_named_signature(new_def, new_params)
+      old_named = macro_required_named_signature(old_def, old_params)
+      return true if new_named.nil? && old_named.nil?
+      return false unless new_named && old_named
+      new_named == old_named
+    end
+
+    private def lookup_macro_entry_with_inheritance_status(
+      method_name : String,
+      scope_name : String,
+      allow_global : Bool = true,
+      call_args : Array(ExprId)? = nil,
+      named_args : Array(Adamas::Compiler::Frontend::NamedArgument)? = nil,
+      call_arena : Adamas::Compiler::Frontend::ArenaLike? = nil,
+    )
+      # Search this owner and each inherited owner before global macros. A
+      # global candidate is a final lookup target in Crystal's macro scope
+      # chain; allowing it during the first owner lookup would hide a matching
+      # inherited macro.
+      if entry = lookup_macro_entry(method_name, scope_name, false, call_args, named_args, call_arena)
+        return {entry, false}
       end
-      # Crystal stops inherited macro lookup at an owner's method definition.
-      # Keep the legacy lexical/global policy for unqualified call sites.
-      return nil if !allow_global && scoped_macro_shadowed_by_class_method?(method_name, scope_name)
+      # Crystal stops inherited macro lookup at an owner's method definition;
+      # a later global target must not bypass that owner-local shadow.
+      return {nil, true} if scoped_macro_shadowed_by_class_method?(method_name, scope_name)
 
       # Generic instantiations (e.g. `Atomic(Int32)`) are not stored in
       # `@macro_defs` — generic classes register their macros under the bare
@@ -15389,10 +15559,10 @@ module Adamas::HIR
       # the generic template are found at the call site.
       stripped_scope = strip_generic_args(scope_name)
       if stripped_scope != scope_name
-        if entry = lookup_macro_entry(method_name, stripped_scope, allow_global)
-          return entry
+        if entry = lookup_macro_entry(method_name, stripped_scope, false, call_args, named_args, call_arena)
+          return {entry, false}
         end
-        return nil if !allow_global && scoped_macro_shadowed_by_class_method?(method_name, stripped_scope)
+        return {nil, true} if scoped_macro_shadowed_by_class_method?(method_name, stripped_scope)
       end
 
       visited = Set(String).new
@@ -15401,10 +15571,10 @@ module Adamas::HIR
         visited << current
         if modules = @class_included_modules[current]?
           modules.each do |mod_name|
-            if entry = lookup_macro_entry(method_name, mod_name, allow_global)
-              return entry
+            if entry = lookup_macro_entry(method_name, mod_name, false, call_args, named_args, call_arena)
+              return {entry, false}
             end
-            return nil if !allow_global && scoped_macro_shadowed_by_class_method?(method_name, mod_name)
+            return {nil, true} if scoped_macro_shadowed_by_class_method?(method_name, mod_name)
           end
         end
 
@@ -15414,21 +15584,69 @@ module Adamas::HIR
                  @module.class_parents[stripped_scope]?
         break unless parent
 
-        if entry = lookup_macro_entry(method_name, parent, allow_global)
-          return entry
+        if entry = lookup_macro_entry(method_name, parent, false, call_args, named_args, call_arena)
+          return {entry, false}
         end
-        return nil if !allow_global && scoped_macro_shadowed_by_class_method?(method_name, parent)
+        return {nil, true} if scoped_macro_shadowed_by_class_method?(method_name, parent)
         parent_stripped = strip_generic_args(parent)
         if parent_stripped != parent
-          if entry = lookup_macro_entry(method_name, parent_stripped, allow_global)
-            return entry
+          if entry = lookup_macro_entry(method_name, parent_stripped, false, call_args, named_args, call_arena)
+            return {entry, false}
           end
-          return nil if !allow_global && scoped_macro_shadowed_by_class_method?(method_name, parent_stripped)
+          return {nil, true} if scoped_macro_shadowed_by_class_method?(method_name, parent_stripped)
         end
         current = parent
       end
 
-      nil
+      # Crystal's macro target order includes Object after a type's own,
+      # included-module, and parent scopes, but before Program/global macros.
+      # Some source owners have no recorded parent edge to Object, so make
+      # this implicit lookup explicit. Preserve Object's DefInMacroLookup
+      # behavior: an ordinary Object method blocks the later global lookup.
+      unless scope_name == "Object" || visited.includes?("Object")
+        if entry = lookup_macro_entry(method_name, "Object", false, call_args, named_args, call_arena)
+          return {entry, false}
+        end
+        return {nil, true} if scoped_macro_shadowed_by_class_method?(method_name, "Object")
+      end
+
+      if allow_global
+        return {lookup_macro_entry(method_name, nil, true, call_args, named_args, call_arena), false}
+      end
+      {nil, false}
+    end
+
+    private def lookup_macro_entry_with_inheritance(
+      method_name : String,
+      scope_name : String,
+      allow_global : Bool = true,
+      call_args : Array(ExprId)? = nil,
+      named_args : Array(Adamas::Compiler::Frontend::NamedArgument)? = nil,
+      call_arena : Adamas::Compiler::Frontend::ArenaLike? = nil,
+    )
+      lookup_macro_entry_with_inheritance_status(
+        method_name, scope_name, allow_global, call_args, named_args, call_arena
+      )[0]
+    end
+
+    # Some class/module body paths historically tried Object after inherited
+    # lookup returned nil. Preserve that lookup order only when the inherited
+    # search reached the end; a local ordinary Def is a stop result, not a
+    # missing macro that permits Object fallback.
+    private def lookup_macro_entry_with_object_fallback(
+      method_name : String,
+      scope_name : String,
+      call_args : Array(ExprId)? = nil,
+      named_args : Array(Adamas::Compiler::Frontend::NamedArgument)? = nil,
+      call_arena : Adamas::Compiler::Frontend::ArenaLike? = nil,
+    )
+      lookup, stopped = lookup_macro_entry_with_inheritance_status(
+        method_name, scope_name, true, call_args, named_args, call_arena
+      )
+      return lookup if lookup
+      return nil if stopped || scope_name == "Object"
+
+      lookup_macro_entry(method_name, "Object", call_args: call_args, named_args: named_args, call_arena: call_arena)
     end
 
     private def scoped_macro_shadowed_by_class_method?(method_name : String, scope_name : String) : Bool
@@ -16383,10 +16601,10 @@ module Adamas::HIR
             end.join(",")
             STDERR.puts "[MACRO_CALL_CLASS] class=#{class_name} method_guess=#{method_name} block_id=#{block_idx} block_kind=#{block_kind} block_body_size=#{block_body_size} arg_kinds=#{arg_kinds}"
           end
-          macro_lookup = lookup_macro_entry_with_inheritance(method_name, class_name)
-          if macro_lookup.nil? && class_name != "Object"
-            macro_lookup = lookup_macro_entry(method_name, "Object")
-          end
+          macro_lookup = lookup_macro_entry_with_object_fallback(
+            method_name, class_name, call_args: member.args,
+            named_args: member.named_args, call_arena: @arena
+          )
           if debug_macro_call
             macro_key = macro_lookup.try(&.[1])
             STDERR.puts "[MACRO_CALL_CLASS] class=#{class_name} method=#{method_name} macro_key=#{macro_key || "nil"}"
@@ -17845,7 +18063,7 @@ module Adamas::HIR
       macro_key : String,
     ) : ExprId
       macro_name = (safe_slice_to_string(macro_def.name) || "")
-      params = @macro_params[macro_key]? || @macro_params[macro_name]? || [] of MacroParamInfo
+      params = extract_macro_params(macro_def)
       debug_macro_result = false
       if filter = env_get("DEBUG_MACRO_RESULT")
         debug_macro_result = (filter == "1" || filter == macro_name)
@@ -27634,7 +27852,9 @@ module Adamas::HIR
       end
       # INC_DEBUG disabled
       include_arena = include_target_arena
-      included_macro_lookup = lookup_macro_entry("included", module_full_name)
+      included_macro_lookup = lookup_macro_entry(
+        "included", module_full_name, call_args: [] of ExprId, call_arena: include_arena
+      )
       if trace_include_phase
         STDERR.puts "[REG_INCLUDE_PHASE] class=#{class_name} phase=macro_lookup module=#{module_full_name} found=#{included_macro_lookup ? 1 : 0}"
       end
@@ -28508,7 +28728,9 @@ module Adamas::HIR
         with_arena(mod_arena) do
           extra_map = include_type_param_map(mod_node, include_node.target, include_arena, class_name)
           with_type_param_map(extra_map) do
-            if macro_lookup = lookup_macro_entry("included", module_full_name)
+            if macro_lookup = lookup_macro_entry(
+                 "included", module_full_name, call_args: [] of ExprId, call_arena: @arena
+               )
               macro_entry, macro_key = macro_lookup
               macro_def, macro_arena = macro_entry
               expanded_id = expand_macro_expr(macro_def, macro_arena, [] of ExprId, nil, nil, macro_key)
@@ -34320,10 +34542,10 @@ module Adamas::HIR
             callee = @arena[member.callee]
             next unless callee.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
             method_name = (safe_slice_to_string(callee.name) || "")
-            macro_lookup = lookup_macro_entry_with_inheritance(method_name, module_name)
-            if macro_lookup.nil? && module_name != "Object"
-              macro_lookup = lookup_macro_entry(method_name, "Object")
-            end
+            macro_lookup = lookup_macro_entry_with_object_fallback(
+              method_name, module_name, call_args: member.args,
+              named_args: member.named_args, call_arena: @arena
+            )
             next unless macro_lookup
             macro_entry, macro_key = macro_lookup
             macro_def, macro_arena = macro_entry
@@ -34340,10 +34562,9 @@ module Adamas::HIR
             end
           when Adamas::Compiler::Frontend::IdentifierNode
             method_name = (safe_slice_to_string(member.name) || "")
-            macro_lookup = lookup_macro_entry_with_inheritance(method_name, module_name)
-            if macro_lookup.nil? && module_name != "Object"
-              macro_lookup = lookup_macro_entry(method_name, "Object")
-            end
+            macro_lookup = lookup_macro_entry_with_object_fallback(
+              method_name, module_name, call_args: [] of ExprId, call_arena: @arena
+            )
             next unless macro_lookup
             macro_entry, macro_key = macro_lookup
             macro_def, macro_arena = macro_entry
@@ -34531,10 +34752,10 @@ module Adamas::HIR
               callee = @arena[member.callee]
               if callee.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
                 method_name = (safe_slice_to_string(callee.name) || "")
-                macro_lookup = lookup_macro_entry_with_inheritance(method_name, module_name)
-                if macro_lookup.nil? && module_name != "Object"
-                  macro_lookup = lookup_macro_entry(method_name, "Object")
-                end
+                macro_lookup = lookup_macro_entry_with_object_fallback(
+                  method_name, module_name, call_args: member.args,
+                  named_args: member.named_args, call_arena: @arena
+                )
                 if macro_lookup
                   macro_entry, macro_key = macro_lookup
                   macro_def, macro_arena = macro_entry
@@ -34559,10 +34780,9 @@ module Adamas::HIR
               end
             when Adamas::Compiler::Frontend::IdentifierNode
               method_name = (safe_slice_to_string(member.name) || "")
-              macro_lookup = lookup_macro_entry_with_inheritance(method_name, module_name)
-              if macro_lookup.nil? && module_name != "Object"
-                macro_lookup = lookup_macro_entry(method_name, "Object")
-              end
+              macro_lookup = lookup_macro_entry_with_object_fallback(
+                method_name, module_name, call_args: [] of ExprId, call_arena: @arena
+              )
               if macro_lookup
                 macro_entry, macro_key = macro_lookup
                 macro_def, macro_arena = macro_entry
@@ -35627,10 +35847,10 @@ module Adamas::HIR
       named_args : Array(Adamas::Compiler::Frontend::NamedArgument)?,
       block_id : ExprId?,
     ) : {ExprId, Adamas::Compiler::Frontend::ArenaLike}?
-      macro_lookup = lookup_macro_entry_with_inheritance(method_name, module_name)
-      if macro_lookup.nil? && module_name != "Object"
-        macro_lookup = lookup_macro_entry(method_name, "Object")
-      end
+      macro_lookup = lookup_macro_entry_with_object_fallback(
+        method_name, module_name, call_args: args,
+        named_args: named_args, call_arena: @arena
+      )
       return nil unless macro_lookup
 
       macro_entry, macro_key = macro_lookup
@@ -38585,8 +38805,10 @@ module Adamas::HIR
       return unless callee.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
 
       method_name = safe_slice_to_string(callee.name) || ""
-      macro_lookup = lookup_macro_entry_with_inheritance(method_name, class_name)
-      macro_lookup ||= lookup_macro_entry(method_name, "Object") if class_name != "Object"
+      macro_lookup = lookup_macro_entry_with_object_fallback(
+        method_name, class_name, call_args: node.args,
+        named_args: node.named_args, call_arena: @arena
+      )
       return unless macro_lookup
 
       macro_entry, macro_key = macro_lookup
@@ -38611,8 +38833,9 @@ module Adamas::HIR
       node : Adamas::Compiler::Frontend::IdentifierNode,
     ) : Nil
       method_name = safe_slice_to_string(node.name) || ""
-      macro_lookup = lookup_macro_entry_with_inheritance(method_name, class_name)
-      macro_lookup ||= lookup_macro_entry(method_name, "Object") if class_name != "Object"
+      macro_lookup = lookup_macro_entry_with_object_fallback(
+        method_name, class_name, call_args: [] of ExprId, call_arena: @arena
+      )
       return unless macro_lookup
 
       macro_entry, macro_key = macro_lookup
@@ -39319,10 +39542,10 @@ module Adamas::HIR
             callee = @arena[member.callee]
             next unless callee.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
             method_name = (safe_slice_to_string(callee.name) || "")
-            macro_lookup = lookup_macro_entry_with_inheritance(method_name, full_name)
-            if macro_lookup.nil? && full_name != "Object"
-              macro_lookup = lookup_macro_entry(method_name, "Object")
-            end
+            macro_lookup = lookup_macro_entry_with_object_fallback(
+              method_name, full_name, call_args: member.args,
+              named_args: member.named_args, call_arena: @arena
+            )
             next unless macro_lookup
             macro_entry, macro_key = macro_lookup
             macro_def, macro_arena = macro_entry
@@ -39340,10 +39563,9 @@ module Adamas::HIR
             end
           when Adamas::Compiler::Frontend::IdentifierNode
             method_name = (safe_slice_to_string(member.name) || "")
-            macro_lookup = lookup_macro_entry_with_inheritance(method_name, full_name)
-            if macro_lookup.nil? && full_name != "Object"
-              macro_lookup = lookup_macro_entry(method_name, "Object")
-            end
+            macro_lookup = lookup_macro_entry_with_object_fallback(
+              method_name, full_name, call_args: [] of ExprId, call_arena: @arena
+            )
             next unless macro_lookup
             macro_entry, macro_key = macro_lookup
             macro_def, macro_arena = macro_entry
@@ -40075,10 +40297,10 @@ module Adamas::HIR
       if env_get("DEBUG_RECORD_LOWER") && method_name == "record"
         STDERR.puts "[DEBUG_RECORD_LOWER] module=#{module_name} stage=lookup"
       end
-      macro_lookup = lookup_macro_entry_with_inheritance(method_name, module_name)
-      if macro_lookup.nil? && module_name != "Object"
-        macro_lookup = lookup_macro_entry(method_name, "Object")
-      end
+      macro_lookup = lookup_macro_entry_with_object_fallback(
+        method_name, module_name, call_args: node.args,
+        named_args: node.named_args, call_arena: @arena
+      )
       if env_get("DEBUG_RECORD_LOWER") && method_name == "record"
         STDERR.puts "[DEBUG_RECORD_LOWER] module=#{module_name} stage=found value=#{!macro_lookup.nil?}"
       end
@@ -40110,10 +40332,9 @@ module Adamas::HIR
       if node_name = safe_slice_to_string(node.name)
         method_name = node_name
       end
-      macro_lookup = lookup_macro_entry_with_inheritance(method_name, module_name)
-      if macro_lookup.nil? && module_name != "Object"
-        macro_lookup = lookup_macro_entry(method_name, "Object")
-      end
+      macro_lookup = lookup_macro_entry_with_object_fallback(
+        method_name, module_name, call_args: [] of ExprId, call_arena: @arena
+      )
       return unless macro_lookup
 
       macro_entry, macro_key = macro_lookup
@@ -42741,10 +42962,10 @@ module Adamas::HIR
                 if env_get("DEBUG_CLASS_BODY_CALLS") && (class_name.includes?("LineNumbers") || class_name.includes?("WUInt::UInt128"))
                   STDERR.puts "[DEBUG_CLASS_BODY_CALLS] #{class_name} call=#{method_name}"
                 end
-                macro_lookup = lookup_macro_entry_with_inheritance(method_name, class_name)
-                if macro_lookup.nil? && class_name != "Object"
-                  macro_lookup = lookup_macro_entry(method_name, "Object")
-                end
+                macro_lookup = lookup_macro_entry_with_object_fallback(
+                  method_name, class_name, call_args: member.args,
+                  named_args: member.named_args, call_arena: @arena
+                )
                 if macro_lookup
                   macro_entry, macro_key = macro_lookup
                   macro_def, macro_arena = macro_entry
@@ -42778,10 +42999,9 @@ module Adamas::HIR
               # `twopick()`) parses as a bare identifier; register its members like the
               # CallNode branch above does.
               method_name = (safe_slice_to_string(member.name) || "")
-              macro_lookup = lookup_macro_entry_with_inheritance(method_name, class_name)
-              if macro_lookup.nil? && class_name != "Object"
-                macro_lookup = lookup_macro_entry(method_name, "Object")
-              end
+              macro_lookup = lookup_macro_entry_with_object_fallback(
+                method_name, class_name, call_args: [] of ExprId, call_arena: @arena
+              )
               if macro_lookup
                 macro_entry, macro_key = macro_lookup
                 macro_def, macro_arena = macro_entry
@@ -45382,10 +45602,9 @@ module Adamas::HIR
       source_owner_methods : Bool = true,
     )
       method_name = (safe_slice_to_string(node.name) || "")
-      macro_lookup = lookup_macro_entry_with_inheritance(method_name, class_name)
-      if macro_lookup.nil? && class_name != "Object"
-        macro_lookup = lookup_macro_entry(method_name, "Object")
-      end
+      macro_lookup = lookup_macro_entry_with_object_fallback(
+        method_name, class_name, call_args: [] of ExprId, call_arena: @arena
+      )
       return unless macro_lookup
 
       macro_entry, macro_key = macro_lookup
@@ -45414,10 +45633,10 @@ module Adamas::HIR
       return unless callee_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
 
       method_name = (safe_slice_to_string(callee_node.name) || "")
-      macro_lookup = lookup_macro_entry_with_inheritance(method_name, class_name)
-      if macro_lookup.nil? && class_name != "Object"
-        macro_lookup = lookup_macro_entry(method_name, "Object")
-      end
+      macro_lookup = lookup_macro_entry_with_object_fallback(
+        method_name, class_name, call_args: node.args,
+        named_args: node.named_args, call_arena: @arena
+      )
       if macro_lookup
         macro_entry, macro_key = macro_lookup
         macro_def, macro_arena = macro_entry
@@ -68900,12 +69119,17 @@ module Adamas::HIR
       case member
       when Adamas::Compiler::Frontend::IdentifierNode
         method_name = safe_slice_to_string(member.name) || ""
-        !method_name.empty? && !lookup_macro_entry_with_inheritance(method_name, owner).nil?
+        !method_name.empty? && !lookup_macro_entry_with_inheritance(
+          method_name, owner, call_args: [] of ExprId, call_arena: arena
+        ).nil?
       when Adamas::Compiler::Frontend::CallNode
         callee = arena[member.callee]
         if callee.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
           method_name = safe_slice_to_string(callee.name) || ""
-          !method_name.empty? && !lookup_macro_entry_with_inheritance(method_name, owner).nil?
+          !method_name.empty? && !lookup_macro_entry_with_inheritance(
+            method_name, owner, call_args: member.args,
+            named_args: member.named_args, call_arena: arena
+          ).nil?
         else
           false
         end
@@ -96059,12 +96283,13 @@ module Adamas::HIR
       # generic instantiation (`Atomic(UInt32)`) finds the template's private
       # macros (`check_pointer_type`), and parents/included modules are walked.
       identifier_macro_lookup = if current_scope = @current_class
-                                  lookup_macro_entry_with_inheritance(name, current_scope)
+                                  lookup_macro_entry_with_inheritance(
+                                    name, current_scope, call_args: [] of ExprId, call_arena: @arena
+                                  )
                                 else
-                                  lookup_macro_entry(name, nil)
+                                  lookup_macro_entry(name, nil, call_args: [] of ExprId, call_arena: @arena)
                                 end
-      if (macro_lookup = identifier_macro_lookup) &&
-         !macro_call_misses_mandatory_param?(macro_lookup[0][0], @arena, [] of ExprId, nil)
+      if macro_lookup = identifier_macro_lookup
         macro_entry, macro_key = macro_lookup
         macro_def, macro_arena = macro_entry
         return expand_macro(ctx, macro_def, macro_arena, [] of ExprId, nil, nil, macro_key)
@@ -115401,11 +115626,23 @@ module Adamas::HIR
         return nil
       end
       macro_lookup = if owner = qualified_owner
-                       lookup_macro_entry_with_inheritance(method_name, owner, allow_global: false)
+                       lookup_macro_entry_with_inheritance(
+                         method_name, owner, allow_global: false, call_args: node.args,
+                         named_args: node.named_args, call_arena: call_arena
+                       )
                      elsif current_scope = @current_class
-                       lookup_macro_entry_with_inheritance(method_name, current_scope)
+                       lookup_macro_entry_with_inheritance(
+                         method_name, current_scope, call_args: node.args,
+                         named_args: node.named_args, call_arena: call_arena
+                       )
                      else
-                       lookup_macro_entry(method_name, nil) || lookup_macro_entry(method_name, "Object")
+                       lookup_macro_entry(
+                         method_name, nil, call_args: node.args,
+                         named_args: node.named_args, call_arena: call_arena
+                       ) || lookup_macro_entry(
+                         method_name, "Object", call_args: node.args,
+                         named_args: node.named_args, call_arena: call_arena
+                       )
                      end
       return nil unless macro_lookup
       args = node.args
@@ -115422,7 +115659,6 @@ module Adamas::HIR
           args = args[0...-1]
         end
       end
-      return nil if macro_call_misses_mandatory_param?(macro_lookup[0][0], call_arena, args, node.named_args)
       macro_entry, macro_key = macro_lookup
       macro_def, macro_arena = macro_entry
       if owner = qualified_owner
@@ -115907,16 +116143,25 @@ module Adamas::HIR
         begin
           macro_lookup = if qualified_identifier_call
                            if owner = static_class_name
-                             lookup_macro_entry_with_inheritance(method_name, owner, allow_global: false)
+                             lookup_macro_entry_with_inheritance(
+                               method_name, owner, allow_global: false, call_args: call_args,
+                               named_args: node.named_args, call_arena: call_arena
+                             )
                            end
                          elsif current_scope = @current_class
-                           lookup_macro_entry_with_inheritance(method_name, current_scope)
+                           lookup_macro_entry_with_inheritance(
+                             method_name, current_scope, call_args: call_args,
+                             named_args: node.named_args, call_arena: call_arena
+                           )
                          else
-                           lookup_macro_entry(method_name, nil) || lookup_macro_entry(method_name, "Object")
+                           lookup_macro_entry(
+                             method_name, nil, call_args: call_args,
+                             named_args: node.named_args, call_arena: call_arena
+                           ) || lookup_macro_entry(
+                             method_name, "Object", call_args: call_args,
+                             named_args: node.named_args, call_arena: call_arena
+                           )
                          end
-          if macro_lookup && macro_call_misses_mandatory_param?(macro_lookup[0][0], call_arena, call_args, node.named_args)
-            macro_lookup = nil
-          end
           if macro_lookup
             macro_entry, macro_key = macro_lookup
             macro_def, macro_arena = macro_entry
@@ -117534,8 +117779,10 @@ module Adamas::HIR
             # An explicit type receiver only admits that owner's macros (and
             # inherited macros). A global macro of the same short name must
             # not intercept ordinary class-method resolution.
-            if (macro_lookup = lookup_macro_entry_with_inheritance(method_name, class_name_str, allow_global: false)) &&
-               !macro_call_misses_mandatory_param?(macro_lookup[0][0], call_arena, call_args, node.named_args)
+            if (macro_lookup = lookup_macro_entry_with_inheritance(
+                 method_name, class_name_str, allow_global: false, call_args: call_args,
+                 named_args: node.named_args, call_arena: call_arena
+               ))
               macro_entry, macro_key = macro_lookup
               macro_def, macro_arena = macro_entry
               return expand_macro_for_owner(ctx, macro_def, macro_arena, call_args, node.named_args, block_expr, macro_key, class_name_str)
@@ -142120,8 +142367,9 @@ module Adamas::HIR
                            else
                              static_owner_name
                            end
-        if (macro_lookup = lookup_macro_entry_with_inheritance("[]", macro_scope_name)) &&
-           !macro_call_misses_mandatory_param?(macro_lookup[0][0], @arena, node.indexes, nil)
+        if (macro_lookup = lookup_macro_entry_with_inheritance(
+             "[]", macro_scope_name, call_args: node.indexes, call_arena: @arena
+           ))
           macro_entry, macro_key = macro_lookup
           macro_def, macro_arena = macro_entry
           return expand_macro_for_owner(ctx, macro_def, macro_arena, node.indexes, nil, nil, macro_key, static_owner_name)

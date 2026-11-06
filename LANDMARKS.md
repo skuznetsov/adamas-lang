@@ -25522,3 +25522,55 @@ f256741819ab354783f582851d3e9c7659c1909cef34aefa41aa1257c57e74d1.
 Refresh after CLI literal expansion, expander diagnostics or generated-text
 acceptance changes. Rollback is this atomic compiler commit. Unrelated WIP
 and all application/library sources are preserved.
+
+
+## 2026-11-06 — Macro candidates preserve order, owner and selected parameters
+
+The HIR registry previously stored one macro per name, so a later overload
+overwrote the earlier definition and its parameters. Keep an ordered array
+of paired definitions and arenas. Same-signature replacement retains the
+original slot; lookup selects the first candidate matching the original call
+shape. Do not rank by inferred specificity. The selected definition supplies
+its own parameter declarations to the expander; remove the parallel scalar
+parameter map. Bare `*` introduces named-only parameters; preserve this fact
+and all default/label/splat/block metadata through AST-cache version 12.
+
+An adversarial source audit and original-first oracle exposed an independent
+pre-existing lookup error: module/class method calls could choose a global
+macro before Object. Search owner, included modules and parents, then implicit
+Object, then global. An ordinary method is a stop result, including on Object;
+class/module body fallback must not turn that stop into a missing lookup.
+Stock 35q3597 chooses B/B/A/C for module/class/global/method-stop controls; the
+old compiler chooses A/A/A/A (35q3599). The final candidate matches stock.
+
+Original-first macro_ordered_registry_repro.sh passes 20 cases on both stock
+Crystal 1.22.1 and exact S1 35q3608 (40 checks, 35q3610): overload replacement,
+first-match splats, required named labels, double splats, ordinary-method stops,
+constructor evaluation order, inherited owner, defaults before splats, Object
+precedence, and five argument/lookup rejections with no executable. Two focused
+AST-cache examples pass (35q3585); the final candidate retains that exact cache
+implementation and unit. Arity/method-fallback and bare class-body neighbors
+passed on the registry candidate (35q3590). Two other neighbor invocations used
+the wrong harness and are not counted as behavior checks. Source adversary:
+ROBUST within the registry/matcher and added Object helper; review is correlated.
+
+This evidence does not establish all macro behavior. Keep the unmeasured **
+plus &identifier prepass, default AST evaluation, special hook accumulation,
+StringInterpolation normalization/API and child-source ownership separate.
+Unchanged LavinMQ still stops at property-next argument transport (35q3612);
+its compiler/application/shard/stock stdlib input manifests agree.
+No object, link, runtime, complete prelude, fresh bootstrap or parity is claimed.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+macro-ordered-registry-permanent35q3610/result.json,
+macro-ordered-registry-cache35q3585/result.json,
+macro-owner-lookup-stock35q3597/result.json,
+macro-owner-lookup-baseline35q3599/result.json,
+macro-owner-lookup-candidate35q3600/result.json, and
+macro-ordered-registry-neighbors35q3590/result.json.
+All 1,916 compiler files match build.macro-object-before-global35q3608.source.json
+(SHA-256 4fa22ffe5d04ee554f4c06f793680e99e237a504d9620621a78cbbd6e2183064).
+Compiler SHA-256: 534a9935b94c51daa2d3f1fb310d979adf9eb2b9ec5f05aa866a9e815de7b80c.
+Refresh after macro registration, signature matching, lookup owner order,
+parameter binding or AST-cache layout changes. Rollback is this atomic compiler
+commit. Application/library sources and unrelated WIP remain untouched.

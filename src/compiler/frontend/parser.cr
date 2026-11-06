@@ -8165,6 +8165,7 @@ module Adamas
           seen_double_splat_param_name = false
           seen_non_block_after_double_splat = false
           named_after_bare_splat = false
+          bare_splat_seen = false
           just_saw_double_splat = false
           just_saw_block_after_double_splat = false
           seen_block_after_double_splat = false
@@ -8183,9 +8184,10 @@ module Adamas
               just_saw_double_splat = false
             when Token::Kind::RParen
               if depth == 1
-                if param = parse_macro_param_decl(current_param_tokens)
+                if param = parse_macro_param_decl(current_param_tokens, bare_splat_seen)
                   params << param
                 end
+                bare_splat_seen = true if macro_bare_splat_param_tokens?(current_param_tokens)
                 trace_macro_def("params-close", token, depth: depth, extra: "count=#{params.size}")
                 current_param_tokens.clear
               else
@@ -8250,9 +8252,10 @@ module Adamas
               just_saw_double_splat = false
             when Token::Kind::Comma
               if depth == 1
-                if param = parse_macro_param_decl(current_param_tokens)
+                if param = parse_macro_param_decl(current_param_tokens, bare_splat_seen)
                   params << param
                 end
+                bare_splat_seen = true if macro_bare_splat_param_tokens?(current_param_tokens)
                 trace_macro_def("params-comma", token, depth: depth, extra: "count=#{params.size}")
                 current_param_tokens.clear
               else
@@ -8279,7 +8282,22 @@ module Adamas
           params
         end
 
-        private def parse_macro_param_decl(tokens : Array(Token)) : MacroDefNode::MacroParamDecl?
+        private def macro_bare_splat_param_tokens?(tokens : Array(Token)) : Bool
+          saw_star = false
+          tokens.each do |token|
+            case token.kind
+            when Token::Kind::Star
+              saw_star = true
+            when Token::Kind::Whitespace, Token::Kind::Comment, Token::Kind::Newline
+              next
+            else
+              return false
+            end
+          end
+          saw_star
+        end
+
+        private def parse_macro_param_decl(tokens : Array(Token), named_only : Bool = false) : MacroDefNode::MacroParamDecl?
           return nil if tokens.empty?
 
           prefix = ""
@@ -8336,7 +8354,7 @@ module Adamas
 
           internal = names.last
           external = names.size > 1 ? names.first : external_name
-          MacroDefNode::MacroParamDecl.new(internal, external, prefix, default_source)
+          MacroDefNode::MacroParamDecl.new(internal, external, prefix, default_source, named_only)
         end
 
         private def skip_whitespace_and_comments

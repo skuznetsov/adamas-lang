@@ -2645,7 +2645,7 @@ module Adamas
           NodeKind::MacroDef
         end
 
-        record MacroParamDecl, name : String, external_name : String? = nil, prefix : String = "", default_source : String? = nil
+        record MacroParamDecl, name : String, external_name : String? = nil, prefix : String = "", default_source : String? = nil, named_only : Bool = false
 
         getter name : Slice(UInt8)
         getter body : ExprId

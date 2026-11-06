@@ -1,0 +1,114 @@
+[
+  {
+    "name": "replace_same_signature_in_original_slot",
+    "ok": true
+  },
+  {
+    "name": "first_matching_splat_precedes_exact",
+    "ok": true
+  },
+  {
+    "name": "required_named_labels_select_distinct_signatures",
+    "ok": true
+  },
+  {
+    "name": "required_named_missing_falls_through",
+    "ok": true
+  },
+  {
+    "name": "double_splat_is_first_match",
+    "ok": true
+  },
+  {
+    "name": "child_ordinary_def_shadows_parent_macro",
+    "ok": true
+  },
+  {
+    "name": "unknown_named_must_reject",
+    "ok": false,
+    "original_diagnostic": [
+      "unknown"
+    ],
+    "candidate_diagnostic": [
+      "need"
+    ]
+  },
+  {
+    "name": "duplicate_positional_named_must_reject",
+    "ok": false,
+    "original_diagnostic": [
+      "value",
+      "already specified"
+    ],
+    "candidate_diagnostic": [
+      "need"
+    ]
+  },
+  {
+    "name": "missing_required_named_must_reject",
+    "ok": false,
+    "original_diagnostic": [
+      "flag"
+    ],
+    "candidate_diagnostic": [
+      "need"
+    ]
+  },
+  {
+    "name": "extra_positional_must_reject",
+    "ok": false,
+    "original_diagnostic": [
+      "need",
+      "arguments"
+    ],
+    "candidate_diagnostic": [
+      "need"
+    ]
+  },
+  {
+    "name": "one_arg_required_overload",
+    "ok": true
+  },
+  {
+    "name": "two_arg_optional_overload",
+    "ok": true
+  },
+  {
+    "name": "direct_factory_argument_order",
+    "ok": true
+  },
+  {
+    "name": "inherited_macro_type_owner",
+    "ok": true
+  },
+  {
+    "name": "class_body_def_stops_global",
+    "ok": false,
+    "original_diagnostic": [
+      "generated"
+    ],
+    "candidate_diagnostic": [
+      "generated"
+    ]
+  },
+  {
+    "name": "default_before_splat",
+    "ok": true
+  },
+  {
+    "name": "owner_module_method",
+    "ok": true
+  },
+  {
+    "name": "owner_class_method",
+    "ok": true
+  },
+  {
+    "name": "owner_global_call",
+    "ok": true
+  },
+  {
+    "name": "owner_module_def_stop",
+    "ok": true
+  }
+]

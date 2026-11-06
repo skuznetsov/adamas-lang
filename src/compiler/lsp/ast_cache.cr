@@ -121,7 +121,7 @@ module Adamas
         MAGIC   = "CV2A"
         # Bump this version whenever the parser, AST format, or cache header changes
         # to invalidate all cached ASTs
-        VERSION = 11_u32
+        VERSION = 12_u32
 
         getter arena : Frontend::AstArena
         getter roots : Array(Frontend::ExprId)
@@ -543,6 +543,12 @@ module Adamas
           when Frontend::NodeKind::MacroDef
             macro_def = node.as(Frontend::MacroDefNode)
             yield String.new(macro_def.name)
+            macro_def.params.each do |param|
+              yield param.name
+              param.external_name.try { |name| yield name }
+              yield param.prefix
+              param.default_source.try { |source| yield source }
+            end
           when Frontend::NodeKind::MacroFor
             macro_for = node.as(Frontend::MacroForNode)
             macro_for.iter_vars.each { |v| yield String.new(v) }
@@ -1235,6 +1241,14 @@ module Adamas
             write_span(io, macro_def_node.span)
             write_string_ref(io, String.new(macro_def_node.name), string_table)
             write_expr_id(io, macro_def_node.body)
+            io.write_bytes(macro_def_node.params.size.to_u32, IO::ByteFormat::LittleEndian)
+            macro_def_node.params.each do |param|
+              write_string_ref(io, param.name, string_table)
+              write_optional_string_ref(io, param.external_name, string_table)
+              write_string_ref(io, param.prefix, string_table)
+              write_optional_string_ref(io, param.default_source, string_table)
+              io.write_byte(param.named_only ? 1_u8 : 0_u8)
+            end
 
           when Frontend::NodeKind::MacroIf
             macro_if_node = node.as(Frontend::MacroIfNode)
@@ -2089,7 +2103,17 @@ module Adamas
             span = read_span(io)
             name = pool.intern(strings[read_string_idx(io)].to_slice)
             body = read_expr_id(io)
-            Frontend::MacroDefNode.new(span, name, body)
+            param_count = io.read_bytes(UInt32, IO::ByteFormat::LittleEndian).to_i
+            params = Array(Frontend::MacroDefNode::MacroParamDecl).new(param_count)
+            param_count.times do
+              param_name = strings[read_string_idx(io)]
+              external_name = io.read_byte.not_nil! == 1_u8 ? strings[read_string_idx(io)] : nil
+              prefix = strings[read_string_idx(io)]
+              default_source = io.read_byte.not_nil! == 1_u8 ? strings[read_string_idx(io)] : nil
+              named_only = io.read_byte.not_nil! == 1_u8
+              params << Frontend::MacroDefNode::MacroParamDecl.new(param_name, external_name, prefix, default_source, named_only)
+            end
+            Frontend::MacroDefNode.new(span, name, body, params)
 
           when .macro_if_node?
             span = read_span(io)
