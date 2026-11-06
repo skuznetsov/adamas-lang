@@ -25421,3 +25421,20 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Close omitted-default forall inference, named/rest body and receiver
   transport, declared-result facts, bootstrap, and unchanged LavinMQ runtime
   and upstream test parity.
+
+### 2026-11-05 — Preserve source include and extend membership
+
+- [x] Store the source membership kind alongside the existing declaration arena,
+  bindings, namespace, and order. Source module restrictions use Include for
+  instances and Extend for class objects, including generic projections,
+  extend self, macro-selected edges, and modules nested under a class.
+- The original-first module_source_value_kind_repro.sh passes all 30 cases
+  against Crystal 1.22.1 and exact-source S1 35q2282. Wrong value kinds, generic
+  conflicts, namespace confusion, and nested generic widening remain rejected.
+  The prior compiler fails three of four class-namespace controls.
+- [ ] Preserve default expressions' actual source type and value kind through
+  default argument expansion. A blind formal-type overwrite rejects valid
+  module defaults on explicit calls and admits invalid ones on bare calls.
+- Fresh unchanged-input LavinMQ front-end probe 35q2300 passes the former
+  IO#write_bytes blocker and stops at UInt32#to_io(IO, LittleEndian). No link,
+  runtime, bootstrap, or upstream test parity is established.

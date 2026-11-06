@@ -24117,3 +24117,43 @@ can still execute for choose(value: Int32), printing X instead of A. The
 falsifier. Method-forall inference with omitted defaults, named/rest deferred
 body/receiver binding, declared returns, bootstrap, and unchanged LavinMQ
 execution/upstream test parity remain open.
+
+## 2026-11-05 — Source module restrictions distinguish include from extend
+
+The legacy hierarchy flattens instance include and metaclass extend. It cannot
+certify a source module restriction when a class object and an instance share
+an ABI carrier. The existing source include records now carry an explicit
+membership kind, retaining their AST arena, generic bindings, lexical namespace,
+and declaration order. Source restriction matching follows only the appropriate
+kind and include projections. Generic argument checks consume aligned actual
+source facts instead of replacing them with carrier-only facts.
+
+Direct module registration also has two paths: top-level modules and modules
+nested beneath classes. Both now record direct Include/Extend edges through the
+same source-only scan. The IO::ByteFormat::{Big,Little}Endian declarations take
+the latter path; previously their static methods existed without their source
+Extend edge. This is a registration producer fix, not a stdlib exception.
+
+The original-first module_source_value_kind_repro.sh passes all 30 stock
+Crystal 1.22.1 and candidate cases (35q2296). The scoped adversary is ROBUST for
+typed source membership and direct-registration coverage, including negative
+kind, generic, and namespace controls. Production compiler sources match the
+frozen S1 35q2282 manifest. Evidence under
+/opt/mldata_ssd/adamas_codex_oct29_rootcause includes
+module-kind-original-first35q2296/result.json,
+class-namespace-module-direct35q2283/result.json, and
+build.module-kind-direct-membership35q2282.source.json. Compiler SHA-256:
+05adbcd1473b7594a2142a4859fa49acc71140f3078c3abea26b46a008016724;
+ast_to_hir.cr: f864c4d9cdfee15733f5d576b63167aa5288d6df0ab91858c5ee0b2cd1f65ec7;
+source_block_result_pattern.cr:
+33a5b7ea0757c8d7bec3182e4916f3b9c4d3f874686eb45a0c1ecdd0639b3efa.
+Refresh after source membership registration, lexical/generic projection, or
+source argument fact transport changes.
+
+The unchanged-input LavinMQ front-end probe 35q2300 gets past IO#write_bytes
+and rejects UInt32#to_io(IO, IO::ByteFormat::LittleEndian). Default expansion
+can still relabel an expression as its formal restriction without a conversion
+or source-kind proof. Bare and explicit call paths expose different failures
+(35q2292 and 35q2295); this remains open. Named target/body ownership, forall
+returns, receiver transport, bootstrap, and unchanged LavinMQ runtime/upstream
+test parity also remain open.

@@ -370,6 +370,7 @@ class Adamas::HIR::AstToHir
     actual_facts : Array({TypeRef, Bool})? = nil,
   ) : Bool
     return false unless pattern.valid
+    module_restriction_key = source_block_result_module_restriction_key(pattern)
     unless pattern.kind == SourceBlockResultPattern::Kind::Formal ||
            pattern.kind == SourceBlockResultPattern::Kind::Union
       if actual_literal && pattern.kind == SourceBlockResultPattern::Kind::Concrete &&
@@ -378,7 +379,9 @@ class Adamas::HIR::AstToHir
         # values, use that hierarchy rather than the instance carrier's parents.
         return true
       end
-      return false unless source_block_result_type_literal_pattern?(pattern) == actual_literal
+      unless module_restriction_key
+        return false unless source_block_result_type_literal_pattern?(pattern) == actual_literal
+      end
     end
     # A Void callback result is filtered at the outer boundary by
     # `source_block_result_pattern_matches?`, but Void is still a meaningful
@@ -413,6 +416,12 @@ class Adamas::HIR::AstToHir
       return true
     end
 
+    if module_restriction_key
+      return source_block_result_module_restriction_match_into?(
+        actual, pattern, module_restriction_key, bindings, actual_literal,
+      )
+    end
+
     case pattern.kind
     when SourceBlockResultPattern::Kind::Concrete
       source_block_result_concrete_match?(actual, pattern)
@@ -426,6 +435,125 @@ class Adamas::HIR::AstToHir
       source_block_result_named_tuple_match?(actual, pattern, bindings)
     else
       false
+    end
+  end
+
+  # A plain module annotation denotes its instance methods. A value whose
+  # source kind is a class literal can satisfy it only through `extend`; an
+  # instance can satisfy it only through `include`. The legacy hierarchy
+  # flattens both edges, so this query uses the source-owned, kind-tagged graph.
+  private def source_block_result_module_restriction_key(
+    pattern : SourceBlockResultPattern,
+  ) : String?
+    source_name = case pattern.kind
+                  when SourceBlockResultPattern::Kind::Concrete
+                    restriction = pattern.restriction_name
+                    return nil if restriction.ends_with?(".class") || restriction.ends_with?(".metaclass")
+                    restriction
+                  when SourceBlockResultPattern::Kind::Generic
+                    pattern.base_name || return nil
+                  else
+                    return nil
+                  end
+    identity = source_block_result_identity_name(source_block_result_carrier_name(source_name)) || return nil
+    macro_module_definition_key(identity)
+  end
+
+  private def source_block_result_module_restriction_match_into?(
+    actual : TypeRef,
+    pattern : SourceBlockResultPattern,
+    expected_module_key : String,
+    bindings : Hash(String, SourceCallArgument),
+    actual_literal : Bool,
+  ) : Bool
+    actual_name = source_block_result_carrier_name(generic_param_type_name_from_ref(actual))
+    actual_identity = source_block_result_identity_name(actual_name) || return false
+    module_value = actual_literal && !macro_module_definition_key(actual_identity).nil?
+    membership_kind = actual_literal ? SourceModuleMembershipKind::Extend : SourceModuleMembershipKind::Include
+
+    owners = [] of String
+    owners << actual_identity
+    unless module_value
+      get_parent_chain(actual_identity).each do |parent|
+        owners << parent unless owners.includes?(parent)
+      end
+    end
+
+    applications = [] of String
+    owners.each do |owner|
+      direct = source_direct_module_memberships(owner, membership_kind) || next
+      direct.each do |application|
+        source_block_result_module_include_projections(application).each do |projection|
+          applications << projection unless applications.includes?(projection)
+        end
+      end
+    end
+
+    matching_bindings = [] of Hash(String, SourceCallArgument)
+    applications.each do |application|
+      candidate = bindings.dup
+      next unless source_block_result_module_application_match_into?(
+        application, expected_module_key, pattern, candidate,
+      )
+      matching_bindings << candidate unless matching_bindings.includes?(candidate)
+    end
+
+    return false unless matching_bindings.size == 1
+    replace_source_block_result_bindings!(bindings, matching_bindings.first)
+    true
+  end
+
+  # Follow only source include edges from a module application. In particular,
+  # do not use the flattened class_include_instantiations table here: it also
+  # records `extend` for older method lookup paths.
+  private def source_block_result_module_include_projections(application : String) : Array(String)
+    result = [] of String
+    pending = [application]
+    visited = Set(String).new
+    while current = pending.shift?
+      normalized = resolve_module_alias_for_include(current)
+      next if normalized.empty? || visited.includes?(normalized)
+      visited << normalized
+      result << normalized
+
+      direct = source_direct_class_includes(normalized)
+      includes = direct || macro_transitive_module_includes(normalized)
+      includes.each do |nested|
+        pending << nested unless visited.includes?(nested)
+      end
+    end
+    result
+  end
+
+  private def source_block_result_module_application_match_into?(
+    application : String,
+    expected_module_key : String,
+    pattern : SourceBlockResultPattern,
+    bindings : Hash(String, SourceCallArgument),
+  ) : Bool
+    actual_module_key = macro_module_definition_key(application) || return false
+    actual_base = split_generic_base_and_args(actual_module_key).try(&.base) || actual_module_key
+    expected_base = split_generic_base_and_args(expected_module_key).try(&.base) || expected_module_key
+    actual_base = source_block_result_identity_name(actual_base) || return false
+    expected_base = source_block_result_identity_name(expected_base) || return false
+    return false unless actual_base == expected_base
+
+    if pattern.kind == SourceBlockResultPattern::Kind::Generic
+      actual_application = split_generic_base_and_args(application) || return false
+      actual_args = split_generic_type_args(actual_application.args)
+      return false unless actual_args.size == pattern.children.size
+      candidate = bindings.dup
+      actual_args.each_with_index do |arg, index|
+        arg = arg.strip
+        arg_ref = canonical_bound_type_ref(arg)
+        return false unless source_block_result_generic_argument_match?(
+          arg, arg_ref, pattern.children.unsafe_fetch(index), candidate,
+        )
+      end
+      replace_source_block_result_bindings!(bindings, candidate)
+      true
+    else
+      split_generic_base_and_args(application).nil?
     end
   end
 

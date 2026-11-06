@@ -1735,7 +1735,13 @@ module Adamas::HIR
       end
     end
 
-    private record ClassIncludeTarget,
+    private enum SourceModuleMembershipKind
+      Include
+      Extend
+    end
+
+    private record SourceModuleMembershipTarget,
+      kind : SourceModuleMembershipKind,
       target : ExprId,
       arena : Adamas::Compiler::Frontend::ArenaLike,
       bindings : Hash(String, String),
@@ -7804,10 +7810,13 @@ module Adamas::HIR
     @generic_declarations_in_source_order = {} of String => Array(GenericClassTemplate)
     # Direct source includes retain their declaration arena even for builtin
     # generic owners whose stdlib reopening has no explicit type parameters.
-    @source_class_include_targets : Hash(String, Array(ClassIncludeTarget))
+    # Exact source membership edges distinguish instance `include` from
+    # metaclass `extend`. Legacy hierarchy tables intentionally retain their
+    # historical flattened shape for unrelated lookup paths.
+    @source_module_membership_targets : Hash(String, Array(SourceModuleMembershipTarget))
     # Selected macro includes join the same physical registration pass as
     # direct includes. Each target keeps its own parsed declaration arena.
-    @active_class_include_targets = {} of String => Array(ClassIncludeTarget)
+    @active_class_include_targets = {} of String => Array(SourceModuleMembershipTarget)
 
     # Already monomorphized generic classes (specialized name -> true)
     @monomorphized : Set(String)
@@ -8796,7 +8805,7 @@ module Adamas::HIR
       @function_namespace_overrides = Hash(String, String).new(initial_capacity: 4096)
       @generic_templates = {} of String => GenericClassTemplate
       @generic_reopenings = {} of String => Array(GenericClassTemplate)
-      @source_class_include_targets = {} of String => Array(ClassIncludeTarget)
+      @source_module_membership_targets = {} of String => Array(SourceModuleMembershipTarget)
       @monomorphized = Set(String).new(initial_capacity: 32768)
       @pending_monomorphizations = [] of {String, Array(String), String}
       @pending_monomorphization_names = Set(String).new(initial_capacity: 32768)
@@ -15824,6 +15833,13 @@ module Adamas::HIR
           i += 1
         end
       when Adamas::Compiler::Frontend::ExtendNode
+        record_source_module_membership(
+          class_name,
+          SourceModuleMembershipKind::Extend,
+          member.target,
+          @arena,
+          member,
+        )
         register_module_class_methods_for(class_name, member.target, defined_class_method_full_names, visited_extends)
       when Adamas::Compiler::Frontend::IncludeNode
         record_class_include_target(class_name, member, @arena)
@@ -32582,7 +32598,6 @@ module Adamas::HIR
       nil
     end
 
-
     # Keep the local-assignment summary as a conservative input during speculative
     # return inference, regardless of which inference consumer requested it.
     private def infer_local_type_from_body(
@@ -33440,6 +33455,39 @@ module Adamas::HIR
       end
     end
 
+    # Record source edges for every direct module owner through one path.
+    # Nested modules use a separate registration routine, so keeping this
+    # source-only scan beside the Include expansion scan avoids dropping their
+    # direct `extend` edges while preserving declaration order and arena scope.
+    private def record_direct_module_memberships(node : Adamas::Compiler::Frontend::ModuleNode, module_name : String)
+      return unless body = node.body
+      with_namespace_override(module_name) do
+        body.each do |expr_id|
+          next if expr_id.null_ptr? || expr_id.invalid?
+          member = unwrap_visibility_member(@arena[expr_id])
+          case member
+          when Adamas::Compiler::Frontend::IncludeNode
+            record_source_module_membership(
+              module_name,
+              SourceModuleMembershipKind::Include,
+              member.target,
+              @arena,
+              member,
+            )
+          when Adamas::Compiler::Frontend::ExtendNode
+            next if member.target.null_ptr? || member.target.invalid?
+            record_source_module_membership(
+              module_name,
+              SourceModuleMembershipKind::Extend,
+              member.target,
+              @arena,
+              member,
+            )
+          end
+        end
+      end
+    end
+
     private def register_direct_module_inclusions(node : Adamas::Compiler::Frontend::ModuleNode, module_name : String)
       return unless body = node.body
       with_namespace_override(module_name) do
@@ -33622,6 +33670,7 @@ module Adamas::HIR
 
       # Publish module ancestors before signatures in nested declarations bind
       # types through them. Yield lookup uses these same inclusion edges.
+      record_direct_module_memberships(node, module_name)
       register_direct_module_inclusions(node, module_name)
 
       # Always register nested types (classes, enums, modules) from module bodies.
@@ -33763,6 +33812,7 @@ module Adamas::HIR
                            end
           if target_is_self
             extend_self = true
+            record_source_module_self_extension(module_name, member, @arena, record_membership: false)
           end
         end
         @module_extend_self.add(module_name) if extend_self
@@ -35232,15 +35282,40 @@ module Adamas::HIR
       end
     end
 
+    private def record_source_module_self_extension(
+      module_name : String,
+      node : Adamas::Compiler::Frontend::ExtendNode,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+      record_membership : Bool = true,
+    ) : Nil
+      @module_extend_self.add(module_name)
+      if record_membership
+        record_source_module_membership(
+          module_name,
+          SourceModuleMembershipKind::Extend,
+          node.target,
+          arena,
+          node,
+        )
+      end
+    end
+
     private def mark_module_extend_self(node : Adamas::Compiler::Frontend::ExtendNode, module_name : String) : Nil
       target_node = @arena[node.target]
       case target_node
       when Adamas::Compiler::Frontend::SelfNode
-        @module_extend_self.add(module_name)
+        record_source_module_self_extension(module_name, node, @arena)
       when Adamas::Compiler::Frontend::IdentifierNode
         if (safe_slice_to_string(target_node.name) || "") == "self"
-          @module_extend_self.add(module_name)
+          record_source_module_self_extension(module_name, node, @arena)
         elsif module_target = resolve_path_like_name(node.target)
+          record_source_module_membership(
+            module_name,
+            SourceModuleMembershipKind::Extend,
+            node.target,
+            @arena,
+            node,
+          )
           if !module_target.includes?("::") && module_name.includes?("::")
             parent = module_name.rpartition("::")[0]
             candidate = "#{parent}::#{module_target}"
@@ -35250,6 +35325,13 @@ module Adamas::HIR
         end
       else
         if module_target = resolve_path_like_name(node.target)
+          record_source_module_membership(
+            module_name,
+            SourceModuleMembershipKind::Extend,
+            node.target,
+            @arena,
+            node,
+          )
           if !module_target.includes?("::") && module_name.includes?("::")
             parent = module_name.rpartition("::")[0]
             candidate = "#{parent}::#{module_target}"
@@ -38605,6 +38687,7 @@ module Adamas::HIR
         bump_module_defs_cache_version
         invalidate_type_cache_for_namespace(full_name) if existing_defs
       end
+      record_direct_module_memberships(node, full_name)
       register_direct_module_inclusions(node, full_name)
       # Add module to short_type_index so Printer can resolve to Float::Printer
       short_name = if env_has?("ADAMAS_INLINE_LAST_NAMESPACE_COMPONENT")
@@ -38715,7 +38798,7 @@ module Adamas::HIR
                         false
                       end
             if is_self
-              @module_extend_self.add(full_name)
+              record_source_module_self_extension(full_name, member, @arena, record_membership: false)
             end
           end
         end
@@ -40618,16 +40701,28 @@ module Adamas::HIR
         record_ivar_annotations_from_body(class_name, body, @arena)
         body.each do |member_id|
           member = unwrap_visibility_member_in_arena(@arena[member_id], @arena)
-          next unless member.is_a?(Adamas::Compiler::Frontend::IncludeNode)
-          targets = @source_class_include_targets[class_name] ||= [] of ClassIncludeTarget
-          target = ClassIncludeTarget.new(
-            member.target,
-            @arena,
-            @type_param_map.dup,
-            @current_namespace_override,
-            source_declaration_order_for(member, @arena),
-          )
-          targets << target unless targets.includes?(target)
+          case member
+          when Adamas::Compiler::Frontend::IncludeNode
+            record_source_module_membership(
+              class_name,
+              SourceModuleMembershipKind::Include,
+              member.target,
+              @arena,
+              member,
+            )
+          when Adamas::Compiler::Frontend::ExtendNode
+            # Generic class templates do not pass through concrete class
+            # registration until an instance is materialized. Record their
+            # source `extend` edges here as well as in concrete registration,
+            # so class-literal restrictions can resolve the template graph.
+            record_source_module_membership(
+              class_name,
+              SourceModuleMembershipKind::Extend,
+              member.target,
+              @arena,
+              member,
+            )
+          end
         end
       end
       @abstract_class_names.add(class_name) if node.is_abstract == true
@@ -41071,21 +41166,39 @@ module Adamas::HIR
       # A macro included by Outer(T) may emit `include Leaf(T)`; the arena
       # identifies syntax, while these bindings own T at that include site.
       target = include_node.target
-      entry = ClassIncludeTarget.new(
+      entry = record_source_module_membership(
+        class_name,
+        SourceModuleMembershipKind::Include,
         target,
         target_arena,
-        @type_param_map.dup,
-        @current_namespace_override,
-        source_declaration_order_for(include_node, target_arena),
+        include_node,
       )
-      source_targets = @source_class_include_targets[class_name] ||= [] of ClassIncludeTarget
-      source_targets << entry unless source_targets.includes?(entry)
       if active_targets = @active_class_include_targets[class_name]?
         active_targets << entry unless active_targets.includes?(entry)
       end
       if module_name = resolve_path_like_name_in_arena(target, target_arena)
         record_module_inclusion(module_name, class_name)
       end
+    end
+
+    private def record_source_module_membership(
+      owner : String,
+      kind : SourceModuleMembershipKind,
+      target : ExprId,
+      target_arena : Adamas::Compiler::Frontend::ArenaLike,
+      source_node : Adamas::Compiler::Frontend::Node,
+    ) : SourceModuleMembershipTarget
+      entry = SourceModuleMembershipTarget.new(
+        kind,
+        target,
+        target_arena,
+        @type_param_map.dup,
+        @current_namespace_override,
+        source_declaration_order_for(source_node, target_arena),
+      )
+      targets = @source_module_membership_targets[owner] ||= [] of SourceModuleMembershipTarget
+      targets << entry unless targets.includes?(entry)
+      entry
     end
 
     # Register a concrete (non-generic or specialized) class. Macro expansion
@@ -41097,7 +41210,7 @@ module Adamas::HIR
       is_struct : Bool,
     )
       previous_targets = @active_class_include_targets[class_name]?
-      @active_class_include_targets[class_name] = [] of ClassIncludeTarget
+      @active_class_include_targets[class_name] = [] of SourceModuleMembershipTarget
       begin
         register_concrete_class_with_includes(node, class_name, is_struct)
       ensure
@@ -41413,6 +41526,13 @@ module Adamas::HIR
             end
           when Adamas::Compiler::Frontend::ExtendNode
             extend_nodes << member
+            record_source_module_membership(
+              class_name,
+              SourceModuleMembershipKind::Extend,
+              member.target,
+              @arena,
+              member,
+            )
             if module_name = resolve_path_like_name_in_arena(member.target, @arena)
               record_module_inclusion(module_name, class_name)
             end
@@ -56568,7 +56688,10 @@ module Adamas::HIR
         context = function_context_for_lookup_candidate(input.func_name, candidate_name)
         candidate_scope = enter_lookup_candidate_scope(candidate_name, context)
         compatible = begin
-          if mismatch = source_generic_argument_mismatch_for_def(def_node, match_arg_types, context, match_param_infos)
+          if mismatch = source_generic_argument_mismatch_for_def(
+               def_node, match_arg_types, context, match_param_infos,
+               source_argument_facts: argument_facts,
+             )
             false
           elsif candidate_map = lookup_candidate_restriction_param_map(candidate_name, def_node)
             with_type_param_map(candidate_map) do
@@ -56774,55 +56897,63 @@ module Adamas::HIR
     # A nil result means this owner has no source target record and permits the
     # legacy registered-relation fallback; an empty array is authoritative.
 
+    private def source_has_direct_class_include_targets?(owner : String) : Bool
+      targets = @source_module_membership_targets[strip_generic_args(owner)]?
+      !!targets && targets.any? { |entry| entry.kind == SourceModuleMembershipKind::Include }
+    end
+
     private def source_direct_class_includes(owner : String, before : Array(Int32)? = nil) : Array(String)?
+      source_direct_module_memberships(owner, SourceModuleMembershipKind::Include, before)
+    end
+
+    private def source_direct_module_extensions(owner : String, before : Array(Int32)? = nil) : Array(String)?
+      source_direct_module_memberships(owner, SourceModuleMembershipKind::Extend, before)
+    end
+
+    private def source_direct_module_memberships(
+      owner : String,
+      kind : SourceModuleMembershipKind,
+      before : Array(Int32)? = nil,
+    ) : Array(String)?
       split = split_generic_base_and_args(owner)
       if split
-        # For a concrete generic owner, retain the include arguments after the
-        # owner's formal parameters have been substituted. The raw include AST
-        # still spells those applications with names such as T, which is not a
-        # concrete application identity for overload selection.
-        applied = source_generic_class_includes(owner, before)
-        return applied unless applied.empty?
+        # For a concrete generic owner, retain the membership arguments after
+        # the owner's formal parameters have been substituted. The raw AST
+        # still spells those applications with names such as T.
+        applied = source_generic_module_memberships(owner, kind, before)
+        return applied if applied
       end
       base = split ? resolve_generic_template_base(split.base) : owner
-      targets = @source_class_include_targets[base]?
+      targets = @source_module_membership_targets[base]?
       return nil unless targets
 
       result = [] of String
       old_class = @current_class
-      @current_class = owner unless split
+      @current_class = owner
       begin
         targets.each do |entry|
+          next unless entry.kind == kind
           next if before && !source_declaration_order_after?(before, entry.source_order)
           target_id = entry.target
           target_arena = entry.arena
-          target = if split
-                     # Generic owners use the specialized projection above;
-                     # retain the historical fallback only when that source
-                     # projection has no result.
-                     resolve_path_like_name_in_arena(target_id, target_arena)
-                   else
-                     # Path-like lookup intentionally strips GenericNode args.
-                     # Preserve the declaration or macro expansion's bindings;
-                     # the receiver's current map cannot reconstruct that frame.
-                     with_arena(target_arena) do
-                       with_namespace_override(entry.namespace_override || base) do
-                         with_isolated_type_param_map(entry.bindings) do
-                           stringify_type_expr_in_current_arena(target_id)
-                         end
-                       end
-                     end
-                   end
+          target = with_arena(target_arena) do
+            with_namespace_override(entry.namespace_override || base) do
+              with_isolated_type_param_map(entry.bindings) do
+                stringify_type_expr_in_current_arena(target_id)
+              end
+            end
+          end
           next unless target
           resolved = source_resolve_direct_class_include_name(target, owner, base)
           next unless resolved
           result << resolved unless result.includes?(resolved)
         end
       ensure
-        @current_class = old_class unless split
+        @current_class = old_class
       end
       result
     end
+
 
     # Source MRO lookup needs the lexical winner for a direct include. Crystal
     # resolves a name inside the current type before consulting enclosing
@@ -57113,7 +57244,7 @@ module Adamas::HIR
       def_node : Adamas::Compiler::Frontend::DefNode,
       def_arena : Adamas::Compiler::Frontend::ArenaLike,
     ) : Bool?
-      return nil unless @source_class_include_targets.has_key?(strip_generic_args(receiver_name))
+      return nil unless source_has_direct_class_include_targets?(receiver_name)
 
       named_names = [] of String
       raw_positional_count = 0
@@ -57250,7 +57381,7 @@ module Adamas::HIR
       end
       unless split_generic_base_and_args(receiver_name)
         return false if @generic_templates.has_key?(receiver_name)
-        return @class_info.has_key?(receiver_name) && @source_class_include_targets.has_key?(receiver_name)
+        return @class_info.has_key?(receiver_name) && source_has_direct_class_include_targets?(receiver_name)
       end
       descriptor = @module.get_type_descriptor(receiver_type)
       return false unless descriptor && descriptor.kind == TypeKind::Tuple
@@ -57359,7 +57490,7 @@ module Adamas::HIR
       return nil unless parts.separator == '#'
       method_name = parts.method || return nil
       receiver_name = normalize_method_owner_name(parts.owner)
-      return nil unless @source_class_include_targets.has_key?(strip_generic_args(receiver_name))
+      return nil unless source_has_direct_class_include_targets?(receiver_name)
       receiver_type = @type_cache[type_cache_key(receiver_name)]?
       unless receiver_type
         # An already registered source class is concrete without instantiating
@@ -60942,6 +61073,26 @@ module Adamas::HIR
       end
     end
 
+    # Keep source module membership authoritative when a generic argument has
+    # the same carrier name for a class literal and an instance. The generic
+    # carrier matcher cannot distinguish `extend` from `include`; only use this
+    # route when the parameter's top-level restriction is a module. Nested
+    # generic arguments retain their existing invariant restriction handling.
+    private def source_generic_module_argument_match?(
+      param : DefParamInfo,
+      argument : SourceCallArgument,
+      def_node : Adamas::Compiler::Frontend::DefNode,
+      context : String?,
+    ) : Bool?
+      restriction = param.type_annotation || return nil
+      formals = source_block_type_param_names(def_node, context)
+      pattern = build_source_block_result_pattern(
+        restriction.strip, context, formals, annotation_type_bindings(context),
+      )
+      return nil unless pattern.valid && source_block_result_module_restriction_key(pattern)
+      proven_class_argument_matches_param?(param, argument, context, formals)
+    end
+
     # Only a concrete source contradiction is a rejection certificate. Unknown
     # arguments and source shapes with separate binding rules remain undecided.
     private def source_generic_argument_mismatch_for_def(
@@ -60949,6 +61100,7 @@ module Adamas::HIR
       arg_types : Array(TypeRef),
       context : String?,
       param_infos : Array(DefParamInfo)? = nil,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : Tuple(String, String)?
       return nil if arg_types.empty? || arg_types.any? { |type_ref| type_ref == TypeRef::VOID }
       declared_params = function_param_infos(def_node)
@@ -60961,7 +61113,12 @@ module Adamas::HIR
         if restriction_text = param.type_annotation
           mismatch = with_parameter_restriction(restriction_text, context) do |declared_name, _contract_type|
             actual_name = generic_param_type_name_from_ref(arg_types[arg_index])
-            if source_generic_restriction_match?(actual_name, declared_name) == false
+            source_match = if source_argument_facts && source_argument_facts.size == arg_types.size &&
+                              (argument = source_argument_facts[arg_index]?) &&
+                              argument.type_ref == arg_types[arg_index]
+                             source_generic_module_argument_match?(param, argument, def_node, context)
+                           end
+            if source_match == false || (source_match != true && source_generic_restriction_match?(actual_name, declared_name) == false)
               {actual_name, declared_name}
             end
           end
@@ -78506,24 +78663,39 @@ module Adamas::HIR
       return nil if source.empty? || source == "_"
       pattern = build_source_block_result_pattern(source, context, formals, annotation_type_bindings(context))
       return nil unless pattern.valid
-      if argument.type_literal
+      if source_block_result_module_restriction_key(pattern)
+        # Module restrictions need the typed source Include/Extend graph for
+        # both value kinds. Checking only class literals leaves an ordinary
+        # module instance to the flattened legacy hierarchy, where `extend`
+        # can incorrectly satisfy an instance restriction.
+        source_block_result_pattern_matches_value?(actual, argument.type_literal, pattern)
+      elsif argument.type_literal
         source_block_result_pattern_matches_value?(actual, true, pattern)
       elsif source_block_result_type_literal_pattern?(pattern) ||
             (pattern.kind == SourceBlockResultPattern::Kind::Concrete &&
              pattern.restriction_name.lchop("::") == "Class")
         false
       elsif pattern.kind == SourceBlockResultPattern::Kind::Union &&
-            pattern.children.any? { |child| source_block_result_type_literal_pattern?(child) }
-        # A metaclass arm cannot admit an instance with the same carrier.
-        # Keep ordinary numeric and other source compatibility for the
-        # remaining arms, including their implicit conversions.
+            pattern.children.any? do |child|
+              source_block_result_type_literal_pattern?(child) ||
+                !source_block_result_module_restriction_key(child).nil?
+            end
+        # A metaclass arm cannot admit an instance with the same carrier, and
+        # a module instance arm must use the source Include graph. Keep
+        # ordinary numeric and other source compatibility for the remaining
+        # arms, including their implicit conversions.
         pattern.children.any? do |child|
-          !source_block_result_type_literal_pattern?(child) &&
+          if source_block_result_module_restriction_key(child)
+            source_block_result_pattern_matches_value?(actual, false, child)
+          elsif !source_block_result_type_literal_pattern?(child)
             param_compatible_with_arg?(
               DefParamInfo.new(param.name, param.external_name, child.restriction_name,
                 param.default_value, param.is_splat, param.is_double_splat, param.is_block),
               actual, context, false, 0,
             )
+          else
+            false
+          end
         end
       end
     end
@@ -79652,12 +79824,22 @@ module Adamas::HIR
     end
 
     private def source_generic_class_includes(owner : String, before : Array(Int32)? = nil) : Array(String)
+      source_generic_module_memberships(owner, SourceModuleMembershipKind::Include, before) || [] of String
+    end
+
+    private def source_generic_module_memberships(
+      owner : String,
+      kind : SourceModuleMembershipKind,
+      before : Array(Int32)? = nil,
+    ) : Array(String)?
       result = [] of String
       info = split_generic_base_and_args(owner)
-      return result unless info
+      return nil unless info
       base = resolve_generic_template_base(info.base)
-      targets = @source_class_include_targets[owner]? || @source_class_include_targets[base]?
-      return result unless targets
+      targets = @source_module_membership_targets[owner]? || @source_module_membership_targets[base]?
+      return nil unless targets
+      targets = targets.select { |entry| entry.kind == kind }
+      return result if targets.empty?
       args = split_generic_type_args(info.args).map { |arg| root_anchored_canonical_type_name(arg) }
       param_map = {} of String => String
       if base == "Tuple"
@@ -79668,7 +79850,7 @@ module Adamas::HIR
         param_map["T__tuple"] = args.join(", ")
       else
         template = @generic_templates[base]?
-        return result unless template && template.type_params.size == args.size
+        return nil unless template && template.type_params.size == args.size
         template.type_params.each_with_index { |param, index| param_map[param] = args[index] }
       end
       old_class = @current_class
@@ -79685,7 +79867,7 @@ module Adamas::HIR
               with_isolated_type_param_map(bindings) do
                 target = stringify_type_expr_in_current_arena(entry.target)
                 next unless target
-                # Include-site generic projections must use the same lexical
+                # Source membership projections must use the same lexical
                 # precedence as source MRO lookup. The generic macro resolver
                 # searches enclosing namespaces and can select an outer module
                 # over a same-named nested module.
@@ -118765,6 +118947,7 @@ module Adamas::HIR
         if source_generic_argument_mismatch_for_def(
              semantic_target.def_node, arg_types,
              function_context_for_lookup_candidate(lookup_name, semantic_target.symbol_name),
+             source_argument_facts: m3e_input.try(&.source_argument_facts),
            )
           semantic_target = nil
         end
@@ -120900,10 +121083,16 @@ module Adamas::HIR
         begin
           source_rejection = if initializer = source_initializer_entry
                                with_arena(initializer.source_arena || call_arena) do
-                                 source_generic_argument_mismatch_for_def(initializer.def_node, arg_types, final_context)
+                                 source_generic_argument_mismatch_for_def(
+                                   initializer.def_node, arg_types, final_context,
+                                   source_argument_facts: call_resolution_source_argument_facts(ctx, args, arg_types),
+                                 )
                                end
                              else
-                               final_def ? source_generic_argument_mismatch_for_def(final_def, arg_types, final_context) : nil
+                               final_def ? source_generic_argument_mismatch_for_def(
+                                 final_def, arg_types, final_context,
+                                 source_argument_facts: call_resolution_source_argument_facts(ctx, args, arg_types),
+                               ) : nil
                              end
           if prior_rejection = source_call_rejections.first?
             # A later owner-aware rematch may legitimately find a different Def.
@@ -129363,6 +129552,7 @@ module Adamas::HIR
           direct_mismatch = if arg_types && !call_has_splat && !call_has_named_args && !has_block
                               source_generic_argument_mismatch_for_def(
                                 func_def, arg_types, function_context_from_name(func_name),
+                                source_argument_facts: input.source_argument_facts,
                               )
                             end
           direct_shape_matches = call_target_matches_call_shape?(input, func_def, func_name)
@@ -129732,7 +129922,10 @@ module Adamas::HIR
             end
             if collect_source_rejections
               saw_source_candidate = true
-              if mismatch = source_generic_argument_mismatch_for_def(def_node, match_arg_types, func_context, match_param_infos)
+              if mismatch = source_generic_argument_mismatch_for_def(
+                   def_node, match_arg_types, func_context, match_param_infos,
+                   source_argument_facts: match_source_argument_facts,
+                 )
                 source_rejection ||= mismatch
               else
                 all_source_candidates_rejected = false
