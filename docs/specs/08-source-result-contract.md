@@ -435,6 +435,37 @@ reflection, runtime and strict-rejection controls. Full macro block-API coverage
 zero-argument top-level builtin fallback and canonical rendering for arbitrary
 projected AST nodes need separate evidence.
 
+## Unevaluated macro projections retain their source owner
+
+An unevaluated argument AST and a projected child such as `declaration.value`
+retain the exact declaration arena and a source provider bound to that arena.
+Check arena identity, node bounds, source ownership and byte bounds before
+using a span. Generated parser payloads and original source buffers have
+separate ownership records. A macro-body expression with payload-local spans
+cannot borrow the expander's primary source merely because its ExprId fits.
+
+Interpolation emits the retained expression source. Explicit `.id` and
+`.stringify` operations use structural AST rendering; a typed declaration's
+initializer must not disappear when the printer encounters an unsupported
+node. Local, instance-variable and class-variable declarations share reflection
+of their variable, annotation and optional initializer. An absent initializer
+is Nop, while an explicit nil remains a NilLiteral.
+
+Reparse keyword-named arguments in their declaration grammar, with the expected
+name, complete input consumption and no parser diagnostics. Ordinary identifiers
+keep their existing entry path. Declaration tails share nonempty annotation and
+assignment-expression initializer rules. Parenthesized argument parsing must
+not impose a declaration ban on a nested call; genuine ternary suppression
+still applies. A newline before `=` ends the annotation even inside call
+delimiters; a newline after `=` may continue the initializer. Persist parser
+changes through AST-cache version 13.
+
+Promotion requires the original-first macro_source_declaration_repro.sh gate,
+the focused keyword-declaration and source-provider specs, and neighboring macro
+source/error/lookup gates. These checks do not establish every nested type
+grammar rule, canonical rendering of arbitrary ASTs, complete prelude,
+bootstrap or unchanged LavinMQ execution and test parity.
+
 ## Falsifiers and recovery
 
 Run each script with the exact candidate as its argument. The scripts first
@@ -469,7 +500,10 @@ and check semantic diagnostics and absence of an executable for rejections.
 - `regression_tests/cli_macro_expansion_error_repro.sh`
 - `regression_tests/macro_ordered_registry_repro.sh`
 - `regression_tests/macro_interpolation_expressions_repro.sh`
+- `regression_tests/macro_source_declaration_repro.sh`
 - `spec/parser/macro_def_parameter_cache_spec.cr`
+- `spec/parser/macro_keyword_type_declaration_spec.cr`
+- `spec/semantic/macro_node_source_provider_spec.cr`
 - `spec/lsp/string_interpolation_source_cache_spec.cr`
 
 Source, toolchain, input manifests, commands, and outcomes belong in the

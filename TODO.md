@@ -26008,10 +26008,10 @@ integration, fresh bootstrap, or LavinMQ parity.
   (35q3495); their corrected .id oracles are rejected by stock (35q3494).
   Macro nil-source and command/source/failure neighbors pass (35q3513).
   Bounded HIR-seam source adversary: ROBUST, correlated lineage.
-- [ ] Repair the newly exposed property argument transport failure. Unchanged
-  LavinMQ now stops earlier at Crystal::Once::Waiter, property next with a
-  rooted Pointer(self) annotation: a TypeDeclarationNode reparses to an invalid
-  ID while the preceding previous declaration succeeds (35q3512/35q3515).
+- [x] Repair the property argument transport failure. Before the repair,
+  unchanged LavinMQ stopped at Crystal::Once::Waiter, property next with a
+  rooted Pointer(self) annotation: a TypeDeclarationNode reparsed to an invalid
+  ID while the preceding previous declaration succeeded (35q3512/35q3515).
   The previous compiler silently skipped this expansion. Test reserved-word
   names in their real macro-argument grammar, not a one-off next exception.
 - [ ] Preserve caller/definition source provenance when formatting diagnostics
@@ -26091,3 +26091,32 @@ integration, fresh bootstrap, or LavinMQ parity.
   permissive placeholder behavior on the basis of an unqualified source review.
 - Keyword argument grammar, projected source ownership and default AST binding
   are separate work. No complete prelude, bootstrap or LavinMQ parity claim.
+
+
+### 2026-11-06 — Preserve source-owned macro declarations and initializers
+
+- [x] Carry the exact arena/source owner through unevaluated macro AST values
+  and projections. Reject foreign spans instead of reading them from an outer
+  buffer. Keep structural .id/.stringify separate from direct source transport;
+  persist declaration metadata through AST-cache version 13.
+- [x] Share the nonempty typed-declaration tail across local, instance and class
+  variables, including nested/named/assignment macro arguments. Reserved-word
+  argument names use declaration grammar, not statement grammar. Preserve
+  initializers and distinguish absent Nop from explicit Nil.
+- Original-first macro_source_declaration_repro.sh passes 57 runtime controls
+  and ten strict rejections on Crystal 1.22.1 and exact S1 35q3746 (134 checks,
+  35q3747). Thirteen focused parser/source-owner units pass (35q3744); three
+  macro source/error/registry neighbors pass on that S1 (35q3752).
+- An adversarial newline-before-= counterexample was wrongly accepted by the
+  prior candidate and rejected by stock (35q3728/35q3729). The final shared tail
+  retains that newline boundary while allowing a newline after =. Bounded
+  adversary: ROBUST for the measured contracts; source review is correlated.
+- Unchanged LavinMQ now passes property next and stops at the pending exact
+  Socket::BindError.from_os_error result in TCPServer#system_bind (35q3753).
+  Compiler, application, shard and stock stdlib inputs remain stable. This is
+  front-end evidence, not object/link/server execution or upstream test parity.
+- [ ] Complete arbitrary AST canonical rendering and remaining structured-type
+  grammar separately; the supported source-provider paths do not establish them.
+- [ ] Preserve the selected Def/Arena and original ** call shape through
+  remangling, block canonicalization and final emission. Keep positional
+  NamedTuple overloads distinct; do not relax pending-result or type guards.

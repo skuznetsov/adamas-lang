@@ -25634,3 +25634,56 @@ Refresh after interpolation normalization, child source ownership, value
 classification, block binding, variable evaluation or dispatch changes. Rollback
 is this atomic compiler commit. No application/stdlib change or relaxed type
 check.
+
+
+## 2026-11-06 — Macro declarations retain source, kind and initializer effects
+
+Unevaluated macro nodes now retain their exact arena/source provider through
+.value/.target projections. Source lookup validates arena identity, node bounds
+and source byte bounds; payload-local macro-body spans do not borrow the outer
+buffer. Direct interpolation may retain owned source, while .id/.stringify use
+structural rendering. Persist declaration metadata through AST-cache version 13.
+
+Keyword names in typed macro arguments reparse as declarations with an expected
+name, colon, structured type, diagnostics and EOF check. HIR verifies declaration
+kind/name/initializer presence and retains generated source ownership. A shared
+nonempty declaration tail handles local/@/@@ forms in ordinary nested, named and
+assignment contexts without disabling the genuine ternary guard. Initializers
+retain block/if/begin effects; absent values remain Nop rather than explicit Nil.
+
+A source adversary found that skipping optional newlines before = widened the
+grammar: stock rejected all three local/@/@@ controls (35q3728), while the prior
+candidate accepted them (35q3729). Skip only whitespace/comments before = and
+allow newlines after it, matching the original parser. The final stock-first
+macro_source_declaration_repro.sh passes 67 cases on each compiler (134 checks,
+35q3747): 57 runtime controls and ten strict syntax/type rejections with diagnostic
+identity and no executable. Thirteen parser/source-owner units pass (35q3744);
+interpolation-source, expansion-error and ordered-registry neighbors pass on the
+exact final compiler (35q3752). Bounded Adversary verdict: ROBUST within these
+contracts, including the newline delta; same-lineage source review is correlated.
+
+Unchanged pinned LavinMQ inputs pass property next and stop at the pending source
+result Socket::BindError.from_os_error in TCPServer#system_bind (35q3753). The
+selected new_from_os_error Def/Arena is lost under an untyped-parameter remangle
+that omits the original ** discriminator (diagnostic 35q3714). Keep strict pending
+result, yield and type guards; investigate exact source binding and later block
+re-keying rather than guessing a result type. No object, link, server, complete
+prelude, fresh bootstrap or upstream parity is established. Arbitrary canonical
+AST rendering and remaining structured-type grammar are separate open boundaries.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+macro-source-declaration-guarded-gate35q3747/result.json,
+macro-declaration-newline-units35q3744/result.json,
+macro-source-declaration-guarded-neighbors35q3752/result.json, and
+lavinmq-source-declaration-guarded35q3753/result.json.
+All 1,916 compiler .cr files match
+build.macro-source-declaration-guarded35q3746.source.json
+(SHA-256 ca1baad6ca3d3e8bcf5d0b130cdb0ca1555d72b958381a45a3f7931740da17a8).
+Compiler SHA-256: d6126b369903fb46353f33242e3a8339044f47a4b14c897f63930bcbe0d769e2.
+Fixture-manifest SHA-256:
+8296b463c67d0985050572f24a7f4f022efa67825cd306993f6845ab96ed4694.
+Application/shard/stdlib input-manifest SHA-256:
+0d4956e706aaf6834eb6df46bd59c27a8a0f6720ffd891dd5d7905b170512bed.
+Refresh after source-provider ownership, macro projection/formatting, declaration
+grammar or AST-cache changes. Rollback is this atomic compiler commit. Application
+and stdlib are unchanged; unrelated WIP remains untouched.

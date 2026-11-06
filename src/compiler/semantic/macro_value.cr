@@ -837,15 +837,29 @@ module Adamas
         getter node_id : Frontend::ExprId
         getter arena : Frontend::ArenaLike
         getter string_pool : Frontend::StringPool?
+        getter node_source_provider : Proc(Frontend::ExprId, String?)?
+        getter node_source_provider_arena : Frontend::ArenaLike?
 
         def initialize(
           @node_id : Frontend::ExprId,
           @arena : Frontend::ArenaLike,
-          @string_pool : Frontend::StringPool? = nil
+          @string_pool : Frontend::StringPool? = nil,
+          @node_source_provider : Proc(Frontend::ExprId, String?)? = nil,
+          @node_source_provider_arena : Frontend::ArenaLike? = nil
         )
+          @strict_type_declaration_stringify_depth = 0
         end
 
         def to_macro_output : String
+          if source = source_for_node(@node_id)
+            return source
+          end
+          stringify_node(@arena[@node_id])
+        end
+
+        # `.stringify` remains the structural AST representation. Source-backed
+        # interpolation is deliberately limited to `to_macro_output`.
+        def stringify : String
           stringify_node(@arena[@node_id])
         end
 
@@ -863,6 +877,10 @@ module Adamas
           when Frontend::NodeKind::Nil then "NilLiteral"
           when .symbol? then "SymbolLiteral"
           when .range?  then "RangeLiteral"
+          when Frontend::NodeKind::TypeDeclaration,
+               Frontend::NodeKind::InstanceVarDecl,
+               Frontend::NodeKind::ClassVarDecl
+            "TypeDeclaration"
           else
             Frontend.node_kind(node).to_s
           end
@@ -891,31 +909,31 @@ module Adamas
             end
           when "target"
             if node.is_a?(Frontend::AssignNode)
-              MacroNodeValue.new(node.target, @arena, @string_pool)
+              MacroNodeValue.new(node.target, @arena, @string_pool, @node_source_provider, @node_source_provider_arena)
             else
               MacroNilValue.new
             end
           when "var"
-            if node.is_a?(Frontend::TypeDeclarationNode)
-              MacroIdValue.new(intern_name(node.name))
+            if var_name = type_declaration_var_name(node)
+              MacroIdValue.new(intern_name(var_name))
             else
               MacroNilValue.new
             end
           when "type"
-            if node.is_a?(Frontend::TypeDeclarationNode)
-              MacroIdValue.new(normalized_type_declaration_name(node.declared_type))
+            if type_name = type_declaration_type_name(node)
+              MacroIdValue.new(normalized_type_declaration_name(type_name))
             else
               MacroNilValue.new
             end
           when "value"
-            if node.is_a?(Frontend::TypeDeclarationNode)
-              if value_id = node.value
-                MacroNodeValue.new(value_id, @arena, @string_pool)
+            if type_declaration_like?(node)
+              if value_id = type_declaration_value(node)
+                MacroNodeValue.new(value_id, @arena, @string_pool, @node_source_provider, @node_source_provider_arena)
               else
-                MacroNilValue.new
+                MacroNopValue.new
               end
             elsif node.is_a?(Frontend::AssignNode)
-              MacroNodeValue.new(node.value, @arena, @string_pool)
+              MacroNodeValue.new(node.value, @arena, @string_pool, @node_source_provider, @node_source_provider_arena)
             else
               MacroNilValue.new
             end
@@ -978,15 +996,11 @@ module Adamas
           when Frontend::InstanceVarNode
             intern_name(node.name)
           when Frontend::TypeDeclarationNode
-            # Crystal: TypeDeclaration#id returns the full form "var : Type = default"
-            # so that record macro's "@#{field.id}".id produces "@var : Type = default"
-            type_n = normalized_type_declaration_name(node.declared_type)
-            id_result = "#{intern_name(node.name)} : #{type_n}"
-            if val_id = node.value
-              val_str = stringify_node(@arena[val_id])
-              id_result = "#{id_result} = #{val_str}" unless val_str.empty?
-            end
-            id_result
+            stringify_type_declaration(node.name, node.declared_type, node.value)
+          when Frontend::InstanceVarDeclNode
+            stringify_type_declaration(node.name, node.type, node.value)
+          when Frontend::ClassVarDeclNode
+            stringify_type_declaration(node.name, node.type, node.value)
           when Frontend::GenericNode
             base_name = node_identifier_name(@arena[node.base_type]) || stringify_node(@arena[node.base_type])
             args = node.type_args.map do |arg_id|
@@ -1251,14 +1265,12 @@ module Adamas
             intern_name(node.name)
           when Frontend::InstanceVarNode
             intern_name(node.name)
-        when Frontend::TypeDeclarationNode
-          type_name = normalized_type_declaration_name(node.declared_type)
-          sn_result = "#{intern_name(node.name)} : #{type_name}"
-          if sn_val_id = node.value
-            sn_val_str = stringify_node(@arena[sn_val_id])
-            sn_result = "#{sn_result} = #{sn_val_str}" unless sn_val_str.empty?
-          end
-          sn_result
+          when Frontend::TypeDeclarationNode
+            stringify_type_declaration(node.name, node.declared_type, node.value)
+          when Frontend::InstanceVarDeclNode, Frontend::ClassVarDeclNode
+            stringify_type_declaration(node.name, node.type, node.value)
+          when Frontend::BeginNode
+            stringify_begin_node(node)
           when Frontend::PathNode
             left = node.left
             prefix = left ? stringify_node(@arena[left]) : ""
@@ -1295,11 +1307,21 @@ module Adamas
                 args << "#{intern_name(entry.name)}: #{stringify_node(@arena[entry.value])}"
               end
             end
-            if args.empty?
+            call = if args.empty?
               callee
             else
               "#{callee}(#{args.join(", ")})"
             end
+            if block_id = node.block
+              block_node = @arena[block_id].as(Frontend::BlockNode)
+              "#{call} #{stringify_block_node(block_node)}"
+            else
+              call
+            end
+          when Frontend::BlockNode
+            stringify_block_node(node)
+          when Frontend::IfNode
+            stringify_assign_rhs_if(node)
           when Frontend::AsNode
             "#{stringify_node(@arena[node.expression])}.as(#{intern_name(node.target_type)})"
           when Frontend::AsQuestionNode
@@ -1331,7 +1353,11 @@ module Adamas
             parts = node.elements.map { |elem_id| stringify_node(@arena[elem_id]) }
             "[#{parts.join(", ")}]"
           else
-            Frontend.node_literal_string(node) || ""
+            literal = Frontend.node_literal_string(node)
+            if @strict_type_declaration_stringify_depth > 0 && (!literal || literal.empty?)
+              raise ArgumentError.new("unsupported #{node.node_kind} in macro TypeDeclaration initializer")
+            end
+            literal || ""
           end
         end
 
@@ -1341,6 +1367,199 @@ module Adamas
           else
             String.new(slice)
           end
+        end
+
+        # The parser uses dedicated declaration nodes for sigiled variables,
+        # while ordinary declarations use TypeDeclarationNode. Keep macro
+        # reflection over their shared source fields in one place.
+        private def type_declaration_like?(node : Frontend::Node) : Bool
+          case node
+          when Frontend::TypeDeclarationNode,
+               Frontend::InstanceVarDeclNode,
+               Frontend::ClassVarDeclNode
+            true
+          else
+            false
+          end
+        end
+
+        private def type_declaration_var_name(node : Frontend::Node) : Slice(UInt8)?
+          case node
+          when Frontend::TypeDeclarationNode,
+               Frontend::InstanceVarDeclNode,
+               Frontend::ClassVarDeclNode
+            node.name
+          else
+            nil
+          end
+        end
+
+        private def type_declaration_type_name(node : Frontend::Node) : Slice(UInt8)?
+          case node
+          when Frontend::TypeDeclarationNode
+            node.declared_type
+          when Frontend::InstanceVarDeclNode,
+               Frontend::ClassVarDeclNode
+            node.type
+          else
+            nil
+          end
+        end
+
+        private def type_declaration_value(node : Frontend::Node) : Frontend::ExprId?
+          case node
+          when Frontend::TypeDeclarationNode,
+               Frontend::InstanceVarDeclNode,
+               Frontend::ClassVarDeclNode
+            node.value
+          else
+            nil
+          end
+        end
+
+        # Crystal TypeDeclaration#id renders the variable, annotation, and
+        # optional initializer through the structural AST printer. Keep this
+        # separate from #value and #to_macro_output, which retain source-backed
+        # expansion behavior.
+        private def stringify_type_declaration(
+          var_name : Slice(UInt8),
+          type_name : Slice(UInt8),
+          value_id : Frontend::ExprId?,
+        ) : String
+          result = "#{intern_name(var_name)} : #{normalized_type_declaration_name(type_name)}"
+          if value_id
+            value = stringify_type_declaration_value(@arena[value_id])
+            if value.empty?
+              raise ArgumentError.new("cannot structurally stringify macro TypeDeclaration initializer")
+            end
+            result = "#{result} = #{value}"
+          end
+          result
+        end
+
+        private def stringify_type_declaration_value(node : Frontend::Node) : String
+          @strict_type_declaration_stringify_depth += 1
+          begin
+            stringify_node(node)
+          ensure
+            @strict_type_declaration_stringify_depth -= 1
+          end
+        end
+
+        private def stringify_begin_node(node : Frontend::BeginNode) : String
+          String.build do |io|
+            io << "begin"
+            append_stringify_body(io, node.body)
+
+            if rescue_clauses = node.rescue_clauses
+              rescue_clauses.each do |clause|
+                io << "\nrescue"
+                if variable_name = clause.variable_name
+                  io << ' ' << intern_name(variable_name)
+                end
+                if exception_type = clause.exception_type
+                  if clause.variable_name
+                    io << " : "
+                  else
+                    io << ' '
+                  end
+                  io << normalized_type_declaration_name(exception_type)
+                end
+                append_stringify_body(io, clause.body)
+              end
+            end
+
+            if else_body = node.else_body
+              io << "\nelse"
+              append_stringify_body(io, else_body)
+            end
+
+            if ensure_body = node.ensure_body
+              io << "\nensure"
+              append_stringify_body(io, ensure_body)
+            end
+
+            io << "\nend"
+          end
+        end
+
+        private def append_stringify_body(
+          io : String::Builder,
+          body : Array(Frontend::ExprId),
+        ) : Nil
+          body.each do |body_id|
+            body_text = stringify_node(@arena[body_id])
+            if body_text.empty?
+              raise ArgumentError.new("cannot structurally stringify macro begin body")
+            end
+            io << "\n  " << body_text.gsub("\n", "\n  ")
+          end
+        end
+
+        private def stringify_block_node(node : Frontend::BlockNode) : String
+          single_line = if last_body_id = node.body.last?
+                          @arena[last_body_id].span.end_line == node.span.start_line
+                        else
+                          false
+                        end
+          text = String.build do |io|
+            io << "do"
+            if params = node.params
+              unless params.empty?
+                io << " |"
+                params.each_with_index do |param, index|
+                  io << ", " if index > 0
+                  io << stringify_block_parameter(param)
+                end
+                io << '|'
+              end
+            end
+
+            node.body.each_with_index do |body_id, index|
+              if single_line
+                io << (index == 0 ? ' ' : '\n')
+              else
+                io << "\n  "
+              end
+              body = stringify_node(@arena[body_id])
+              io << (single_line ? body : body.gsub("\n", "\n  "))
+            end
+            io << (single_line ? ' ' : '\n') << "end"
+          end
+          text
+        end
+
+        private def stringify_block_parameter(param : Frontend::Parameter) : String
+          text = String.build do |io|
+            if param.is_double_splat
+              io << "**"
+            elsif param.is_splat
+              io << '*'
+            elsif param.is_block && (param.name != nil || param.external_name != nil)
+              io << '&'
+            end
+            if external_name = param.external_name
+              io << intern_name(external_name) << ' '
+            end
+            if name = param.name
+              io << intern_name(name)
+            end
+            if type = param.type_annotation
+              io << " : " << normalized_type_declaration_name(type)
+            end
+            if default_id = param.default_value
+              io << " = " << stringify_node(@arena[default_id])
+            end
+          end
+          text
+        end
+
+        private def source_for_node(expr_id : Frontend::ExprId) : String?
+          provider = @node_source_provider
+          owner = @node_source_provider_arena
+          return nil unless provider && owner && owner.same?(@arena)
+          return nil if expr_id.invalid? || expr_id.index < 0 || expr_id.index >= @arena.size
+          provider.call(expr_id)
         end
 
         # Nested macro TypeDeclaration nodes may carry one leading colon as a
@@ -1363,12 +1582,18 @@ module Adamas
           node_id : Frontend::ExprId,
           arena : Frontend::ArenaLike,
           @source_text : String,
-          string_pool : Frontend::StringPool? = nil
+          string_pool : Frontend::StringPool? = nil,
+          node_source_provider : Proc(Frontend::ExprId, String?)? = nil,
+          node_source_provider_arena : Frontend::ArenaLike? = nil
         )
-          super(node_id, arena, string_pool)
+          super(node_id, arena, string_pool, node_source_provider, node_source_provider_arena)
         end
 
         def to_macro_output : String
+          source_for_node(@node_id) || @source_text
+        end
+
+        def stringify : String
           @source_text
         end
       end
@@ -1376,6 +1601,16 @@ module Adamas
       # Keep the source range and its arena until a consumer asks for bounds.
       # Crystal evaluates endpoint expressions in the consuming macro scope.
       class MacroRangeValue < MacroNodeValue
+        def initialize(
+          node_id : Frontend::ExprId,
+          arena : Frontend::ArenaLike,
+          string_pool : Frontend::StringPool? = nil,
+          node_source_provider : Proc(Frontend::ExprId, String?)? = nil,
+          node_source_provider_arena : Frontend::ArenaLike? = nil
+        )
+          super(node_id, arena, string_pool, node_source_provider, node_source_provider_arena)
+        end
+
         def class_name : String
           "RangeLiteral"
         end

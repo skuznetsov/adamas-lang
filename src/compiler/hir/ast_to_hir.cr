@@ -9503,6 +9503,33 @@ module Adamas::HIR
       sources
     end
 
+    # Macro AST values may be emitted from projected nodes such as
+    # `field.value` or `assignment.target`. Bind source lookup to this exact
+    # arena; an ExprId/span from another arena cannot select a buffer.
+    private def macro_node_source_provider_for(
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Proc(ExprId, String?)
+      ->(expr_id : ExprId) { macro_node_source_for_expr(expr_id, arena) }
+    end
+
+    private def macro_node_source_for_expr(
+      expr_id : ExprId,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : String?
+      return nil if expr_id.invalid? || expr_id.index < 0 || expr_id.index >= arena.size
+
+      generated_text = nil.as(String?)
+      if generated_entry = @macro_generated_sources_by_arena[arena_map_key(arena)]?
+        if generated_entry[0].same?(arena)
+          generated_text = generated_entry[1][expr_id.index]?
+        end
+      end
+
+      owner_text = generated_text || macro_arg_primary_source_for_expr(expr_id, arena)
+      return nil unless owner_text
+      macro_arg_owned_source_slice(expr_id, arena, owner_text)
+    end
+
     @[AlwaysInline]
     private def set_source_for_arena(arena : Adamas::Compiler::Frontend::ArenaLike, source : String) : String
       key = arena_map_key(arena)
@@ -18246,6 +18273,7 @@ module Adamas::HIR
         compilation_flags,
         recovery_mode: true,
         generated_sources: macro_generated_sources_for(macro_arena),
+        node_source_provider: macro_node_source_provider_for(macro_arena),
         source_provider: ->(expr_id : ExprId) : String? { macro_block_body_text(expr_id) },
         block_value_provider: ->(expr_id : ExprId) : Adamas::Compiler::Semantic::MacroValue? { macro_block_value_for(expr_id) },
         macro_source: source_for_arena(macro_arena),
@@ -18500,7 +18528,46 @@ module Adamas::HIR
       owner_slice = owner_text.try { |text| macro_arg_owned_source_slice(expr_id, source_arena, text) }
       return ExprId.new(-1) unless owner_text && owner_slice
 
+      if Adamas::Compiler::Frontend.node_kind(source_node) == Adamas::Compiler::Frontend::NodeKind::TypeDeclaration
+        declaration = source_node.unsafe_as(Adamas::Compiler::Frontend::TypeDeclarationNode)
+        if reparsed = reparse_type_declaration_argument_for_macro(owner_slice, declaration, target_arena)
+          return reparsed
+        end
+      end
+
       parse_macro_owned_expr_text_for_arena(owner_slice, source_node, target_arena)
+    end
+
+    private def reparse_type_declaration_argument_for_macro(
+      text : String,
+      source_node : Adamas::Compiler::Frontend::TypeDeclarationNode,
+      target_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : ExprId?
+      first_generated_index = target_arena.size
+      parser = Adamas::Compiler::Frontend::Parser.new(
+        Adamas::Compiler::Frontend::Lexer.new(text),
+        target_arena,
+        recovery_mode: true
+      )
+      reparsed = parser.parse_macro_keyword_type_declaration_argument(source_node.name)
+      return nil unless reparsed
+      return ExprId.new(-1) if reparsed.invalid? || !parser.diagnostics.empty?
+
+      target_node = target_arena[reparsed]?
+      return ExprId.new(-1) unless target_node
+      return ExprId.new(-1) unless Adamas::Compiler::Frontend.node_kind(target_node) == Adamas::Compiler::Frontend::NodeKind::TypeDeclaration
+      target_declaration = target_node.unsafe_as(Adamas::Compiler::Frontend::TypeDeclarationNode)
+      return ExprId.new(-1) unless target_declaration.name == source_node.name
+      return ExprId.new(-1) unless target_declaration.value.nil? == source_node.value.nil?
+
+      generated_sources = macro_generated_sources_for(target_arena)
+      index = first_generated_index
+      while index < target_arena.size
+        generated_sources[index] = text
+        index += 1
+      end
+      store_extra_source(target_arena, text)
+      reparsed
     end
 
     private def seed_macro_primary_source_owners(
@@ -18736,9 +18803,22 @@ module Adamas::HIR
         source_text = slice_source_for_expr_in_arena(expr_id, arena, source)
       end
       if source_text && !source_text.empty?
-        Adamas::Compiler::Semantic::MacroSourceNodeValue.new(expr_id, arena, source_text)
+        Adamas::Compiler::Semantic::MacroSourceNodeValue.new(
+          expr_id,
+          arena,
+          source_text,
+          nil,
+          macro_node_source_provider_for(arena),
+          arena
+        )
       else
-        Adamas::Compiler::Semantic::MacroNodeValue.new(expr_id, arena)
+        Adamas::Compiler::Semantic::MacroNodeValue.new(
+          expr_id,
+          arena,
+          nil,
+          macro_node_source_provider_for(arena),
+          arena
+        )
       end
     end
 
@@ -36219,6 +36299,7 @@ module Adamas::HIR
         compilation_flags,
         recovery_mode: true,
         generated_sources: macro_generated_sources_for(@arena),
+        node_source_provider: macro_node_source_provider_for(@arena),
         macro_source: source,
         macro_source_path: source_path_for(@arena),
         type_value_resolver: macro_type_value_resolver,
@@ -92928,6 +93009,7 @@ module Adamas::HIR
         compilation_flags,
         recovery_mode: true,
         generated_sources: macro_generated_sources_for(@arena),
+        node_source_provider: macro_node_source_provider_for(@arena),
         macro_source: source,
         macro_source_path: source_path_for(@arena),
         source_provider: ->(block_id : Adamas::Compiler::Frontend::ExprId) { macro_block_text(block_id) },

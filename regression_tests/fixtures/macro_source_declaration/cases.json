@@ -1,0 +1,370 @@
+[
+  {
+    "name": "ordinary_identifier",
+    "ok": true
+  },
+  {
+    "name": "next_keyword",
+    "ok": true
+  },
+  {
+    "name": "break_rooted_type",
+    "ok": true
+  },
+  {
+    "name": "return_pointer_self_type",
+    "ok": true
+  },
+  {
+    "name": "next_default_value_effect",
+    "ok": true
+  },
+  {
+    "name": "next_default_block_effect",
+    "ok": true
+  },
+  {
+    "name": "generated_next_argument",
+    "ok": true
+  },
+  {
+    "name": "instance_var_default",
+    "ok": true
+  },
+  {
+    "name": "class_var_default",
+    "ok": true
+  },
+  {
+    "name": "reject_keyword_default_string_as_int",
+    "ok": false,
+    "diagnostic": [
+      "consume_int",
+      "String"
+    ]
+  },
+  {
+    "name": "local_empty",
+    "ok": true
+  },
+  {
+    "name": "local_initialized",
+    "ok": true
+  },
+  {
+    "name": "local_canonical_call",
+    "ok": true
+  },
+  {
+    "name": "instance_empty",
+    "ok": true
+  },
+  {
+    "name": "instance_initialized",
+    "ok": true
+  },
+  {
+    "name": "instance_canonical_call",
+    "ok": true
+  },
+  {
+    "name": "class_empty",
+    "ok": true
+  },
+  {
+    "name": "class_initialized",
+    "ok": true
+  },
+  {
+    "name": "class_canonical_call",
+    "ok": true
+  },
+  {
+    "name": "local_missing_nop",
+    "ok": true
+  },
+  {
+    "name": "local_explicit_nil",
+    "ok": true
+  },
+  {
+    "name": "local_declaration_kind",
+    "ok": true
+  },
+  {
+    "name": "instance_missing_nop",
+    "ok": true
+  },
+  {
+    "name": "instance_explicit_nil",
+    "ok": true
+  },
+  {
+    "name": "instance_declaration_kind",
+    "ok": true
+  },
+  {
+    "name": "class_missing_nop",
+    "ok": true
+  },
+  {
+    "name": "class_explicit_nil",
+    "ok": true
+  },
+  {
+    "name": "class_declaration_kind",
+    "ok": true
+  },
+  {
+    "name": "id_call_block_effect",
+    "ok": true
+  },
+  {
+    "name": "id_if_effect",
+    "ok": true
+  },
+  {
+    "name": "id_call_block_param_effect",
+    "ok": true
+  },
+  {
+    "name": "id_nested_call_block_effect",
+    "ok": true
+  },
+  {
+    "name": "local_stringify_empty",
+    "ok": true
+  },
+  {
+    "name": "local_stringify_initialized",
+    "ok": true
+  },
+  {
+    "name": "local_stringify_canonical_call",
+    "ok": true
+  },
+  {
+    "name": "instance_stringify_empty",
+    "ok": true
+  },
+  {
+    "name": "instance_stringify_initialized",
+    "ok": true
+  },
+  {
+    "name": "instance_stringify_canonical_call",
+    "ok": true
+  },
+  {
+    "name": "class_stringify_empty",
+    "ok": true
+  },
+  {
+    "name": "class_stringify_initialized",
+    "ok": true
+  },
+  {
+    "name": "class_stringify_canonical_call",
+    "ok": true
+  },
+  {
+    "name": "begin_id_effect",
+    "ok": true
+  },
+  {
+    "name": "begin_value_effect",
+    "ok": true
+  },
+  {
+    "name": "local_stringify_begin",
+    "ok": true
+  },
+  {
+    "name": "instance_stringify_begin",
+    "ok": true
+  },
+  {
+    "name": "class_stringify_begin",
+    "ok": true
+  },
+  {
+    "name": "context_instance_nested",
+    "ok": true
+  },
+  {
+    "name": "context_instance_named",
+    "ok": true
+  },
+  {
+    "name": "context_instance_assignment",
+    "ok": true
+  },
+  {
+    "name": "context_instance_ternary",
+    "ok": false,
+    "rejection_kind": "syntax",
+    "diagnostic_by_stage": {
+      "original": [
+        "expecting token"
+      ],
+      "candidate": [
+        "unexpected",
+        "parser errors"
+      ]
+    }
+  },
+  {
+    "name": "context_instance_empty_type",
+    "ok": false,
+    "rejection_kind": "syntax",
+    "diagnostic_by_stage": {
+      "original": [
+        "unexpected token:",
+        "\"=\""
+      ],
+      "candidate": [
+        "Expected type in type declaration",
+        "parser errors"
+      ]
+    }
+  },
+  {
+    "name": "context_class_nested",
+    "ok": true
+  },
+  {
+    "name": "context_class_named",
+    "ok": true
+  },
+  {
+    "name": "context_class_assignment",
+    "ok": true
+  },
+  {
+    "name": "context_class_ternary",
+    "ok": false,
+    "rejection_kind": "syntax",
+    "diagnostic_by_stage": {
+      "original": [
+        "expecting token"
+      ],
+      "candidate": [
+        "unexpected",
+        "parser errors"
+      ]
+    }
+  },
+  {
+    "name": "context_class_empty_type",
+    "ok": false,
+    "rejection_kind": "syntax",
+    "diagnostic_by_stage": {
+      "original": [
+        "unexpected token:",
+        "\"=\""
+      ],
+      "candidate": [
+        "Expected type in type declaration",
+        "parser errors"
+      ]
+    }
+  },
+  {
+    "name": "context_local_nested",
+    "ok": true
+  },
+  {
+    "name": "context_local_named",
+    "ok": true
+  },
+  {
+    "name": "context_local_assignment",
+    "ok": true
+  },
+  {
+    "name": "context_local_ternary",
+    "ok": false,
+    "rejection_kind": "syntax",
+    "diagnostic_by_stage": {
+      "original": [
+        "expecting token"
+      ],
+      "candidate": [
+        "unexpected",
+        "parser errors"
+      ]
+    }
+  },
+  {
+    "name": "context_local_empty_type",
+    "ok": false,
+    "rejection_kind": "syntax",
+    "diagnostic_by_stage": {
+      "original": [
+        "unexpected token:",
+        "\"=\""
+      ],
+      "candidate": [
+        "Expected type in type declaration",
+        "parser errors"
+      ]
+    }
+  },
+  {
+    "name": "newline_local_before_eq",
+    "ok": false,
+    "rejection_kind": "syntax",
+    "diagnostic_by_stage": {
+      "original": [
+        "expecting token",
+        "not '='"
+      ],
+      "candidate": [
+        "unexpected",
+        "parser errors"
+      ]
+    }
+  },
+  {
+    "name": "newline_local_after_eq",
+    "ok": true
+  },
+  {
+    "name": "newline_instance_before_eq",
+    "ok": false,
+    "rejection_kind": "syntax",
+    "diagnostic_by_stage": {
+      "original": [
+        "expecting token",
+        "not '='"
+      ],
+      "candidate": [
+        "unexpected",
+        "parser errors"
+      ]
+    }
+  },
+  {
+    "name": "newline_instance_after_eq",
+    "ok": true
+  },
+  {
+    "name": "newline_class_before_eq",
+    "ok": false,
+    "rejection_kind": "syntax",
+    "diagnostic_by_stage": {
+      "original": [
+        "expecting token",
+        "not '='"
+      ],
+      "candidate": [
+        "unexpected",
+        "parser errors"
+      ]
+    }
+  },
+  {
+    "name": "newline_class_after_eq",
+    "ok": true
+  }
+]

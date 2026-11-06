@@ -1145,6 +1145,36 @@ module Adamas
           @diagnostics
         end
 
+        # Reparse a source-owned TypeDeclaration macro argument using the same
+        # declaration grammar used when the original call was parsed. Keyword
+        # names such as `next`, `break`, and `return` are valid declaration
+        # names in this context even though their tokens are control-flow
+        # keywords in a bare expression.
+        def parse_macro_keyword_type_declaration_argument(expected_name : Slice(UInt8)) : ExprId?
+          skip_trivia
+          name_token = current_token
+          # Ordinary identifiers stay on the established expression-parser
+          # path; this entry only supplies the keyword-name grammar that a
+          # bare expression parse cannot reproduce.
+          return nil unless is_keyword_identifier?(name_token)
+
+          name_slice = stable_identifier_token_slice(name_token)
+          return PREFIX_ERROR unless name_slice == expected_name
+
+          advance
+          skip_whitespace_and_optional_newlines
+          return PREFIX_ERROR unless current_token.kind == Token::Kind::Colon
+
+          declaration = parse_type_declaration_from_identifier(name_token.span, name_slice, structured_type: true)
+          return PREFIX_ERROR if declaration.invalid?
+
+          skip_trivia
+          return PREFIX_ERROR unless current_token.kind == Token::Kind::EOF
+          return PREFIX_ERROR unless @diagnostics.empty?
+
+          declaration
+        end
+
         def string_pool
           @string_pool
         end
@@ -1853,14 +1883,47 @@ module Adamas
           )
         end
 
+        # Parse the common type/default tail for local, sigil, and call-argument
+        # declarations. Only source-owned keyword reparsing requests the structured
+        # type parser; ordinary declarations retain the token-collector behavior.
+        private def parse_type_declaration_tail(structured_type : Bool = false) : NamedTuple(type_slice: Slice(UInt8), value: ExprId?, end_span: Span)?
+          type_start_token = current_token
+          parsed_type = if structured_type
+                          parse_bare_proc_type
+                        else
+                          parse_type_annotation
+                        end
+          unless parsed_type && !parsed_type.empty?
+            @diagnostics << Diagnostic.new("Expected type in type declaration", current_token.span)
+            return nil
+          end
+          type_slice = parsed_type.not_nil!
+          type_end_token = previous_token
+
+          # A declaration's default must begin on the same line as its type.
+          # Keep the newline after '=' legal below, where it belongs to the value.
+          skip_whitespace_and_comments
+
+          value : ExprId? = nil
+          if operator_token?(current_token, Token::Kind::Eq)
+            advance # consume '='
+            skip_whitespace_and_optional_newlines
+            value_expr = with_pointer_suffix { parse_op_assign }
+            return nil if value_expr.invalid?
+            value = value_expr
+          end
+
+          end_span = value ? @arena[value].span : type_end_token.try(&.span) || type_start_token.span
+          {type_slice: type_slice, value: value, end_span: end_span}
+        end
+
         # Phase 103: Parse type declaration from identifier: x : Type = value
         # Called from parse_prefix when identifier followed by " : " (space + colon)
         private def parse_type_declaration_from_identifier(identifier_token : Token) : ExprId
           parse_type_declaration_from_identifier(identifier_token.span, stable_identifier_token_slice(identifier_token))
         end
 
-        private def parse_type_declaration_from_identifier(identifier_span : Span, identifier_slice : Slice(UInt8)) : ExprId
-          var_span = identifier_span
+        private def parse_type_declaration_from_identifier(identifier_span : Span, identifier_slice : Slice(UInt8), structured_type : Bool = false) : ExprId
           var_name = @string_pool.intern(identifier_slice)
 
           # Skip whitespace and consume ':'
@@ -1872,37 +1935,21 @@ module Adamas
           advance # consume ':'
           skip_whitespace_and_optional_newlines
 
-          # Parse type annotation (supports namespaces, generics, suffixes)
-          type_start_token = current_token
-          declared_type_slice = parse_type_annotation
-          type_end_token = previous_token
+          tail = parse_type_declaration_tail(structured_type)
+          return PREFIX_ERROR unless tail
 
-          skip_trivia
-
-          # Check for optional '= value'
-          value = nil
-          if current_token.kind == Token::Kind::Eq
-            advance # consume '='
-            skip_whitespace_and_optional_newlines
-            value = parse_expression(0)
-            return PREFIX_ERROR if value.invalid?
-          end
-
-          type_span = type_end_token ? type_start_token.span.cover(type_end_token.span) : type_start_token.span
-          value_span = value ? @arena[value].span : type_span
-          full_span = var_span.cover(value_span)
-
+          full_span = identifier_span.cover(tail[:end_span])
           node_id = @arena.add_typed(TypeDeclarationNode.new(
             full_span,
             var_name,
-            declared_type_slice,
-            value
+            tail[:type_slice],
+            tail[:value]
           ))
 
           if ENV["DEBUG_TYPE_DECL_NODE"]?
             stored = @arena[node_id]
             is_type_decl = stored.is_a?(TypeDeclarationNode) ? 1 : 0
-            STDERR.puts "[TYPE_DECL_NODE] name=#{String.new(var_name)} type=#{String.new(declared_type_slice)} id=#{node_id.index} class=#{stored.class.name} kind=#{Frontend.node_kind(stored)} is_type_decl=#{is_type_decl}"
+            STDERR.puts "[TYPE_DECL_NODE] name=#{String.new(var_name)} type=#{String.new(tail[:type_slice])} id=#{node_id.index} class=#{stored.class.name} kind=#{Frontend.node_kind(stored)} is_type_decl=#{is_type_decl}"
           end
 
           node_id
@@ -8021,41 +8068,17 @@ module Adamas
             return PREFIX_ERROR
           end
           advance # consume :
-
           skip_trivia
 
-          # Parse type annotation
-          type_start_token = current_token
-          type_slice = parse_type_annotation
-          type_end_token = previous_token
+          tail = parse_type_declaration_tail
+          return PREFIX_ERROR unless tail
 
-          end_span = type_end_token ? type_end_token.span : type_start_token.span
-
-          # Optional default value: @ivar : Type = expr
-          default_value = nil
-          default_span = nil
-          if operator_token?(current_token, Token::Kind::Eq)
-            advance
-            skip_whitespace_and_optional_newlines
-            value_expr = parse_expression(0)
-            if value_expr.invalid?
-              return PREFIX_ERROR
-            end
-            default_value = value_expr
-            default_span = @arena[value_expr].span
-          end
-
-          decl_span = if default_span
-                        ivar_token.span.cover(default_span)
-                      else
-                        ivar_token.span.cover(end_span)
-                      end
-
+          decl_span = ivar_token.span.cover(tail[:end_span])
           @arena.add_typed(InstanceVarDeclNode.new(
             decl_span,
             ivar_token.slice,
-            type_slice,
-            default_value
+            tail[:type_slice],
+            tail[:value]
           ))
         end
 
@@ -8076,41 +8099,17 @@ module Adamas
             return PREFIX_ERROR
           end
           advance # consume :
-
           skip_trivia
 
-          # Parse type annotation
-          type_start_token = current_token
-          type_slice = parse_type_annotation
-          type_end_token = previous_token
+          tail = parse_type_declaration_tail
+          return PREFIX_ERROR unless tail
 
-          end_span = type_end_token ? type_end_token.span : type_start_token.span
-
-          # Optional default value: @@var : Type = expr
-          default_value = nil
-          default_span = nil
-          if operator_token?(current_token, Token::Kind::Eq)
-            advance
-            skip_whitespace_and_optional_newlines
-            value_expr = parse_expression(0)
-            if value_expr.invalid?
-              return PREFIX_ERROR
-            end
-            default_value = value_expr
-            default_span = @arena[value_expr].span
-          end
-
-          decl_span = if default_span
-                        cvar_token.span.cover(default_span)
-                      else
-                        cvar_token.span.cover(end_span)
-                      end
-
+          decl_span = cvar_token.span.cover(tail[:end_span])
           @arena.add_typed(ClassVarDeclNode.new(
             decl_span,
             cvar_token.slice,
-            type_slice,
-            default_value
+            tail[:type_slice],
+            tail[:value]
           ))
         end
 
@@ -12596,10 +12595,8 @@ module Adamas
                   args_b << arg_expr
                   pushed = true
                 else
-                  @no_type_declaration += 1
                   arg_expr = with_pointer_suffix { parse_expression(0) }
                   have_arg_expr = true
-                  @no_type_declaration -= 1
                   return PREFIX_ERROR if arg_expr.invalid?
                 end
               else
@@ -12632,7 +12629,17 @@ module Adamas
                 end
                 # A spaced colon declares a positional AST argument regardless
                 # of the callee name; only an adjacent colon names an argument.
-                if (typed_macro_callee || next_comes_colon_space?) && (current_token.kind == Token::Kind::Identifier || is_keyword_identifier?(current_token))
+                if @no_type_declaration == 0 && next_comes_colon_space? &&
+                   (current_token.kind == Token::Kind::InstanceVar || current_token.kind == Token::Kind::ClassVar)
+                  # Admit sigil declarations before generic call arguments.
+                  # Named-argument starts are checked before their values are parsed.
+                  arg_expr = current_token.kind == Token::Kind::InstanceVar ? parse_instance_var_decl : parse_class_var_decl
+                  return PREFIX_ERROR if arg_expr.invalid?
+                  have_arg_expr = true
+                  args_b << arg_expr
+                  pushed = true
+                  skip_whitespace_and_optional_newlines
+                elsif (typed_macro_callee || next_comes_colon_space?) && (current_token.kind == Token::Kind::Identifier || is_keyword_identifier?(current_token))
                   save_idx = @index
                   name_tok = current_token
                   advance
@@ -12642,31 +12649,16 @@ module Adamas
                     advance
                     skip_whitespace_and_optional_newlines
 
-                    type_start = current_token
-                    type_slice = parse_type_annotation
-                    type_end = previous_token || type_start
-                    skip_whitespace_and_optional_newlines
+                    tail = parse_type_declaration_tail
+                    return PREFIX_ERROR unless tail
 
-                    typed_value_expr : ExprId? = nil
-                    if current_token.kind == Token::Kind::Eq
-                      advance
-                      skip_whitespace_and_optional_newlines
-                      typed_value_expr = with_pointer_suffix { parse_op_assign }
-                      return PREFIX_ERROR if typed_value_expr.invalid?
-                    end
-
-                    full_span = if typed_value_expr
-                                  name_tok.span.cover(@arena[typed_value_expr].span)
-                                else
-                                  name_tok.span.cover(type_end.span)
-                                end
-
+                    full_span = name_tok.span.cover(tail[:end_span])
                     arg_expr = @arena.add_typed(
                       TypeDeclarationNode.new(
                         full_span,
                         name_tok.slice,
-                        type_slice,
-                        typed_value_expr
+                        tail[:type_slice],
+                        tail[:value]
                       )
                     )
                     have_arg_expr = true
@@ -12734,12 +12726,11 @@ module Adamas
                     named_b << NamedArgument.new(name_slice, value_expr, name_span, value_span)
                     skip_whitespace_and_optional_newlines
                   else
-                    # Parse first argument expression (allow assignments)
-                    # Disable type declarations to allow identifier: syntax for named args
-                    @no_type_declaration += 1
+                    # Parse first argument expression (allow assignments). Named
+                    # arguments were recognized above, so nested declaration syntax
+                    # can remain enabled while parsing this expression.
                     arg_expr = with_pointer_suffix { parse_op_assign }
                     have_arg_expr = true
-                    @no_type_declaration -= 1
                     if arg_expr.invalid?
                       emit_unexpected(current_token)
                       return PREFIX_ERROR
@@ -12757,31 +12748,16 @@ module Adamas
                         advance # consume ':'
                         skip_whitespace_and_optional_newlines
 
-                        type_start_token = current_token
-                        type_slice = parse_type_annotation
-                        type_end_token = previous_token || type_start_token
-                        skip_whitespace_and_optional_newlines
+                        tail = parse_type_declaration_tail
+                        return PREFIX_ERROR unless tail
 
-                        decl_value_expr : ExprId? = nil
-                        if current_token.kind == Token::Kind::Eq
-                          advance
-                          skip_whitespace_and_optional_newlines
-                          decl_value_expr = with_pointer_suffix { parse_op_assign }
-                          return PREFIX_ERROR if decl_value_expr.invalid?
-                        end
-
-                        full_span = if decl_value_expr
-                                      name_span.cover(@arena[decl_value_expr].span)
-                                    else
-                                      name_span.cover(type_end_token.span)
-                                    end
-
+                        full_span = name_span.cover(tail[:end_span])
                         decl = @arena.add_typed(
                           TypeDeclarationNode.new(
                             full_span,
                             name_slice,
-                            type_slice,
-                            decl_value_expr
+                            tail[:type_slice],
+                            tail[:value]
                           )
                         )
                         args_b << decl
@@ -12801,11 +12777,8 @@ module Adamas
                         advance # consume ':'
                         skip_whitespace_and_optional_newlines
 
-                        # Parse value expression
-                        # Disable type declarations in value (may contain nested named tuples/args)
-                        @no_type_declaration += 1
+                        # Parse the named value with its normal nested expression grammar.
                         value_expr = with_pointer_suffix { parse_op_assign }
-                        @no_type_declaration -= 1
                         return PREFIX_ERROR if value_expr.invalid?
                         value_span = @arena[value_expr].span
 
@@ -12916,9 +12889,7 @@ module Adamas
                 break unless current_token.kind == Token::Kind::Colon
                 advance
                 skip_whitespace_and_optional_newlines
-                @no_type_declaration += 1
                 val = with_pointer_suffix { parse_op_assign }
-                @no_type_declaration -= 1
                 break if val.invalid?
                 accu_named << NamedArgument.new(name_slice, val, name_span, @arena[val].span)
               else

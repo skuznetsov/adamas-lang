@@ -121,7 +121,7 @@ module Adamas
         MAGIC   = "CV2A"
         # Bump this version whenever the parser, AST format, or cache header changes
         # to invalidate all cached ASTs
-        VERSION = 12_u32
+        VERSION = 13_u32
 
         getter arena : Frontend::AstArena
         getter roots : Array(Frontend::ExprId)

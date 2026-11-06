@@ -218,6 +218,10 @@ module Adamas
 
         # Supplied by HIR so block ExprIds are interpreted in their caller arena.
         @block_value_provider : Proc(ExprId, MacroValue?)?
+        # Supplied by HIR and bound to this expander's exact AST arena. This is
+        # intentionally distinct from block-body and macro-definition sources.
+        @node_source_provider : Proc(ExprId, String?)?
+        @node_source_provider_arena : Frontend::ArenaLike?
 
         def initialize(
           @program : Program,
@@ -228,6 +232,7 @@ module Adamas
           recovery_mode : Bool = false,
           source_provider : Proc(ExprId, String?)? = nil,
           block_value_provider : Proc(ExprId, MacroValue?)? = nil,
+          node_source_provider : Proc(ExprId, String?)? = nil,
           macro_source : String? = nil,
           macro_source_path : String? = nil,
           source_sink : Proc(String, Nil)? = nil,
@@ -244,6 +249,8 @@ module Adamas
           @recovery_mode = recovery_mode
           @source_provider = source_provider
           @block_value_provider = block_value_provider
+          @node_source_provider = node_source_provider
+          @node_source_provider_arena = node_source_provider.nil? ? nil : @arena
           @macro_source = macro_source
           @macro_source_path = macro_source_path
           @macro_source_provider = nil.as(Proc(Frontend::ExprId, String?)?)
@@ -821,6 +828,9 @@ module Adamas
             recovery_mode: @recovery_mode,
             source_provider: @source_provider,
             block_value_provider: @block_value_provider,
+            node_source_provider: ->(expr_id : ExprId) : String? {
+              macro_node_source_slice(expr_id, program.arena, wrapped)
+            },
             macro_source: wrapped,
             macro_source_path: @macro_source_path,
             source_sink: @source_sink,
@@ -918,7 +928,7 @@ module Adamas
           when Frontend::NodeKind::Nil
             MacroNilLiteralValue.new
           when .identifier?, .constant?
-            return MacroNodeValue.new(expr_id, @arena, @string_pool) unless resolve_names
+            return macro_node_value(expr_id) unless resolve_names
 
             # A macro argument is an unevaluated AST node (original Crystal binds
             # the Path itself), so a bare type name must not become a TypeNode:
@@ -947,11 +957,11 @@ module Adamas
               end
               MacroNamedTupleValue.new(entries)
             elsif node.is_a?(Frontend::RangeNode)
-              MacroRangeValue.new(expr_id, @arena, @string_pool)
+              macro_range_value(expr_id)
             elsif node.is_a?(Frontend::TypeDeclarationNode) || node.is_a?(Frontend::AssignNode) || node.is_a?(Frontend::GenericNode)
-              MacroNodeValue.new(expr_id, @arena, @string_pool)
+              macro_node_value(expr_id)
             elsif node.is_a?(Frontend::PathNode)
-              return MacroNodeValue.new(expr_id, @arena, @string_pool) unless resolve_names
+              return macro_node_value(expr_id) unless resolve_names
 
               name = path_to_string(node)
               name.empty? ? MacroIdValue.new("") : MacroIdValue.new(name)
@@ -959,7 +969,7 @@ module Adamas
               # Preserve structured expressions (calls, casts, member access,
               # builtins, etc.) so macro argument emission can reconstruct
               # their source-like form instead of collapsing to an empty Id.
-              MacroNodeValue.new(expr_id, @arena, @string_pool)
+              macro_node_value(expr_id)
             end
           end
         end
@@ -1056,6 +1066,10 @@ module Adamas
               end
               return MacroNamedTupleValue.new(entries)
             elsif node.is_a?(Frontend::RangeNode)
+              # Evaluated macro-body nodes are not necessarily owned by the
+              # primary source buffer (interpolation expressions, for example,
+              # use payload-local spans). Keep them structural; the provider is
+              # reserved for unevaluated argument ASTs from expr_to_macro_value.
               return MacroRangeValue.new(expr_id, @arena, @string_pool)
             elsif node.is_a?(Frontend::BinaryNode)
               return evaluate_binary_to_macro_value(node, context)
@@ -1112,11 +1126,11 @@ module Adamas
               if value = assign_macro_target(node.target, context) { evaluate_to_macro_value(node.value, context) }
                 return value
               end
-              return MacroNodeValue.new(expr_id, @arena, @string_pool)
+              return evaluated_macro_node_value(expr_id)
             elsif node.is_a?(Frontend::MultipleAssignNode)
               return evaluate_macro_multiple_assignment(expr_id, node, context)
             elsif node.is_a?(Frontend::TypeDeclarationNode) || node.is_a?(Frontend::GenericNode)
-              return MacroNodeValue.new(expr_id, @arena, @string_pool)
+              return evaluated_macro_node_value(expr_id)
             elsif node.is_a?(Frontend::PathNode)
               name = path_to_string(node, preserve_root: true)
               if scoped_macro_value = resolve_scoped_macro_value(name, context)
@@ -1125,8 +1139,45 @@ module Adamas
               return name.empty? ? macro_nil_value : MacroIdValue.new(name)
             end
 
-            MacroNodeValue.new(expr_id, @arena, @string_pool)
+            evaluated_macro_node_value(expr_id)
           end
+        end
+
+        private def macro_node_value(expr_id : ExprId) : MacroNodeValue
+          provider = current_node_source_provider
+          MacroNodeValue.new(expr_id, @arena, @string_pool, provider, provider.nil? ? nil : @arena)
+        end
+
+        private def macro_range_value(expr_id : ExprId) : MacroRangeValue
+          provider = current_node_source_provider
+          MacroRangeValue.new(expr_id, @arena, @string_pool, provider, provider.nil? ? nil : @arena)
+        end
+
+        private def current_node_source_provider : Proc(ExprId, String?)?
+          provider = @node_source_provider
+          owner = @node_source_provider_arena
+          return nil unless provider && owner && owner.same?(@arena)
+          provider
+        end
+
+        # Values produced while interpreting macro-body AST are not guaranteed
+        # to have spans in the expander's primary source buffer. In particular,
+        # interpolation child expressions have payload-local spans. They remain
+        # structural unless they came from a source-owned argument value.
+        private def evaluated_macro_node_value(expr_id : ExprId) : MacroNodeValue
+          MacroNodeValue.new(expr_id, @arena, @string_pool)
+        end
+
+        private def macro_node_source_slice(
+          expr_id : ExprId,
+          arena : Frontend::ArenaLike,
+          source : String,
+        ) : String?
+          return nil if expr_id.invalid? || expr_id.index < 0 || expr_id.index >= arena.size
+          span = arena[expr_id].span
+          return nil if span.start_offset < 0 || span.end_offset <= span.start_offset
+          return nil if span.end_offset > source.bytesize
+          source.byte_slice(span.start_offset, span.end_offset - span.start_offset)
         end
 
         private def evaluate_string_interpolation(node : Frontend::StringInterpolationNode, context : Context) : String
@@ -2871,11 +2922,17 @@ module Adamas
 
         private def with_macro_range_arena(range : MacroRangeValue, &)
           old_arena = @arena
+          old_node_source_provider = @node_source_provider
+          old_node_source_provider_arena = @node_source_provider_arena
           begin
             @arena = range.arena
+            @node_source_provider = range.node_source_provider
+            @node_source_provider_arena = range.node_source_provider_arena
             yield
           ensure
             @arena = old_arena
+            @node_source_provider = old_node_source_provider
+            @node_source_provider_arena = old_node_source_provider_arena
           end
         end
 
