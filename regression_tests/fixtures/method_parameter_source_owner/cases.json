@@ -1,0 +1,84 @@
+[
+  {
+    "name": "inherited_nested_type_beats_suffix_alias",
+    "source": "inherited_nested_type_beats_suffix_alias.cr",
+    "source_sha256": "95fd756e92c4fe2a35afd3ed6fb630760c8eae65ae60f0860194c1283078b707",
+    "oracle_status": "Qualified against stock Crystal 1.22.1 in 35q3356/35q3364; exact candidate 35q3354 passes in 35q3358/35q3365.",
+    "ok": true,
+    "expected": "A\n",
+    "purpose": "Inherited TypeOwner::Type must beat the unique Unrelated::Type suffix alias; value.code makes the selected parameter type observable."
+  },
+  {
+    "name": "inherited_alias_beats_suffix_alias",
+    "source": "inherited_alias_beats_suffix_alias.cr",
+    "source_sha256": "fac2873bf70ef29baba381e5e88d2c05033929044ce703f677f4a022fe8ce1ab",
+    "oracle_status": "Qualified against stock Crystal 1.22.1 in 35q3356/35q3364; exact candidate 35q3354 passes in 35q3358/35q3365.",
+    "ok": true,
+    "expected": "A\n",
+    "purpose": "An alias owned by the inherited parent must remain visible and beat an unrelated suffix alias."
+  },
+  {
+    "name": "direct_class_alias_control",
+    "source": "direct_class_alias_control.cr",
+    "source_sha256": "6305b3843269e0b00dd67bc6a7c8c82e1f8ae29925393eb128f5bbccf88c7bc0",
+    "oracle_status": "Qualified against stock Crystal 1.22.1 in 35q3356/35q3364; exact candidate 35q3354 passes in 35q3358/35q3365.",
+    "ok": true,
+    "expected": "A\n",
+    "purpose": "A direct class alias remains resolvable through owner-aware annotation lowering."
+  },
+  {
+    "name": "near_lexical_alias_control",
+    "source": "near_lexical_alias_control.cr",
+    "source_sha256": "a59181f734454b21e64c745ea70a8aa346da5bc0c18aa5fea2ccc7622bc318d5",
+    "oracle_status": "Qualified against stock Crystal 1.22.1 in 35q3356/35q3364; exact candidate 35q3354 passes in 35q3358/35q3365.",
+    "ok": true,
+    "expected": "A\n",
+    "purpose": "An enclosing lexical alias remains resolvable through owner-aware annotation lowering."
+  },
+  {
+    "name": "inherited_type_rejects_suffix_alias_value",
+    "source": "inherited_type_rejects_suffix_alias_value.cr",
+    "source_sha256": "ce55be85e8dde1ec79ea95e8af56f53cee88448d5290a8d7952d806e575f6da3",
+    "oracle_status": "Qualified against stock Crystal 1.22.1 in 35q3356/35q3364; exact candidate 35q3354 passes in 35q3358/35q3365.",
+    "ok": false,
+    "expected": "",
+    "purpose": "Int32 must not satisfy the inherited StrictTypeOwner::Type formal; the body intentionally does not expose parameter type so this isolates admission.",
+    "expected_diagnostic": "reject Int32 for inherited StrictTypeOwner::Type"
+  },
+  {
+    "name": "included_relative_alias_observed",
+    "source": "included_relative_alias_observed.cr",
+    "source_sha256": "e5bd707c22c84a541d144c25a9f01087b727bdaf8f595301a7bbb7e5a211f3f0",
+    "oracle_status": "Qualified against stock Crystal 1.22.1 in 35q3356/35q3364; exact candidate 35q3354 passes in 35q3358/35q3365.",
+    "ok": true,
+    "expected": "A\n",
+    "purpose": "The included method's bare Payload annotation must resolve in IncludedPayload despite CompetingCaller::Payload; passing the value to LibC.putchar observes the resulting parameter type."
+  },
+  {
+    "name": "included_method_forall_shadows_owner_alias",
+    "source": "included_method_forall_shadows_owner_alias.cr",
+    "source_sha256": "80fbbbf27f885672c4bc99376a45c1096f683d242d08c5aff8a4357a6a4aada0",
+    "oracle_status": "Qualified against stock Crystal 1.22.1 in 35q3356/35q3364; exact candidate 35q3354 passes in 35q3358/35q3365.",
+    "ok": true,
+    "expected": "A\n",
+    "purpose": "Method forall T must shadow the included owner's alias T = Bool; the actual Int32 argument is consumed by LibC.putchar."
+  },
+  {
+    "name": "included_method_forall_shadows_owner_formal",
+    "source": "included_method_forall_shadows_owner_formal.cr",
+    "source_sha256": "00e633ce59a8fbf71193186111a016f7b7bd40e956c195b2ea07600c4185b006",
+    "oracle_status": "Qualified against stock Crystal 1.22.1 in 35q3356/35q3364; exact candidate 35q3354 passes in 35q3358/35q3365.",
+    "ok": true,
+    "expected": "A\n",
+    "purpose": "Method forall T must shadow the included generic owner formal T = Bool; the actual Int32 argument is consumed by LibC.putchar."
+  },
+  {
+    "name": "included_enum_relative_alias_value",
+    "source": "included_enum_relative_alias_value.cr",
+    "source_sha256": "07da12ebb4394d9512671fb7b0b6edf2a227c8c00697c20dbb2781801a4b7503",
+    "oracle_status": "Qualified against stock Crystal 1.22.1 in 35q3376; exact candidate 35q3354 passes in 35q3377.",
+    "ok": true,
+    "expected": "A\n",
+    "purpose": "The included method annotation Value must resolve to IncludedEnumScope::Payload despite CompetingEnumCaller::Value = Int32. Its supplied enum value reaches enum and Int32 overloads; the enum overload inspects Enum#value, so output depends on actual payload and selected type."
+  }
+]

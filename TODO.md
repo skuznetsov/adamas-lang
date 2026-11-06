@@ -25895,3 +25895,33 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Audit other source-name versus canonical-identity boundaries in inferred
   Tuple, Range and NamedTuple composition. Their stringify/reparse shape is
   a source-inspection lead, not a reproduced failure or a verified fix.
+
+### 2026-11-06 — Resolve method parameter annotations in one owner
+
+- [x] Remove the alias-only prepasses for AST and registered parameter
+  annotations. Pass raw source text to the selected declaration/forall
+  resolver once; retain strict call admission and nominal enum facts.
+- Original-first method_parameter_source_owner_repro.sh passes eight runtime
+  cases and one strict inherited-parameter rejection on Crystal 1.22.1 and
+  exact S1 35q3354 (35q3381). Included-module, forall-shadow and enum-payload
+  controls pass; inherited lookup and three namespace/default neighbors pass
+  (35q3359/35q3361). Bounded source adversary: ROBUST, correlated lineage.
+- Unchanged LavinMQ passes the Socket initializer failure and reaches
+  Controller#get's route callback restriction (35q3366): expected
+  HTTP::Server::Context, actual Void. Project, shards and installed stdlib
+  hashes remain unchanged (35q3368). No execution or parity claim follows.
+- [ ] Locate the first loss in the /metrics callback, whose source ends with
+  context. Trace 35q3369 confirms earlier Context uses and an inner report
+  callback returning IO; distinguish a bad tail, an extra reachable Return,
+  and source-fact loss before changing the strict result check.
+- [ ] Qualify unresolved method-forall fallback and the all-VOID signature
+  inference branch independently. Both can still consult an owner/source
+  frame without a complete call binding; source review is not a reproducer.
+- [ ] Reject incompatible unions in inherited parent fallback selection.
+  Stock 35q3343 rejects incompatible_union_must_reject; baseline 35q3345
+  accepts it and the resulting program aborts. Do not infer valid admission
+  from the four positive controls that pass both compilers.
+- [ ] Validate supplied forall arguments independently of a compatible
+  callback result. Stock 35q3347 rejects same_type(65, "text") with an Int32
+  callback; baseline 35q3349 and private callback candidate 35q3348 accept
+  it. This predates the parameter-owner repair and remains a strictness gap.

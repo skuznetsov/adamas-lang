@@ -49904,14 +49904,11 @@ module Adamas::HIR
             type_ann_str : String? = nil
             raw_type_ann_str : String? = nil
             param_type = TypeRef::VOID
+            # Resolve raw source annotations once in the selected declaration's
+            # owner frame. An alias-only prepass can erase an inherited type.
             if ta = param.type_annotation
               if type_ann_value = safe_slice_to_string(ta)
                 raw_type_ann_str = type_ann_value
-                if substitute_forall_bindings(type_ann_value, node, method_forall_bindings) == type_ann_value
-                  if contextual_alias = resolve_contextual_type_alias_name(type_ann_value)
-                    type_ann_value = contextual_alias
-                  end
-                end
                 type_ann_str = type_ann_value
                 param_type = rest_layout || method_forall_annotation_type_ref(type_ann_value, signature_owner, node, method_forall_bindings)
               end
@@ -49920,11 +49917,6 @@ module Adamas::HIR
               if registered_type_annotation = registered_param_info.try(&.type_annotation)
                 raw_type_ann_str = registered_type_annotation
                 type_ann_value = registered_type_annotation
-                if substitute_forall_bindings(type_ann_value, node, method_forall_bindings) == type_ann_value
-                  if contextual_alias = resolve_contextual_type_alias_name(type_ann_value)
-                    type_ann_value = contextual_alias
-                  end
-                end
                 type_ann_str = type_ann_value
                 param_type = rest_layout || method_forall_annotation_type_ref(type_ann_value, signature_owner, node, method_forall_bindings)
               end

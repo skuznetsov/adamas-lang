@@ -25205,3 +25205,61 @@ with 35q3272, only AST, binary and an unused baseline .orig backup differ.
 Refresh after annotation resolution, generic binding, canonical interning,
 array inference or overload matching changes. Rollback is this atomic compiler
 commit. Unrelated WIP remains outside the change.
+
+## 2026-11-06 — Method parameters have one declaration-owner resolver
+
+Trace 35q3341 isolates the first Socket loss: TCPSocket#initialize receives
+Socket::Type, but its raw Type annotation becomes JSON::Any's union before
+parameter refinement. Two lower_method alias-only prepasses run before the
+owner-aware resolver. Remove those prepasses for AST and registered metadata;
+method_forall_annotation_type_ref now receives the original source text with
+the selected declaration owner and call-local bindings. No global alias
+search, overload admission or source restriction is relaxed.
+
+Original-first method_parameter_source_owner_repro.sh passes eight runtime
+controls and one strict inherited-parameter rejection on Crystal 1.22.1 and
+exact S1 35q3354 (35q3381). The inherited nested-type reproducer fails on the
+baseline with undefined method code for Int32 (35q3357), then prints A on
+the candidate. Controls cover inherited/direct/lexical aliases, included
+module ownership, method forall shadowing and an actual enum payload crossing
+an owner-relative alias into nominal overload selection. The inherited
+precedence gate and three namespace/default neighbor gates pass
+(35q3359/35q3361). Bounded source adversary: ROBUST within the two removed
+prepasses; same-lineage source review remains correlated evidence.
+
+Unchanged LavinMQ passes Socket initialization and next rejects the /metrics
+route callback as Void instead of HTTP::Server::Context (35q3366). Trace
+35q3369 shows earlier Context arguments, then an inner report callback with
+result IO; the source route ends with context. Distinguish the tail value,
+extra reachable returns and source-fact publication before changing result
+validation. Comparison 35q3368 shows only compiler AST and binary changes;
+application, shard and all installed stdlib input bytes remain unchanged.
+Object/link execution, complete prelude, fresh bootstrap and upstream-test
+parity remain open.
+
+Source review also identifies unresolved method-forall fallback and the
+all-VOID signature-inference branch as unqualified follow-ups. Two separate
+strictness counterexamples are preserved in the private evidence root:
+parent-fallback-union-qualified35q3342 (stock rejection 35q3343; baseline
+acceptance and abort 35q3345), and callback-supplied-conflict35q3346 (stock
+rejection 35q3347; baseline/private candidate accept in 35q3349/35q3348).
+These measurements predate this repair; neither defect is declared closed.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+method-param-source-owner-final-permanent35q3381/result.json,
+socket-param-alias-baseline35q3357/result.json,
+method-param-inherited-neighbor35q3359/result.json,
+method-param-source-owner-neighbors35q3361/result.json,
+method-param-enum-alias-stock35q3376/result.json,
+method-param-enum-alias-candidate35q3377/result.json,
+lavinmq-method-param-source-owner35q3366/result.json,
+lavinmq-http-block-source-trace35q3369/result.json, and
+method-param-source-owner-lineage35q3368.json.
+All 1,916 compiler files match
+build.method-param-annotation-owner-final35q3354.source.json
+(SHA-256 2c805b31f995d439b76087c7f5721af5a1dbab9da3ae822ed9ffb7453400cabf).
+Compiler SHA-256: 956792adc9b5938cb4d73ad2f1ad5d06b73412aa0266e5a61a4580dccc4d2f45;
+ast_to_hir.cr: 6e997ab6a1548e719c480b912b5e8f7bb3470062d0024219c7bc489ccdbf65dd.
+Refresh after annotation/alias lookup, forall substitution, parameter
+refinement, enum tracking or declaration-owner changes. Rollback is this
+atomic compiler commit. Unrelated WIP remains outside the change.

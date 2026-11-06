@@ -304,6 +304,26 @@ consumer change does not repair an already-rebound constructor result
 (35q3326/35q3327); investigate its earlier producer rather than widening
 Array restrictions or changing variance.
 
+## Method parameters resolve raw annotations in their declaration owner
+
+Pass a parameter's raw source annotation directly to
+method_forall_annotation_type_ref with the selected declaration owner and
+call-local forall bindings. This applies both to the AST annotation and to
+registered parameter metadata. The resolver owns forall substitution and
+owner-relative type/alias lookup. An alias-only prepass must not replace an
+inherited type with an unrelated suffix alias before that resolver runs.
+
+Preserve own and enclosing aliases, aliases/types inherited through a parent
+or included module, and method-forall precedence over owner parameters. A
+canonical parameter TypeRef does not permit weakening call admission or
+dropping nominal enum facts used by its body.
+
+The original-first method_parameter_source_owner_repro.sh gate covers eight
+runtime controls and one strict inherited-parameter rejection (35q3381).
+Included-module controls observe actual values, forall shadowing and enum
+payload/overload identity. This does not close unresolved method formals or
+the separate inherited-parent fallback admission path.
+
 ## Falsifiers and recovery
 
 Run each script with the exact candidate as its argument. The scripts first
@@ -318,6 +338,7 @@ and check semantic diagnostics and absence of an executable for rejections.
 - `regression_tests/enum_value_source_result_repro.sh`
 - `regression_tests/inherited_type_source_precedence_repro.sh`
 - `regression_tests/array_source_type_identity_repro.sh`
+- `regression_tests/method_parameter_source_owner_repro.sh`
 - `regression_tests/nil_source_result_repro.sh`
 - `regression_tests/virtual_source_fact_transport_repro.sh`
 - `regression_tests/module_source_value_kind_repro.sh`
