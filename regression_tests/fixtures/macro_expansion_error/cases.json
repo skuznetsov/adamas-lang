@@ -1,0 +1,24 @@
+[
+  {
+    "name": "valid_empty_macro_statement",
+    "ok": true
+  },
+  {
+    "name": "cross_file_nested_nil_argument",
+    "ok": true
+  },
+  {
+    "name": "valid_string_literal_output",
+    "ok": true
+  },
+  {
+    "name": "malformed_statement_macro",
+    "ok": false,
+    "macro_name": "malformed_statement"
+  },
+  {
+    "name": "malformed_member_macro",
+    "ok": false,
+    "macro_name": "malformed_member"
+  }
+]

@@ -25988,7 +25988,7 @@ integration, fresh bootstrap, or LavinMQ parity.
   Socket::BindError.from_os_error$String_Nil_NamedTuple (35q3506). Compiler,
   application, shards and installed stdlib input manifests remain unchanged.
   Object generation, linking, execution, fresh bootstrap and parity remain open.
-- [ ] Propagate failed HIR macro expansion diagnostics instead of treating
+- [x] Propagate failed HIR macro expansion diagnostics instead of treating
   invalid generated code as a valid empty expansion/Nil. Preserve genuinely
   empty output and legitimate nil arguments. The separate CLI literal-expansion
   path also needs its own audit; a HIR-only fix does not cover it.
@@ -25996,3 +25996,27 @@ integration, fresh bootstrap, or LavinMQ parity.
   parameter metadata. Stock 35q3486 versus baseline 35q3488 reproduces an
   overwritten from_errno overload changing evaluation order; do not rank by
   invented specificity or weaken from_os_error argument checks.
+
+### 2026-11-06 — Stop failed HIR macro expansion before Nil conversion
+
+- [x] Reject invalid argument reparses and propagate MacroExpander Error
+  diagnostics at the HIR boundary. Keep invalid-without-error as valid empty
+  output; do not reject explicit nil AST arguments or string-literal output.
+- Original-first macro_expansion_error_repro.sh passes three runtime positives
+  and two generated-syntax rejections on Crystal 1.22.1 and exact S1 35q3507
+  (35q3518). The malformed statement/member cases compile before the repair
+  (35q3495); their corrected .id oracles are rejected by stock (35q3494).
+  Macro nil-source and command/source/failure neighbors pass (35q3513).
+  Bounded HIR-seam source adversary: ROBUST, correlated lineage.
+- [ ] Repair the newly exposed property argument transport failure. Unchanged
+  LavinMQ now stops earlier at Crystal::Once::Waiter, property next with a
+  rooted Pointer(self) annotation: a TypeDeclarationNode reparses to an invalid
+  ID while the preceding previous declaration succeeds (35q3512/35q3515).
+  The previous compiler silently skipped this expansion. Test reserved-word
+  names in their real macro-argument grammar, not a one-off next exception.
+- [ ] Preserve caller/definition source provenance when formatting diagnostics
+  supplied from a macro block. Failure propagation is established; exact
+  cross-arena error snippet and location are not.
+- [ ] Audit the separate CLI literal-expansion and other direct MacroExpander
+  callers. The HIR gate does not establish global macro-path closure, full
+  prelude, a fresh bootstrap, LavinMQ linking/execution or upstream test parity.

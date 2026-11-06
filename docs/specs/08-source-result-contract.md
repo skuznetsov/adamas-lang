@@ -370,6 +370,22 @@ old-header rejection. This contract preserves expression source; it does not
 claim canonical formatting for every possible macro AST operation or close the
 separate macro-overload and failed-expansion diagnostic paths.
 
+## Failed HIR macro expansion is not an empty value
+
+At expand_macro_expr, invalid argument reparse is a compilation error. After
+expansion, any Error diagnostic stops compilation before callers can convert
+an invalid ExprId to Nil or omit generated class members. An invalid result
+without an Error remains a legitimate empty expansion. Explicit nil arguments
+are ordinary valid AST nodes and must survive cross-arena macro calls.
+
+The original-first macro_expansion_error_repro.sh gate distinguishes empty
+output, nested cross-file nil, and valid string-literal output from malformed
+generated statements and members. Rejections must name the failing macro and
+generated syntax error and must leave no executable. This is a contract for
+the HIR expansion seam; other MacroExpander entry points and diagnostic source
+locations require separate evidence. A newly exposed transport failure must
+be repaired at its producer, not hidden by restoring silent expansion skips.
+
 ## Falsifiers and recovery
 
 Run each script with the exact candidate as its argument. The scripts first
@@ -400,6 +416,7 @@ and check semantic diagnostics and absence of an executable for rejections.
 - `regression_tests/ivar_default_caller_frame_repro.sh`
 - `regression_tests/ivar_default_source_owner_repro.sh`
 - `regression_tests/macro_interpolation_argument_repro.sh`
+- `regression_tests/macro_expansion_error_repro.sh`
 - `spec/lsp/string_interpolation_source_cache_spec.cr`
 
 Source, toolchain, input manifests, commands, and outcomes belong in the

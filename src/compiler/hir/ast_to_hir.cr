@@ -18003,7 +18003,7 @@ module Adamas::HIR
           invalid_named = normalized_named.try(&.any? { |arg| arg.value.invalid? }) ? 1 : 0
           STDERR.puts "[MACRO_RESULT] name=#{macro_name} valid=false reason=arg_reparse invalid_args=#{invalid_arg_indexes.join(",")} invalid_named=#{invalid_named}"
         end
-        return ExprId.new(-1)
+        raise LoweringError.new("failed to reparse argument for macro '#{macro_name}'", macro_def)
       end
       if env_get("DEBUG_MACRO_ARGS") && macro_name == "record"
         normalized_args.each_with_index do |expr_id, idx|
@@ -18045,6 +18045,14 @@ module Adamas::HIR
         named_args: normalized_named,
         block_id: block_id
       )
+      # An invalid ExprId without an error is a legitimate empty expansion.
+      # Failed expansion must stop here before any caller can treat it as Nil
+      # or skip generated declarations during registration.
+      if diagnostic = expander.diagnostics.find { |entry| entry.level == Adamas::Compiler::Semantic::DiagnosticLevel::Error }
+        source = source_for_arena(macro_arena) || ""
+        formatted = Adamas::Compiler::Semantic::DiagnosticFormatter.format(source, diagnostic)
+        raise LoweringError.new("invalid generated macro expansion '#{macro_name}':\n#{formatted}", macro_def)
+      end
       if !expanded_id.invalid? && (output = expander.last_output)
         remember_macro_generated_parameter_sources(
           expanded_id,

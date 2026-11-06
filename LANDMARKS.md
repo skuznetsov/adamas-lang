@@ -25420,3 +25420,61 @@ LavinMQ input-manifest SHA-256:
 Refresh after interpolation parsing, StringPiece producers/copies, macro
 rendering or AST-cache layout changes. Rollback is this atomic compiler commit;
 old cache entries are intentionally invalidated. Unrelated WIP is preserved.
+
+## 2026-11-06 — Failed HIR macro expansion cannot become Nil
+
+expand_macro_expr returned an invalid ExprId after argument reparse failure
+or MacroExpander parse errors. Its consumers interpret invalid-without-error
+as legitimate empty output: expression lowering produces Nil and registration
+omits generated members. The Error channel was lost at that shared boundary.
+Raise LoweringError for invalid argument transfer and immediately after an
+expander Error diagnostic, before generated metadata or Nil conversion.
+Keep a genuinely empty expansion valid and keep explicit nil as an AST value.
+
+The original proposed syntax negatives were invalid oracles: expanding a
+StringLiteral containing malformed-looking code emits a valid quoted literal.
+Stock accepts those cases (35q3489). The corrected .id fixtures actually emit
+invalid code; stock rejects both with macro identity and syntax diagnostics,
+while the old compiler accepts and emits executables (35q3494/35q3495).
+Original-first macro_expansion_error_repro.sh passes three runtime positives
+(empty output, cross-file nested nil, and string-literal output) and both
+statement/member syntax rejections on Crystal 1.22.1 and exact S1 35q3507
+(35q3518). Nil-source and command/source/failure neighbors pass (35q3513).
+The candidate reports the correct macro and generated parse error and emits
+no executable. Bounded HIR-seam source adversary: ROBUST; same-lineage review
+is correlated. Source audit found no enclosing LoweringError rescue that
+swallows this path. This is not closure of all MacroExpander callers.
+
+Unchanged LavinMQ now stops earlier at a previously hidden argument-transfer
+failure, not at the old pending from_os_error result. Trace 35q3515 identifies
+Crystal::Once::Waiter's property next TypeDeclarationNode, rooted Pointer(self),
+reparsing to invalid; the preceding property previous succeeds. Old code
+silently skipped the failed expansion. The new guard preserves the error
+contract but does not close this valid-input capability. Repair the argument
+grammar/transport and qualify it against stock. The before/after application,
+shard and installed stdlib manifests agree (35q3512/35q3515).
+
+Residual limits: provider-backed block diagnostics can carry a caller-arena
+span while the current formatter receives definition-arena source. Compile
+failure is preserved, but exact snippet/location needs a separate fix. CLI's
+literal-expansion path and other direct expander callers are outside this hunk.
+No object, link, runtime, complete prelude, fresh bootstrap or parity claim.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+macro-expansion-error-stock35q3494/result.json,
+macro-expansion-error-baseline35q3495/result.json,
+macro-expansion-error-candidate35q3509/result.json,
+macro-expansion-nil-stock35q3516/result.json,
+macro-expansion-nil-candidate35q3517/result.json,
+macro-expansion-error-permanent35q3518/result.json,
+macro-expansion-error-neighbors35q3513/result.json, and
+lavinmq-property-reparse35q3515/result.json.
+All 1,916 compiler files match build.macro-expansion-error35q3507.source.json
+(SHA-256 16065fdda420306dcf0689efad2dca49dd46f41545ae28fc14906fca2c3b75d6).
+Compiler SHA-256: 8f51b90599b5ae5f3e44dc1dc7a85f07237d872de906a85d22ff028838fca805;
+ast_to_hir.cr: 470a4b79f33f6cd2b833d0708774e804ad8293bdea4b13c2614338aefe2ed2b9.
+LavinMQ input-manifest SHA-256:
+eb924e8b792a7e8647abacb6f8e0928193ce91f0dfa2c4c8528a70ac586731fe.
+Refresh after argument transfer, macro diagnostics, expander entry points or
+invalid-result handling changes. Rollback is this atomic compiler commit.
+Unrelated WIP is preserved.
