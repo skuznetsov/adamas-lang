@@ -88,9 +88,18 @@ evaluation and the selected invocation, while its own restriction still
 follows Crystal's NoReturn admission rules. Rechecking a materialized default
 must not select another overload.
 
+Named calls must pair source arguments with the selected declaration's formal
+slots, including omitted defaults and external labels. Projected candidate
+parameters retain that pairing during method-forall inference. A completed
+named binding reaches deferred body lowering even when ordinary instance
+arguments need no class-object suffix. Transport requires the exact Def and
+arena, complete actual slots, matching TypeRefs, and matching source value
+facts; it cannot substitute an ABI-only type for the source contract.
+
 Known open probes include broad or mixed-kind annotated results consumed
-before their exact body facts are available, callback/named method-variable
-defaults, and class/instance body reuse through keyword rest arguments. An
+before their exact body facts are available, callback method-variable defaults,
+unknown external-label admission, and class/instance body reuse through keyword
+rest arguments. An
 explicit invalid generic call also reaches an internal provenance guard before
 its intended source restriction. Passing the bounded return/default corpus
 does not close these probes or establish whole-program compatibility.
@@ -109,6 +118,7 @@ and check semantic diagnostics and absence of an executable for rejections.
 - `regression_tests/class_block_source_dispatch_repro.sh`
 - `regression_tests/source_default_contract_repro.sh`
 - `regression_tests/source_default_block_slot_repro.sh`
+- `regression_tests/source_named_forall_contract_repro.sh`
 
 Source, toolchain, input manifests, commands, and outcomes belong in the
 corresponding LANDMARK entry. Refresh after result publication, return

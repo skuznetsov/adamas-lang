@@ -25619,3 +25619,18 @@ integration, fresh bootstrap, or LavinMQ parity.
   namespace, and initializer-replay frontiers. The latest actual LavinMQ
   probe is still the Hash::Entry/Log::Entry failure at 35q2669. Fresh prelude,
   bootstrap, LavinMQ execution and upstream test parity remain open.
+
+### 2026-11-06 — Carry exact named-call forall bindings into the selected body
+
+- [x] Pair projected named actuals with their selected source formals through
+  skipped defaults, external labels, and method-forall inference. Preserve the
+  exact source binding during deferred body lowering even when no class-kind
+  symbol suffix is required. Validate Def/arena, slots, types and value facts.
+- Original-first source_named_forall_contract_repro.sh passes 12 cases on
+  Crystal 1.22.1 and exact-source S1 35q2799 (35q2810), including five strict
+  argument rejections and two previously open default/named companions.
+  All 47 default/block-slot neighboring checks pass too (35q2807).
+- [ ] Unknown external label `paylod` is rejected by stock but accepted by both
+  baseline and candidate; its stock-qualified fixture is explicitly excluded
+  from candidate success. Callback-inferred defaults, keyword-rest body reuse,
+  prelude, bootstrap and unchanged LavinMQ runtime/upstream parity remain open.

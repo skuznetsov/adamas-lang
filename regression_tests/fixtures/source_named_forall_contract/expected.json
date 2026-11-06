@@ -1,0 +1,50 @@
+{
+  "named_owner_method_forall_positive.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "named_owner_wrong_value_rejected.cr": {
+    "status": 1,
+    "diagnostic_regex": "expected argument 'guard'.*NamedOwner.*take.*Int32, not String|no overload matches NamedOwner\\(String\\)\\.take for argument types \\(String, Int32\\)"
+  },
+  "skip_earlier_default_positive.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "skip_earlier_default_wrong_value_rejected.cr": {
+    "status": 1,
+    "diagnostic_regex": "expected argument 'guard'.*NamedOwner.*take.*Int32, not String|no overload matches NamedOwner\\(String\\)\\.take for argument types \\(String, Int32\\)"
+  },
+  "external_label_positive.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "external_label_wrong_value_rejected.cr": {
+    "status": 1,
+    "diagnostic_regex": "expected argument 'guard'.*NamedOwner.*take.*Int32, not String|no overload matches NamedOwner\\(String\\)\\.take for argument types \\(String, Int32\\)"
+  },
+  "two_named_same_forall_positive.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "two_named_same_forall_conflict_rejected.cr": {
+    "status": 1,
+    "diagnostic_regex": "expected argument 'left'.*NamedOwner.*pair.*String, not Int32|no overload matches NamedOwner\\(String\\)\\.pair for argument types \\(Int32, String\\)"
+  },
+  "reversed_named_class_instance_positive.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "reversed_named_class_instance_wrong_kind_rejected.cr": {
+    "status": 1,
+    "diagnostic_regex": "expected argument 'type_value'.*NamedKindOwner.*choose.*String.class, not Int32.class|no overload matches NamedKindOwner.choose for argument types \\(String, Int32\\)"
+  },
+  "forall_named_previous_actual.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "method_formal_named_actual_over_owner.cr": {
+    "status": 0,
+    "stdout": "A"
+  }
+}

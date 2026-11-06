@@ -61370,6 +61370,38 @@ module Adamas::HIR
       end
     end
 
+    # Preserve a named call's exact selected source binding for deferred body
+    # materialization even when no source-kind suffix is needed. The binding is
+    # usable only when its exact Def/arena and every formal-slot actual still
+    # align with the call's TypeRefs and source-kind facts.
+    private def complete_exact_forall_source_call_binding(
+      binding : SourceCallBinding?,
+      definition : Adamas::Compiler::Frontend::DefNode,
+      declaration_arena : Adamas::Compiler::Frontend::ArenaLike?,
+      ctx : LoweringContext,
+      actual_values : Array(ValueId),
+      arg_types : Array(TypeRef),
+    ) : SourceCallBinding?
+      return nil if forall_type_param_names(definition).empty?
+      return nil unless method_forall_positional_signature?(definition)
+      return nil unless arena = declaration_arena
+      return nil unless source = binding
+      return nil unless source_call_binding_matches?(source, definition, arena)
+      actuals = source_call_binding_actual_arguments(source)
+      return nil unless actuals.size == arg_types.size && actuals.size == actual_values.size
+
+      actuals.each_with_index do |actual, index|
+        return nil unless actual
+        source_actual = actual.not_nil!
+        return nil if source_actual.type_ref == TypeRef::VOID || source_actual.type_ref != arg_types[index]
+        lowered_actual = source_call_argument(ctx, actual_values[index], preserve_value_facts: true)
+        return nil if lowered_actual.type_ref == TypeRef::VOID || lowered_actual.type_ref != arg_types[index]
+        return nil unless source_call_argument_value_facts(source_actual) ==
+                          source_call_argument_value_facts(lowered_actual)
+      end
+      source
+    end
+
     # Return a source-kind suffix only when the selected ordinary forall call
     # has a complete, formal-slot-projected binding for this exact declaration.
     # TypeRef alone cannot distinguish `T` from `T.class` when a class object
@@ -61412,6 +61444,7 @@ module Adamas::HIR
       source_arguments : Array(SourceCallArgument?)? = nil,
       source_binding : SourceCallBinding? = nil,
       declaration_arena : Adamas::Compiler::Frontend::ArenaLike? = nil,
+      source_formal_infos : Array(DefParamInfo)? = nil,
     ) : Hash(String, String)
       bindings = {} of String => String
       formals = forall_type_param_names(def_node)
@@ -61445,7 +61478,16 @@ module Adamas::HIR
         end
       end
 
-      source_params = function_param_infos(def_node)
+      # Ordinary source arguments are paired with the declaration's complete
+      # formal list. A source-shaped named candidate may instead pass a
+      # candidate-local projection containing only supplied formals; keep
+      # those facts paired with that exact projection rather than shifting a
+      # keyword actual onto an earlier omitted default formal.
+      source_params = if source_binding
+                        function_param_infos(def_node)
+                      else
+                        source_formal_infos || function_param_infos(def_node)
+                      end
       source_count = source_arguments.try(&.size) || arg_types.size
       arg_index = 0
       source_params.each do |param|
@@ -61488,15 +61530,22 @@ module Adamas::HIR
       # An ABI-only Int32 must not turn a generic `T` into an instance-only
       # restriction before the class-object witness is checked.
       bindings = method_forall_call_bindings(def_node, arg_types, context,
-        source_arguments: source_argument_facts)
+        source_arguments: source_argument_facts, source_formal_infos: params)
       return params if bindings.empty?
       source_params = function_param_infos(def_node)
-      return params if source_params.size != params.size
       formals = forall_type_param_names(def_node)
 
       params.map_with_index do |param, index|
         restriction_text = param.type_annotation
-        if source_annotation = source_params[index].type_annotation
+        source_annotation = if source_params.size == params.size
+                              source_params[index].type_annotation
+                            else
+                              source_params.find do |source_param|
+                                source_param.name == param.name &&
+                                  source_param.external_name == param.external_name
+                              end.try(&.type_annotation)
+                            end
+        if source_annotation
           if formals.any? { |formal| type_name_includes_param?(source_annotation, formal) }
             restriction_text = substitute_type_params(source_annotation, bindings)
           end
@@ -61537,7 +61586,9 @@ module Adamas::HIR
     ) : Tuple(String, String)?
       return nil if arg_types.empty? || arg_types.any? { |type_ref| type_ref == TypeRef::VOID }
       declared_params = function_param_infos(def_node)
-      params = method_forall_call_param_infos(def_node, arg_types, param_infos || declared_params, context)
+      params = method_forall_call_param_infos(
+        def_node, arg_types, param_infos || declared_params, context, source_argument_facts,
+      )
       return nil if params.any? { |param| param.is_splat || param.is_double_splat || named_only_separator?(param) }
       arg_index = 0
       params.each do |param|
@@ -109883,7 +109934,7 @@ module Adamas::HIR
                     match_arg_types,
                     strip_generic_args(module_name),
                     live_params,
-                    selection_input.try(&.source_argument_facts),
+                    source_argument_facts,
                   )
                   score += 2 if actual_param_count == match_arg_types.size
                   score += 1 if required_param_count == match_arg_types.size
@@ -122093,6 +122144,16 @@ module Adamas::HIR
           exact_positional_source_call = true
           exact_source_argument_names = source_names
           exact_forall_source_binding = source_call_binding
+        elsif !allocator_explicit_new_call && has_named_args &&
+              (selected_def = selected_call_entry_def) &&
+              (declaration_arena = selected_call_entry_arena || registered_arena_for_def(selected_def)) &&
+              (exact_binding = complete_exact_forall_source_call_binding(
+                source_call_binding, selected_def, declaration_arena, ctx, args, arg_types,
+              ))
+          # Ordinary named actuals also bind method forall variables. Their
+          # source binding must reach deferred lowering even when no class-kind
+          # suffix is needed to identify the callsite symbol.
+          exact_forall_source_binding = exact_binding
         elsif !has_named_args
           exact_positional_source_call = def_has_untyped_regular_param?(selected_def) ||
                                          !prefer_callsite_specialization(

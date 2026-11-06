@@ -24533,3 +24533,39 @@ binding, source value-kind tracking, replay identity or argument coercion
 changes. Rollback is this atomic compiler commit. Fresh stock prelude,
 bootstrap and unchanged LavinMQ execution/upstream parity remain open; no
 stdlib or application edits belong to this repair.
+
+## 2026-11-06 — A named call's selected source binding must reach its body
+
+Named candidate inference paired supplied arguments with the complete source
+formal list, shifting an actual across omitted defaults. Restoring projected
+formal pairing admitted the call but still produced String instead of Int32:
+deferred lowering only received the exact binding when class-object facts
+required a source-kind symbol suffix. Ordinary named actuals lost method-forall
+bindings and inherited the same-spelled owner variable. Preserve the binding
+independently of suffix generation after checking exact Def/arena, complete
+formal slots, TypeRefs and source value facts.
+
+Crystal 1.22.1 and exact-source S1 35q2799 pass all 12 original-first cases in
+source_named_forall_contract_repro.sh (35q2810), with exact runtime output and
+five semantic argument rejections that leave no executable. The final candidate
+also passes all 37 default-contract and ten block-slot cases (35q2807).
+Before transport, four positive controls printed S; they now print A (35q2780,
+35q2800). Two historical default companions also pass (35q2806/35q2810).
+
+The Adversary verdict is ROBUST within this named-forall transport slice.
+Unknown external-label admission is a distinct surviving falsifier: stock
+rejects `paylod`, while both baseline and candidate accept it and abort at
+runtime (35q2782/35q2800). The regression qualifies it on stock and explicitly
+excludes it from candidate success. Callback defaults, ordinary keyword-rest
+body identity, broad-result demand, prelude, bootstrap and LavinMQ execution
+and upstream parity remain open. No stdlib or application edits are included.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+named-forall-original-first35q2810/result.json,
+named-transport-default-neighbors35q2807/result.json and
+build.named-source-binding-transport35q2799.source.json (1,916 compiler files).
+Compiler SHA-256: 6ba7e9cb6b5492f76ec8a7f89b76ad586b9b4b56b89dd702b08b090173190ace;
+ast_to_hir.cr: 6c0a2e46279d269184fdf361ad3e71428a3fdc59519f36b9dbc9b3c1c1c57fe2.
+Refresh after named projection, method-forall substitution, exact source-call
+binding, body demand, arena ownership or source value-kind changes. Rollback
+is this atomic compiler commit.

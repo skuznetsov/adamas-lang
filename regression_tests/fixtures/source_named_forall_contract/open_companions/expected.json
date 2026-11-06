@@ -1,0 +1,6 @@
+{
+  "external_label_unknown_rejected.cr": {
+    "status": 1,
+    "diagnostic_regex": "no parameter named 'paylod'"
+  }
+}

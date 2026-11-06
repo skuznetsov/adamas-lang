@@ -14,12 +14,11 @@ later value remains rejected. NoReturn stops later evaluation and allocation,
 while its own declared restriction still applies.
 
 The original-first main gate contains 37 cases with exact stdout or strict
-semantic diagnostics and no executable on rejection. The five open companions
-are qualified only on original Crystal and explicitly excluded from candidate
-success: callback/named forall defaults, a named owner/method-formal call, and
-a kwargs call that reuses a class-valued default body for a later instance,
-and an explicit invalid generic call that currently fails at a provenance guard
-instead of its source restriction. They remain parity obligations.
+semantic diagnostics and no executable on rejection. Its five historical
+companions remain excluded from this candidate gate. Two named-forall
+companions are now covered by `source_named_forall_contract_repro.sh`.
+The callback default, keyword-rest body reuse, and explicit invalid generic
+call that fails at a provenance guard remain parity obligations.
 
 This gate does not establish bootstrap, stock-prelude execution, or unchanged
 LavinMQ runtime/upstream test parity. No standard-library or application edits
