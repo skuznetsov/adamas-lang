@@ -1,0 +1,237 @@
+[
+  {
+    "name": "ordered_parts",
+    "ok": true
+  },
+  {
+    "name": "no_empty_edge_parts",
+    "ok": true
+  },
+  {
+    "name": "adjacent_literals",
+    "ok": true
+  },
+  {
+    "name": "block_expression",
+    "ok": true
+  },
+  {
+    "name": "api_arity_reject",
+    "ok": false,
+    "original_diagnostic": [
+      "StringInterpolation#expressions",
+      "expected 0"
+    ],
+    "candidate_diagnostic": [
+      "StringInterpolation#expressions",
+      "expects no arguments"
+    ]
+  },
+  {
+    "name": "nil_size",
+    "ok": true
+  },
+  {
+    "name": "nil_ast_kind",
+    "ok": true
+  },
+  {
+    "name": "nil_predicate",
+    "ok": true
+  },
+  {
+    "name": "nil_text",
+    "ok": true
+  },
+  {
+    "name": "number_kind",
+    "ok": true
+  },
+  {
+    "name": "bool_kind",
+    "ok": true
+  },
+  {
+    "name": "symbol_kind",
+    "ok": true
+  },
+  {
+    "name": "char_kind",
+    "ok": true
+  },
+  {
+    "name": "consecutive_leading_text",
+    "ok": true
+  },
+  {
+    "name": "consecutive_middle_text",
+    "ok": true
+  },
+  {
+    "name": "number_i128",
+    "ok": true
+  },
+  {
+    "name": "number_u128",
+    "ok": true
+  },
+  {
+    "name": "reject_block",
+    "ok": false,
+    "original_diagnostic": [
+      "StringInterpolation#expressions",
+      "block"
+    ],
+    "candidate_diagnostic": [
+      "StringInterpolation#expressions",
+      "block"
+    ]
+  },
+  {
+    "name": "array_map_positive",
+    "ok": true
+  },
+  {
+    "name": "array_each_positive",
+    "ok": true
+  },
+  {
+    "name": "named_each_positive",
+    "ok": true
+  },
+  {
+    "name": "range_each_positive",
+    "ok": true
+  },
+  {
+    "name": "range_map_positive",
+    "ok": true
+  },
+  {
+    "name": "reject_string_size_block",
+    "ok": false,
+    "original_diagnostic": [
+      "StringLiteral#size",
+      "block"
+    ],
+    "candidate_diagnostic": [
+      "StringLiteral#size",
+      "block"
+    ]
+  },
+  {
+    "name": "reject_number_map_block",
+    "ok": false,
+    "original_diagnostic": [
+      "NumberLiteral#map"
+    ],
+    "candidate_diagnostic": [
+      "NumberLiteral#map",
+      "block"
+    ]
+  },
+  {
+    "name": "reject_range_select_block",
+    "ok": false,
+    "original_diagnostic": [
+      "RangeLiteral#select"
+    ],
+    "candidate_diagnostic": [
+      "RangeLiteral#select",
+      "block"
+    ]
+  },
+  {
+    "name": "reject_array_map_argument_block",
+    "ok": false,
+    "original_diagnostic": [
+      "ArrayLiteral#map",
+      "expected 0"
+    ],
+    "candidate_diagnostic": [
+      "ArrayLiteral#map",
+      "expects no arguments"
+    ]
+  },
+  {
+    "name": "reject_named_each_named_argument_block",
+    "ok": false,
+    "original_diagnostic": [
+      "no parameter named 'extra'"
+    ],
+    "candidate_diagnostic": [
+      "NamedTupleLiteral#each",
+      "expects no arguments"
+    ]
+  },
+  {
+    "name": "array_map_second_outer",
+    "ok": true
+  },
+  {
+    "name": "array_each_second_outer",
+    "ok": true
+  },
+  {
+    "name": "array_select_second_outer",
+    "ok": true
+  },
+  {
+    "name": "array_reject_second_outer",
+    "ok": true
+  },
+  {
+    "name": "array_each_with_index_positive",
+    "ok": true
+  },
+  {
+    "name": "named_select_kind_key",
+    "ok": true
+  },
+  {
+    "name": "named_reject_kind_key",
+    "ok": true
+  },
+  {
+    "name": "named_map_array_kind",
+    "ok": true
+  },
+  {
+    "name": "range_map_second_outer",
+    "ok": true
+  },
+  {
+    "name": "array_map_second_unbound",
+    "ok": false,
+    "original_diagnostic": [
+      "undefined macro variable 'missing'"
+    ],
+    "candidate_diagnostic": [
+      "undefined macro variable 'missing'"
+    ]
+  },
+  {
+    "name": "array_map_first_binding_persists",
+    "ok": true
+  },
+  {
+    "name": "array_each_scalar_write_persists",
+    "ok": true
+  },
+  {
+    "name": "array_map_binding_defined_after",
+    "ok": true
+  },
+  {
+    "name": "array_each_with_index_binding_persists",
+    "ok": true
+  },
+  {
+    "name": "array_map_unused_second",
+    "ok": true
+  },
+  {
+    "name": "array_map_skipped_unbound_second",
+    "ok": true
+  }
+]

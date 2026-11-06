@@ -26060,3 +26060,34 @@ integration, fresh bootstrap, or LavinMQ parity.
   helper. Same-lineage review is correlated. The ** plus &identifier prepass,
   macro default AST evaluation, special hooks and literal/source APIs remain
   separate open boundaries. No full prelude, bootstrap or LavinMQ parity claim.
+
+
+### 2026-11-06 — Check macro interpolation AST and block contracts
+
+- [x] Implement StringInterpolation#expressions over ordered AST pieces with
+  payload-local expression source, literal class names, and zero arity.
+- [x] Reject block erasure centrally: admit only implemented receiver/method
+  pairs and validate arguments before executing a block. Retain Range each/map.
+- [x] Make block argument projection and variable ownership match the stock
+  macro interpreter: only each_with_index supplies an index; missing formals
+  preserve existing bindings; supplied bindings and scalar writes persist.
+  Reject an actually evaluated unbound lowercase variable. Preserve NamedTuple
+  keys and result kind through select/reject.
+- Original-first macro_interpolation_expressions_repro.sh passes 36 runtime
+  controls and eight strict rejections on Crystal 1.22.1 and exact S1 35q3658
+  (88 checks, 35q3660). Earlier adversary controls expose eight binding/kind and
+  four shared-scope failures on the prior candidate (35q3636/35q3644).
+- Interpolation-source, expansion-error and ordered-registry neighbors all pass
+  on the same exact compiler (35q3663); compiler/script inputs remain stable.
+- [ ] Implement the remaining stock macro block APIs when reached, including
+  Tuple/Hash iteration, additional Array operations and regex String#gsub. The
+  dispatcher now reports missing capability instead of discarding the block.
+- [ ] Preserve Int128/UInt128 numeric value semantics beyond AST reflection.
+- [ ] Implement the stock zero-argument top-level builtin fallback for an
+  unresolved evaluated variable; do not confuse it with user macro lookup.
+- [ ] Audit legacy macro typeof/sizeof placeholder paths separately from
+  unevaluated argument AST transport. Crystal rejects executing TypeOf in a
+  macro; bare user-macro identifiers also reject (35q3667). Do not restore
+  permissive placeholder behavior on the basis of an unqualified source review.
+- Keyword argument grammar, projected source ownership and default AST binding
+  are separate work. No complete prelude, bootstrap or LavinMQ parity claim.

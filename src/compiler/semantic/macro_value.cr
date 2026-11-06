@@ -852,7 +852,20 @@ module Adamas
         def class_name : String
           node = @arena[@node_id]
           return "ProcPointer" if node.is_a?(Frontend::UnaryNode) && node.operator == "->".to_slice
-          Frontend.node_kind(node).to_s
+          # Source AST literals keep Crystal's macro class even when a value
+          # cannot be represented by the interpreter's numeric value storage.
+          case Frontend.node_kind(node)
+          when .number? then "NumberLiteral"
+          when .string? then "StringLiteral"
+          when .char?   then "CharLiteral"
+          when .regex?  then "RegexLiteral"
+          when .bool?   then "BoolLiteral"
+          when Frontend::NodeKind::Nil then "NilLiteral"
+          when .symbol? then "SymbolLiteral"
+          when .range?  then "RangeLiteral"
+          else
+            Frontend.node_kind(node).to_s
+          end
         end
 
         def call_method(name : String, args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : MacroValue
@@ -861,6 +874,15 @@ module Adamas
           when "nil?"
             # Keep explicit nil's source spelling distinct from an absent value.
             MacroBoolValue.new(node.is_a?(Frontend::NilNode))
+          when "expressions"
+            if node.is_a?(Frontend::StringInterpolationNode)
+              unless args.empty? && (named_args.nil? || named_args.not_nil!.empty?)
+                raise ArgumentError.new("StringInterpolation#expressions expects no arguments")
+              end
+              interpolation_expressions(node)
+            else
+              super
+            end
           when "id"
             if id_name = node_identifier_name(node)
               MacroIdValue.new(id_name)
@@ -909,6 +931,42 @@ module Adamas
           else
             super
           end
+        end
+
+        # StringInterpolation#expressions exposes the ordered AST pieces, not
+        # their runtime values. Each expression keeps its own parser payload;
+        # its span is not relative to the enclosing string's source buffer.
+        private def interpolation_expressions(node : Frontend::StringInterpolationNode) : MacroValue
+          values = [] of MacroValue
+          node.pieces.each do |piece|
+            if piece.kind.text?
+              values << MacroStringValue.new(piece.text.not_nil!)
+              next
+            end
+
+            expr_id = piece.expr.not_nil!
+            source = piece.expression_source.not_nil!
+            child = @arena[expr_id]
+            value = case Frontend.node_kind(child)
+                    when .number?
+                      MacroNumberValue.from_literal(Frontend.node_literal_string(child) || "") ||
+                        MacroSourceNodeValue.new(expr_id, @arena, source, @string_pool)
+                    when .string?
+                      MacroStringValue.new(Frontend.node_literal_string(child) || "")
+                    when .symbol?
+                      MacroSymbolValue.from_literal(Frontend.node_literal_string(child) || "")
+                    when .char?
+                      MacroCharValue.new(Frontend.node_literal_string(child) || "")
+                    when .bool?
+                      MacroBoolValue.new(Frontend.node_literal_string(child) == "true")
+                    when Frontend::NodeKind::Nil
+                      MacroNilLiteralValue.new
+                    else
+                      MacroSourceNodeValue.new(expr_id, @arena, source, @string_pool)
+                    end
+            values << value.as(MacroValue)
+          end
+          MacroArrayValue.new(values)
         end
 
         private def node_identifier_name(node) : String?

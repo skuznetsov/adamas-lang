@@ -413,6 +413,28 @@ The focused macro_def_parameter_cache_spec.cr checks metadata round-trip and
 old-header rejection. This does not close default-expression evaluation,
 special-hook accumulation or block-pass normalization before the ** prepass.
 
+## Macro interpolation reflection and block consumption
+
+StringInterpolation#expressions returns ordered AST pieces, preserving text
+and each expression's own interpolation payload without evaluating runtime
+code. Literal class names describe AST kind even when numeric storage cannot
+represent the literal magnitude. This is not a numeric arithmetic guarantee.
+
+The block dispatcher validates the receiver/method pair and argument shape.
+It may execute an implemented block API or report a capability error; it must
+never fall through to a blockless method and erase the block. Array each/map/
+select/reject supply only the element; each_with_index also supplies the index.
+Bind only supplied block arguments into the shared macro-variable map. Missing
+arguments leave existing bindings unchanged, and assignments and supplied
+bindings remain visible after the block. Diagnose an unbound lowercase variable
+when it is evaluated, preserving lazy unused branches. NamedTuple select/reject
+retain keys and NamedTuple result kind; map returns an Array.
+
+The original-first macro_interpolation_expressions_repro.sh gate covers 44
+reflection, runtime and strict-rejection controls. Full macro block-API coverage,
+zero-argument top-level builtin fallback and canonical rendering for arbitrary
+projected AST nodes need separate evidence.
+
 ## Falsifiers and recovery
 
 Run each script with the exact candidate as its argument. The scripts first
@@ -446,6 +468,7 @@ and check semantic diagnostics and absence of an executable for rejections.
 - `regression_tests/macro_expansion_error_repro.sh`
 - `regression_tests/cli_macro_expansion_error_repro.sh`
 - `regression_tests/macro_ordered_registry_repro.sh`
+- `regression_tests/macro_interpolation_expressions_repro.sh`
 - `spec/parser/macro_def_parameter_cache_spec.cr`
 - `spec/lsp/string_interpolation_source_cache_spec.cr`
 

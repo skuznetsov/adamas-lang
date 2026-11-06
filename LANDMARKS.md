@@ -25574,3 +25574,63 @@ Compiler SHA-256: 534a9935b94c51daa2d3f1fb310d979adf9eb2b9ec5f05aa866a9e815de7b8
 Refresh after macro registration, signature matching, lookup owner order,
 parameter binding or AST-cache layout changes. Rollback is this atomic compiler
 commit. Application/library sources and unrelated WIP remain untouched.
+
+
+## 2026-11-06 — Checked macro interpolation reflection retains AST pieces
+
+StringInterpolation#expressions exposes ordered literal-text and expression AST
+pieces without evaluating runtime expressions. Nonliteral children retain their
+own interpolation payload instead of interpreting a span against outer source.
+Literal class names remain accurate for i128/u128 values beyond Int64 storage;
+this does not establish numeric value or arithmetic parity.
+
+The block dispatcher no longer silently calls a blockless API. It validates
+receiver/method and argument shape, including Range each/map. Adversarial tests
+also exposed shared interpreter defects: Array helpers fabricated an index,
+missing arguments overwrote outer bindings, block contexts copied the variable
+map, and NamedTuple filters returned Arrays without keys. Bind only yielded
+arguments into the shared map, preserve subsequent writes, diagnose unbound
+lowercase variables on use, and retain NamedTuple keys/kind for select/reject.
+Unused missing formals and untaken lazy branches remain accepted.
+
+Original-first macro_interpolation_expressions_repro.sh passes 44 cases on
+Crystal 1.22.1 and exact S1 35q3658 (88 checks, 35q3660): 36 runtime controls and
+eight strict rejections with diagnostic identity and no executable. The
+previous candidate fails eight of ten binding/kind controls and all four shared
+scope controls (35q3636/35q3644); stock passes them (35q3635/35q3641). These
+counterexamples distinguish the interpreter contracts from isolated fixture
+adjustments. Two additional stock unused/lazy controls pass (35q3650).
+Interpolation-source, expansion-error and ordered-registry neighbors pass on
+the same exact compiler with compiler/script inputs stable (35q3663).
+
+Bounded Adversary verdict: ROBUST for the declared 44-case contracts, with a
+correlated source review. The review questioned strict lookup in a legacy
+macro typeof inference helper and suggested a user-macro fallback. Stock
+controls reject both forms: executing TypeOf in a macro is unsupported and a
+bare user-macro identifier is an undefined macro variable (35q3667). The exact
+candidate also rejects both (35q3668); TypeOf diagnostic parity is not claimed.
+Stock's fallback only enumerates top-level builtins (macros/methods.cr:47).
+Do not promote legacy placeholder behavior into a compatibility requirement.
+
+Full block API coverage, zero-argument top-level builtin fallback, arbitrary AST
+canonical rendering and Int128 arithmetic remain open. This gate does not
+establish complete prelude, fresh bootstrap, LavinMQ object/link/server execution
+or upstream test parity. Application and stdlib sources are unchanged.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+macro-interpolation-block-permanent35q3660/result.json,
+macro-interpolation-block-neighbors35q3663/result.json,
+macro-strict-lookup-stock35q3667/result.json,
+macro-strict-lookup-candidate35q3668/result.json,
+macro-block-binding-baseline35q3636/result.json,
+macro-block-scope-baseline35q3644/result.json, and
+macro-block-unused-stock35q3650/result.json.
+All 1,916 compiler files match build.macro-interpolation-block-final35q3658.source.json
+(SHA-256 a9beac78afbc1087766c258f122f0d888d8c6c6b75897359c98fb2095dbe32bd).
+Compiler SHA-256: 463f79dbfd948276f4e87563596840e644a3c26f3a517343e47ff7206b51aa5f.
+Fixture-manifest SHA-256:
+67972b288ea121fbee93926699bfd25f13dbec4101af01b9e0321232635318ef.
+Refresh after interpolation normalization, child source ownership, value
+classification, block binding, variable evaluation or dispatch changes. Rollback
+is this atomic compiler commit. No application/stdlib change or relaxed type
+check.

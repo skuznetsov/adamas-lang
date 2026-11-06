@@ -866,6 +866,21 @@ module Adamas
           MacroNilValue.new
         end
 
+        private def macro_variable_value(name : String, context : Context) : MacroValue?
+          if value = context.variables[name]?
+            return value
+          end
+
+          # A lowercase identifier in an evaluated macro expression is a
+          # variable read. Keep unresolved source ASTs on expr_to_macro_value;
+          # once evaluation reaches this helper, Crystal rejects an unbound
+          # variable rather than treating it as nil or empty text.
+          unless constant_like_name?(name)
+            raise MacroEvaluationError.new("undefined macro variable '#{name}'")
+          end
+          nil
+        end
+
         private def node_for_expr?(expr_id : ExprId) : TypedNode?
           return nil if expr_id.null_ptr?
           return nil if expr_id.invalid?
@@ -1003,7 +1018,7 @@ module Adamas
             MacroNilLiteralValue.new
           when .identifier?, .constant?
             name = Frontend.node_literal_string(node)
-            if name && (macro_val = context.variables[name]?)
+            if name && (macro_val = macro_variable_value(name, context))
               macro_val
             elsif name && constant_like_name?(name)
               resolve_scoped_macro_value(name, context) || MacroIdValue.new(name)
@@ -1250,7 +1265,7 @@ module Adamas
                          type_value
                        elsif obj.is_a?(Frontend::IdentifierNode)
                          name = Frontend.node_literal_string(obj)
-                         name ? context.variables[name]? : nil
+                         name ? macro_variable_value(name, context) : nil
                        else
                          evaluate_to_macro_value(node.object, context)
                        end
@@ -1765,20 +1780,39 @@ module Adamas
             if member.in?("map", "each")
               check_macro_range_arguments(member, args, named_args)
             end
-            if member.in?("map", "each", "select", "reject", "each_with_index")
+            unless member.in?("map", "each")
+              raise MacroEvaluationError.new("RangeLiteral##{member} is not implemented with a block")
+            end
+            if member.in?("map", "each")
               elements = expand_macro_range(receiver, context)
               return macro_nil_value unless elements
               receiver = MacroArrayValue.new(elements)
             end
           end
 
+          # Only a receiver/method pair handled below may consume a block.
+          # A block cannot be erased by falling through to the blockless API.
+          supported = case receiver
+                      when MacroArrayValue
+                        member.in?("map", "select", "reject", "each", "each_with_index")
+                      when MacroNamedTupleValue
+                        member.in?("map", "select", "reject", "each")
+                      else
+                        false
+                      end
+          unless supported
+            raise MacroEvaluationError.new("#{receiver.class_name}##{member} is not implemented with a block")
+          end
+
+          unless args.empty? && (named_args.nil? || named_args.not_nil!.empty?)
+            raise MacroEvaluationError.new("#{receiver.class_name}##{member} expects no arguments")
+          end
+
           case member
           when "map", "select", "reject"
-            return evaluate_macro_block_map(receiver, member, block, context)
-          when "each", "each_with_index"
-            return evaluate_macro_block_each(receiver, block, context)
+            evaluate_macro_block_map(receiver, member, block, context)
           else
-            call_macro_value_method(receiver, member, args, named_args, context)
+            evaluate_macro_block_each(receiver, member, block, context)
           end
         end
 
@@ -1789,6 +1823,7 @@ module Adamas
         # take effect. Returns nil like the original.
         private def evaluate_macro_block_each(
           receiver : MacroValue,
+          member : String,
           block : Frontend::BlockNode,
           context : Context
         ) : MacroValue
@@ -1796,7 +1831,7 @@ module Adamas
           when MacroArrayValue
             receiver.elements.each_with_index do |elem, idx|
               values = [elem] of MacroValue
-              if block.params && block.params.not_nil!.size > 1
+              if member == "each_with_index"
                 values << MacroNumberValue.new(idx.to_i64)
               end
               evaluate_block_body_statements(block, context, values)
@@ -1813,25 +1848,37 @@ module Adamas
         # Evaluate a block body with statement semantics: each body expression
         # goes through `evaluate_expression`, so assignments (`x = ...`) and
         # index assignments (`arr[i] = ...`) are applied. Block params are bound
-        # in a scoped context; because `with_variable` shallow-dups the variable
-        # map (sharing MacroValue objects), in-place mutations of a captured
-        # container persist to the enclosing scope, matching original Crystal.
+        # in the shared variable map. Yielded bindings and scalar assignments
+        # made in the body remain visible afterward, matching Crystal's macro
+        # interpreter.
         private def evaluate_block_body_statements(
           block : Frontend::BlockNode,
           context : Context,
           values : Array(MacroValue)
         ) : Nil
-          scoped = context
-          if params = block.params
-            params.each_with_index do |param, idx|
-              next unless param_name = param.name
-              value = values[idx]? || macro_nil_value
-              scoped = scoped.with_variable(intern_name(param_name), value)
-            end
-          end
-
+          bind_block_context(block, context, values)
           block.body.each do |expr_id|
-            evaluate_expression(expr_id, scoped)
+            evaluate_expression(expr_id, context)
+          end
+        end
+
+        # Crystal's macro interpreter writes yielded block arguments into the
+        # same macro-variable map and leaves those bindings visible afterward.
+        # Missing arguments do not overwrite outer variables. If no outer value
+        # exists, the missing identifier is diagnosed only if evaluated.
+        private def bind_block_context(
+          block : Frontend::BlockNode,
+          context : Context,
+          values : Array(MacroValue)
+        ) : Nil
+          return unless params = block.params
+
+          params.each_with_index do |param, idx|
+            next unless param_name = param.name
+            name = intern_name(param_name)
+            if value = values[idx]?
+              context.variables[name] = value
+            end
           end
         end
 
@@ -1844,11 +1891,8 @@ module Adamas
           case receiver
           when MacroArrayValue
             results = [] of MacroValue
-            receiver.elements.each_with_index do |elem, idx|
+            receiver.elements.each do |elem|
               values = [elem] of MacroValue
-              if block.params && block.params.not_nil!.size > 1
-                values << MacroNumberValue.new(idx.to_i64)
-              end
               predicate = evaluate_block_body(block, context, values)
               case member
               when "map"
@@ -1866,6 +1910,7 @@ module Adamas
             return MacroArrayValue.new(results)
           when MacroNamedTupleValue
             results = [] of MacroValue
+            filtered = {} of String => MacroValue
             receiver.entries.each do |key, value|
               values = [MacroIdValue.new(key).as(MacroValue), value]
               predicate = evaluate_block_body(block, context, values)
@@ -1873,12 +1918,13 @@ module Adamas
               when "map"
                 results << predicate
               when "select"
-                results << value if predicate.truthy?
+                filtered[key] = value if predicate.truthy?
               when "reject"
-                results << value unless predicate.truthy?
+                filtered[key] = value unless predicate.truthy?
               end
             end
-            return MacroArrayValue.new(results)
+            return MacroArrayValue.new(results) if member == "map"
+            MacroNamedTupleValue.new(filtered)
           else
             return macro_nil_value
           end
@@ -1889,15 +1935,7 @@ module Adamas
           context : Context,
           values : Array(MacroValue)
         ) : MacroValue
-          scoped = context
-          if params = block.params
-            params.each_with_index do |param, idx|
-              next unless param_name = param.name
-              value = values[idx]? || macro_nil_value
-              scoped = scoped.with_variable(intern_name(param_name), value)
-            end
-          end
-
+          bind_block_context(block, context, values)
           if ENV["DEBUG_MACRO_BLOCK"]?
             names = block.params.try(&.map do |param|
               name = param.name
@@ -1929,7 +1967,7 @@ module Adamas
 
           result = macro_nil_value
           block.body.each do |expr_id|
-            result = evaluate_to_macro_value(expr_id, scoped)
+            result = evaluate_to_macro_value(expr_id, context)
           end
           result
         end
@@ -2008,7 +2046,7 @@ module Adamas
           # ivar.annotation(Foo) where ivar is a macro variable
           if obj.is_a?(Frontend::IdentifierNode) && context.owner_type
             id_name = Frontend.node_literal_string(obj) || ""
-            macro_val = context.variables[id_name]?
+            macro_val = macro_variable_value(id_name, context)
 
             # If it's a MacroMetaVarValue, use its annotation method
             if macro_val.is_a?(MacroMetaVarValue)
@@ -2690,7 +2728,7 @@ module Adamas
                   STDERR.puts "[MACRO_VAR] bytesize missing"
                 end
               end
-              if macro_val = context.variables[name]?
+              if macro_val = macro_variable_value(name, context)
                 macro_val.to_macro_output
               elsif constant_like_name?(name)
                 resolve_scoped_macro_value(name, context).try(&.to_macro_output) || ""
@@ -2755,7 +2793,7 @@ module Adamas
           if obj.is_a?(Frontend::IdentifierNode)
             name = Frontend.node_literal_string(obj)
             if name
-              base_value = context.variables[name]?
+              base_value = macro_variable_value(name, context)
             end
           end
 
@@ -2974,7 +3012,7 @@ module Adamas
                                            {evaluate_instance_var_expression(obj, context), nil}
                                          when Frontend::IdentifierNode
                                            var_name = Frontend.node_literal_string(obj) || ""
-                                           if mv = context.variables[var_name]?
+                                           if mv = macro_variable_value(var_name, context)
                                              {mv.to_macro_output, mv}
                                            else
                                              {"", nil}
@@ -3045,7 +3083,7 @@ module Adamas
           # Legacy: Handle ivar metadata access when base_value is an instance var name
           if context.owner_type && obj.is_a?(Frontend::IdentifierNode)
             var_name = Frontend.node_literal_string(obj) || ""
-            if mv = context.variables[var_name]?
+            if mv = macro_variable_value(var_name, context)
               ivar_name = mv.to_macro_output
               if !ivar_name.empty?
                 class_symbol = context.owner_type.not_nil!
@@ -3200,7 +3238,7 @@ module Adamas
               # инстанс-поля (взятым из @type.instance_vars).
               if obj.is_a?(Frontend::IdentifierNode) && context.owner_type
                 id_name = Frontend.node_literal_string(obj) || ""
-                macro_val = context.variables[id_name]?
+                macro_val = macro_variable_value(id_name, context)
                 base_name = macro_val ? macro_val.to_macro_output : ""
                 if base_name.empty?
                   return ""
@@ -3360,7 +3398,7 @@ module Adamas
                 inner_member = intern_name(obj.member)
                 if inner_member == "type" && inner_obj.is_a?(Frontend::IdentifierNode)
                   var_name = Frontend.node_literal_string(inner_obj) || ""
-                  if macro_val = context.variables[var_name]?
+                  if macro_val = macro_variable_value(var_name, context)
                     ivar_name = macro_val.to_macro_output
                     if !ivar_name.empty? && context.owner_type
                       class_symbol = context.owner_type.not_nil!
@@ -3600,7 +3638,7 @@ module Adamas
           # so constructs like `if ann` or `if flag` behave reasonably.
           if node.is_a?(Frontend::IdentifierNode)
             name = Frontend.node_literal_string(node)
-            if name && (macro_val = context.variables[name]?)
+            if name && (macro_val = macro_variable_value(name, context))
               if ENV["DEBUG_MACRO_IDENT_COND"]?
                 STDERR.puts "[MACRO_IDENT_COND] name=#{name} class=#{macro_val.class} class_name=#{macro_val.class_name} truthy=#{macro_val.truthy?} value=#{macro_val.to_macro_output.inspect}"
               end
@@ -3610,7 +3648,8 @@ module Adamas
               if ENV["DEBUG_MACRO_IDENT_COND"]? && name
                 STDERR.puts "[MACRO_IDENT_COND] name=#{name} class=(missing) truthy=false value=nil"
               end
-              # Unbound macro variable is treated as falsy.
+              # Unresolved constant-like names remain falsy here. A missing
+              # lowercase macro variable raises in macro_variable_value.
               return {false, context}
             end
           end
@@ -3655,7 +3694,7 @@ module Adamas
             nil
           when Frontend::IdentifierNode
             name = Frontend.node_literal_string(node)
-            if name && (value = context.variables[name]?)
+            if name && (value = macro_variable_value(name, context))
               return value.to_i if value.is_a?(MacroNumberValue)
             end
             nil
@@ -4239,7 +4278,7 @@ module Adamas
           return nil if segments.size < 2
 
           head = segments.first
-          macro_head = context.variables[head]?
+          macro_head = macro_variable_value(head, context)
           return nil unless macro_head
 
           substituted_head = macro_head.to_macro_output
@@ -4590,7 +4629,7 @@ module Adamas
           when Frontend::IdentifierNode
             # Look up variable type from context
             name = Frontend.node_literal_string(node)
-            if name && (macro_val = context.variables[name]?)
+            if name && (macro_val = macro_variable_value(name, context))
               macro_val.type_name
             else
               nil
