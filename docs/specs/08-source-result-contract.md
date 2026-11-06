@@ -144,6 +144,35 @@ receiver cannot invalidate that exact application. Broad receiver include or
 element-type guesses cannot reconstruct missing module bindings. Method-forall
 bindings retain their separately validated source call ownership.
 
+A generated allocator has two distinct owners. The selected initializer
+owns source parameter restrictions and callback typing. The generated function
+owns allocation, its receiverless outer target, argument slots, and physical
+ABI. A generic block lookup must not replace that target with the initializer
+instance method. An explicit source `self.new` remains an ordinary method and
+retains its own actual result.
+
+The generated `.new` expression has the allocated instance as its source type
+and instance value kind, including when initialize terminates. Store that
+source type on the HIR Call itself and its context entry; local assignment
+consumes the instruction's canonical type. Keep the generated Function's
+physical bottom ABI separate for exact MIR calls. Setting only cached facts
+or context types is insufficient and is rejected by the local-return falsifier.
+
+Retain each generated outer call's exact caller object, ValueId, and generated
+target. After deferred generation and RTA, validate its current instruction,
+completed generated-body witness, receiverless nonvirtual target, physical
+argument count, and callback Proc ABI. A stale or replaced body cannot be
+certified from a same-spelled method. Result-only Call/Copy/Local repair may
+transport an already-current source or layout proof independently across that
+single owned revision; it must not revive an earlier stale proof.
+
+The bounded original-first corpus covers stored callbacks, defaults, recursion,
+explicit forwarding, instance/class-object results, and strict return/argument
+rejections. Stock-valid `self.new` class/union companions stay explicitly open.
+Typed-local coercion, `typeof` result ownership, and source Void callbacks also
+remain separate open obligations. This contract does not establish complete
+prelude, bootstrap, application linking, runtime, or upstream-test parity.
+
 Known open probes include broad or mixed-kind annotated results consumed
 before their exact body facts are available, callback method-variable defaults,
 unknown external-label admission, and class/instance body reuse through keyword
@@ -171,6 +200,7 @@ and check semantic diagnostics and absence of an executable for rejections.
 - `regression_tests/contextual_global_source_result_repro.sh`
 - `regression_tests/materialized_method_source_owner_repro.sh`
 - `regression_tests/source_module_method_owner_repro.sh`
+- `regression_tests/source_heap_block_allocator_owner_repro.sh`
 
 Source, toolchain, input manifests, commands, and outcomes belong in the
 corresponding LANDMARK entry. Refresh after result publication, return

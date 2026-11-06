@@ -8043,6 +8043,7 @@ module Adamas::HIR
     # Track which allocators have been generated (to avoid duplicates for reopened classes)
     @generated_allocators : Set(String)
     @generated_allocator_layout_bodies = {} of String => Tuple(Adamas::HIR::Function, UInt64, String)
+    @generated_allocator_calls = {} of {Adamas::HIR::Function, ValueId} => String
     @generated_allocator_layout_recipes = {} of String => GeneratedAllocatorLayoutRecipe
     @deferred_allocator_overload_targets = Set(String).new
     # A generated wrapper has no source Def of its own. Retain the initializer
@@ -46963,8 +46964,9 @@ module Adamas::HIR
       end
 
       # A direct initialize call has its source result; the allocator discards
-      # it and returns the allocated instance. A bottom initializer remains
-      # bottom through .new.
+      # it and returns the allocated instance. A bottom initializer makes the
+      # generated function's physical ABI bottom. The .new expression retains
+      # the allocated owner as its source type in lower_call.
       allocator_return_type = if init_result = initializer_return_type
                                 noreturn_type?(init_result) ? init_result : class_info.type_ref
                               else
@@ -58711,10 +58713,9 @@ module Adamas::HIR
       end
     end
 
-    # A return-type repair preserves the selected source initializer only when
-    # it changes result annotations and no other operation or operand. Transport
-    # an already-current allocator proof across that one owned mutation; never
-    # revive a proof invalidated by an earlier or intervening body change.
+    # Result-only repair retains generated origin/layout and selected source
+    # proofs independently. Both must be current before the one owned mutation;
+    # no earlier or intervening body change may be hidden by refreshing them.
     private def replace_repaired_result_type(
       func : Function,
       block : Block,
@@ -58722,50 +58723,57 @@ module Adamas::HIR
       replacement : Value,
     ) : Nil
       previous = block.instructions[index]
-      proof = @generated_allocator_sources[func.name]?
+      source_proof = @generated_allocator_sources[func.name]?
+      layout_proof = @generated_allocator_layout_bodies[func.name]?
       revision = func.body_revision
-      preserve_source = false
-      if proof && proof[0].same?(func) && proof[1] == revision &&
-         previous.id == replacement.id && previous.type != replacement.type
-        preserve_source = case previous
-                          when Call
-                            if call = replacement.as?(Call)
-                              previous.method_name == call.method_name &&
-                                previous.has_receiver? == call.has_receiver? &&
-                                previous.receiver_value == call.receiver_value &&
-                                previous.args == call.args &&
-                                previous.block == call.block &&
-                                previous.virtual == call.virtual
-                            else
-                              false
-                            end
-                          when Copy
-                            if copy = replacement.as?(Copy)
-                              previous.source == copy.source
-                            else
-                              false
-                            end
-                          when Local
-                            if local = replacement.as?(Local)
-                              previous.name == local.name &&
-                                previous.scope == local.scope &&
-                                previous.mutable == local.mutable
-                            else
-                              false
-                            end
-                          else
-                            false
-                          end
+      result_only = false
+      if previous.id == replacement.id && previous.type != replacement.type
+        result_only = case previous
+                      when Call
+                        if call = replacement.as?(Call)
+                          previous.method_name == call.method_name &&
+                            previous.has_receiver? == call.has_receiver? &&
+                            previous.receiver_value == call.receiver_value &&
+                            previous.args == call.args &&
+                            previous.block == call.block &&
+                            previous.virtual == call.virtual
+                        else
+                          false
+                        end
+                      when Copy
+                        if copy = replacement.as?(Copy)
+                          previous.source == copy.source
+                        else
+                          false
+                        end
+                      when Local
+                        if local = replacement.as?(Local)
+                          previous.name == local.name &&
+                            previous.scope == local.scope &&
+                            previous.mutable == local.mutable
+                        else
+                          false
+                        end
+                      else
+                        false
+                      end
       end
       block.replace(index, replacement)
-      return unless proof && preserve_source
-      return unless func.body_revision == (revision &+ 1_u64)
-      return unless @generated_allocator_sources[func.name]? == proof
+      return unless result_only && func.body_revision == (revision &+ 1_u64)
       current = @module.function_by_name(func.name)
       return unless current && current.same?(func)
-      @generated_allocator_sources[func.name] = {
-        func, func.body_revision, proof[2], proof[3], proof[4], proof[5],
-      }
+      if source_proof && source_proof[0].same?(func) && source_proof[1] == revision &&
+         @generated_allocator_sources[func.name]? == source_proof
+        @generated_allocator_sources[func.name] = {
+          func, func.body_revision, source_proof[2], source_proof[3], source_proof[4], source_proof[5],
+        }
+      end
+      if layout_proof && layout_proof[0].same?(func) && layout_proof[1] == revision &&
+         @generated_allocator_layout_bodies[func.name]? == layout_proof
+        @generated_allocator_layout_bodies[func.name] = {
+          func, func.body_revision, layout_proof[2],
+        }
+      end
     end
 
     private def repair_stale_call_return_types : Nil
@@ -69063,6 +69071,78 @@ module Adamas::HIR
       TypeRef::UINT64
     end
 
+    # This witness is produced only by allocator generation. A source .new
+    # with the same spelling cannot borrow it, and layout invalidation removes
+    # it together with the exact generated body.
+    private def materialized_generated_allocator(name : String) : Function?
+      proof = @generated_allocator_layout_bodies[name]?
+      return nil unless proof
+      function = @module.function_by_name(name)
+      return nil unless function && function.same?(proof[0]) &&
+                        function.body_revision == proof[1] &&
+                        @module.has_function_with_body?(name)
+      function
+    end
+
+    # Recursive lowering and layout replay can finish a wrapper after its
+    # caller. Require the generated body's witness and physical signature only
+    # after those producers and RTA have settled, before MIR consumes the call.
+    def validate_generated_allocator_call_contracts!(hir_module : Adamas::HIR::Module) : Nil
+      return if @generated_allocator_calls.empty?
+      unless hir_module.same?(@module)
+        raise LoweringError.new("generated allocator calls belong to another HIR module")
+      end
+      hir_module.functions.each do |caller|
+        caller.blocks.each do |block|
+          block.instructions.each do |instruction|
+            target_name = @generated_allocator_calls[{caller, instruction.id}]?
+            next unless target_name
+            unless call = instruction.as?(Call)
+              raise LoweringError.new("generated allocator outer call changed instruction kind: #{target_name} in #{caller.name}")
+            end
+            validate_generated_allocator_call_contract!(caller, call, target_name)
+          end
+        end
+      end
+    end
+
+    private def validate_generated_allocator_call_contract!(caller : Function, call : Call, target_name : String) : Nil
+      allocator = materialized_generated_allocator(target_name)
+      unless allocator && call.method_name == target_name &&
+             !call.has_receiver? && !call.virtual
+        raise LoweringError.new("generated allocator outer call lost its completed target: #{target_name} in #{caller.name}")
+      end
+      unless call.args.size == allocator.params.size
+        raise LoweringError.new("generated allocator outer call has inconsistent argument or block slots: #{target_name} in #{caller.name}")
+      end
+      # The physical wrapper can terminate in its initializer. Source .new
+      # still has the allocated instance result; this check owns only its ABI.
+      unless call.type == allocator.return_type || noreturn_type?(allocator.return_type)
+        raise LoweringError.new("generated allocator outer call changed result type: #{target_name} in #{caller.name}")
+      end
+      allocator.params.each_with_index do |param, index|
+        next unless proc_type_ref?(param.type)
+        expected = @module.get_type_descriptor(param.type)
+        actual_type = hir_value_type_in_function(caller, call.args[index])
+        actual = actual_type.try { |type| @module.get_type_descriptor(type) }
+        unless expected && actual && actual.kind == TypeKind::Proc &&
+               !expected.type_params.empty? && !actual.type_params.empty?
+          raise LoweringError.new("generated allocator callback has no concrete Proc signature: #{target_name} in #{caller.name}")
+        end
+        expected_signature = expected.type_params
+        actual_signature = actual.type_params
+        same_inputs = expected_signature.size == actual_signature.size &&
+                      expected_signature[0, expected_signature.size - 1] == actual_signature[0, actual_signature.size - 1]
+        # A semantic Void result is discarded by the receiving callback;
+        # every other result has an exact ABI, including Nil.
+        same_result = expected_signature.last == TypeRef::VOID ||
+                      expected_signature.last == actual_signature.last
+        unless same_inputs && same_result
+          raise LoweringError.new("generated allocator outer call has inconsistent Proc ABI: #{target_name} in #{caller.name}")
+        end
+      end
+    end
+
     private def get_function_return_type(
       name : String,
       call_arg_count : Int32? = nil,
@@ -69071,6 +69151,9 @@ module Adamas::HIR
     ) : TypeRef
       return TypeRef::VOID unless v2_string_readable?(name)
       validate_current_primitive_template_source_binding!(name)
+      if allocator = materialized_generated_allocator(name)
+        return allocator.return_type
+      end
       base_name = strip_type_suffix(name)
       if backend_return = backend_synthesized_method_return_contract(name)
         install_backend_synthesized_method_return_contract(
@@ -115573,6 +115656,7 @@ module Adamas::HIR
       prefer_allocator_new_call = false
       constructor_arg_binding_name : String? = nil
       allocator_call_shape_target : String? = nil
+      allocator_call_shape_result_type : TypeRef? = nil
       allocator_explicit_new_call = false
       # Type literal receiver whose class method resolved to an ancestor def.
       class_literal_receiver_name : String? = nil
@@ -121099,6 +121183,7 @@ module Adamas::HIR
                 call_named_arg_names,
                 source_initializer_entry,
               )
+              allocator_call_shape_result_type = class_info.type_ref
               if source_only_allocator && !has_unknown_arg_types &&
                  !@module.has_function_with_body?(allocator_call_shape_target)
                 actual_names = arg_types.map { |type| get_type_name_from_ref(type) }.join(", ")
@@ -122296,6 +122381,10 @@ module Adamas::HIR
       end
       has_typed_args = arg_types.any? { |t| t != TypeRef::VOID }
 
+      # The source initializer owns callback typing; the generated wrapper
+      # owns allocation, its outer call ABI, and its result. Block lookup must
+      # not rebind that receiverless wrapper to an initializer instance method.
+      generated_allocator_call_target = allocator_explicit_new_call ? nil : allocator_call_shape_target
       block_return_name = nil
       raw_callback_target : String? = nil
       raw_callback_source_def : Adamas::Compiler::Frontend::DefNode? = nil
@@ -122327,7 +122416,7 @@ module Adamas::HIR
         # `Crystal::DWARF::Info#each$block` for a `Nil | Array(String) | String#each` call).
         # Keep the already-resolved union/static target unless we can constrain the
         # lookup to a real receiver owner.
-        if !receiver_id || receiver_base_for_block_target
+        if generated_allocator_call_target.nil? && (!receiver_id || receiver_base_for_block_target)
           if block_entry = lookup_block_function_def_for_call(base_method_name, call_args.size, block_target_arg_types, receiver_base_for_block_target)
             # Per-shape block specialization (see shape_keyed_block_target): re-key the
             # arity-collapsed block target to the concrete callsite arg shape so distinct
@@ -122650,14 +122739,15 @@ module Adamas::HIR
 
       # Try to infer return type using mangled name first, fallback to base name
       # For non-overloaded functions, prefer base name since that's how they're registered in HIR module
-      return_type = get_function_return_type(mangled_method_name, return_def_arg_count, entry_def)
+      return_type = get_function_return_type(mangled_method_name, return_def_arg_count,
+        generated_allocator_call_target ? nil : entry_def)
       # Preserve the structured resolver's selected overload through return
       # inference. If typed resolution missed but the exact symbol cache already
       # has a concrete return, keep that contract: an arity-only retry can choose
       # a sibling overload (for example Array#[]?(Range) for an Int32 call).
       # Arity fallback is admissible only while the exact return is unresolved.
-      selected_return_def = entry_def
-      if selected_return_def.nil? &&
+      selected_return_def = generated_allocator_call_target ? nil : entry_def
+      if generated_allocator_call_target.nil? && selected_return_def.nil? &&
          (return_type == TypeRef::VOID ||
          return_type == TypeRef::NIL ||
          unresolved_generic_return_type?(return_type))
@@ -122944,7 +123034,7 @@ module Adamas::HIR
         # Re-running block canonicalization without an owner constraint can
         # retarget a valid union dispatch key (for example `Nil | Array(String) | String#each$block`)
         # to an unrelated owner with the same short name/arity.
-        if (!receiver_id || receiver_base_for_canon) && raw_callback_target.nil?
+        if generated_allocator_call_target.nil? && (!receiver_id || receiver_base_for_canon) && raw_callback_target.nil?
           typed_canon = lookup_block_function_def_for_call(base_method_name, call_args.size, arg_types, receiver_base_for_canon)
           if typed_canon
             # Per-shape block specialization: keep the concrete callsite arg shape instead
@@ -123025,7 +123115,7 @@ module Adamas::HIR
         "[L11_RT] site=B name=#{mangled_method_name}",
         "[L11_RT] site=B rt=#{get_type_name_from_ref(return_type)}",
       )
-      if block_return_name
+      if block_return_name && generated_allocator_call_target.nil?
         receiver_name = receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : nil
         if inferred = resolve_block_dependent_return_type(
              mangled_method_name,
@@ -124252,7 +124342,16 @@ module Adamas::HIR
       # source .new is an ordinary class method and may return another type.
       # Prefer fully-qualified owners to avoid short-name collisions.
       return_type_pinned = false
-      if method_name == "new" && !allocator_explicit_new_call
+      if generated_allocator_call_target
+        # Allocation, not the initializer's result or bottom effect, owns the
+        # source type of .new. Keep the physical wrapper ABI separate below.
+        if instance_type = allocator_call_shape_result_type
+          return_type = instance_type
+          return_type_pinned = true
+        else
+          raise LoweringError.new("generated allocator outer call has no source instance type", node)
+        end
+      elsif method_name == "new" && !allocator_explicit_new_call
         owner_candidates = [] of String
         if full_method_name
           full_base = strip_type_suffix(full_method_name)
@@ -125534,7 +125633,7 @@ module Adamas::HIR
               )
             end
           end
-          wildcard_inputs = unless call_virtual || raw_callback_target
+          wildcard_inputs = unless call_virtual || raw_callback_target || generated_allocator_call_target
                               wildcard_callback_input_names(selected_call_entry_def, selected_call_entry_name || mangled_method_name)
                             end
           # The selected signature supplies the source kind of each input.
@@ -125866,7 +125965,7 @@ module Adamas::HIR
       # Block may be lowered to a trailing proc (`has_block_call` false) while `block_id` stays set.
       # `args`/`arg_types` then include the proc, but `lookup_block_function_def_for_call` must match
       # the `def ... &` arity using only the non-proc arguments from `call_args`.
-      if (has_block_call || block_id) && receiver_id && raw_callback_target.nil?
+      if generated_allocator_call_target.nil? && (has_block_call || block_id) && receiver_id && raw_callback_target.nil?
         recv_base_for_emit = yield_receiver_base_name(ctx.type_of(receiver_id))
         lookup_arg_types = if block_id && !has_block_call && args.size > call_args.size && call_args.size <= arg_types.size
                              arg_types[0, call_args.size]
@@ -126214,6 +126313,17 @@ module Adamas::HIR
           return_type = target.return_type if function_state(emit_method_name).completed?
         end
       end
+      if allocator_target = generated_allocator_call_target
+        unless emit_method_name == allocator_target &&
+               mangled_method_name == allocator_target && !receiver_id && !call_virtual
+          raise LoweringError.new("generated allocator outer call changed target or receiver: #{allocator_target}", node)
+        end
+        # HIR expressions and their local copies retain the producer's source
+        # instance result, including when initialize terminates. The exact
+        # generated Function owns the physical ABI; MIR consumes that signature
+        # after validate_generated_allocator_call_contracts! has settled it.
+        return_type = allocator_call_shape_result_type.not_nil!
+      end
       # V2 bootstrap: `receiver_id.nil?` can be miscompiled for UInt32? zombie-nil
       # in stage2. Truthiness keeps real ValueId(0) receivers distinct from nil.
       call = if receiver_id
@@ -126286,13 +126396,19 @@ module Adamas::HIR
       write_back_block_proc_captures(ctx, uncoerced_args)
       # Keep the selected target's bottom effect separate from VOID, which
       # also represents an unresolved ABI. A virtual call needs every target.
-      unless call_virtual
+      unless call_virtual || generated_allocator_call_target
         if selected_call_noreturn?(emit_method_name, selected_call_entry_def) ||
            certify_inherited_virtual_bottom?(ctx.function, call, selected_call_entry_def)
           @control_flow_dead_blocks.add({ctx.function.id, ctx.current_block})
         end
       end
-      if !call_virtual && register_materialized_source_return_value_facts(ctx, call.id, mangled_method_name)
+      if allocator_target = generated_allocator_call_target
+        @generated_allocator_calls[{ctx.function, call.id}] = allocator_target
+        # The initializer's last value is discarded. In particular a class
+        # object returned there cannot turn the allocated instance into a
+        # type literal at the caller.
+        ctx.register_source_value_facts(call.id, [{return_type, false}])
+      elsif !call_virtual && register_materialized_source_return_value_facts(ctx, call.id, mangled_method_name)
         # A virtual call needs a family-level result join, not one target's certificate.
       elsif function_returns_type_literal?(mangled_method_name, base_method_name)
         ctx.mark_type_literal(call.id)

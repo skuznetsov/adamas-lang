@@ -2950,6 +2950,7 @@ module Adamas
         hir_converter.validate_included_forall_virtual_return_certificates!(hir_module)
         hir_converter.validate_deferred_union_variant_contracts!(hir_module)
         hir_converter.validate_inherited_virtual_bottom_certificates!(hir_module)
+        hir_converter.validate_generated_allocator_call_contracts!(hir_module)
 
         if debug_profile
           timings["dbg_count_hir_reachable_names"] = reachable.size.to_f

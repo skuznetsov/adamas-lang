@@ -25723,12 +25723,40 @@ integration, fresh bootstrap, or LavinMQ parity.
 - Actual unchanged LavinMQ passes Tuple#size and reaches Isolated#start_thread
   returning Nil | Thread (35q3031). Comparison 35q3033 finds only compiler AST
   and binary changes; project, shard and stock stdlib bytes are unchanged.
-- [ ] Preserve generated allocator targets through block canonicalization.
+- [x] Preserve generated allocator targets through block canonicalization.
   The default + stored-callback Token repro fails before the fix (35q3024,
-  35q3032); final emission calls initialize without a receiver, attaches its
-  Nil facts, and omits the generated new target. A fact-only override is unsafe.
+  35q3032); the qualified repair and remaining consumers are recorded below.
 - [ ] Probe conflicting generic module-formal reopenings, e.g. M(T) then M(U).
   Source review found no registration-time check; runtime/compiler parity is
   unqualified. Keep this separate from the verified ownership repair.
 - Prelude, initializer replay, previous_def chains, bootstrap and unchanged
   LavinMQ execution/upstream parity remain open. No stdlib/application edits.
+
+### 2026-11-06 — Preserve generated allocator targets and source instance results
+
+- [x] Keep generated receiverless `.new` targets through callback lookup and
+  final emission. The selected initializer owns callback typing; its instance
+  method must not replace the outer allocator or supply the caller's result.
+- [x] Put the allocated instance type and value kind on the actual HIR Call,
+  independently of a terminating initializer's physical bottom ABI. A cached
+  context-only repair was refuted by local assignment (35q3080); the canonical
+  instruction repair passes the direct and local-return controls (35q3099).
+- [x] Validate live registered outer calls after deferred generation/RTA:
+  exact generated body/revision, receiver shape, argument slots and Proc ABI.
+  Result-only repairs transport current source/layout proofs independently.
+- Original-first source_heap_block_allocator_owner_repro.sh passes all 27 main
+  cases on Crystal 1.22.1 and exact-source S1 35q3098 (35q3099), including seven
+  strict semantic rejections. Six neighboring scripts pass on the same code
+  before a comment-only clarification (35q3095, lineage 35q3100).
+- Actual unchanged LavinMQ passes Isolated#start_thread and reaches
+  Array(String)#shift returning Void (35q3090). The project, shards and stock
+  stdlib inputs remain identical (35q3093). This is front-end progress only.
+- [ ] Fix Array#shift's lost helper/inline result without treating Void as
+  bottom. Four minimal shift controls already pass; a stock-rejected Void
+  callback still falsely accepts (35q3087/35q3088). Trace the actual producer.
+- [ ] Retain the two stock-valid `self.new` class/union companions as open,
+  stock-qualified cases excluded from candidate success. Preserve the separate
+  typed-local coercion and `typeof` consumer failures (35q3079/35q3086).
+- [ ] Refresh prelude, previous_def/initializer replay, fresh bootstrap,
+  unchanged LavinMQ execution and upstream parity. No application/stdlib edits
+  or relaxed type checks belong to this repair.

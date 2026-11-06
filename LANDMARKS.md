@@ -24810,3 +24810,73 @@ ast_to_hir.cr: 6e7e88fc916481a5b105d8c83c1e83199b08d0bf811c6b66fb9cb2e2d67389b2.
 Refresh after source ownership, Def/arena recovery, include MRO/application,
 module-formal substitution, macro registration or materialization changes.
 Rollback is this atomic compiler commit. No stdlib or application edits.
+
+
+## 2026-11-06 — Generated allocation owns the outer target and source result
+
+The default-plus-stored-callback failure came from generic block target lookup
+retargeting receiverless Token.new to Token#initialize (35q3032). Final emission
+lost allocation, while its Call type said Token and source facts said Nil.
+The unchanged LavinMQ Thread.new path had the same mismatch. Preserve the
+exact generated target; the selected initializer owns parameter/callback
+restrictions, not the receiverless outer call or its result. Explicit source
+self.new remains an ordinary method with its actual result.
+
+Retain the producer's allocated instance type on the HIR Call, context entry
+and instance-kind facts even if initialize terminates. The generated Function
+can retain a physical NoReturn ABI for exact MIR lowering. A context-only fix
+was refuted when assignment consumed the Call's physical type and incorrectly
+accepted a NoReturn-return wrapper (35q3080); the canonical Call type fixes it.
+An explicitly annotated initializer exposed the earlier inferred-only test gap
+(35q3072/35q3073). Do not treat source Void as bottom.
+
+Record registered generated calls by exact caller Function and ValueId, and
+validate their current instructions after deferred generation and RTA: exact
+generated target, current completed body/revision, receiverless nonvirtual
+shape, argument count and callback Proc ABI. Do not require the body to finish
+during recursive lowering or count an inline CFG BlockId as an argument.
+A result-only Call/Copy/Local repair transports source and layout witnesses
+independently, only if each was current before that single owned revision.
+The first strict candidate exposed stale layout proof at body revision 11
+versus proof revision 10 (35q3057); refreshing an unrelated stale proof remains
+forbidden. MIR's exact receiverless path continues to use the Function ABI.
+
+The original-first source_heap_block_allocator_owner_repro.sh gate passes all
+27 main cases on Crystal 1.22.1 and exact-source S1 35q3098 (35q3099), including
+20 runtime stdout controls and seven strict semantic rejections with no output
+executable. It covers defaults exactly once, stored callbacks, independent
+allocations, recursion, generic owners, explicit block forwarding, direct
+source factory controls, inferred/explicit bottom initializers and local-return
+consumers. Six neighboring scripts pass (35q3095); their compiler differs only
+by the clarified source/physical-bottom comment (35q3100). The bounded source
+adversary verdict is ROBUST for this seam; same-lineage review is correlated,
+and the separately executed stock compiler is the semantic oracle.
+
+Actual unchanged LavinMQ passes Isolated#start_thread and reaches
+Array(String)#shift returning Void (35q3090). Input comparison 35q3093 finds
+no project, shard or stock stdlib change. The inline result trace is Void;
+four simplified shift variants pass, so this does not yet identify the actual
+helper-result producer (35q3087/35q3088). Front-end progress establishes no
+object, link, runtime, fresh bootstrap or upstream-test parity.
+
+Two stock-valid self.new class/union companions remain explicitly excluded
+from candidate success. Separate baseline failures remain in typed-local
+coercion, typeof result ownership and source Void callbacks. The physical
+get_function_return_type query has not been generalized: reopen that boundary
+only with a stock-first pre-inference/overload falsifier bypassing the final
+source-expression pin. Prelude, previous_def, initializer replay and fresh
+bootstrap remain open. No stdlib or application changes are included.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+heap-allocator-final-original-first35q3099/result.json,
+allocator-expression-neighbors35q3095/result.json,
+generated-allocator-final-comment-lineage35q3100.json,
+lavinmq-allocator-expression-owner35q3090/result.json, and
+lavinmq-allocator-input-lineage35q3093.json.
+All 1,916 compiler files match
+build.generated-allocator-final35q3098.source.json.
+Compiler SHA-256: 19213514fb59cf8d98bd38c6e3bea5d9a50d415eea6bc5a51cf0ef8f472cf2d9;
+ast_to_hir.cr: 51b97655588c2c23af7c994b074e6a8cc40146382d9d851c9e48f1980222aaa0.
+Refresh after allocator generation/replay, callback target resolution, result
+repair, assignment type transport or physical ABI lowering changes. Rollback
+is this atomic compiler commit. Unrelated existing WIP remains preserved.

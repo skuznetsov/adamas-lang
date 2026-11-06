@@ -1,0 +1,12 @@
+{
+  "self_new_class.cr": {
+    "source_sha256": "f4835cad4d6f93bc0ff383cf3abdb9ff348ebcc575bb0d1f4766745c9bcd4c99",
+    "status": 0,
+    "stdout": "A"
+  },
+  "self_new_union.cr": {
+    "source_sha256": "56c9c76fee013d2e0d79c9c13a5eefc924dcc78e3f6a98924519f28b8d71ba83",
+    "status": 0,
+    "stdout": "A"
+  }
+}

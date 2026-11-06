@@ -1,0 +1,144 @@
+{
+  "default_accept_instance.cr": {
+    "source_sha256": "dbd0aa28b0cffb95d8b0730403b2de3c500ae5e6a670b6f2ffe6debf6241ef14",
+    "status": 0,
+    "stdout": "A"
+  },
+  "default_evaluated_once.cr": {
+    "source_sha256": "952e2a13d22284d131ce88513173fabfddc1f2dc38498b8ae89e88e35aaebe80",
+    "status": 0,
+    "stdout": "AA"
+  },
+  "default_heap_block.cr": {
+    "source_sha256": "d4ce99f56148286609699a95456ee76e31054eff8a436bb0f006628e815807f8",
+    "status": 0,
+    "stdout": "A"
+  },
+  "default_or_heap_block.cr": {
+    "source_sha256": "5efc202f302cffc94e1bd3e22ed075afe320ea5e2bb7d00d7efddeaa62e381c2",
+    "status": 0,
+    "stdout": "A"
+  },
+  "default_reject_bottom.cr": {
+    "source_sha256": "7df8614eef0b79ae7e466516be39801f3f31ae788c17cb4a753e77cce19c8a74",
+    "status": 1,
+    "diagnostic_category": "method-return",
+    "diagnostic_regex": "method (::)?wrapper must return NoReturn,? but it is returning BottomInitializerToken"
+  },
+  "direct_class_factory_new.cr": {
+    "source_sha256": "085b5f48480018c83c9754bce3b212b8cecee7c6091afc1bb9ddf2a9687ede54",
+    "status": 0,
+    "stdout": "A"
+  },
+  "direct_heap_block.cr": {
+    "source_sha256": "0a24b81e65d40e39b9d0833e936367a7c1a3f05e5ad4b3f2919ca425bfb9ceb6",
+    "status": 0,
+    "stdout": "A"
+  },
+  "direct_union_factory_new.cr": {
+    "source_sha256": "f2375d4ec496138b53652ffe3993d4b4ed84b6aa518e995dcbfe4602b6a1beef",
+    "status": 0,
+    "stdout": "B"
+  },
+  "explicit_block_forwarding.cr": {
+    "source_sha256": "2bab79ccc19903919ea67672e1c37b2fcf7a723ab4f983424fcd8657b4be4574",
+    "status": 0,
+    "stdout": "A"
+  },
+  "explicit_bottom_via_local.cr": {
+    "source_sha256": "cb14785ce96701bd3355e0bad867e9d2ed80f6e2f36eccab4ed46745dfb5facd",
+    "status": 1,
+    "diagnostic_category": "method-return",
+    "diagnostic_regex": "method (::)?wrapper must return NoReturn,? but it is returning BottomInitializerToken"
+  },
+  "explicit_bottom_wrong_argument.cr": {
+    "source_sha256": "b32a8e3a19a283317c8eae4e432fa461ade057f7a85a47783865b66c02471dae",
+    "status": 1,
+    "diagnostic_category": "argument-type",
+    "diagnostic_regex": "(expected argument #1 to 'consume' to be Int32, not BottomInitializerToken|no overload matches consume for argument types \\(BottomInitializerToken\\))"
+  },
+  "explicit_default_accept_instance.cr": {
+    "source_sha256": "a9c862539973951914b303cd32ece90180cd369f9e09602fec38e35c5b4573f1",
+    "status": 0,
+    "stdout": "A"
+  },
+  "explicit_default_reject_bottom.cr": {
+    "source_sha256": "5728a7c9f1ad3e9a6bab351c5b64709509571f400e8c2f55370a8cf997ceb8de",
+    "status": 1,
+    "diagnostic_category": "method-return",
+    "diagnostic_regex": "method (::)?wrapper must return NoReturn,? but it is returning BottomInitializerToken"
+  },
+  "explicit_required_accept_instance.cr": {
+    "source_sha256": "ffd49a986367b08fa46c9b453e0543aa4197e54aa5a7a99662a934dcfc7ec7ad",
+    "status": 0,
+    "stdout": "A"
+  },
+  "explicit_required_reject_bottom.cr": {
+    "source_sha256": "5bf725662e4500f1989d6fd086df55b5ca4a93d1ff9ae0a350c7b435717ac8b2",
+    "status": 1,
+    "diagnostic_category": "method-return",
+    "diagnostic_regex": "method (::)?wrapper must return NoReturn,? but it is returning BottomInitializerToken"
+  },
+  "generic_owner_stored_callback.cr": {
+    "source_sha256": "3bd18894590a25bdc16fab9d35da5c7eb2adfaf19244356e3c35ea74a9b67cae",
+    "status": 0,
+    "stdout": "A"
+  },
+  "initialized_field_read.cr": {
+    "source_sha256": "0d03c8e5046c899b247bbeec409744e8f74e60e55c2a5dad506b53f946d1689e",
+    "status": 0,
+    "stdout": "A"
+  },
+  "initializer_class_object_still_instance.cr": {
+    "source_sha256": "277e362b3e6c51106058878c9c08fde6ba4b9e3d9dbcf34ac66504345123ca12",
+    "status": 0,
+    "stdout": "A"
+  },
+  "initializer_terminates_without_fallthrough.cr": {
+    "source_sha256": "b70a6d9ecd48f2a95d3388607f49f6bfb60195d156c35307a5ba9718c765e12b",
+    "status": 0,
+    "stdout": "A"
+  },
+  "or_heap_block.cr": {
+    "source_sha256": "09d61495adacb528a26509444b0c244052909689b23d7f813ddcd96011c307b9",
+    "status": 0,
+    "stdout": "A"
+  },
+  "recursive_initializer_stored_callback.cr": {
+    "source_sha256": "c12e20dc0471a3606e9d31e5443ccce99bd08d3999fa2cfe25dce2d774b29b38",
+    "status": 0,
+    "stdout": "A"
+  },
+  "required_accept_instance.cr": {
+    "source_sha256": "e79f0856ceb57a5d3258f759a82b6ee9eb3bbfb3d12f4cda7c2963b15e1be669",
+    "status": 0,
+    "stdout": "A"
+  },
+  "required_reject_bottom.cr": {
+    "source_sha256": "c593ee723ada61d4790b94207e224a615f356c0a8247f24d4ce3a2f6c19523ee",
+    "status": 1,
+    "diagnostic_category": "method-return",
+    "diagnostic_regex": "method (::)?wrapper must return NoReturn,? but it is returning BottomInitializerToken"
+  },
+  "self_new_value.cr": {
+    "source_sha256": "b5eee7579896dc4659648414f641113df07e3866e03e038d50205a054c1939a6",
+    "status": 0,
+    "stdout": "A"
+  },
+  "self_new_wrong_return.cr": {
+    "source_sha256": "c99ca44e65d190be1d27594d65aaf8ec5fdfdb1ade0066fe929c06e8f5a3ddda",
+    "status": 1,
+    "diagnostic_category": "method-return",
+    "diagnostic_regex": "method WrongReturnFactory[.#]new must return Int32,? but it is returning Bool"
+  },
+  "stored_callback_after_construction.cr": {
+    "source_sha256": "1abc6c07add26ec62cda06adacd91922d4409eaa5b0c8f3ad6239d1447aad245",
+    "status": 0,
+    "stdout": "A"
+  },
+  "two_separate_allocations.cr": {
+    "source_sha256": "218c997d5e2f7487760cc2863b1a53ca4384d034a1b726e04e6a2f157d6b1f8c",
+    "status": 0,
+    "stdout": "AB"
+  }
+}
