@@ -1,0 +1,163 @@
+{
+  "reorder_module_default_actual_vs_omitted.cr": {
+    "status": 0,
+    "stdout": "AB\n"
+  },
+  "named_generic_wrong_default.cr": {
+    "status": 1,
+    "diagnostic_regex": "can't restrict DefaultChoice(?:\\.class|:Module) to Marker\\(Int64\\)",
+    "stock_expectation": ""
+  },
+  "reorder_generic_wrong_default.cr": {
+    "status": 1,
+    "diagnostic_regex": "can't restrict DefaultChoice(?:\\.class|:Module) to Marker\\(Int64\\)",
+    "stock_expectation": ""
+  },
+  "concrete_formal_default.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "wrong_concrete_formal_default.cr": {
+    "status": 1,
+    "diagnostic_regex": "can't restrict Int32 to (?:T|String)",
+    "stock_expectation": ""
+  },
+  "concrete_formal_explicit.cr": {
+    "status": 0,
+    "stdout": "B"
+  },
+  "eager_template_no_actual_default_subtype.cr": {
+    "status": 0,
+    "stdout": ""
+  },
+  "eager_template_explicit_actual_does_not_inherit_default_subtype.cr": {
+    "status": 1,
+    "diagnostic_regex": "undefined method 'only_default' for ExplicitChoice(?::Module)?",
+    "stock_expectation": ""
+  },
+  "selected_default_owner_does_not_reselect.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "fitting_integer_literal_default.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "fitting_float_literal_default.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "valid_symbol_enum_default.cr": {
+    "status": 0,
+    "stdout": ""
+  },
+  "invalid_symbol_enum_default_rejected.cr": {
+    "status": 1,
+    "diagnostic_regex": "(?:can't autocast :green to DefaultShade: no matching enum member|can't restrict Symbol to DefaultShade)",
+    "stock_expectation": ""
+  },
+  "runtime_integer_widening_default_rejected.cr": {
+    "status": 1,
+    "diagnostic_regex": "can't restrict Int16 to Int64",
+    "stock_expectation": ""
+  },
+  "float_to_integer_default_rejected.cr": {
+    "status": 1,
+    "diagnostic_regex": "can't restrict Float32 to Int32",
+    "stock_expectation": ""
+  },
+  "runtime_float_widening_default_rejected.cr": {
+    "status": 1,
+    "diagnostic_regex": "can't restrict Float32 to Float64",
+    "stock_expectation": ""
+  },
+  "untyped_noreturn_default_stops_allocator.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "exact_bottom.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "nil_or_bottom.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "int_or_bottom.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "alias_bottom.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "alias_bottom_union.cr": {
+    "status": 1,
+    "diagnostic_regex": "can't restrict NoReturn to Bottom",
+    "stock_expectation": ""
+  },
+  "nullable_bottom.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "qualified_alias.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "alias_nullable_bottom.cr": {
+    "status": 1,
+    "diagnostic_regex": "can't restrict NoReturn to Bottom",
+    "stock_expectation": ""
+  },
+  "alias_bottom_twice.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "alias_bottom_nil.cr": {
+    "status": 1,
+    "diagnostic_regex": "can't restrict NoReturn to Bottom",
+    "stock_expectation": ""
+  },
+  "forall_positional_previous_actual.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "forall_fitting_literal.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "forall_wrong_literal_default.cr": {
+    "status": 1,
+    "diagnostic_regex": "can't restrict Int32 to (?:T|Token)",
+    "stock_expectation": "semantic rejection"
+  },
+  "terminal_default_stops_later_defaults.cr": {
+    "status": 0,
+    "stdout": "AB"
+  },
+  "noreturn_default_stops_allocator.cr": {
+    "status": 1,
+    "diagnostic_regex": "can't restrict NoReturn to Int32",
+    "stock_expectation": ""
+  },
+  "method_forall_unbound_owner_int.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "method_forall_unbound_owner_string_uses_default_actual.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "method_forall_method_formal_actual_over_owner.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "method_forall_multiple_defaults_same_forall.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "method_forall_incompatible_second_default.cr": {
+    "status": 1,
+    "diagnostic_regex": "can't restrict String to (?:T|Int32)"
+  }
+}

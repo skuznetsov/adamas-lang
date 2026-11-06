@@ -24477,3 +24477,59 @@ full-prelude compilation on the standalone commit. Actual LavinMQ 35q2669
 still fails at the Hash::Entry versus Log::Entry result contract. Defaults,
 broad-result demand, fresh bootstrap and upstream execution/test parity remain
 open; no stdlib or application workaround belongs to this fix.
+
+## 2026-11-06 — A default restriction cannot manufacture its actual type
+
+The IO#read_bytes default exposed a shared lowering defect: a materialized
+LittleEndian class object was retagged as its ByteFormat formal. Positional,
+canonical named and legacy named expansion now use one selected-default
+lowerer with the exact Def and retained arena, declaration namespace, receiver
+arguments and method-forall bindings. Admission validates actual source facts;
+only explicit fitting literal conversions create a new typed value. Preserve
+enum-symbol context, reject incompatible runtime numeric expressions, and keep
+the selected overload after defaults run. A terminal default stops later
+evaluation and the invocation; its own restriction still follows original
+Crystal's direct/aliased/nullable NoReturn rules.
+
+The selected source-call record keeps supplied and defaulted facts separate.
+Defaults can infer a method variable without borrowing a same-spelled generic
+owner variable or erasing omission provenance. Earlier materialized actuals
+constrain later defaults. Selected binding identity and materialized body
+consumers carry both vectors. The legacy named producer publishes its final
+record after default evaluation; this alone does not add missing downstream
+kwargs source-binding transport.
+
+Crystal 1.22.1 and exact-source S1 35q2760 pass all 37 main cases of
+source_default_contract_repro.sh and all ten source-default block-slot cases
+(35q2764). Rejections require semantic diagnostics and no executable. Five
+open companions are qualified against stock but excluded from candidate
+success. The preceding candidate passes 129 original-first checks across
+defaults, block slots, Nil, source kind, virtual facts and declared returns
+(35q2745); the final publication change was rechecked with the 47 directly
+relevant cases. No whole-program or bootstrap claim follows from these gates.
+
+Adversary controls established same-call owner/method variable independence
+and rejected a conflicting second default (35q2735/35q2740). They also found
+a separate kwargs failure: default Concrete.class and explicit Concrete
+instance reuse a body with the same ABI carrier (stock ABI, candidate ABA).
+Both before and after final-record publication fail (35q2753/35q2756/35q2761).
+Source review locates the missing binding in ordinary deferred kwargs requests;
+retain that falsifier as open rather than claiming final-record publication
+repairs it. Named/formal projection, callback defaults, explicit-invalid-call
+provenance and broad-result demand also remain open. The scoped Adversary
+verdict is ROBUST for the 47-case default contract, not those open surfaces.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+defaults-final-contract-gate35q2764/result.json,
+defaults-expanded-contract-gate35q2745/result.json and
+defaults-source-contract-qualified35q2768.json/.files.json. All 1,916 compiler
+files match build.reorder-default-final-binding35q2760.source.json. Compiler
+SHA-256: 210f3873b1147840107f8052ea591beae67039388c0b073ec723ae5f150f2b66;
+ast_to_hir.cr: 0e8e3794342414100071a93a25c6d9813a15bb917260b45c32c3b5ae8a3946a9.
+The regression's final display-only OPEN line now references its manifest;
+all executed assertions are unchanged, and bash -n passes after that edit.
+Refresh after default materialization, selected-source context, forall
+binding, source value-kind tracking, replay identity or argument coercion
+changes. Rollback is this atomic compiler commit. Fresh stock prelude,
+bootstrap and unchanged LavinMQ execution/upstream parity remain open; no
+stdlib or application edits belong to this repair.

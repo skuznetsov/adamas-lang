@@ -1,0 +1,212 @@
+[
+  {
+    "name": "reorder_module_default_actual_vs_omitted",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/reorder_module_default_actual_vs_omitted.cr",
+    "ok": true,
+    "expected": "AB\n"
+  },
+  {
+    "name": "named_generic_wrong_default",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/named_generic_wrong_default.cr",
+    "ok": false,
+    "expected": ""
+  },
+  {
+    "name": "reorder_generic_wrong_default",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/reorder_generic_wrong_default.cr",
+    "ok": false,
+    "expected": ""
+  },
+  {
+    "name": "concrete_formal_default",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/concrete_formal_default.cr",
+    "ok": true,
+    "expected": "A"
+  },
+  {
+    "name": "wrong_concrete_formal_default",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/wrong_concrete_formal_default.cr",
+    "ok": false,
+    "expected": ""
+  },
+  {
+    "name": "concrete_formal_explicit",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/concrete_formal_explicit.cr",
+    "ok": true,
+    "expected": "B"
+  },
+  {
+    "name": "wrong_concrete_formal_explicit",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/wrong_concrete_formal_explicit.cr",
+    "ok": false,
+    "expected": ""
+  },
+  {
+    "name": "eager_template_no_actual_default_subtype",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/eager_template_no_actual_default_subtype.cr",
+    "ok": true,
+    "expected": ""
+  },
+  {
+    "name": "eager_template_explicit_actual_does_not_inherit_default_subtype",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/eager_template_explicit_actual_does_not_inherit_default_subtype.cr",
+    "ok": false,
+    "expected": ""
+  },
+  {
+    "name": "selected_default_owner_does_not_reselect",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/selected_default_owner_does_not_reselect.cr",
+    "ok": true,
+    "expected": "A\n"
+  },
+  {
+    "name": "fitting_integer_literal_default",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/fitting_integer_literal_default.cr",
+    "ok": true,
+    "expected": "A\n"
+  },
+  {
+    "name": "fitting_float_literal_default",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/fitting_float_literal_default.cr",
+    "ok": true,
+    "expected": "A\n"
+  },
+  {
+    "name": "valid_symbol_enum_default",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/valid_symbol_enum_default.cr",
+    "ok": true,
+    "expected": ""
+  },
+  {
+    "name": "invalid_symbol_enum_default_rejected",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/invalid_symbol_enum_default_rejected.cr",
+    "ok": false,
+    "expected": ""
+  },
+  {
+    "name": "runtime_integer_widening_default_rejected",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/runtime_integer_widening_default_rejected.cr",
+    "ok": false,
+    "expected": ""
+  },
+  {
+    "name": "float_to_integer_default_rejected",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/float_to_integer_default_rejected.cr",
+    "ok": false,
+    "expected": ""
+  },
+  {
+    "name": "runtime_float_widening_default_rejected",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/runtime_float_widening_default_rejected.cr",
+    "ok": false,
+    "expected": ""
+  },
+  {
+    "name": "untyped_noreturn_default_stops_allocator",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/untyped_noreturn_default_stops_allocator.cr",
+    "ok": true,
+    "expected": "A"
+  },
+  {
+    "name": "exact_bottom",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/exact_bottom.cr",
+    "ok": true,
+    "expected": "A"
+  },
+  {
+    "name": "nil_or_bottom",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/nil_or_bottom.cr",
+    "ok": true,
+    "expected": "A"
+  },
+  {
+    "name": "int_or_bottom",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/int_or_bottom.cr",
+    "ok": true,
+    "expected": "A"
+  },
+  {
+    "name": "alias_bottom",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/alias_bottom.cr",
+    "ok": true,
+    "expected": "A"
+  },
+  {
+    "name": "alias_bottom_union",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/alias_bottom_union.cr",
+    "ok": false,
+    "expected": ""
+  },
+  {
+    "name": "nullable_bottom",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/nullable_bottom.cr",
+    "ok": true,
+    "expected": "A"
+  },
+  {
+    "name": "qualified_alias",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/qualified_alias.cr",
+    "ok": true,
+    "expected": "A"
+  },
+  {
+    "name": "alias_nullable_bottom",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/alias_nullable_bottom.cr",
+    "ok": false,
+    "expected": ""
+  },
+  {
+    "name": "alias_bottom_twice",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/alias_bottom_twice.cr",
+    "ok": true,
+    "expected": "A"
+  },
+  {
+    "name": "alias_bottom_nil",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/alias_bottom_nil.cr",
+    "ok": false,
+    "expected": ""
+  },
+  {
+    "name": "forall_positional_previous_actual",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/forall_positional_previous_actual.cr",
+    "ok": true,
+    "expected": "A\n"
+  },
+  {
+    "name": "forall_named_previous_actual",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/forall_named_previous_actual.cr",
+    "ok": true,
+    "expected": "A\n"
+  },
+  {
+    "name": "forall_fitting_literal",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/forall_fitting_literal.cr",
+    "ok": true,
+    "expected": "A\n"
+  },
+  {
+    "name": "forall_wrong_literal_default",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/forall_wrong_literal_default.cr",
+    "ok": false,
+    "expected": "semantic rejection"
+  },
+  {
+    "name": "forall_callback_default",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/forall_callback_default.cr",
+    "ok": true,
+    "expected": "A\n"
+  },
+  {
+    "name": "terminal_default_stops_later_defaults",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/terminal_default_stops_later_defaults.cr",
+    "ok": true,
+    "expected": "AB"
+  },
+  {
+    "name": "noreturn_default_stops_allocator",
+    "source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/shared-default-canonical-facts-controls35q2565/fixtures/noreturn_default_stops_allocator.cr",
+    "ok": false,
+    "expected": ""
+  }
+]

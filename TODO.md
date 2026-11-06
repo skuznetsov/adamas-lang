@@ -25593,3 +25593,29 @@ integration, fresh bootstrap, or LavinMQ parity.
   probe (35q2669) still stops at Hash#get_entry returning Log::Entry instead
   of Hash::Entry. This bounded callback gate establishes no runtime or upstream
   test parity for LavinMQ and introduces no stdlib/application changes.
+
+### 2026-11-06 — Give selected default arguments an owned source contract
+
+- [x] Evaluate each default under its exact selected Def/arena, declaration
+  namespace, concrete receiver arguments, and call-local method variables.
+  Preserve actual type and value kind; validate the formal as an upper bound
+  instead of retagging the expression or reselecting an overload.
+- [x] Keep supplied/defaulted source slots separate through selected-call
+  binding and replay identity. A default can infer a method forall independently
+  of a same-spelled owner variable; incompatible later defaults remain errors.
+  Preserve fitting literal/enum-symbol conversions and Crystal's NoReturn
+  restrictions, and stop later defaults and invocation after a terminal value.
+- Exact-source S1 35q2760 passes source_default_contract_repro.sh (37 main
+  cases, five stock-qualified open companions excluded) and the ten-case
+  source_default_block_slot_repro.sh (35q2764). The prior candidate passes
+  129 original-first neighboring checks (35q2745). See specification 08.
+- [ ] Close the five open companions: callback/named forall defaults, named
+  owner/method-formal projection, an explicit-invalid-call provenance error,
+  and class/instance specialization through keyword rest arguments. Stock
+  prints ABI for the latter, both tested candidates print ABA (35q2753,
+  35q2756, 35q2761). Moving final binding publication alone does not fix it;
+  ordinary kwargs deferred body requests currently drop that source binding.
+- [ ] Close broad-result consumers and the remaining Enum previous_def,
+  namespace, and initializer-replay frontiers. The latest actual LavinMQ
+  probe is still the Hash::Entry/Log::Entry failure at 35q2669. Fresh prelude,
+  bootstrap, LavinMQ execution and upstream test parity remain open.

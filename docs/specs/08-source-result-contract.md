@@ -4,6 +4,8 @@ Status: IN_PROGRESS, 2026-11-06. The bounded return-owner implementation passes
 four original-first gates against Crystal 1.22.1 (116 fixtures,
 35q2635). Result-consumer precision, stock-prelude compilation, fresh bootstrap,
 and unchanged LavinMQ execution and upstream test parity remain open.
+The selected-default contract passes 37 main cases and ten block-slot cases
+on exact-source S1 35q2760 (35q2764); five companions remain explicitly open.
 
 This is a bounded repair to source result transport in HIR. It does not
 replace the semantic architecture transition in specification 07.
@@ -69,11 +71,29 @@ closed-family path when a reachable generic template can add runtime owners.
 Ten original-first class-dispatch cases pass (35q2732); argument forwarding
 and late generic descendant completeness are outside that bounded gate.
 
+The exact selected definition and declaration arena also own each default
+argument. Evaluate it in the declaration's namespace with the concrete
+receiver and call-local method variables. Preserve the expression's actual
+source type and value kind; the parameter restriction remains an upper bound.
+A fitting numeric literal can produce an explicit converted value, whereas
+an arbitrary numeric expression cannot inherit its formal's type. An enum
+symbol default uses its selected restriction as context and must name a
+member of that enum.
+
+Keep supplied and defaulted source slots separate through body binding and
+replay identity. Materialized defaults may infer a method variable without
+filling the supplied-slot omission or borrowing a same-spelled owner variable.
+Earlier actuals constrain later defaults. A terminal default stops later
+evaluation and the selected invocation, while its own restriction still
+follows Crystal's NoReturn admission rules. Rechecking a materialized default
+must not select another overload.
+
 Known open probes include broad or mixed-kind annotated results consumed
-before their exact body facts are available, and defaults whose actual type
-is overwritten by their formal restriction. These failures were reproduced on
-the previous compiler as well. Passing the bounded return corpus does not
-close these probes or establish whole-program compatibility.
+before their exact body facts are available, callback/named method-variable
+defaults, and class/instance body reuse through keyword rest arguments. An
+explicit invalid generic call also reaches an internal provenance guard before
+its intended source restriction. Passing the bounded return/default corpus
+does not close these probes or establish whole-program compatibility.
 
 ## Falsifiers and recovery
 
@@ -87,6 +107,8 @@ and check semantic diagnostics and absence of an executable for rejections.
 - `regression_tests/virtual_source_fact_transport_repro.sh`
 - `regression_tests/module_source_value_kind_repro.sh`
 - `regression_tests/class_block_source_dispatch_repro.sh`
+- `regression_tests/source_default_contract_repro.sh`
+- `regression_tests/source_default_block_slot_repro.sh`
 
 Source, toolchain, input manifests, commands, and outcomes belong in the
 corresponding LANDMARK entry. Refresh after result publication, return

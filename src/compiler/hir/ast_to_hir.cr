@@ -1404,7 +1404,13 @@ module Adamas::HIR
       definition : Adamas::Compiler::Frontend::DefNode,
       declaration_arena : Adamas::Compiler::Frontend::ArenaLike,
       supplied_types : Array(SourceCallArgument?),
-      source_receiver_name : String? = nil
+      source_receiver_name : String? = nil,
+      block_result : SourceCallArgument? = nil,
+      # Defaults are materialized after source-call selection. Keep their
+      # facts separate from `supplied_types`: only omitted slots may populate
+      # this vector, and source-call inference continues to read supplied
+      # arguments alone.
+      defaulted_types : Array(SourceCallArgument?) = [] of SourceCallArgument?
 
     private alias IncludedModuleDefOrigin = Tuple(
       Adamas::Compiler::Frontend::DefNode,
@@ -32632,7 +32638,7 @@ module Adamas::HIR
           .map { |key, value| "#{key}=>#{value}" }.join(";")
         call_map = callsite_bindings.map { |key, value| "#{key}=>#{value}" }.join(";")
         return_text = selected[1].return_type.try { |slice| safe_slice_to_string(slice) || "" } || "-"
-        STDERR.puts "[SOURCE_RETURN_FLOW] stage=selected_return_begin selected=#{selected[0]} def=#{selected[1].object_id} arena=#{declaration_arena.object_id} args=#{arg_types.map { |type| get_type_name_from_ref(type) }.join(",")} source=#{source_binding.supplied_types.map { |actual| actual ? proc_source_type_name(actual.not_nil!) : "-" }.join(",")} annotation=#{return_text} ambient=#{ambient_map} registered=#{registered_map} callsite=#{call_map}"
+        STDERR.puts "[SOURCE_RETURN_FLOW] stage=selected_return_begin selected=#{selected[0]} def=#{selected[1].object_id} arena=#{declaration_arena.object_id} args=#{arg_types.map { |type| get_type_name_from_ref(type) }.join(",")} source=#{source_call_binding_actual_arguments(source_binding).map { |actual| actual ? proc_source_type_name(actual.not_nil!) : "-" }.join(",")} annotation=#{return_text} ambient=#{ambient_map} registered=#{registered_map} callsite=#{call_map}"
       end
       callsite_forall_bindings : Hash(String, String)? = nil
       if block_expr.nil? && !forall_type_param_names(selected[1]).empty?
@@ -47912,81 +47918,86 @@ module Adamas::HIR
           ctx, forwarded_init_param_ids, init_base_name, default_source_name,
           initializer_has_block, call_has_named_args, alloc.id,
         )[0]
-        init_call_args.each_with_index do |arg_id, index|
-          actual_type = ctx.type_of(arg_id)
-          if index >= init_param_types.size
-            init_param_types << actual_type
-          elsif init_param_types[index] == TypeRef::VOID && actual_type != TypeRef::VOID
-            init_param_types[index] = actual_type
-          end
-        end
-        remember_callsite_arg_types(init_name, init_param_types, nil, nil, initializer_has_block) unless init_param_types.empty?
-        # A raw untyped block carrier (`&block` or bare `yield`) has no ABI of
-        # its own: bind the callsite block shape to the initializer target so
-        # its block formal is the concrete Proc and its yields return the block
-        # value, then forward the allocator block param under the same carrier.
-        if initializer_has_block && block_param_id && forwarded_initializer_block_index.nil? &&
-           (blk_node = call_block_node) && (contract_def = matched_init_def)
-          contract_arena = matched_init_arena || resolve_arena_for_def(contract_def, @arena)
-          if chosen = register_raw_callback_abi_target(
-               init_name, contract_def, contract_arena, init_param_types,
-               blk_node, call_block_param_types, call_block_return_name,
-               raw_callback_callsite(init_param_types, has_named_args: call_has_named_args, named_arg_names: call_named_arg_names))
-            init_name = chosen
-            if contract = raw_callback_abi_for(init_name)
-              func.set_block_param_type(block_param_id.not_nil!, contract.proc_type)
-              ctx.register_type(block_param_id.not_nil!, contract.proc_type)
-              @raw_callback_abis[overload_name] ||= contract
+        if terminal_default = init_call_args.find { |value| runtime_noreturn_value?(ctx, value) }
+          initializer_return_type = ctx.type_of(terminal_default)
+          ctx.terminate(Unreachable.new) unless control_flow_dead_block?(ctx, ctx.current_block)
+        else
+          init_call_args.each_with_index do |arg_id, index|
+            actual_type = ctx.type_of(arg_id)
+            if index >= init_param_types.size
+              init_param_types << actual_type
+            elsif init_param_types[index] == TypeRef::VOID && actual_type != TypeRef::VOID
+              init_param_types[index] = actual_type
             end
           end
-        end
-        lower_function_if_needed(init_name)
-        # Body presence is authoritative: a declaration-only entry or stale
-        # Completed state must still be rematerialized through a guarded state
-        # transaction so recursive calls observe InProgress.
-        rematerialize_missing_function_body(init_name) do
-          init_def = matched_init_def || @function_defs[init_name]?
-          init_def_name = matched_init_name || (init_def ? init_name : nil)
-          unless init_def
-            init_def = @function_defs[init_base_name]?
-            init_def_name = init_def ? init_base_name : nil
-          end
-          unless init_def
-            if match = lookup_function_def_for_call(
-                 init_base_name,
-                 initializer_call_arg_types.size,
-                 initializer_has_block,
-                 initializer_call_arg_types,
-                 false,
-                 call_has_named_args,
-                 allocator_named_arg_names,
-                 source_argument_facts: initializer_call_source_facts,
-               )
-              init_def_name, init_def = match
-            end
-          end
-          if init_def
-            init_arena = selected_init_target.try(&.source_arena) ||
-                         @function_def_arenas[init_def_name]? || @function_def_arenas[init_base_name]?
-            init_arena ||= resolve_arena_for_def(init_def, @arena)
-            callsite_types = init_param_types.empty? ? nil : init_param_types
-            with_arena(init_arena) do
-              with_namespace_override_or_clear(initializer_declaration_namespace(init_def_name || init_base_name, init_def, init_arena)) do
-                lower_method(class_name, class_info, init_def, callsite_types, nil, nil, init_name)
+          remember_callsite_arg_types(init_name, init_param_types, nil, nil, initializer_has_block) unless init_param_types.empty?
+          # A raw untyped block carrier (`&block` or bare `yield`) has no ABI of
+          # its own: bind the callsite block shape to the initializer target so
+          # its block formal is the concrete Proc and its yields return the block
+          # value, then forward the allocator block param under the same carrier.
+          if initializer_has_block && block_param_id && forwarded_initializer_block_index.nil? &&
+             (blk_node = call_block_node) && (contract_def = matched_init_def)
+            contract_arena = matched_init_arena || resolve_arena_for_def(contract_def, @arena)
+            if chosen = register_raw_callback_abi_target(
+                 init_name, contract_def, contract_arena, init_param_types,
+                 blk_node, call_block_param_types, call_block_return_name,
+                 raw_callback_callsite(init_param_types, has_named_args: call_has_named_args, named_arg_names: call_named_arg_names))
+              init_name = chosen
+              if contract = raw_callback_abi_for(init_name)
+                func.set_block_param_type(block_param_id.not_nil!, contract.proc_type)
+                ctx.register_type(block_param_id.not_nil!, contract.proc_type)
+                @raw_callback_abis[overload_name] ||= contract
               end
             end
           end
+          lower_function_if_needed(init_name)
+          # Body presence is authoritative: a declaration-only entry or stale
+          # Completed state must still be rematerialized through a guarded state
+          # transaction so recursive calls observe InProgress.
+          rematerialize_missing_function_body(init_name) do
+            init_def = matched_init_def || @function_defs[init_name]?
+            init_def_name = matched_init_name || (init_def ? init_name : nil)
+            unless init_def
+              init_def = @function_defs[init_base_name]?
+              init_def_name = init_def ? init_base_name : nil
+            end
+            unless init_def
+              if match = lookup_function_def_for_call(
+                   init_base_name,
+                   initializer_call_arg_types.size,
+                   initializer_has_block,
+                   initializer_call_arg_types,
+                   false,
+                   call_has_named_args,
+                   allocator_named_arg_names,
+                   source_argument_facts: initializer_call_source_facts,
+                 )
+                init_def_name, init_def = match
+              end
+            end
+            if init_def
+              init_arena = selected_init_target.try(&.source_arena) ||
+                           @function_def_arenas[init_def_name]? || @function_def_arenas[init_base_name]?
+              init_arena ||= resolve_arena_for_def(init_def, @arena)
+              callsite_types = init_param_types.empty? ? nil : init_param_types
+              with_arena(init_arena) do
+                with_namespace_override_or_clear(initializer_declaration_namespace(init_def_name || init_base_name, init_def, init_arena)) do
+                  lower_method(class_name, class_info, init_def, callsite_types, nil, nil, init_name)
+                end
+              end
+            end
+          end
+          init_call_args << block_param_id.not_nil! if block_param_id
+          init_call_args = coerce_args_to_types(ctx, init_call_args, init_param_types)
+          init_function = @module.function_by_name(init_name)
+          unless init_function && @module.has_function_with_body?(init_name)
+            raise LoweringError.new("missing completed initializer body before allocator call: #{init_name}")
+          end
+          initializer_return_type = init_function.return_type
+          init_call = Call.with_receiver(ctx.next_id, initializer_return_type.not_nil!, alloc.id, init_name, init_call_args)
+          ctx.emit(init_call)
+          ctx.terminate(Unreachable.new) if noreturn_type?(initializer_return_type.not_nil!)
         end
-        init_call_args << block_param_id.not_nil! if block_param_id
-        init_call_args = coerce_args_to_types(ctx, init_call_args, init_param_types)
-        init_function = @module.function_by_name(init_name)
-        unless init_function && @module.has_function_with_body?(init_name)
-          raise LoweringError.new("missing completed initializer body before allocator call: #{init_name}")
-        end
-        initializer_return_type = init_function.return_type
-        init_call = Call.with_receiver(ctx.next_id, initializer_return_type.not_nil!, alloc.id, init_name, init_call_args)
-        ctx.emit(init_call)
-        ctx.terminate(Unreachable.new) if noreturn_type?(initializer_return_type.not_nil!)
       end
 
       allocator_return_type = if init_result = initializer_return_type
@@ -49689,7 +49700,7 @@ module Adamas::HIR
       )
       source_binding_arena = initializer_replay_source.try(&.source_arena) || source_method_declaration_arena(node, @arena)
       source_binding_arguments = call_source_binding.try do |binding|
-        binding.supplied_types if source_call_binding_matches?(binding, node, source_binding_arena)
+        source_call_binding_actual_arguments(binding) if source_call_binding_matches?(binding, node, source_binding_arena)
       end
       source_binding_param_index = 0
       whole_double_splat_layout = bind_whole_double_splat_formal(node, effective_full_name_override, method_forall_bindings)
@@ -49856,16 +49867,6 @@ module Adamas::HIR
             if env_get("DEBUG_PARAM_TYPES") && class_name == "IO::Error" && method_name == "initialize" && param_name == "target"
               default_kind = param.default_value ? @arena[param.default_value.not_nil!].class.name.split("::").last : "none"
               STDERR.puts "[PARAM_TYPE] class=#{class_name} param=#{param_name} type=#{get_type_name_from_ref(param_type)} default=#{default_kind}"
-            end
-            if module_type_ref?(param_type) && (default_value = param.default_value)
-              call_type = call_index < call_types.size ? type_ref_array_fetch_or_void(call_types, call_index) : TypeRef::VOID
-              if call_type == TypeRef::VOID || call_type == param_type
-                if inferred_default = infer_type_from_expr(default_value, class_name)
-                  if module_type_ref?(inferred_default) && inferred_default != TypeRef::VOID
-                    param_type = inferred_default
-                  end
-                end
-              end
             end
             if param_name.ends_with?("_class") && call_type_for_param != TypeRef::VOID
               param_type = call_type_for_param
@@ -51808,8 +51809,6 @@ module Adamas::HIR
     # of the called function (which may not have been lowered yet).
     @[AlwaysInline]
     private def weak_callsite_arg_type?(type : TypeRef) : Bool
-      # Nil is a concrete source result. Recovering it from a generic callee
-      # declaration can replace an owned Nil result with an unresolved T.
       type == TypeRef::VOID || type == TypeRef::POINTER
     end
 
@@ -61386,12 +61385,13 @@ module Adamas::HIR
       return nil unless arena = declaration_arena
       return nil unless source = binding
       return nil unless source_call_binding_matches?(source, definition, arena)
-      return nil unless source.supplied_types.size == arg_types.size
+      actuals = source_call_binding_actual_arguments(source)
+      return nil unless actuals.size == arg_types.size
 
       names = Array(String?).new(arg_types.size)
       has_source_literal = false
       arg_types.each_with_index do |type, index|
-        actual = source.supplied_types[index]?
+        actual = actuals[index]?
         return nil unless actual
         return nil if actual.type_ref == TypeRef::VOID || actual.type_ref != type
 
@@ -61426,10 +61426,10 @@ module Adamas::HIR
         # This record is already projected into source formal slots. Reusing
         # it preserves named arguments and mixed-kind union witnesses without
         # treating source order as formal order.
-        source_arguments = binding.supplied_types
+        source_arguments = source_call_binding_actual_arguments(binding)
         if source_return_flow_trace_match?(binding.selected_name, "method_forall_call_bindings")
           ambient_map = @type_param_map.map { |key, value| "#{key}=>#{value}" }.join(";")
-          actuals = binding.supplied_types.map do |actual|
+          actuals = source_arguments.map do |actual|
             actual ? proc_source_type_name(actual.not_nil!) : "-"
           end.join(",")
           STDERR.puts "[SOURCE_RETURN_FLOW] stage=forall_bindings_begin selected=#{binding.selected_name} def=#{binding.definition.object_id} arena=#{binding.declaration_arena.object_id} exact=#{binding.definition.same?(def_node) && binding.declaration_arena.same?(arena)} actuals=#{actuals} ambient=#{ambient_map}"
@@ -79621,9 +79621,10 @@ module Adamas::HIR
       if binding = source_binding
         return false unless source_call_binding_matches?(binding, selected_def, arena)
         return false unless binding.selected_name == source_name
-        return false unless binding.supplied_types.size == arg_types.size
+        actuals = source_call_binding_actual_arguments(binding)
+        return false unless actuals.size == arg_types.size
         arg_types.each_with_index do |type, index|
-          actual = binding.supplied_types[index]?
+          actual = actuals[index]?
           return false unless actual && actual.type_ref == type && type != TypeRef::VOID
         end
       end
@@ -83763,7 +83764,7 @@ module Adamas::HIR
         source_binding: call_source_binding, declaration_arena: @arena,
       )
       source_binding_arguments = call_source_binding.try do |binding|
-        binding.supplied_types if source_call_binding_matches?(binding, node, @arena)
+        source_call_binding_actual_arguments(binding) if source_call_binding_matches?(binding, node, @arena)
       end
       source_binding_param_index = 0
       whole_double_splat_layout = bind_whole_double_splat_formal(node, full_name_override, method_forall_bindings)
@@ -95902,16 +95903,25 @@ module Adamas::HIR
             # call targets the zero-arg mangle and defaulted params only get a
             # value from backend padding (lost when default_literal is absent).
             self_id = emit_self(ctx)
-            bare_self_args, _, _ = apply_default_args(ctx, [] of ValueId, name, class_method_base, false, false, self_id)
+            bare_self_default_entries = [] of Tuple(String, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike)
+            bare_self_args, _, _ = apply_default_args(
+              ctx, [] of ValueId, name, class_method_base, false, false, self_id,
+              bare_self_default_entries,
+            )
+            if terminal_default = bare_self_args.find { |value| runtime_noreturn_value?(ctx, value) }
+              return terminal_default
+            end
             bare_self_arg_types = bare_self_args.map { |arg_id| ctx.type_of(arg_id) }
-            full_name = mangle_function_name(class_method_base, bare_self_arg_types)
+            bare_self_source_entry = bare_self_default_entries.first?
+            bare_self_target_name = bare_self_source_entry.try(&.[0]) || class_method_base
+            full_name = mangle_function_name(bare_self_target_name, bare_self_arg_types)
             return_type = @function_types[full_name]? || TypeRef::VOID
             lower_function_if_needed(full_name)
             # Unknown AST inference is not a Void result contract. Materialize
             # the exact pending target before its value enters caller lowering;
             # tuple extraction likewise needs the completed concrete layout.
             tuple_return = get_type_name_from_ref(return_type).starts_with?("Tuple(")
-            source_def = @function_defs[full_name]?
+            source_def = bare_self_source_entry.try(&.[1]) || @function_defs[full_name]?
             if return_type == TypeRef::VOID || tuple_return || selected_source_result_pending?(full_name, source_def)
               refused_before_call_force = @force_lower_depth_refused.size
               force_pending_call_targets_for_return_type(full_name, context: "bare_self")
@@ -96024,15 +96034,30 @@ module Adamas::HIR
         # instead of 0/null. Without this, `def f(x : Int32 = 7); x; end; f`
         # mangled to the zero-arg `f` and passed 0 for x; `make_array.join` even
         # segfaulted because `make_array` resolved to a null instead of calling.
-        call_args, _, _ = apply_default_args(ctx, [] of ValueId, name, name, false, false, nil)
-        arg_types = call_args.map { |arg_id| ctx.type_of(arg_id) }
-        full_name = mangle_function_name(name, arg_types)
-        selected_entry = lookup_function_def_for_call(
-          name,
-          call_args.size,
-          false,
-          arg_types,
+        bare_default_entries = [] of Tuple(String, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike)
+        call_args, _, _ = apply_default_args(
+          ctx, [] of ValueId, name, name, false, false, nil, bare_default_entries,
         )
+        if terminal_default = call_args.find { |value| runtime_noreturn_value?(ctx, value) }
+          return terminal_default
+        end
+        # A default such as `:red` is carried as Int32 at runtime, while its
+        # source enum identity selects the enum overload. Keep source identity
+        # when forming the zero-argument call target, just as explicit calls do.
+        arg_types = call_args.map { |arg_id| enum_tracked_type(ctx, arg_id) }
+        bare_source_entry = bare_default_entries.first?
+        bare_target_name = bare_source_entry.try(&.[0]) || name
+        full_name = mangle_function_name(bare_target_name, arg_types)
+        selected_entry = if bare_source_entry
+                           {bare_source_entry.not_nil![0], bare_source_entry.not_nil![1]}
+                         else
+                           lookup_function_def_for_call(
+                             name,
+                             call_args.size,
+                             false,
+                             arg_types,
+                           )
+                         end
         selected_def = selected_entry.try { |entry| entry[1] }
         if selected_entry && pad_missing_positional_splat(ctx, selected_entry[0], selected_entry[1], call_args, arg_types)
           full_name = mangle_function_name(name, arg_types)
@@ -108263,6 +108288,10 @@ module Adamas::HIR
         binding.supplied_types.each do |argument|
           h = source_call_argument_fingerprint(h, argument)
         end
+        h = (h ^ 0x7a_u64) &* 1099511628211_u64
+        binding.defaulted_types.each do |argument|
+          h = source_call_argument_fingerprint(h, argument)
+        end
       else
         source_argument_facts_shape_key(source_argument_facts).each_byte do |byte|
           h = (h ^ byte.to_u64) &* 1099511628211_u64
@@ -108458,9 +108487,9 @@ module Adamas::HIR
                            !has_block && !existing.has_block &&
                            !existing.has_named_args && existing.named_arg_names.nil? &&
                            existing.selected_target.nil? &&
-                           binding.supplied_types.size == arg_types.size
+                           source_call_binding_actual_arguments(binding).size == arg_types.size
       if source_abi_matches
-        binding.supplied_types.each_with_index do |actual, index|
+        source_call_binding_actual_arguments(binding).each_with_index do |actual, index|
           unless actual && actual.type_ref != TypeRef::VOID && actual.type_ref == arg_types[index]
             source_abi_matches = false
             break
@@ -118159,6 +118188,21 @@ module Adamas::HIR
       source_default_entry : Tuple(String, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike)? = nil
       source_named_rest_packed = false
       source_binding_out = [] of SourceCallBinding
+      # Defaults can depend on a method forall inferred from a zero-argument
+      # callback result. Capture only the block's directly inferred result;
+      # callback formals need the selected yield signature and remain handled
+      # by the later block-lowering path.
+      source_callback_result = nil.as(SourceCallArgument?)
+      if block_expr
+        if source_block = node_for_call_expr(call_arena, block_expr.not_nil!).as?(Adamas::Compiler::Frontend::BlockNode)
+          if source_block.params.nil? || source_block.params.not_nil!.empty?
+            if result_name = inline_block_return_type_name(source_block, [] of TypeRef, @current_class, ctx)
+              result = source_call_argument_from_name(result_name, @current_class)
+              source_callback_result = result unless result.type_ref == TypeRef::VOID
+            end
+          end
+        end
+      end
       args = with_arena(call_arena) do
         if DebugHooks::ENABLED && block_pass_expr
           kind = Adamas::Compiler::Frontend.node_kind(@arena[block_pass_expr])
@@ -118171,7 +118215,7 @@ module Adamas::HIR
           STDERR.puts "[SPLAT_TRACE_ARGS] #{@last_splat_context || "func=#{ctx.function.name}"} args=#{kinds.join(",")}"
         end
         args_result = if named_args = node.named_args
-                        reordered = reorder_named_args(ctx, call_args, named_args, method_name, arg_binding_full_method_name, has_block_call, receiver_id, call_arena, lowered_call_arguments, source_binding_out)
+                        reordered = reorder_named_args(ctx, call_args, named_args, method_name, arg_binding_full_method_name, has_block_call, receiver_id, call_arena, lowered_call_arguments, source_binding_out, source_callback_result)
                         return reordered.value if reordered.is_a?(TerminatedCallArguments)
                         # An allocator consumes the selected initializer's
                         # slots, but its physical target remains the allocator.
@@ -118193,7 +118237,8 @@ module Adamas::HIR
                         reordered[0]
                       elsif positional_binding = lower_positional_rest_keyword_args(
                               ctx, call_args, method_name, arg_binding_full_method_name,
-                              has_block_call, receiver_id, call_arena, lowered_call_arguments, source_binding_out)
+                              has_block_call, receiver_id, call_arena, lowered_call_arguments, source_binding_out,
+                              source_callback_result)
                         return positional_binding.value if positional_binding.is_a?(TerminatedCallArguments)
                         selected_binding = positional_binding[1]
                         if method_name == "new" && method_short_from_name(selected_binding[0]) == "initialize"
@@ -118302,10 +118347,13 @@ module Adamas::HIR
                                                        {args, has_named_args, nil}
                                                      else
                                                        source_default_entry_out = [] of Tuple(String, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike)
-                                                       default_result = apply_default_args(ctx, args, method_name, arg_binding_full_method_name, has_block_call, has_named_args, receiver_id, source_default_entry_out, source_binding_out)
+                                                       default_result = apply_default_args(ctx, args, method_name, arg_binding_full_method_name, has_block_call, has_named_args, receiver_id, source_default_entry_out, source_binding_out, source_callback_result)
                                                        source_default_entry = source_default_entry_out.first?
                                                        default_result
                                                      end
+      if terminal_default = args.find { |value| runtime_noreturn_value?(ctx, value) }
+        return terminal_default
+      end
       source_call_binding = source_binding_out.first?
       source_receiver_name = has_block_call ? with_arena(call_arena) { source_call_receiver_name(node, @current_class) } : nil
       if binding = source_call_binding
@@ -132636,6 +132684,7 @@ module Adamas::HIR
       call_arena : Adamas::Compiler::Frontend::ArenaLike,
       lowered_arguments : LoweredCallSiteArguments?,
       source_binding_out : Array(SourceCallBinding),
+      source_callback_result : SourceCallArgument? = nil,
     ) : Tuple(Array(ValueId), Tuple(String, Adamas::Compiler::Frontend::DefNode), Bool) | TerminatedCallArguments | Nil
       func_name = full_method_name || method_name
       needs_source_slots = function_def_overload_keys(func_name).any? do |key|
@@ -132652,7 +132701,7 @@ module Adamas::HIR
       lower_source_named_args(ctx, positional_args,
         [] of Adamas::Compiler::Frontend::NamedArgument, func_name, initial_entry,
         has_block_call, receiver_id, call_arena, lowered_arguments, source_binding_out,
-        allow_empty_named: true)
+        allow_empty_named: true, source_callback_result: source_callback_result)
     end
 
     private def lower_source_named_args(
@@ -132667,6 +132716,7 @@ module Adamas::HIR
       lowered_arguments : LoweredCallSiteArguments? = nil,
       source_binding_out : Array(SourceCallBinding)? = nil,
       allow_empty_named : Bool = false,
+      source_callback_result : SourceCallArgument? = nil,
     ) : Tuple(Array(ValueId), Tuple(String, Adamas::Compiler::Frontend::DefNode), Bool) | TerminatedCallArguments | Nil
       return nil if named_args.empty? && !allow_empty_named
       # Source argument types must select the declaration before its named
@@ -132814,15 +132864,18 @@ module Adamas::HIR
       source_namespace = function_namespace_override_for(
         selected[0], strip_type_suffix(selected[0]), func_name
       ) || context
-      source_type_params = {} of String => String
-      if source_receiver = receiver_id
-        source_type_params = type_param_map_for_receiver_type(ctx.type_of(source_receiver))
-      end
-      if selected_type_params = function_type_param_map_for(
-           selected[0], strip_type_suffix(selected[0]), func_name
-         )
-        source_type_params = source_type_params.merge(selected_type_params)
-      end
+      source_receiver_type = receiver_id.try { |source_receiver| ctx.type_of(source_receiver) }
+      source_default_arguments = source_named_call_argument_facts(
+        ctx, params, positional_values, named_values,
+      )
+      selected_source_binding = SourceCallBinding.new(
+        selected[0], selected[1], def_arena, source_default_arguments,
+        block_result: source_callback_result,
+      )
+      _, selected_source_namespace, source_type_params = selected_default_source_context(
+        selected[0], func_name, source_receiver_type, selected[1], def_arena, selected_source_binding,
+      )
+      source_namespace = selected_source_namespace || source_namespace
 
       saved_locals = ctx.save_locals
       saved_inline_caller_locals = @inline_caller_locals_stack.map { |locals| {locals, locals.dup} }
@@ -132909,18 +132962,11 @@ module Adamas::HIR
                     id
                   elsif default = param.default_value
                     supplied = false
-                    restriction = param.type_annotation.try { |type_node| normalize_declared_type_name(type_node, context) }
-                    expected = restriction ? type_ref_for_name(restriction) : TypeRef::VOID
-                    default_value = lower_arg_with_expected_type(ctx, default, expected, restriction, context, def_arena)
-                    # An integer literal default is typed by its restriction
-                    # when it fits (`size : UInt64 = 0`), as positional calls do.
-                    default_node = node_for_expr(default, def_arena)
-                    if default_node.is_a?(Adamas::Compiler::Frontend::NumberNode) &&
-                       ctx.type_of(default_value) != expected &&
-                       integer_literal_representable_as?(default_node, expected)
-                      default_value = coerce_value_to_type(ctx, default_value, expected)
-                    end
-                    default_value
+                    default_id, selected_source_binding = lower_selected_default_argument(
+                      ctx, default, param, selected[1], selected[0], func_name,
+                      source_receiver_type, def_arena, supplied_types.size, selected_source_binding,
+                    )
+                    default_id
                   else
                     raise LoweringError.new("missing argument #{param.name} for #{strip_type_suffix(func_name)}")
                   end
@@ -132928,6 +132974,9 @@ module Adamas::HIR
           supplied_types << (supplied ? source_call_argument(ctx, value) : nil)
           if local_name = param.name
             ctx.all_locals[local_name.lstrip('@')] = value
+          end
+          if runtime_noreturn_value?(ctx, value)
+            return TerminatedCallArguments.new(value)
           end
         end
 
@@ -132953,7 +133002,11 @@ module Adamas::HIR
         @type_param_map = saved_type_param_map
         @subst_cache_gen &+= 1
       end
-      source_binding_out.try(&.push(SourceCallBinding.new(selected[0], selected[1], def_arena, supplied_types)))
+      source_binding_out.try(&.push(SourceCallBinding.new(
+        selected[0], selected[1], def_arena, supplied_types,
+        block_result: source_callback_result,
+        defaulted_types: selected_source_binding.try(&.defaulted_types) || [] of SourceCallArgument?,
+      )))
       {result, selected, rest_packed}
     end
 
@@ -132969,9 +133022,11 @@ module Adamas::HIR
       call_arena : Adamas::Compiler::Frontend::ArenaLike,
       lowered_arguments : LoweredCallSiteArguments? = nil,
       source_binding_out : Array(SourceCallBinding)? = nil,
+      source_callback_result : SourceCallArgument? = nil,
     ) : Tuple(Array(ValueId), Tuple(String, Adamas::Compiler::Frontend::DefNode)?, Bool) | TerminatedCallArguments
       # Get parameter names from function definition
       func_name = full_method_name || method_name
+      default_receiver_type = receiver_id.try { |source_receiver| ctx.type_of(source_receiver) }
       named_arg_names = named_arg_names_for(named_args)
       # This is the RAW callsite shape, so the positional prefix check applies;
       # a splatted positional has unknown arity, so leave it unchecked.
@@ -132986,12 +133041,17 @@ module Adamas::HIR
         end
       end
       func_entry = lookup_function_def_for_call(func_name, positional_args.size + named_args.size, has_block_call, nil, false, !named_args.empty?, named_arg_names, raw_positional_count)
-      if bound = lower_source_named_args(ctx, positional_args, named_args, func_name, func_entry, has_block_call, receiver_id, call_arena, lowered_arguments, source_binding_out)
+      if bound = lower_source_named_args(
+           ctx, positional_args, named_args, func_name, func_entry, has_block_call,
+           receiver_id, call_arena, lowered_arguments, source_binding_out,
+           source_callback_result: source_callback_result,
+         )
         return bound if bound.is_a?(TerminatedCallArguments)
         return {bound[0], bound[1], bound[2]}
       end
       func_def = func_entry ? func_entry[1] : nil
-      func_context = func_entry ? function_context_from_name(func_entry[0]) : nil
+      selected_name = func_entry.try(&.[0]) || func_name
+      func_context = func_entry ? function_context_for_lookup_candidate(func_name, selected_name) : nil
       def_arena = func_entry ? (registered_arena_for_def(func_entry[1]) || @function_def_arenas[func_entry[0]]? || @arena) : @arena
 
       # When looking up `new` and the found def doesn't match any named args,
@@ -133047,7 +133107,8 @@ module Adamas::HIR
             if init_match
               func_entry = init_entry
               func_def = init_def
-              func_context = function_context_from_name(init_entry[0])
+              selected_name = init_entry[0]
+              func_context = function_context_for_lookup_candidate(func_name, selected_name)
               def_arena = registered_arena_for_def(init_def) || @function_def_arenas[init_entry[0]]? || @arena
             end
           end
@@ -133061,48 +133122,54 @@ module Adamas::HIR
         param_defaults = [] of ExprId?
         param_types = [] of TypeRef
         param_type_names = [] of String?
+        param_source_infos = [] of DefParamInfo
         double_splat_index : Int32? = nil
         splat_index : Int32? = nil
 
-        params.each do |p|
-          next if p.is_block
-          next if named_only_separator?(p)
-          call_name = if ext = p.external_name
-                        ext
-                      elsif name = p.name
-                        # ivar capture params have '@'-prefixed names; strip for named-arg matching
-                        name.lstrip('@')
-                      else
-                        ""
-                      end
-          local_name = p.name || ""
-          param_type_name = if ta = p.type_annotation
-                              normalize_declared_type_name(ta, func_context)
-                            else
-                              nil
-                            end
-          param_type = if p.is_double_splat
-                         param_type_name ? type_ref_for_name(param_type_name) : type_ref_for_name("NamedTuple")
-                       elsif param_type_name
-                         type_ref_for_name(param_type_name)
-                       else
-                         TypeRef::VOID
-                       end
-          param_call_names << call_name
-          param_local_names << local_name
-          param_defaults << p.default_value
-          param_types << param_type
-          param_type_names << param_type_name
-          if p.is_double_splat
-            double_splat_index = param_types.size - 1
-          elsif p.is_splat
-            splat_index = param_types.size - 1
+        with_selected_default_source_context(selected_name, func_name, default_receiver_type) do |default_owner, _|
+          func_context = default_owner
+          params.each do |p|
+            next if p.is_block
+            next if named_only_separator?(p)
+            call_name = if ext = p.external_name
+                          ext
+                        elsif name = p.name
+                          # ivar capture params have '@'-prefixed names; strip for named-arg matching
+                          name.lstrip('@')
+                        else
+                          ""
+                        end
+            local_name = p.name || ""
+            param_type_name = if ta = p.type_annotation
+                                normalize_declared_type_name(ta, default_owner)
+                              else
+                                nil
+                              end
+            param_type = if p.is_double_splat
+                           param_type_name ? type_ref_for_name(param_type_name) : type_ref_for_name("NamedTuple")
+                         elsif param_type_name
+                           type_ref_for_name(param_type_name)
+                         else
+                           TypeRef::VOID
+                         end
+            param_call_names << call_name
+            param_local_names << local_name
+            param_defaults << p.default_value
+            param_types << param_type
+            param_type_names << param_type_name
+            param_source_infos << p
+            if p.is_double_splat
+              double_splat_index = param_types.size - 1
+            elsif p.is_splat
+              splat_index = param_types.size - 1
+            end
           end
         end
 
         result = [] of ValueId
         provided = [] of Bool
         source_rest_values = {} of Int32 => Array(SourceCallArgument)
+        selected_source_binding = nil.as(SourceCallBinding?)
         old_arena = @arena
         begin
           if lowered_arguments
@@ -133201,11 +133268,14 @@ module Adamas::HIR
 
           # Copy source provenance before defaults mutate `provided`. Slots
           # absent from this vector are omitted, including trailing defaults.
-          if source_binding_out && func_entry
+          if func_entry
             supplied_types = result.map_with_index do |value, index|
               provided[index]? == true ? source_call_argument(ctx, value, source_rest_values[index]?).as(SourceCallArgument?) : nil
             end
-            source_binding_out << SourceCallBinding.new(func_entry[0], func_def, def_arena, supplied_types)
+            selected_source_binding = SourceCallBinding.new(
+              func_entry[0], func_def, def_arena, supplied_types,
+              block_result: source_callback_result,
+            )
           end
 
           # Fill missing args with defaults (evaluate in a param-local context)
@@ -133231,25 +133301,24 @@ module Adamas::HIR
                 next if provided[idx]
                 next unless default_expr
                 @arena = call_arena
-                default_id = with_arena(def_arena) {
-                  if idx < param_type_names.size && param_type_names[idx]
-                    lower_arg_with_expected_type(ctx, default_expr, param_types[idx], param_type_names[idx], func_context, def_arena)
-                  else
-                    lower_expr(ctx, default_expr)
-                  end
-                }
-                if param_types[idx] != TypeRef::VOID
-                  ctx.register_type(default_id, param_types[idx])
-                end
+                default_id, selected_source_binding = lower_selected_default_argument(
+                  ctx, default_expr, param_source_infos[idx], func_def, selected_name, func_name,
+                  default_receiver_type, def_arena, idx, selected_source_binding,
+                )
                 result[idx] = default_id
                 provided[idx] = true
                 name = param_local_names[idx]
                 locals[name] = default_id unless name.empty?
+                break if runtime_noreturn_value?(ctx, default_id)
               end
             ensure
               ctx.restore_locals(saved_locals)
             end
           end
+          # Publish one binding after default materialization so replay sees
+          # the completed defaulted_types vector together with the original
+          # supplied_types omissions.
+          source_binding_out.try(&.push(selected_source_binding.not_nil!)) if selected_source_binding
         ensure
           @arena = old_arena
         end
@@ -133275,6 +133344,401 @@ module Adamas::HIR
       {result, nil, false}
     end
 
+    private def selected_default_source_context(
+      selected_name : String,
+      lookup_name : String,
+      receiver_type : TypeRef?,
+      selected_def : Adamas::Compiler::Frontend::DefNode? = nil,
+      selected_arena : Adamas::Compiler::Frontend::ArenaLike? = nil,
+      source_binding : SourceCallBinding? = nil,
+    ) : Tuple(String?, String?, Hash(String, String))
+      owner = function_context_for_lookup_candidate(lookup_name, selected_name) || function_context_from_name(selected_name)
+      namespace = function_namespace_override_for(
+        selected_name, strip_type_suffix(selected_name), lookup_name,
+      ) || owner
+      bindings = receiver_type ? type_param_map_for_receiver_type(receiver_type).dup : {} of String => String
+      if selected_bindings = function_type_param_map_for(
+           selected_name, strip_type_suffix(selected_name), lookup_name,
+         )
+        selected_bindings.each do |name, value|
+          receiver_binding = bindings[name]?
+          # A selected-family registration is only a fallback. Any binding
+          # carried by this exact receiver, including a rigid generic owner
+          # variable, takes precedence over a stale family specialization.
+          next if receiver_binding
+          bindings[name] = value
+        end
+      end
+      if definition = selected_def
+        method_formals = forall_type_param_names(definition)
+        # Method forall names shadow same-spelled owner or family bindings.
+        # An uninferred name remains rigid and will fail closed in a resolved
+        # source pattern instead of borrowing a stale specialization.
+        method_formals.each { |name| bindings[name] = name }
+        if source_call = source_binding
+          if source_call.definition.same?(definition) &&
+             selected_arena && source_call.declaration_arena.same?(selected_arena)
+            source_default_method_forall_bindings(
+              definition, selected_arena.not_nil!, source_call, owner,
+            ).each do |name, value|
+              bindings[name] = value if method_formals.includes?(name)
+            end
+          end
+        end
+      end
+      {owner, namespace, bindings}
+    end
+
+    private def source_default_method_forall_bindings(
+      definition : Adamas::Compiler::Frontend::DefNode,
+      declaration_arena : Adamas::Compiler::Frontend::ArenaLike,
+      source_binding : SourceCallBinding,
+      declaration_owner : String?,
+    ) : Hash(String, String)
+      formals = forall_type_param_names(definition)
+      return {} of String => String if formals.empty?
+      return {} of String => String unless source_binding.definition.same?(definition) &&
+                                            source_binding.declaration_arena.same?(declaration_arena)
+      return {} of String => String unless method_forall_positional_signature?(definition)
+
+      bindings = {} of String => String
+      conflicted = Set(String).new
+      source_params = function_param_infos(definition, declaration_arena)
+      slot = 0
+      source_params.each do |param|
+        next if param.is_block || named_only_separator?(param)
+        # Defaults remain separate from source-supplied slots, but participate
+        # in this same selected call's forall map after materialization.
+        actual = source_binding.supplied_types[slot]? || source_binding.defaulted_types[slot]?
+        slot += 1
+        next unless actual
+        actual_argument = actual.not_nil!
+        next if actual_argument.type_ref == TypeRef::VOID
+        next unless restriction = param.type_annotation
+
+        # A mixed class/instance Phi has no single source binding for a forall
+        # name. Preserve the unresolved formal so default validation rejects
+        # it rather than inferring from the carrier alone.
+        if facts = actual_argument.value_facts
+          next if facts.map(&.[1]).uniq.size > 1
+        end
+        concrete = generic_param_type_name_from_ref(actual_argument.type_ref)
+        concrete = "#{concrete}.class" if actual_argument.type_literal
+        next if concrete.empty? || concrete == "Unknown"
+
+        candidate = {} of String => String
+        collect_type_param_substitutions(
+          restriction, concrete, candidate, formals,
+          resolve_heads: true, head_context: declaration_owner,
+        )
+        candidate.each do |name, value|
+          next unless formals.includes?(name)
+          if previous = bindings[name]?
+            if previous != value
+              conflicted << name
+              bindings.delete(name)
+            end
+          elsif !conflicted.includes?(name)
+            bindings[name] = value
+          end
+        end
+      end
+      conflicted.each { |name| bindings.delete(name) }
+
+      # A callback result can infer the same method forall after ordinary
+      # supplied arguments and earlier defaults have established their
+      # bindings. Keep those actuals authoritative; the shared source-block
+      # matcher rejects a contradictory callback and leaves unresolved formals
+      # unbound.
+      if block_result = source_binding.block_result
+        if callback_bindings = source_block_output_type_bindings(
+             definition, declaration_owner, block_result, bindings,
+           )
+          callback_bindings.each do |name, value|
+            bindings[name] = value if formals.includes?(name) && !bindings.has_key?(name)
+          end
+        end
+      end
+      bindings
+    end
+
+    private def source_call_binding_with_default_at_slot(
+      source_binding : SourceCallBinding?,
+      definition : Adamas::Compiler::Frontend::DefNode,
+      declaration_arena : Adamas::Compiler::Frontend::ArenaLike,
+      source_slot : Int32,
+      actual : SourceCallArgument,
+    ) : SourceCallBinding?
+      binding = source_binding || return nil
+      return nil unless binding.definition.same?(definition) &&
+                        binding.declaration_arena.same?(declaration_arena)
+      return nil if source_slot < 0 ||
+                    source_slot >= binding.supplied_types.size ||
+                    binding.supplied_types[source_slot]?
+
+      defaulted = binding.defaulted_types.dup
+      while defaulted.size <= source_slot
+        defaulted << nil
+      end
+      defaulted[source_slot] = actual
+      binding.copy_with(defaulted_types: defaulted)
+    end
+
+    private def collect_source_block_formal_names(
+      pattern : SourceBlockResultPattern,
+      names : Set(String),
+    ) : Nil
+      if pattern.kind == SourceBlockResultPattern::Kind::Formal
+        if name = pattern.formal_name
+          names << name
+        end
+      end
+      pattern.children.each do |child|
+        collect_source_block_formal_names(child, names)
+      end
+    end
+
+    private def with_selected_default_source_context(
+      selected_name : String,
+      lookup_name : String,
+      receiver_type : TypeRef?,
+      selected_def : Adamas::Compiler::Frontend::DefNode? = nil,
+      selected_arena : Adamas::Compiler::Frontend::ArenaLike? = nil,
+      source_binding : SourceCallBinding? = nil,
+      &
+    )
+      owner, namespace, bindings = selected_default_source_context(
+        selected_name, lookup_name, receiver_type, selected_def, selected_arena, source_binding,
+      )
+      old_class = @current_class
+      old_namespace = @current_namespace_override
+      old_type_param_map = @type_param_map
+      @current_class = owner
+      @current_namespace_override = namespace
+      @type_param_map = bindings
+      @subst_cache_gen &+= 1
+      begin
+        yield owner, bindings
+      ensure
+        @current_class = old_class
+        @current_namespace_override = old_namespace
+        @type_param_map = old_type_param_map
+        @subst_cache_gen &+= 1
+      end
+    end
+
+    # TypeRef union normalization removes NoReturn when a returning arm exists.
+    # Crystal still accepts a bottom expression when the source restriction
+    # directly spells NoReturn, while an alias must follow its normalized type.
+    private def normalized_type_ref_includes_noreturn?(type : TypeRef, depth : Int32 = 0) : Bool
+      return false if depth >= 32
+      desc = @module.get_type_descriptor(type) || return false
+      return true if desc.name == "NoReturn"
+      return false unless desc.kind == TypeKind::Union
+
+      union_desc = @union_descriptors[hir_to_mir_type_ref(type)]? || return false
+      union_desc.variants.any? do |variant|
+        normalized_type_ref_includes_noreturn?(mir_to_hir_type_ref(variant.type_ref), depth + 1)
+      end
+    end
+
+    private def source_restriction_includes_noreturn?(type_name : String, context : String?, depth : Int32 = 0) : Bool
+      return false if depth >= 32
+
+      source_name = strip_fully_grouped_type_name(type_name.strip)
+      return false if source_name.empty?
+
+      # Preserve an explicit source arm before union normalization drops it.
+      source_parts = split_union_type_name(source_name)
+      explicit_noreturn_arm = source_parts.any? do |part|
+        part_name = strip_fully_grouped_type_name(part.strip)
+        part_name == "NoReturn" || part_name == "::NoReturn"
+      end
+      return true if source_parts.size > 1 && explicit_noreturn_arm
+
+      # Direct nullable syntax retains its explicitly written NoReturn base.
+      # Do not recurse through aliases here: Crystal rejects Bottom? when
+      # Bottom aliases NoReturn, after normalizing that alias inside the union.
+      if source_name.ends_with?('?')
+        base_name = strip_fully_grouped_type_name(source_name[0, source_name.size - 1].strip)
+        return true if base_name == "NoReturn" || base_name == "::NoReturn"
+      end
+
+      normalized = strip_fully_grouped_type_name(normalize_declared_type_name(type_name, context).strip)
+      return false if normalized.empty?
+
+      resolved = resolve_type_alias_chain(normalized)
+      return true if resolved == "NoReturn" || resolved == "::NoReturn"
+
+      normalized_type = type_ref_for_name(resolved)
+      normalized_type_ref_includes_noreturn?(normalized_type, depth + 1)
+    end
+
+    private def lower_selected_default_argument(
+      ctx : LoweringContext,
+      default_expr : ExprId,
+      param_info : DefParamInfo,
+      selected_def : Adamas::Compiler::Frontend::DefNode,
+      selected_name : String,
+      lookup_name : String,
+      receiver_type : TypeRef?,
+      def_arena : Adamas::Compiler::Frontend::ArenaLike,
+      source_slot : Int32,
+      source_binding : SourceCallBinding? = nil,
+    ) : {ValueId, SourceCallBinding?}
+      default_id, default_binding = with_selected_default_source_context(
+        selected_name, lookup_name, receiver_type, selected_def, def_arena, source_binding,
+      ) do |selected_owner, source_bindings|
+        default_annotation = param_info.type_annotation.try(&.strip)
+        default_annotation = nil if default_annotation == "_"
+        infer_unbound_method_formal = false
+        if default_annotation
+          formals = source_block_type_param_names(selected_def, selected_owner)
+          unbound_pattern = build_source_block_result_pattern(
+            default_annotation, selected_owner, formals, {} of String => String,
+          )
+          annotation_formals = Set(String).new
+          collect_source_block_formal_names(unbound_pattern, annotation_formals)
+          infer_unbound_method_formal = forall_type_param_names(selected_def).any? do |name|
+            annotation_formals.includes?(name) && source_bindings[name]? == name
+          end
+        end
+
+        # A source default can be the only actual that determines a method
+        # forall (for example `x : T = 65`). Lower that expression without an
+        # owner-specialized expected type, then attach its fact to a distinct
+        # defaulted slot on this exact call binding. Supplied-slot omissions
+        # remain intact, and the same-call binding calculation rejects later
+        # defaults that conflict with the inferred T.
+        source_binding_matches = if binding = source_binding
+                                  binding.definition.same?(selected_def) &&
+                                    binding.declaration_arena.same?(def_arena)
+                                else
+                                  false
+                                end
+        if infer_unbound_method_formal && source_binding_matches
+          default_id = with_arena(def_arena) { lower_expr(ctx, default_expr) }
+          updated_binding = if runtime_noreturn_value?(ctx, default_id)
+                              # A terminal default is not a runtime actual for
+                              # inferring a method forall. Keep the original
+                              # omission and let the existing NoReturn
+                              # restriction check decide whether it is legal.
+                              source_binding
+                            else
+                              actual = source_call_argument(ctx, default_id, preserve_value_facts: true)
+                              source_call_binding_with_default_at_slot(
+                                source_binding, selected_def, def_arena, source_slot, actual,
+                              ) || source_binding
+                            end
+          {default_id, updated_binding}
+        else
+          default_annotation = param_info.type_annotation.try(&.strip)
+          default_annotation = nil if default_annotation == "_"
+          # The active selected-call map already contains the exact receiver
+          # arguments and method-forall bindings. Passing `selected_owner`
+          # explicitly would replace it with a receiver-only map and let an
+          # owner T override a same-spelled method-forall T.
+          param_type_name = default_annotation.try { |type_node| normalize_declared_type_name(type_node) }
+          param_type = param_type_name ? type_ref_for_name(param_type_name) : TypeRef::VOID
+          default_id = with_arena(def_arena) do
+            if param_type_name
+              lower_arg_with_expected_type(ctx, default_expr, param_type, param_type_name, selected_owner, def_arena)
+            else
+              lower_expr(ctx, default_expr)
+            end
+          end
+          {default_id, source_binding}
+        end
+      end
+
+      with_selected_default_source_context(
+        selected_name, lookup_name, receiver_type, selected_def, def_arena, default_binding,
+      ) do |selected_owner, source_bindings|
+        default_annotation = param_info.type_annotation.try(&.strip)
+        default_annotation = nil if default_annotation == "_"
+        param_type_name = default_annotation.try { |type_node| normalize_declared_type_name(type_node) }
+        param_type = param_type_name ? type_ref_for_name(param_type_name) : TypeRef::VOID
+
+        # A bottom default terminates evaluation and reaches the call boundary
+        # before any selected function runs. Typed restrictions still apply:
+        # Crystal admits NoReturn only when the source restriction explicitly
+        # contains that bottom arm (including an alias or union spelling).
+        if runtime_noreturn_value?(ctx, default_id)
+          if param_type_name
+            unless param_type != TypeRef::VOID && source_restriction_includes_noreturn?(param_info.type_annotation || param_type_name, selected_owner)
+              raise LoweringError.new(
+                "can't restrict NoReturn to #{param_type_name}",
+                node_for_expr(default_expr, def_arena),
+              )
+            end
+          end
+          return {default_id, default_binding}
+        end
+
+        actual = source_call_argument(ctx, default_id, preserve_value_facts: true)
+        if param_type_name && param_type == TypeRef::VOID
+          raise LoweringError.new(
+            "can't restrict #{proc_source_type_name(actual)} to #{param_type_name}",
+            node_for_expr(default_expr, def_arena),
+          )
+        end
+
+        if param_type_name
+          default_node = node_for_expr(default_expr, def_arena)
+          # Crystal contextualizes fitting integer literals (including integer
+          # literals assigned to float formals); it does not widen arbitrary
+          # numeric expressions at a default boundary.
+          if default_node.is_a?(Adamas::Compiler::Frontend::NumberNode) &&
+             actual.type_ref != param_type && integer_literal_representable_as?(default_node, param_type)
+            default_id = coerce_value_to_type(ctx, default_id, param_type)
+            actual = source_call_argument(ctx, default_id, preserve_value_facts: true)
+          end
+
+          unless default_annotation == "_"
+            numeric_type_mismatch = actual.type_ref != param_type &&
+                                    numeric_primitive?(actual.type_ref) && numeric_primitive?(param_type)
+            formals = source_block_type_param_names(selected_def, selected_owner)
+            pattern = build_source_block_result_pattern(
+              param_info.type_annotation || param_type_name,
+              selected_owner,
+              formals,
+              source_bindings,
+            )
+            compatible = !numeric_type_mismatch && pattern.valid && !pattern.has_unbound_formal? &&
+                         source_default_argument_matches_pattern?(actual, pattern)
+            unless compatible
+              raise LoweringError.new(
+                "can't restrict #{proc_source_type_name(actual)} to #{param_type_name}",
+                node_for_expr(default_expr, def_arena),
+              )
+            end
+          end
+        end
+
+        default_binding = source_call_binding_with_default_at_slot(
+          default_binding, selected_def, def_arena, source_slot, actual,
+        ) || default_binding
+
+        # Keep the default expression's own TypeRef and value-kind facts. Only
+        # the explicit literal conversion above creates a new typed value.
+        nil
+      end
+      {default_id, default_binding}
+    end
+
+    private def source_default_argument_matches_pattern?(
+      actual : SourceCallArgument,
+      pattern : SourceBlockResultPattern,
+    ) : Bool
+      if facts = actual.value_facts
+        return false if facts.empty?
+        return facts.all? do |(type_ref, type_literal)|
+          source_block_result_pattern_matches_value?(type_ref, type_literal, pattern)
+        end
+      end
+      source_block_result_pattern_matches_value?(actual.type_ref, actual.type_literal, pattern)
+    end
+
     private def apply_default_args(
       ctx : LoweringContext,
       args : Array(ValueId),
@@ -133285,8 +133749,10 @@ module Adamas::HIR
       receiver_id : ValueId? = nil,
       source_default_entry_out : Array(Tuple(String, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike))? = nil,
       source_binding_out : Array(SourceCallBinding)? = nil,
+      source_callback_result : SourceCallArgument? = nil,
     ) : {Array(ValueId), Bool, String?}
       func_name = full_method_name || method_name
+      default_receiver_type = receiver_id.try { |source_receiver| ctx.type_of(source_receiver) }
       source_arg_count = args.size
       arg_types = args.map { |arg_id| ctx.type_of(arg_id) }
       source_argument_facts = call_resolution_source_argument_facts(ctx, args, arg_types, false, call_has_named_args)
@@ -133373,12 +133839,33 @@ module Adamas::HIR
       return {args, call_has_named_args, nil} unless func_entry
       func_entry_name = func_entry[0]
       func_def = func_entry[1]
-      func_context = function_context_from_name(func_entry_name)
+      func_context, _, _ = selected_default_source_context(func_entry_name, func_name, default_receiver_type)
       def_arena = registered_arena_for_def(func_def) || func_entry_arena || @function_def_arenas[func_entry[0]]? || @arena
       params = function_param_infos(func_def, def_arena)
-      if source_binding_out && !call_has_named_args
-        source_values = args.map { |value| source_call_argument(ctx, value) }
-        source_binding_out << source_positional_call_binding(func_entry_name, func_def, def_arena, source_values)
+      source_default_binding = nil.as(SourceCallBinding?)
+      if bindings = source_binding_out
+        bindings.reverse_each do |candidate|
+          if candidate.definition.same?(func_def) && candidate.declaration_arena.same?(def_arena)
+            source_default_binding = candidate
+            break
+          end
+        end
+      end
+      unless source_default_binding || call_has_named_args
+        source_values = args.map { |value| source_call_argument(ctx, value, preserve_value_facts: true) }
+        source_default_binding = source_positional_call_binding(
+          func_entry_name, func_def, def_arena, source_values,
+        ).copy_with(block_result: source_callback_result)
+        source_binding_out.try(&.push(source_default_binding.not_nil!))
+      end
+      if source_default_binding && source_callback_result && !source_default_binding.not_nil!.block_result
+        source_default_binding = source_default_binding.not_nil!.copy_with(block_result: source_callback_result)
+        if bindings = source_binding_out
+          binding_index = bindings.index do |candidate|
+            candidate.definition.same?(func_def) && candidate.declaration_arena.same?(def_arena)
+          end
+          bindings[binding_index] = source_default_binding.not_nil! if binding_index
+        end
       end
       return {args, call_has_named_args, func_entry_name} if params.empty?
       func_stats = function_param_stats(func_entry_name, func_def)
@@ -133411,26 +133898,25 @@ module Adamas::HIR
       param_local_names = [] of String
       param_defaults = [] of ExprId?
       param_requires_argument = [] of Bool
-      param_types = [] of TypeRef
-      param_type_names = [] of String?
+      param_source_infos = [] of DefParamInfo
+      param_source_slots = [] of Int32
+      source_slot = 0
 
       params.each do |p|
+        next if p.is_block
+        next if named_only_separator?(p)
         # The keyword-rest slot is packed after positional defaults. It has
         # no default expression and must not make those defaults inapplicable.
-        next if p.is_block || p.is_double_splat
-        next if named_only_separator?(p)
-        local_name = p.name || ""
-        param_local_names << local_name
+        if p.is_double_splat
+          source_slot += 1
+          next
+        end
+        param_local_names << (p.name || "")
         param_defaults << p.default_value
         param_requires_argument << (p.default_value.nil? && !p.is_splat)
-        if ta = p.type_annotation
-          param_type_name = normalize_declared_type_name(ta, func_context)
-          param_types << type_ref_for_name(param_type_name)
-          param_type_names << param_type_name
-        else
-          param_types << TypeRef::VOID
-          param_type_names << nil
-        end
+        param_source_infos << p
+        param_source_slots << source_slot
+        source_slot += 1
       end
 
       return {args, call_has_named_args, func_entry_name} if args.size >= param_defaults.size
@@ -133451,7 +133937,7 @@ module Adamas::HIR
       saved_current_method = @current_method
       saved_current_method_is_class = @current_method_is_class
       saved_namespace_override = @current_namespace_override
-      saved_receiver_type : TypeRef? = receiver_id ? ctx.type_of(receiver_id) : nil
+      saved_receiver_type = default_receiver_type
       begin
         locals = ctx.all_locals
         if func_context && !func_context.empty?
@@ -133469,11 +133955,8 @@ module Adamas::HIR
           ctx.register_local("self", receiver_id)
           # Also set the receiver's type and class context so that method
           # resolution (e.g., `size` → `Slice#size`) works correctly.
-          if func_context && !func_context.empty?
-            receiver_type = type_ref_for_name(func_context)
-            if receiver_type != TypeRef::VOID
-              ctx.register_type(receiver_id, receiver_type)
-            end
+          if receiver_type = default_receiver_type
+            ctx.register_type(receiver_id, receiver_type)
             @current_class = func_context
           end
         elsif func_context && !func_context.empty? && @current_method_is_class && type_name_exists?(func_context)
@@ -133490,19 +133973,14 @@ module Adamas::HIR
         while idx < param_defaults.size
           default_expr = param_defaults[idx]
           break unless default_expr
-          default_id = with_arena(def_arena) {
-            if idx < param_type_names.size && param_type_names[idx]
-              lower_arg_with_expected_type(ctx, default_expr, param_types[idx], param_type_names[idx].not_nil!, func_context, def_arena)
-            else
-              lower_expr(ctx, default_expr)
-            end
-          }
-          if param_types[idx] != TypeRef::VOID
-            ctx.register_type(default_id, param_types[idx])
-          end
+          default_id, source_default_binding = lower_selected_default_argument(
+            ctx, default_expr, param_source_infos[idx], func_def, func_entry_name, func_name,
+            default_receiver_type, def_arena, param_source_slots[idx], source_default_binding,
+          )
           args << default_id
           local_name = param_local_names[idx]
           locals[local_name] = default_id unless local_name.empty?
+          break if runtime_noreturn_value?(ctx, default_id)
           idx += 1
         end
       ensure
@@ -133520,18 +133998,30 @@ module Adamas::HIR
         end
       end
 
+      if source_default_binding
+        if bindings = source_binding_out
+          binding_index = bindings.rindex do |candidate|
+            candidate.definition.same?(func_def) &&
+              candidate.declaration_arena.same?(def_arena) &&
+              candidate.selected_name == func_entry_name
+          end
+          bindings[binding_index] = source_default_binding.not_nil! if binding_index
+        end
+      end
+
       effective_has_named_args = call_has_named_args
       if !effective_has_named_args && func_stats.has_named_only && args.size > func_stats.positional_count
         effective_has_named_args = true
       end
 
-      # Defaults filled named-only slots of a call without named args. The
-      # padded positional shape no longer says which slots are named, so a
-      # re-resolution can bind them to an unrelated positional overload
-      # (`slice.fill { }` padded with `offset` matched `fill(range : Range, &)`).
-      # The overload chosen for the source shape stays the call target.
+      # Keep the overload selected for the source shape after materializing
+      # defaults. In particular, the default's concrete value must not cause a
+      # second lookup to choose a sibling overload that was not selected by
+      # the source call. This also preserves named-only slots: the padded
+      # positional shape no longer records which slots were named, so replaying
+      # it can bind to an unrelated positional overload (`slice.fill { }`
+      # padded with `offset` matched `fill(range : Range, &)`).
       if source_default_entry_out &&
-         !call_has_named_args && effective_has_named_args &&
          args.size > source_arg_count &&
          strip_type_suffix(func_entry_name) == strip_type_suffix(func_name)
         source_default_entry_out << {func_entry_name, func_def, def_arena}
@@ -143925,6 +144415,9 @@ module Adamas::HIR
         ctx, [] of ValueId, member_name, base_method_name, false, false, object_id,
         source_default_entries,
       )
+      if terminal_default = args.find { |value| runtime_noreturn_value?(ctx, value) }
+        return terminal_default
+      end
       source_default_entry = source_default_entries.first?
       arg_types = args.map { |arg_id| ctx.type_of(arg_id) }
       admitted_member_self_dispatch_root : String? = nil
@@ -145574,6 +146067,9 @@ module Adamas::HIR
         ctx, [] of ValueId, member_name, full_method_name, false, false, nil,
         source_default_entry_out,
       )
+      if terminal_default = args.find { |value| runtime_noreturn_value?(ctx, value) }
+        return terminal_default
+      end
       if enum_name && member_name == "new"
         enum_type = enum_base_type(enum_name)
         if args.size == 1
@@ -150018,6 +150514,42 @@ module Adamas::HIR
       SourceCallBinding.new(selected_name, definition, declaration_arena, supplied, source_receiver_name)
     end
 
+    private def source_named_call_argument_facts(
+      ctx : LoweringContext,
+      params : Array(DefParamInfo),
+      positional_values : Array(ValueId),
+      named_values : Hash(String, ValueId),
+    ) : Array(SourceCallArgument?)
+      supplied = [] of SourceCallArgument?
+      positional_index = 0
+      named_only = false
+      params.each do |param|
+        next if param.is_block
+        if named_only_separator?(param)
+          named_only = true
+          next
+        end
+        if param.is_double_splat
+          supplied << SourceCallArgument.new(type_ref_for_name("NamedTuple()"), false, [] of SourceCallArgument)
+        elsif param.is_splat
+          rest = positional_values[positional_index, positional_values.size - positional_index]
+          rest_facts = rest.map { |value| source_call_argument(ctx, value, preserve_value_facts: true) }
+          names = rest_facts.map { |value| proc_source_type_name(value) }
+          supplied << SourceCallArgument.new(type_ref_for_name("Tuple(#{names.join(", ")})"), false, rest_facts)
+          positional_index = positional_values.size
+          named_only = true
+        elsif !named_only && positional_index < positional_values.size
+          supplied << source_call_argument(ctx, positional_values[positional_index], preserve_value_facts: true)
+          positional_index += 1
+        elsif (label = named_parameter_label(param)) && (value = named_values[label]?)
+          supplied << source_call_argument(ctx, value, preserve_value_facts: true)
+        else
+          supplied << nil
+        end
+      end
+      supplied
+    end
+
     # Capture the semantic receiver before dispatch normalizes a bare generic
     # to an ABI carrier such as Pointer(Void). Explicit Box(T) applications are
     # already bound, even when the caller's T is still symbolic; bare Box may
@@ -150097,6 +150629,23 @@ module Adamas::HIR
       binding.definition.same?(definition) && binding.declaration_arena.same?(declaration_arena)
     end
 
+    # Runtime default values participate in the selected call's method-forall
+    # map, while their separate vector preserves which source slots were
+    # omitted. Merge only for consumers resolving the materialized call.
+    private def source_call_binding_actual_arguments(
+      binding : SourceCallBinding,
+    ) : Array(SourceCallArgument?)
+      actuals = binding.supplied_types.dup
+      binding.defaulted_types.each_with_index do |actual, index|
+        next unless actual
+        while actuals.size <= index
+          actuals << nil
+        end
+        actuals[index] = actual unless actuals[index]
+      end
+      actuals
+    end
+
     private def source_call_bindings_same?(left : SourceCallBinding?, right : SourceCallBinding?) : Bool
       return right.nil? unless left
       return false unless right
@@ -150105,6 +150654,7 @@ module Adamas::HIR
         left.definition.same?(right.definition) &&
         left.declaration_arena.same?(right.declaration_arena) &&
         left.supplied_types == right.supplied_types &&
+        left.defaulted_types == right.defaulted_types &&
         left.source_receiver_name == right.source_receiver_name
     end
 
@@ -150189,9 +150739,10 @@ module Adamas::HIR
         binding = source_positional_call_binding(selected_name, definition, declaration_arena, source_values)
       end
       argument_index = 0
+      source_arguments = source_call_binding_actual_arguments(binding)
       params.each do |param|
         next if param.is_block || named_only_separator?(param)
-        actual = binding.supplied_types[argument_index]?
+        actual = source_arguments[argument_index]?
         argument_index += 1
         next unless actual && (restriction = param.type_annotation)
         # Ordinary restrictions were already checked by source call admission.

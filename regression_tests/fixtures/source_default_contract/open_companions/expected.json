@@ -1,0 +1,23 @@
+{
+  "forall_callback_default.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "forall_named_previous_actual.cr": {
+    "status": 0,
+    "stdout": "A\n"
+  },
+  "wrong_concrete_formal_explicit.cr": {
+    "status": 1,
+    "diagnostic_regex": "expected argument #1 to 'SourceGenericDefaults\\(String\\)\\.call' to be String, not Int32",
+    "stock_expectation": ""
+  },
+  "method_formal_named_actual_over_owner.cr": {
+    "status": 0,
+    "stdout": "A"
+  },
+  "kwargs_default_class_instance_replay.cr": {
+    "status": 0,
+    "stdout": "ABI\n"
+  }
+}
