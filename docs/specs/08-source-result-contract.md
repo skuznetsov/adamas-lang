@@ -173,6 +173,23 @@ Typed-local coercion, `typeof` result ownership, and source Void callbacks also
 remain separate open obligations. This contract does not establish complete
 prelude, bootstrap, application linking, runtime, or upstream-test parity.
 
+A source method whose exact return annotation resolves to Void has a Nil
+call result, as in Crystal's check_return_type. Normalize that declaration at
+signature/result resolution and body materialization, before publishing source
+facts or selecting an outer overload. The body's raw final value is not the
+method's source result. An exact-Def cached result may refresh to Nil; retaining
+an inferred concrete body type would violate that declared result contract.
+
+Prove Void through the selected declaration's lexical/type-parameter bindings.
+An unknown provisional Void is not evidence of a discard annotation. Nested
+Pointer(Void)/Proc(Void) carriers retain their enclosing type. Pass the owning
+Def to both annotation resolvers and exclude C fun definitions explicitly;
+ordinary extern declarations and a C-ABI main must retain their physical Void
+contract. The original-first source_method_void_result_repro.sh gate checks
+runtime overload/effect behavior, strict returns and this separate HIR boundary.
+The C-entrypoint oracle uses the official primitives prelude because empty.cr
+already defines an Int32 main; no standard-library file is modified.
+
 Known open probes include broad or mixed-kind annotated results consumed
 before their exact body facts are available, callback method-variable defaults,
 unknown external-label admission, and class/instance body reuse through keyword
@@ -189,6 +206,7 @@ and check semantic diagnostics and absence of an executable for rejections.
 
 - `regression_tests/declared_return_contract_repro.sh`
 - `regression_tests/source_return_kind_repro.sh`
+- `regression_tests/source_method_void_result_repro.sh`
 - `regression_tests/nil_source_result_repro.sh`
 - `regression_tests/virtual_source_fact_transport_repro.sh`
 - `regression_tests/module_source_value_kind_repro.sh`

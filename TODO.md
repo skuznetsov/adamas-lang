@@ -25760,3 +25760,26 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Refresh prelude, previous_def/initializer replay, fresh bootstrap,
   unchanged LavinMQ execution and upstream parity. No application/stdlib edits
   or relaxed type checks belong to this repair.
+
+
+### 2026-11-06 — Normalize declared source-method Void results at their owner
+
+- [x] Resolve an exact source-method Void annotation to Nil at signature,
+  cached result and body materialization boundaries. Do not publish the body's
+  raw final Int32 as the call result; preserve effects and overload selection.
+- [x] Keep unknown/provisional Void, enclosing Pointer/Proc types and C fun
+  definitions separate. The exact Def owns the FFI exclusion, including the
+  special top-level main path; no target-name heuristics are used.
+- Original-first source_method_void_result_repro.sh passes eight cases on
+  Crystal 1.22.1 and exact-source S1 35q3157 (35q3169): six runtime controls
+  and two strict method-return rejections. The additional HIR guard preserves
+  C main -> Void and ordinary source_discard -> Nil; its stock semantic oracle
+  uses the official primitives prelude. All 74 cases in three return-contract
+  neighbors pass (35q3160). The baseline fails the generic overload witness
+  (35q3159) and falsely accepts both invalid Int32 wrappers (35q3142).
+- [ ] Close bare implicit-self helper demand inside inline lowering. The first
+  such candidate exposed this pre-existing Void result leak; do not bypass the
+  source return check or infer Nil from an unresolved annotation.
+- Recursive yield-result inference, callback forall results, prelude,
+  previous_def/initializer replay, fresh bootstrap and unchanged LavinMQ
+  execution/upstream parity remain open. No app/stdlib changes are included.

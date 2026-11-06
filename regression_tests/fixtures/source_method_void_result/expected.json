@@ -1,0 +1,68 @@
+{
+  "explicit_return_void.cr": {
+    "candidate_status": 0,
+    "run_exit": 0,
+    "source_sha256": "e06df1a68a2867a59fc7fc4ea27951bb6050d5cb146988ec38a3c3e4456e501f",
+    "status": 0,
+    "stdout": "RN\n"
+  },
+  "generic_declared_void_result.cr": {
+    "candidate_status": 0,
+    "purpose": "A generic specialization with a declared Void result discards the value result and selects observe(Nil); stock qualification is required.",
+    "qualification": "PREDICTED_UNRUN",
+    "run_exit": 0,
+    "source_sha256": "177dc831ce4af9223da326f3d39179f5f082214885ef7bf7aece3cd0cd65e54f",
+    "status": 0,
+    "stdout": "GN\n"
+  },
+  "global_overload_effect_once.cr": {
+    "candidate_status": 0,
+    "purpose": "The Void overload is chosen; its effect occurs once; the expression selects observe(Nil).",
+    "qualification": "PREDICTED_UNRUN",
+    "run_exit": 0,
+    "source_sha256": "e49fe944bb9957ddb364bd2b5dc49f0af42d4df6b946996e69b8db6b06721778",
+    "status": 0,
+    "stdout": "CN\n"
+  },
+  "instance_bare_parenthesized_self.cr": {
+    "candidate_status": 0,
+    "purpose": "Bare implicit-self, parenthesized, and explicit-self calls each run emit once and select classify(Nil).",
+    "qualification": "PREDICTED_UNRUN",
+    "run_exit": 0,
+    "source_sha256": "b677170f743e40e7fa128e142b6cec15d5235cfeb154254c25c2358974945f9e",
+    "status": 0,
+    "stdout": "ENENEN\n"
+  },
+  "qualified_alias_void_shadow.cr": {
+    "candidate_status": 0,
+    "purpose": "The owner-qualified ResultKind alias remains Void despite the caller module alias of the same name; observe(Nil) is selected.",
+    "qualification": "PREDICTED_UNRUN",
+    "run_exit": 0,
+    "source_sha256": "986c44b7ccdc627ee89624eee924684570ba342ad6d2cd3f3796ea3c999a550c",
+    "status": 0,
+    "stdout": "AN\n"
+  },
+  "reject_ordinary_void_body_result.cr": {
+    "candidate_diagnostic_regex": "must return Int32.*returning Nil",
+    "candidate_status": 1,
+    "diagnostic_category": "method-return",
+    "original_diagnostic_regex": "must return Int32 but it is returning Nil",
+    "source_sha256": "256c6d68d12ddb2426574dc06bde83fc1129105a09235cb9225b357282a9f2d7",
+    "status": 1
+  },
+  "reject_parenthesized_void_body_result.cr": {
+    "candidate_diagnostic_regex": "must return Int32.*returning Nil",
+    "candidate_status": 1,
+    "diagnostic_category": "method-return",
+    "original_diagnostic_regex": "must return Int32 but it is returning Nil",
+    "source_sha256": "ce287ed897024d2c46f59bb0dbee6e50d8ab01b9154d6f2870b8a4844f11706e",
+    "status": 1
+  },
+  "source_nil_control.cr": {
+    "candidate_status": 0,
+    "run_exit": 0,
+    "source_sha256": "bb36394e7df21c8365e1107c7e4946f78f02c04d2c277812341cbd1c869843de",
+    "status": 0,
+    "stdout": "LN\n"
+  }
+}

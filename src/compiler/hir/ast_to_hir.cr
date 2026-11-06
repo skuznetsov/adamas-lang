@@ -27203,9 +27203,18 @@ module Adamas::HIR
       source_name : String,
       lexical_owner : String?,
       runtime_self_name : String?,
+      definition : Adamas::Compiler::Frontend::DefNode,
     ) : TypeRef
       unless contains_type_param_token?(source_name, "self")
-        return annotation_type_ref(source_name, lexical_owner)
+        resolved = annotation_type_ref(source_name, lexical_owner)
+        # A source method annotated Void discards its body's value and returns
+        # Nil. Prove that declaration before distinguishing it from an unknown
+        # annotation's provisional Void; FFI and nested Void types stay intact.
+        if !fun_def?(definition) && resolved == TypeRef::VOID &&
+           source_return_annotation_discards_value?(source_name, lexical_owner, @type_param_map)
+          return TypeRef::NIL
+        end
+        return resolved
       end
       unless runtime_self_name && !runtime_self_name.empty?
         raise LoweringError.new("method result annotation lost its runtime self owner: #{source_name}")
@@ -50243,9 +50252,9 @@ module Adamas::HIR
                           class_info.type_ref
                         elsif module_like_type_name?(direct_return_name)
                           direct_inferred_return = infer_concrete_return_type_from_body(node, class_name)
-                          direct_inferred_return || method_result_annotation_type_ref(direct_return_name, signature_owner, class_name)
+                          direct_inferred_return || method_result_annotation_type_ref(direct_return_name, signature_owner, class_name, node)
                         else
-                          method_result_annotation_type_ref(direct_return_name, signature_owner, class_name)
+                          method_result_annotation_type_ref(direct_return_name, signature_owner, class_name, node)
                         end
                       elsif method_name.ends_with?('?')
                         provisional_query_return_type_for_registration(
@@ -50273,9 +50282,9 @@ module Adamas::HIR
                             class_info.type_ref
                           elsif module_like_type_name?(generic_return_name)
                             generic_inferred_return = infer_concrete_return_type_from_body(node, class_name)
-                            generic_inferred_return || method_result_annotation_type_ref(generic_return_name, signature_owner, class_name)
+                            generic_inferred_return || method_result_annotation_type_ref(generic_return_name, signature_owner, class_name, node)
                           else
-                            method_result_annotation_type_ref(generic_return_name, signature_owner, class_name)
+                            method_result_annotation_type_ref(generic_return_name, signature_owner, class_name, node)
                           end
                         elsif method_name.ends_with?('?')
                           provisional_query_return_type_for_registration(
@@ -50378,7 +50387,7 @@ module Adamas::HIR
             resolved_return = class_info.type_ref
           elsif module_like_type_name?(merged_return_name)
             merged_inferred_return = infer_concrete_return_type_from_body(node, class_name)
-            annotated = method_result_annotation_type_ref(merged_return_name, signature_owner, class_name)
+            annotated = method_result_annotation_type_ref(merged_return_name, signature_owner, class_name, node)
             if merged_inferred_return && merged_inferred_return != TypeRef::VOID && merged_inferred_return != TypeRef::NIL
               resolved_return = merged_inferred_return
             elsif annotated == TypeRef::VOID
@@ -50388,7 +50397,7 @@ module Adamas::HIR
             end
           else
             merged_return_name = substitute_forall_bindings(merged_return_name, node, extra_type_params)
-            resolved_return = method_result_annotation_type_ref(merged_return_name, signature_owner, class_name)
+            resolved_return = method_result_annotation_type_ref(merged_return_name, signature_owner, class_name, node)
           end
         end
         if resolved_return != TypeRef::VOID || return_type == TypeRef::VOID
@@ -76651,8 +76660,8 @@ module Adamas::HIR
            !return_type_name.ends_with?('?') &&
            !return_type_name.ends_with?('*') &&
            !(type_param_like?(return_type_name) && !@type_param_map.has_key?(return_type_name))
-          resolved = method_result_annotation_type_ref(return_type_name, owner_override.empty? ? nil : owner_override, runtime_self_name)
-          if resolved != TypeRef::VOID && resolved != TypeRef::NIL && resolved != cached
+          resolved = method_result_annotation_type_ref(return_type_name, owner_override.empty? ? nil : owner_override, runtime_self_name, func_def)
+          if resolved != TypeRef::VOID && resolved != cached
             # A nested declaration may resolve after the signature was cached.
             # Refresh only entries owned by this exact annotated Def. Contextual
             # type-parameter bindings belong to their individual specializations.
@@ -76738,7 +76747,7 @@ module Adamas::HIR
       end
 
       if merged.empty?
-        resolved = method_result_annotation_type_ref(return_type_name, owner_override.empty? ? nil : owner_override, runtime_self_name)
+        resolved = method_result_annotation_type_ref(return_type_name, owner_override.empty? ? nil : owner_override, runtime_self_name, func_def)
         if debug_env_filter_match?("DEBUG_RETURN_DEF", mangled_method_name, base_method_name)
           STDERR.puts "[RETURN_DEF] name=#{mangled_method_name} base=#{base_method_name} rt=#{return_type_name} map=none resolved=#{get_type_name_from_ref(resolved)}"
         end
@@ -76747,7 +76756,7 @@ module Adamas::HIR
 
       return_type_name = substitute_forall_bindings(return_type_name, func_def, merged)
       with_type_param_map(merged) do
-        resolved = method_result_annotation_type_ref(return_type_name, owner_override.empty? ? nil : owner_override, runtime_self_name)
+        resolved = method_result_annotation_type_ref(return_type_name, owner_override.empty? ? nil : owner_override, runtime_self_name, func_def)
         if debug_env_filter_match?("DEBUG_RETURN_DEF", mangled_method_name, base_method_name)
           params_str = merged.map { |k, v| "#{k}=#{v}" }.join(",")
           STDERR.puts "[RETURN_DEF] name=#{mangled_method_name} base=#{base_method_name} rt=#{return_type_name} map=#{params_str} resolved=#{get_type_name_from_ref(resolved)}"
@@ -83167,21 +83176,29 @@ module Adamas::HIR
       end
     end
 
-    private def lower_def_resolve_type_annotation(rt_string : String) : TypeRef
+    private def lower_def_resolve_type_annotation(
+      rt_string : String,
+      definition : Adamas::Compiler::Frontend::DefNode,
+    ) : TypeRef
       normalized_rt = rt_string.strip
-      if normalized_rt.starts_with?("::")
-        direct = type_ref_for_name(normalized_rt)
-        if direct == TypeRef::VOID
-          stripped_rt = normalized_rt.size > 2 ? normalized_rt[2..] : ""
-          stripped_rt.empty? ? TypeRef::VOID : type_ref_for_name(stripped_rt)
-        else
-          direct
-        end
-      else
-        resolved_name = resolve_type_name_in_context(normalized_rt)
-        resolved = type_ref_for_name(resolved_name)
-        (resolved == TypeRef::VOID && resolved_name != normalized_rt) ? type_ref_for_name(normalized_rt) : resolved
+      resolved_type = if normalized_rt.starts_with?("::")
+                        direct = type_ref_for_name(normalized_rt)
+                        if direct == TypeRef::VOID
+                          stripped_rt = normalized_rt.size > 2 ? normalized_rt[2..] : ""
+                          stripped_rt.empty? ? TypeRef::VOID : type_ref_for_name(stripped_rt)
+                        else
+                          direct
+                        end
+                      else
+                        resolved_name = resolve_type_name_in_context(normalized_rt)
+                        resolved = type_ref_for_name(resolved_name)
+                        (resolved == TypeRef::VOID && resolved_name != normalized_rt) ? type_ref_for_name(normalized_rt) : resolved
+                      end
+      if !fun_def?(definition) && resolved_type == TypeRef::VOID &&
+         source_return_annotation_discards_value?(rt_string, @current_class, @type_param_map)
+        return TypeRef::NIL
       end
+      resolved_type
     end
 
     # Query the selected source contract before owner storage is allocated.
@@ -84297,7 +84314,7 @@ module Adamas::HIR
           if rt = node.return_type
             rt_string = safe_slice_to_string(rt) || ""
             validate_runtime_return_union_annotation!(rt_string, node, @current_class)
-            return_type = lower_def_resolve_type_annotation(rt_string)
+            return_type = lower_def_resolve_type_annotation(rt_string, node)
           elsif base_name.ends_with?('?')
             return_type = TypeRef::BOOL
             predicate_return_guess = true
@@ -84344,7 +84361,7 @@ module Adamas::HIR
           resolved_return = TypeRef::VOID
           with_type_param_map(extra_type_params) do
             rt_string = safe_slice_to_string(rt) || ""
-            resolved_return = lower_def_resolve_type_annotation(rt_string)
+            resolved_return = lower_def_resolve_type_annotation(rt_string, node)
             explicit_discard_return = source_return_annotation_discards_value?(rt_string, @current_class, extra_type_params)
           end
           if resolved_return != TypeRef::VOID || return_type == TypeRef::VOID

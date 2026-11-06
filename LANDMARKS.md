@@ -24880,3 +24880,52 @@ ast_to_hir.cr: 51b97655588c2c23af7c994b074e6a8cc40146382d9d851c9e48f1980222aaa0.
 Refresh after allocator generation/replay, callback target resolution, result
 repair, assignment type transport or physical ABI lowering changes. Rollback
 is this atomic compiler commit. Unrelated existing WIP remains preserved.
+
+
+## 2026-11-06 — Source-method Void resolves to Nil before fact publication
+
+The bare-helper demand candidate exposed an older source-result violation:
+ordinary and parenthesized helpers declared Void still leaked their raw Int32
+body facts, allowing an Int32 wrapper that Crystal rejects as returning Nil
+(35q3142). Separately, an ordinary generic Void method failed outer Nil-overload
+selection on the baseline (35q3159). Correct the declaration producer rather
+than suppressing return validation or changing the library.
+
+Crystal 1.22.1 semantic/call.cr:457-462 normalizes a resolved method Void return
+to Nil and freezes that source result. Do the same in method signature/result
+resolution and lower_def materialization. Prove a resolved discard annotation
+using its lexical/type-parameter owner; unknown provisional Void must not
+become Nil. Refresh an exact annotated Def's cached result to Nil when needed.
+Existing return normalization then publishes the declared result instead of
+raw body facts. Pass the owning Def through both resolvers and exclude C fun
+DefNodes, including top-level main; separate extern FunNode registration and
+nested Pointer/Proc carriers are unchanged.
+
+Original-first source_method_void_result_repro.sh passes all eight cases on
+stock Crystal 1.22.1 and exact-source S1 35q3157 (35q3169): six runtime controls
+for overload/effect ownership, instance syntax, alias shadowing, generic Void,
+explicit return and a Nil control, plus two strict Int32-wrapper rejections.
+An additional stock-qualified HIR guard retains C main -> Void while source
+source_discard -> Nil. The first proposed ABI oracle used empty.cr, which
+already defines Int32 main and correctly rejected a conflicting Void main
+(35q3167); use the unchanged official primitives prelude for this isolated
+C-entrypoint semantic check (35q3168/35q3169). No stdlib edit is involved.
+All 74 neighboring declared/Nil/source-kind return cases pass (35q3160).
+The bounded source adversary verdict is ROBUST for declaration normalization
+and its exact-Def FFI guard; review is correlated, while stock execution is
+an independent semantic oracle. This establishes no complete prelude,
+recursive yield inference, callback forall, bootstrap or LavinMQ runtime parity.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+source-method-void-with-abi-final35q3169/result.json,
+source-method-void-neighbors35q3160/result.json,
+source-method-void-baseline35q3159/result.json,
+source-void-baseline35q3142/result.json, and
+source-method-void-ffi-main-primitives35q3168/result.json.
+All 1,916 compiler files match
+build.source-method-void-ffi-guard35q3157.source.json.
+Compiler SHA-256: cbbea336e8b92f34433f12a777fb9224905769140bac7c0a39d89b78bba90994;
+ast_to_hir.cr: 07aa055fb9a7c10b1b7bcc7f177c37c02d0085db75db655faaa9d2622839e670.
+Refresh after annotation resolution, result publication, cache ownership,
+return normalization, generic substitution or fun/FFI lowering changes.
+Rollback is this atomic compiler commit. Unrelated existing WIP is preserved.
