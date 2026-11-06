@@ -25533,3 +25533,30 @@ integration, fresh bootstrap, or LavinMQ parity.
   (35q2486); stock-prelude hello retains the same blocker (35q2487). These are
   front-end failures, not link/runtime successes. Bootstrap and upstream parity
   remain open.
+
+### 2026-11-06 — Give completed source results an exact declaration owner
+
+- [x] Publish actual result types and value kinds from the completed body with
+  its exact source Def and retained declaration arena. Validate explicit,
+  implicit and yielding returns against a declaration-scoped upper bound;
+  retain Crystal's Nil/Void discard behavior and call-local forall bindings.
+- [x] Suspend ordinary declared-return consumers when an exact producer hits
+  the existing force-lower depth boundary. A completed generic family may
+  settle through its owned concrete result facts; an unresolved method formal
+  cannot borrow that certificate. Use the canonical built-in hierarchy in the
+  shared source-result matcher.
+- Original-first declared_return_contract_repro.sh (54),
+  source_return_kind_repro.sh (14), virtual_source_fact_transport_repro.sh (8),
+  and module_source_value_kind_repro.sh (40) all pass against Crystal 1.22.1
+  and exact-source S1 35q2630 (35q2635). This certifies the bounded return
+  corpus, not all consumers of source result facts. See specification 08.
+- [ ] Demand completed broad/union result facts before an outer overload
+  consumes them. Three falsifiers fail on the previous compiler too (35q2629).
+- [ ] Locate the consumer that changes a callback-bound Nil result back into
+  unresolved T at outer overload admission; the previous compiler also fails
+  the matched Nil control (35q2609).
+- [ ] Preserve and validate actual default-argument types and kinds. The
+  unchanged LavinMQ and prelude probes still reject IO#read_bytes because the
+  LittleEndian default is retagged ByteFormat.class (35q2612/35q2613/35q2615).
+- Fresh bootstrap, unchanged LavinMQ execution, and upstream test parity remain
+  open. No standard-library or application workaround belongs to these repairs.

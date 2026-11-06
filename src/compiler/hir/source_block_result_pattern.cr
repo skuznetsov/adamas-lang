@@ -2,7 +2,7 @@ class Adamas::HIR::AstToHir
   # A callback result restriction is a source-level tree. Its leaves retain the
   # resolved restriction spelling as well as the HIR carrier; those are not
   # interchangeable for abstract restrictions such as Int.
-  private class SourceBlockResultPattern
+  class SourceBlockResultPattern
     enum Kind
       Invalid
       Concrete
@@ -162,7 +162,9 @@ class Adamas::HIR::AstToHir
       return invalid_source_block_result_pattern(source) unless base_name
 
       raw_args = split_generic_type_args(generic.args)
-      return invalid_source_block_result_pattern(source) if raw_args.empty?
+      if raw_args.empty? && !{"Tuple", "::Tuple", "NamedTuple", "::NamedTuple"}.includes?(base_name)
+        return invalid_source_block_result_pattern(source)
+      end
       labels = [] of String
       children = [] of SourceBlockResultPattern
       named_tuple = base_name == "NamedTuple" || base_name == "::NamedTuple"
@@ -246,6 +248,7 @@ class Adamas::HIR::AstToHir
   private def source_block_result_structural_source?(source : String) : Bool
     !proc_type_argument_names(source).nil? ||
       source.ends_with?('?') || source.ends_with?('*') ||
+      source.ends_with?(".class") ||
       has_top_level_union_separator?(source) ||
       !split_generic_base_and_args(source).nil?
   end
@@ -710,7 +713,7 @@ class Adamas::HIR::AstToHir
       return true if actual_generic.base == expected_identity
     end
 
-    return true if inherits_from?(actual_identity, expected_identity)
+    return true if get_parent_chain(actual_identity).includes?(expected_identity)
     source_generic_ancestor_projections(actual_identity).any? do |projection|
       source_block_result_identity_name(projection) == expected_identity
     end

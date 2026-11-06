@@ -24348,3 +24348,54 @@ Fresh LavinMQ probe 35q2486 retains all 2,582 noncompiler inputs from baseline
 35q2461 and stops at IO#read_bytes(Int32, IO::ByteFormat). Prelude hello 35q2487
 fails at the same call. Neither run establishes linking, runtime, bootstrap or
 upstream test parity; default and declared-result ownership remain open.
+
+## 2026-11-06 — Completed source results own their type and value kind
+
+A declared return annotation is an upper bound, not evidence that the body
+returned that exact type or a class object. Publish reachable result facts on
+the completed HIR function together with its exact source Def and declaration
+arena. A call consumes that certificate only while the registered owner still
+matches. Keep the physical return ABI separate. Explicit, implicit and inline
+yielding returns share declaration-scoped validation, with Crystal's Nil/Void
+discard rules and exact call-local forall substitutions. Qualified names do
+not capture an unrelated caller formal with the same final component.
+
+The ordinary depth-refused producer path previously consumed provisional Void:
+suspend its consumer through the existing exact dependency/replay machinery.
+The initial generic-family fix was insufficient because type_param_like?
+rejected a bare generic template before checking its completed concrete result
+certificate. Distinguish that validated family from an unresolved method
+formal. Canonical parent-chain matching also restores Reference -> Object and
+Struct -> Value while preserving the reverse-direction rejections.
+
+Original-first declared_return_contract_repro.sh (54 fixtures),
+source_return_kind_repro.sh (14), virtual_source_fact_transport_repro.sh (8),
+and module_source_value_kind_repro.sh (40) pass against Crystal 1.22.1 and
+exact-source S1 35q2630 (35q2635). Seven additional hierarchy controls fail at
+the missing built-in edges before the matcher correction and all pass after
+it (35q2626/35q2628/35q2631); they are included in the 54-fixture gate. Wrong
+types, wrong kinds, unknown annotations, generic mismatches and invalid
+returning branches retain semantic rejection and produce no executable.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+source-return-contract-expanded-original-first35q2635/result.json and
+source-return-contract-qualified35q2636.json/.files.json. All 1,916 live
+compiler files match build.current-return-builtin-hierarchy35q2630.source.json;
+the gate input index covers 124 files. Compiler SHA-256:
+821301e780850af2b176d1f7b3f00413f40608838dff9465de883fc91cd2e93b;
+ast_to_hir.cr:
+7bb4aeacefec5ad0d257d7d066e5f71f5663ac58fe9a89ce264ed710ba7e3261.
+Refresh after result publication, return validation, exact call binding, arena
+ownership, replay identity, generic substitution or return ABI coercion changes.
+The scoped Adversary verdict is ROBUST for this bounded return-owner corpus;
+broader source-result consumer completeness remains IN_PROGRESS.
+
+Three broad/mixed-result overload falsifiers still fail, and were reproduced
+on the previous compiler (35q2629). The callback-bound Nil versus union pair
+also establishes a pre-existing unresolved-T consumer failure (35q2609).
+These are separate missing-consumption frontiers, not closed by producer
+ownership. Fresh unchanged-input LavinMQ 35q2612 and stock-prelude hello 35q2613
+still stop at IO#read_bytes. Trace 35q2615 shows the default LittleEndian class
+object overwritten by its formal ByteFormat carrier. No linking, runtime,
+bootstrap fixed point or upstream parity is established. Specification 08
+records the remaining contracts; no stdlib or LavinMQ files are changed.

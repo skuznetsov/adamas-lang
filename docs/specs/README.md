@@ -25,6 +25,7 @@ time.
 | `05-falsifier-matrix.md` | Claim-to-reproducer mapping for the above contracts. |
 | `06-cli-output-contract.md` | CLI compile modes, output side effects, and post-LLVM tail behavior. |
 | `07-compiler-decomposition-and-semantic-replacement.md` | Frontier SDD for typed semantic ownership, lawful `DefInstanceKey` materialization continuity with the current-red T9 [reducer](../../regression_tests/union_static_generic_materialization_guard.cr) and [guard](../../regression_tests/union_static_generic_materialization_guard.sh), selective replacement, zero-copy contracts, and normalized shadow gates. |
+| `08-source-result-contract.md` | Exact source ownership of actual result types and value kinds, declared return bounds, and deferred result replay. |
 
 Numeric-slot policy: `07-compiler-decomposition-and-semantic-replacement.md`
 is the canonical architecture-transition SDD for slot 07. A bounded contract

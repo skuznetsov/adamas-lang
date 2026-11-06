@@ -1994,6 +1994,12 @@ module Adamas::HIR
     # also be invoked through yield; is_block preserves source slot identity.
     # Lives on Function because `params` rebuilds Parameter objects.
     property heap_block_param : Bool = false
+    # Source value-kind results from this completed body. The Def and arena
+    # identities bind these facts to the exact declaration generation; an
+    # empty array is a known bottom-only result, while nil means unpublished.
+    property source_return_value_facts : Array({TypeRef, Bool})? = nil
+    property source_return_definition_id : UInt64? = nil
+    property source_return_arena_key : UInt64? = nil
     @revision_ledger : FunctionRevisionLedger
 
     def initialize(
