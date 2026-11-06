@@ -25382,10 +25382,25 @@ integration, fresh bootstrap, or LavinMQ parity.
   object. The previous compiler prints BBCCB instead of ABCDA on the core case.
 - [x] Preserve the synthetic C-callback guard's exact ::raise source binding.
   Its captured-Proc control and pointerof_source_identity_repro.sh pass.
-- [ ] Repair ordinary empty-rest source selection separately: the instance-first
-  class-object call prints I instead of A, and an incompatible rest overload is
-  accepted. Both failures reproduce on baseline S1 35q2123 and successor 35q2143.
+- [x] Repair ordinary empty-rest source selection separately. Keep source splat
+  syntax distinct from synthesized ABI rest slots and preserve failed source
+  admission. The instance-first class-object call now prints A, and incompatible
+  rest calls are rejected; both failures reproduce on baseline S1 35q2143.
 - [ ] Investigate the single stock-prelude hello runtime timeout in 35q2144.
   The compared IR differs only in diagnostic symbol names, and six subsequent
   executions of each compared binary pass. The initial timeout remains open;
   neither bootstrap nor unchanged LavinMQ execution/test parity is qualified.
+
+### 2026-11-05 — Preserve source admission across empty rest packing
+
+- [x] Qualify empty_rest_source_kind_repro.sh against stock Crystal 1.22.1
+  and S1 35q2180: both declaration orders, prior materialization, repeated
+  class/instance calls, ordinary and explicit-splat controls, and two strict
+  rejection cases pass. Four separate required-file class/include/generic-include
+  controls also agree with Crystal, including an incompatible class-object call.
+- The source call keeps its original arity, kinds, and splat syntax after an
+  empty tuple is added for the callee ABI. A rejected source candidate remains
+  a rejection until a later exact source-compatible candidate supersedes it.
+- [ ] Close named/rest forall body bindings and declared-return source facts.
+  Successful admission alone does not establish the parameter/result contract.
+- Bootstrap and unchanged LavinMQ execution/upstream test parity remain open.

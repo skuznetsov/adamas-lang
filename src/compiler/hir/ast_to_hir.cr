@@ -116771,6 +116771,8 @@ module Adamas::HIR
       # `call_args` belong to `call_arena`; direct indexing avoids an otherwise
       # unnecessary block capture of call-resolution locals in generated stage2.
       has_splat = call_args.any? { |arg_id| call_arena[arg_id].is_a?(Adamas::Compiler::Frontend::SplatNode) }
+      # Keep source syntax separate from a rest tuple synthesized for the callee ABI.
+      source_has_splat = has_splat
       raw_call_positional_count : Int32? = has_splat ? nil : call_args.size
       lexical_method_name = if callee_kind == Adamas::Compiler::Frontend::NodeKind::Identifier
                               identifier_call_name_text(node, call_arena)
@@ -118750,6 +118752,7 @@ module Adamas::HIR
         end
       end
       source_call_rejections = [] of Tuple(String, String)
+      implicit_splat_padded = false
       selected_target = if source_named_entry
                           SelectedCallTarget.new(source_named_entry[0], source_named_entry[1])
                         elsif source_default_entry
@@ -119028,7 +119031,8 @@ module Adamas::HIR
           STDERR.puts "[CALL_PARAM_INFO] phase=entry lookup=#{lookup_name} entry=#{entry_name} base=#{base_method_name} method=#{method_name}"
         end
         preserve_requested_value_owner = preserve_requested_value_owner_specialization?(lookup_name, entry_name)
-        has_splat = true if pad_missing_positional_splat(ctx, entry_name, entry_def, args, arg_types)
+        implicit_splat_padded = pad_missing_positional_splat(ctx, entry_name, entry_def, args, arg_types)
+        has_splat = true if implicit_splat_padded
         if splat_packed && use_prepack_callsite_types
           entry_stats_for_callsite = @function_param_stats[entry_name]? || function_param_stats(entry_name, entry_def)
           unless entry_stats_for_callsite.has_splat || entry_stats_for_callsite.has_double_splat
@@ -119045,7 +119049,7 @@ module Adamas::HIR
           base_method_name = strip_type_suffix(lookup_name)
         end
         if entry_name.includes?('$')
-          if selected_call_entry_origin && !has_block_call && !has_splat && !has_named_args &&
+          if selected_call_entry_origin && !has_block_call && !source_has_splat && !has_named_args &&
              m3e_input.try(&.source_argument_facts).try(&.any? { |arg| arg.try(&.type_literal) })
             # The source include registered the complete positional identity.
             # The generic remangling branches below only have carrier types.
@@ -120578,7 +120582,7 @@ module Adamas::HIR
       exact_positional_source_call = false
       exact_source_argument_names : Array(String?)? = nil
       if (selected_def = selected_call_entry_def) && !source_default_entry &&
-         !has_block_call && !has_splat && !has_named_args &&
+         !has_block_call && !source_has_splat && !has_named_args &&
          method_name_codec_exact_callsite_name?(mangled_method_name, base_method_name, arg_types, false)
         exact_positional_source_call = def_has_untyped_regular_param?(selected_def) ||
                                        !prefer_callsite_specialization(
@@ -120764,7 +120768,7 @@ module Adamas::HIR
       # exact call-site symbol; late materialization must not rediscover a
       # different included or inherited body from the serialized name alone.
       if selected_def = selected_call_entry_def
-        if (default_source = source_default_entry) && !has_block_call && !has_splat
+        if (default_source = source_default_entry) && !has_block_call && !source_has_splat
           unless default_source[1].same?(selected_def)
             raise LoweringError.new("defaulted call changed its selected source definition", node)
           end
@@ -120861,10 +120865,18 @@ module Adamas::HIR
           )
         end
       end
-      if !has_block_call && !has_splat && !has_named_args
+      if !has_block_call && !source_has_splat && !has_named_args
         final_def = source_initializer_entry.try(&.def_node) ||
                     selected_call_entry_def || @function_defs[mangled_method_name]?
         final_name = source_initializer_entry.try(&.symbol_name) || selected_call_entry_name || mangled_method_name
+        if implicit_splat_padded && m3e_input && final_def &&
+           !call_target_matches_call_shape?(m3e_input, final_def, final_name)
+          actual_names = (m3e_input.arg_types || [] of TypeRef).map { |type| get_type_name_from_ref(type) }.join(", ")
+          raise LoweringError.new(
+            "no overload matches #{lookup_name} for argument types (#{actual_names})",
+            node,
+          )
+        end
         final_context = function_context_for_lookup_candidate(lookup_name, final_name)
         candidate_scope = enter_lookup_candidate_scope(final_name, final_context)
         begin
@@ -120878,8 +120890,19 @@ module Adamas::HIR
           if prior_rejection = source_call_rejections.first?
             # A later owner-aware rematch may legitimately find a different Def.
             # It must establish compatibility before superseding a typed rejection.
-            source_admitted = final_def && params_compatible_with_args?(final_def, arg_types, final_context,
-              source_argument_facts: call_resolution_source_argument_facts(ctx, args, arg_types))
+            source_admitted = if final_def
+                                if implicit_splat_padded && m3e_input
+                                  original_types = m3e_input.arg_types
+                                  original_types && call_target_matches_call_shape?(m3e_input, final_def, final_name) &&
+                                    params_compatible_with_args?(final_def, original_types, final_context,
+                                      source_argument_facts: m3e_input.source_argument_facts)
+                                else
+                                  params_compatible_with_args?(final_def, arg_types, final_context,
+                                    source_argument_facts: call_resolution_source_argument_facts(ctx, args, arg_types))
+                                end
+                              else
+                                false
+                              end
           end
         ensure
           leave_lookup_candidate_scope(candidate_scope)
@@ -120937,7 +120960,7 @@ module Adamas::HIR
         base_method_name,
         arg_types,
         has_block_call,
-        has_splat,
+        source_has_splat,
         has_named_args,
         selected_call_entry_def,
         exact_source_argument_names,
@@ -120965,7 +120988,7 @@ module Adamas::HIR
       # for plain positional calls: blocks may materialize a trailing proc arg,
       # named args bind by name, and a callsite splat expands to an unknown
       # count — all fall back to legacy (nil) lookup.
-      return_def_arg_count = (has_block_call || block_id || has_named_args || has_splat) ? nil : args.size
+      return_def_arg_count = (has_block_call || block_id || has_named_args || source_has_splat) ? nil : raw_call_positional_count
 
       # Try to infer return type using mangled name first, fallback to base name
       # For non-overloaded functions, prefer base name since that's how they're registered in HIR module
@@ -129601,6 +129624,10 @@ module Adamas::HIR
 
         untyped_candidate = untyped_candidate_for?(stats)
         next if prefer_untyped && !untyped_candidate
+        # A source-kind rejection is still a failed candidate in this family.
+        # Retain that failure before any later carrier-only return probe can
+        # rediscover and materialize the incompatible declaration.
+        saw_source_candidate = true if collect_source_rejections
         next unless call_source_argument_kinds_match?(input, def_node, name)
 
         score = 0

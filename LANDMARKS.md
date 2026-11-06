@@ -24066,3 +24066,26 @@ subsequent repeated runs pass and the compared IR differs only in diagnostic
 symbol names (hello-rest-path-diff35q2146 and hello-runtime-repeat-five35q2148).
 That runtime failure remains unexplained. Bootstrap and unchanged LavinMQ
 execution/upstream test parity remain open.
+
+## 2026-11-05 — ABI rest padding does not change source call admission
+
+Ordinary lowering reused `has_splat` for both source syntax and an empty rest
+tuple synthesized for the callee ABI. Padding then skipped source-kind checks,
+exact selected-target binding, and original-arity return lookup. An incompatible
+class object could reach an instance overload. Keep the source splat flag and
+raw positional arity; validate rematches against the original source arguments.
+Record kind-rejected candidates before carrier-only lookup can rediscover them.
+
+The original-first empty_rest_source_kind_repro.sh passes all eight cases with
+Crystal 1.22.1 and S1 35q2180, including both declaration orders, repeated
+class/instance calls, explicit source splats, and two rejection controls. Four
+required-file class/include/generic-include controls also pass. The production
+source matches this frozen compiler; the fresh receipts are
+empty-rest-production-gate35q2224 and empty-rest-production-cross-arena35q2224
+under /opt/mldata_ssd/adamas_codex_oct29_rootcause. Compiler SHA-256:
+ccadc68e48a0a724e4a4b6324627c37940f26da731a731b9ef9104037a9d584f;
+ast_to_hir.cr: c93bc9e179d3aa838d4cc1a2ff000a43ab4137a5a572f22c18efdf295fc9fcf7.
+The bounded adversary is ROBUST for this source/ABI distinction. Refresh after
+overload admission, rest packing, or exact-target binding changes. Named/rest
+forall body facts, declared returns, bootstrap, and unchanged LavinMQ execution
+and upstream test parity remain open.
