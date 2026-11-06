@@ -25965,7 +25965,34 @@ integration, fresh bootstrap, or LavinMQ parity.
   next stops at raise(Nil) (35q3463). Application, shard and installed stdlib
   input manifests remain unchanged. No object, link, runtime, complete prelude,
   fresh bootstrap or upstream test parity is claimed.
-- [ ] Locate the first source/type loss behind raise(Nil); retain the strict
-  overload rejection until the real argument or narrowing owner is repaired.
+- [x] Locate the first source/type loss behind raise(Nil). Macro argument
+  rendering omitted StringInterpolationNode, producing malformed from_errno
+  code; failed HIR expansion then became Nil. Preserve interpolation source
+  with its ExprId, including blocks/conditionals and AST-cache transport.
+  Retain the strict raise overload rejection.
 - [ ] Close the independently reproduced Char::Reader#previous_char prelude
   failure. Do not treat its unchanged baseline failure as a passing guard.
+
+### 2026-11-06 — Preserve interpolation expression source across macro arguments
+
+- [x] Make each expression StringPiece carry the exact parser payload paired
+  with its ExprId. Render that payload instead of relying on an incomplete
+  recursive child printer; persist it in AST-cache version 11.
+- Original-first macro_interpolation_argument_repro.sh passes seven positive
+  cases and one strict String argument rejection on Crystal 1.22.1 and exact
+  S1 35q3500 (35q3502). The block and conditional attacks refute the earlier
+  child-printer proposal (35q3497/35q3498); that proposal was not committed.
+  Two focused cache specs pass (35q3503), as do macro self/nil source neighbors
+  (35q3505). Bounded source adversary: ROBUST, correlated lineage.
+- Unchanged LavinMQ passes raise(Nil), next stopping at pending source result
+  Socket::BindError.from_os_error$String_Nil_NamedTuple (35q3506). Compiler,
+  application, shards and installed stdlib input manifests remain unchanged.
+  Object generation, linking, execution, fresh bootstrap and parity remain open.
+- [ ] Propagate failed HIR macro expansion diagnostics instead of treating
+  invalid generated code as a valid empty expansion/Nil. Preserve genuinely
+  empty output and legitimate nil arguments. The separate CLI literal-expansion
+  path also needs its own audit; a HIR-only fix does not cover it.
+- [ ] Preserve ordered macro overload candidates and selected-definition
+  parameter metadata. Stock 35q3486 versus baseline 35q3488 reproduces an
+  overwritten from_errno overload changing evaluation order; do not rank by
+  invented specificity or weaken from_os_error argument checks.

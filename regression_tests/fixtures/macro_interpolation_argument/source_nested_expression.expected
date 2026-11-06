@@ -1,0 +1,1 @@
+"a#{identity(items[index], left + (right * third))}z"

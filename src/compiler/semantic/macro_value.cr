@@ -1163,6 +1163,25 @@ module Adamas
             String.new(node.value)
           when Frontend::StringNode
             String.new(node.value).inspect
+          when Frontend::StringInterpolationNode
+            # Keep runtime expressions unevaluated and quote decoded text pieces
+            # exactly as string literals when reconstructing macro argument AST.
+            String.build do |io|
+              io << '"'
+              node.pieces.each do |piece|
+                if piece.kind.text?
+                  (piece.text || "").inspect_unquoted(io)
+                elsif expression_id = piece.expr
+                  io << '#' << '{'
+                  # Child spans are relative to their own parser payload.
+                  # Retain that source rather than guessing a buffer or losing
+                  # unsupported child nodes in the structural printer.
+                  io << piece.expression_source.not_nil!
+                  io << '}'
+                end
+              end
+              io << '"'
+            end
           when Frontend::CharNode
             literal = Frontend.node_literal_string(node) || ""
             literal.empty? ? "" : "'#{literal}'"

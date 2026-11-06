@@ -25366,3 +25366,57 @@ c47e46f8fa703f337dd2ecdf27724b2e806dff9304ae2d1499da4058ee02d477.
 Refresh after caller-frame isolation/restoration, branch merges, Proc
 materialization or initializer ownership changes. Rollback is this atomic
 compiler commit. Unrelated WIP is preserved.
+
+## 2026-11-06 — Interpolation AST owns its exact expression source
+
+Trace 35q3474 localizes LavinMQ's raise(Nil): MacroNodeValue#stringify_node has
+no StringInterpolationNode arm, so a valid argument becomes an empty source
+fragment in from_errno. The generated macro text is invalid; the independent
+HIR diagnostic-loss path silently converts the failed expansion to Nil. The
+strict raise rejection is correct and is retained.
+
+An initial private renderer recursively printed interpolation child nodes.
+Stock-qualified block and conditional controls reject that route: Crystal
+prints AB\n in both; the partial candidate drops the block and exits 139 in
+one case, and prints only a newline in the other (35q3497/35q3498). Do not
+extend that incomplete printer node by node. The accepted repair makes the
+parser retain the exact expression payload beside its ExprId. Adjacent merging
+copies the pair. Macro rendering quotes decoded text and embeds that retained
+payload unevaluated. AST-cache version 11 collects, writes and reads the source
+member; version 10 is invalidated. No library or application changes are involved.
+
+Original-first macro_interpolation_argument_repro.sh passes seven positives
+and one String-to-Int32 rejection on Crystal 1.22.1 and exact S1 35q3500
+(35q3502). Cases cover direct/nested macros, quoting, nested expressions,
+effects in a block and effects in an if. The two focused LSP specs pass,
+including adjacent literals, live ExprIds after cache reload/GC and rejection
+of an old header (35q3503). Macro self-source and nil-source neighbor gates
+pass (35q3505). Bounded source/cache adversary: ROBUST; same-lineage review is
+correlated. All internal expression-piece producers pair source and ExprId.
+Malformed direct construction without source fails closed at consumers;
+general macro AST canonical formatting remains outside this bounded claim.
+
+Unchanged LavinMQ passes raise(Nil) and reaches pending source result
+Socket::BindError.from_os_error$String_Nil_NamedTuple in TCPServer#system_bind
+(35q3506). Input manifests are stable. This is front-end HIR progress, not
+object generation, linking, a working server, full prelude, a fresh bootstrap
+or upstream test parity. Error propagation and ordered macro overload selection
+remain separate defects with their own stock-qualified controls.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+macro-interpolation-argument-controls35q3496.json,
+macro-interpolation-argument-attacks-stock35q3497/result.json,
+macro-interpolation-argument-attacks-partial35q3498/result.json,
+macro-interpolation-source-permanent35q3502/result.json,
+macro-interpolation-source-cache35q3503/result.json,
+macro-interpolation-source-neighbors35q3505/result.json, and
+lavinmq-macro-interpolation-source35q3506/result.json.
+All 1,916 compiler files match
+build.macro-interpolation-source35q3500.source.json
+(SHA-256 9b3f48ac566081f4aeb37de5b8c110c2f3b06078e688638e2518f4676e63f605).
+Compiler SHA-256: 1053d97dc45ab06f4ed1a3c4b76a544fb0518f8565bba481cae50abcfb58c797.
+LavinMQ input-manifest SHA-256:
+5fbc5427c4eaebbdd39ca35d0bdc897edd0a10925fc99570ffc6ed28a8be70bb.
+Refresh after interpolation parsing, StringPiece producers/copies, macro
+rendering or AST-cache layout changes. Rollback is this atomic compiler commit;
+old cache entries are intentionally invalidated. Unrelated WIP is preserved.

@@ -12217,7 +12217,7 @@ module Adamas
               expr_text = bytes_window_to_string(content, expr_start, i - expr_start)
               expr_id = parse_interpolation_expression(expr_text)
               return PREFIX_ERROR if @ternary_branch_depth > 0 && expr_id.invalid?
-              pieces_b << StringPiece.expression(expr_id)
+              pieces_b << StringPiece.expression(expr_id, expr_text)
               saw_expression = true
 
               # Move past the closing }
@@ -12262,7 +12262,7 @@ module Adamas
               expr_text = bytes_window_to_string(content, expr_start, i - expr_start)
               expr_id = parse_interpolation_expression(expr_text)
               return PREFIX_ERROR if @ternary_branch_depth > 0 && expr_id.invalid?
-              pieces_b << StringPiece.expression(expr_id)
+              pieces_b << StringPiece.expression(expr_id, expr_text)
               saw_expression = true
 
               # Move past the closing }}

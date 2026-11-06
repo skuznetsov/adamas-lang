@@ -744,16 +744,19 @@ module Adamas
         getter kind : Kind
         getter text : String?
         getter expr : ExprId?
+        # The exact parser payload that produced expr; keep the pair immutable
+        # across adjacent-literal merges and persistent AST serialization.
+        getter expression_source : String?
 
         def self.text(value : String)
           new(Kind::Text, value, nil)
         end
 
-        def self.expression(expr : ExprId)
-          new(Kind::Expression, nil, expr)
+        def self.expression(expr : ExprId, source : String)
+          new(Kind::Expression, nil, expr, source)
         end
 
-        def initialize(@kind : Kind, @text : String?, @expr : ExprId?)
+        def initialize(@kind : Kind, @text : String?, @expr : ExprId?, @expression_source : String? = nil)
         end
       end
 

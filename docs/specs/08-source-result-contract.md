@@ -349,6 +349,27 @@ repair and all three match Crystal after it (35q3452/35q3453/35q3462).
 Declaration locals must still reject an unrelated caller constant/local;
 ivar_default_source_owner_repro.sh is the guard for that isolation boundary.
 
+## Interpolation expressions retain their parser source
+
+A string interpolation piece owns both its expression ExprId and the exact
+parser payload that produced that ID. Construct and copy that pair together;
+adjacent-literal merging must not detach either part. The AST cache persists
+both members and rejects older layouts (version 11).
+
+Macro argument rendering quotes decoded text pieces and embeds the retained
+expression source without evaluating it. Reprinting arbitrary child AST nodes
+is insufficient: incomplete printers can omit a block or an entire conditional,
+changing effects, runtime values and inferred argument types. Child spans are
+relative to their interpolation parser payload, so they cannot select text from
+an unrelated outer source buffer.
+
+The original-first macro_interpolation_argument_repro.sh gate covers seven
+runtime/source controls, including blocks and conditionals, plus a String-to-Int32
+rejection. The focused LSP spec checks adjacent merging, cache round-trip and
+old-header rejection. This contract preserves expression source; it does not
+claim canonical formatting for every possible macro AST operation or close the
+separate macro-overload and failed-expansion diagnostic paths.
+
 ## Falsifiers and recovery
 
 Run each script with the exact candidate as its argument. The scripts first
@@ -378,6 +399,8 @@ and check semantic diagnostics and absence of an executable for rejections.
 - `regression_tests/source_heap_block_allocator_owner_repro.sh`
 - `regression_tests/ivar_default_caller_frame_repro.sh`
 - `regression_tests/ivar_default_source_owner_repro.sh`
+- `regression_tests/macro_interpolation_argument_repro.sh`
+- `spec/lsp/string_interpolation_source_cache_spec.cr`
 
 Source, toolchain, input manifests, commands, and outcomes belong in the
 corresponding LANDMARK entry. Refresh after result publication, return

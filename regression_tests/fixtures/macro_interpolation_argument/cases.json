@@ -1,0 +1,38 @@
+[
+  {
+    "name": "literal_control",
+    "ok": true
+  },
+  {
+    "name": "runtime_single",
+    "ok": true
+  },
+  {
+    "name": "nested_macro",
+    "ok": true
+  },
+  {
+    "name": "source_escaping",
+    "ok": true
+  },
+  {
+    "name": "source_nested_expression",
+    "ok": true
+  },
+  {
+    "name": "typed_argument_negative",
+    "ok": false,
+    "diagnostic": [
+      "consume_int",
+      "String"
+    ]
+  },
+  {
+    "name": "runtime_block",
+    "ok": true
+  },
+  {
+    "name": "runtime_if",
+    "ok": true
+  }
+]

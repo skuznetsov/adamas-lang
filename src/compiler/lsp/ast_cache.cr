@@ -121,7 +121,7 @@ module Adamas
         MAGIC   = "CV2A"
         # Bump this version whenever the parser, AST format, or cache header changes
         # to invalidate all cached ASTs
-        VERSION = 10_u32
+        VERSION = 11_u32
 
         getter arena : Frontend::AstArena
         getter roots : Array(Frontend::ExprId)
@@ -530,6 +530,7 @@ module Adamas
             interp_node = node.as(Frontend::StringInterpolationNode)
             interp_node.pieces.each do |piece|
               piece.text.try { |t| yield t }
+              piece.expression_source.try { |source| yield source }
             end
           when Frontend::NodeKind::MacroLiteral
             macro_node = node.as(Frontend::MacroLiteralNode)
@@ -1483,6 +1484,7 @@ module Adamas
               write_string_ref(io, p.text.not_nil!, table)
             else
               write_expr_id(io, p.expr.not_nil!)
+              write_string_ref(io, p.expression_source.not_nil!, table)
             end
           end
         end
@@ -2315,7 +2317,8 @@ module Adamas
             if kind.text?
               Frontend::StringPiece.text(strings[read_string_idx(io)])
             else
-              Frontend::StringPiece.expression(read_expr_id(io))
+              expression_id = read_expr_id(io)
+              Frontend::StringPiece.expression(expression_id, strings[read_string_idx(io)])
             end
           end
         end
