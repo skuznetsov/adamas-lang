@@ -1,0 +1,23 @@
+[
+  {
+    "name": "dynamic_ivar_default_inline",
+    "source": "dynamic_ivar_default_inline.cr",
+    "ok": true,
+    "expected": "AA\n",
+    "source_sha256": "0d9c55729d5257000699baa5f82639cc5f9762d6ce5c149f28240f414a45804b"
+  },
+  {
+    "name": "literal_ivar_default_inline",
+    "source": "literal_ivar_default_inline.cr",
+    "ok": true,
+    "expected": "AA\n",
+    "source_sha256": "618582fbbc1cb64f28f3a9156bc9d81dfd3ab5e10c49014547c771018ddb0db4"
+  },
+  {
+    "name": "dynamic_ivar_default_nested_proc",
+    "source": "dynamic_ivar_default_nested_proc.cr",
+    "ok": true,
+    "expected": "AA\n",
+    "source_sha256": "fdf641a73144893791d8a52e13bda9e16d2f2dcaea1bc0295fd258adbcd27644"
+  }
+]

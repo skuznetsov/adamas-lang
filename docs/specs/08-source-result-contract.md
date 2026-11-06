@@ -332,6 +332,23 @@ Included-module controls observe actual values, forall shadowing and enum
 payload/overload identity. This does not close unresolved method formals or
 the separate inherited-parent fallback admission path.
 
+## Declaration isolation restores active caller frames
+
+An ivar initializer's source scope owns its temporary locals. Save each active
+inline caller frame's exact Hash reference and contents before entering that
+scope. On every exit, restore those contents and reinstall the saved references
+in their original slot order. Restoring detached Hashes is insufficient:
+control-flow lowering can replace the active stack with cloned maps while the
+declaration scope is isolated. Keep caller-frame membership and contents under
+the same restoration boundary, as for source named-argument evaluation.
+
+The original-first ivar_default_caller_frame_repro.sh gate covers a dynamic
+initializer inside a forwarded inline block, the same initializer inside a
+nested Proc, and a literal control (35q3465). Both dynamic cases fail before the
+repair and all three match Crystal after it (35q3452/35q3453/35q3462).
+Declaration locals must still reject an unrelated caller constant/local;
+ivar_default_source_owner_repro.sh is the guard for that isolation boundary.
+
 ## Falsifiers and recovery
 
 Run each script with the exact candidate as its argument. The scripts first
@@ -359,6 +376,8 @@ and check semantic diagnostics and absence of an executable for rejections.
 - `regression_tests/materialized_method_source_owner_repro.sh`
 - `regression_tests/source_module_method_owner_repro.sh`
 - `regression_tests/source_heap_block_allocator_owner_repro.sh`
+- `regression_tests/ivar_default_caller_frame_repro.sh`
+- `regression_tests/ivar_default_source_owner_repro.sh`
 
 Source, toolchain, input manifests, commands, and outcomes belong in the
 corresponding LANDMARK entry. Refresh after result publication, return

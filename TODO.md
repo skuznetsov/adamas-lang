@@ -25910,7 +25910,7 @@ integration, fresh bootstrap, or LavinMQ parity.
   Controller#get's route callback restriction (35q3366): expected
   HTTP::Server::Context, actual Void. Project, shards and installed stdlib
   hashes remain unchanged (35q3368). No execution or parity claim follows.
-- [ ] Locate the first loss in the /metrics callback, whose source ends with
+- [x] Locate the first loss in the /metrics callback, whose source ends with
   context. Trace 35q3369 confirms earlier Context uses and an inner report
   callback returning IO; distinguish a bad tail, an extra reachable Return,
   and source-fact loss before changing the strict result check.
@@ -25940,8 +25940,32 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Qualify call-local binding provenance at each predicate caller with a
   concrete stock counterexample. The owner-Nil/method-forall proposal is not
   a rejection oracle: both compilers accept and print A (35q3443/35q3446).
-- [ ] Close the /metrics caller-frame loss. Trace 35q3440 proves report and
+- [x] Close the /metrics caller-frame loss. Trace 35q3440 proves report and
   Time.measure initially save complete maps, then both maps are empty before
   the first block body executes. Frame indices are correct in this trace;
   inspect nested Proc/default isolation rather than weakening the callback
   result contract. Unchanged LavinMQ still fails at Controller#get.
+
+
+### 2026-11-06 — Restore active caller frames after ivar defaults
+
+- [x] Restore both membership and contents of the exact saved inline caller
+  frame Hashes after declaration-scoped ivar initialization. Nested branch
+  lowering can replace the stack with cloned maps; rehydrating the old Hashes
+  alone leaves empty maps active. Preserve slot order and lexical isolation.
+- Original-first ivar_default_caller_frame_repro.sh passes three runtime cases
+  on Crystal 1.22.1 and exact S1 35q3460 (35q3465). Both dynamic-initializer
+  cases fail before the repair; the literal control passes (35q3452/35q3453).
+  Ivar declaration ownership, strict rejection and inline-yield break neighbors
+  pass (35q3466). Bounded source adversary: ROBUST, correlated lineage.
+- The collision neighbor's no-prelude case passes; its prelude case fails
+  identically on baseline and candidate at Char::Reader#previous_char, Char
+  versus Void (35q3468/35q3466). This mixed gate is not counted as passing.
+- Unchanged LavinMQ passes Controller#get's /metrics result restriction and
+  next stops at raise(Nil) (35q3463). Application, shard and installed stdlib
+  input manifests remain unchanged. No object, link, runtime, complete prelude,
+  fresh bootstrap or upstream test parity is claimed.
+- [ ] Locate the first source/type loss behind raise(Nil); retain the strict
+  overload rejection until the real argument or narrowing owner is repaired.
+- [ ] Close the independently reproduced Char::Reader#previous_char prelude
+  failure. Do not treat its unchanged baseline failure as a passing guard.

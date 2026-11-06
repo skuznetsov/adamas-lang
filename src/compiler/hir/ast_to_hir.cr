@@ -46254,10 +46254,15 @@ module Adamas::HIR
         yield
       ensure
         ctx.restore_locals(saved_locals)
+        # Control-flow lowering can replace the stack with cloned maps while
+        # declaration locals are isolated. Reinstall the saved frame objects,
+        # not only their contents, before the caller resumes.
+        @inline_caller_locals_stack.clear
         saved_inline_locals.each do |entry|
           locals, contents = entry
           locals.clear
           locals.merge!(contents)
+          @inline_caller_locals_stack << locals
         end
         @closure_ref_cells = saved_ref_cells
         @closure_ref_prefer_cell = saved_ref_preference

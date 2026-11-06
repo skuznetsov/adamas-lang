@@ -25307,3 +25307,62 @@ Compiler SHA-256: 31e081832eb4cdaedbd91c45845260c5cf9575c963e04bc30ee486d7af4c5d
 ast_to_hir.cr: 6c8a3dd65db44966874b33f1afc825ce6d95132a3ed1c2404ddbf8fc2ae8d3ef.
 Refresh after return annotation, canonical type, source-pattern or binding
 changes. Rollback is this atomic compiler commit. Unrelated WIP is preserved.
+
+
+## 2026-11-06 — Ivar defaults restore active inline caller frames
+
+Trace 35q3458 establishes the first /metrics loss. with_ivar_default_source
+saves full caller frame Hashes and temporarily clears their contents. A
+runtime branch in Writer's field initializer replaces the active stack with
+cloned empty maps. The old ensure restores the detached original Hashes only;
+the new active maps remain empty and report later overwrites the route locals,
+turning its final context into an unresolved Void call. Frame indices and
+callback-result validation are not the cause.
+
+Rebuild the active stack from the saved exact Hash references in original slot
+order while restoring their contents. This mirrors lower_source_named_args;
+only with_ivar_default_source lacked active membership restoration in the
+bounded save/isolate/restore audit. Array identity is not a consumer contract:
+branch merges routinely replace it, while consumers use frame slots or copied
+maps. Preserve declaration isolation and existing scope/type restrictions.
+No application or stdlib file changes are involved.
+
+Original-first ivar_default_caller_frame_repro.sh passes three runtime controls
+on Crystal 1.22.1 and exact S1 35q3460 (35q3465), with byte-exact AA\n output.
+Both dynamic-initializer cases fail on the baseline, including construction
+inside a nested Proc; the literal control passes (35q3452/35q3453). The ivar
+source-owner gate, including strict unknown-owner rejection and lazy/eager
+paths, and the inline-yield break-local gate pass (35q3466). The collision
+neighbor's no-prelude case passes, but its prelude case fails identically
+before and after at Char::Reader#previous_char returning Void instead of Char
+(35q3468/35q3466). Do not promote that mixed gate to a pass. Bounded source
+adversary: ROBUST; same-lineage review is correlated, and a dedicated nested
+InstanceGetter branch probe remains a possible extension rather than measured
+coverage.
+
+Unchanged LavinMQ passes the old Controller#get /metrics result frontier and
+next stops at no overload matches raise(Nil) (35q3463). Its before/after input
+manifests agree for compiler snapshot, application, shards and installed
+stdlib. Linking, runtime, full prelude, fresh bootstrap and test parity remain
+open. The new rejection is the next localization target, not permission to
+accept Nil as an Exception.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+inline-ivar-default-frame-trace35q3458/result.json,
+inline-ivar-default-caller-stock35q3452/result.json,
+inline-ivar-default-caller-baseline35q3453/result.json,
+inline-ivar-default-caller-candidate35q3462/result.json,
+ivar-default-caller-frame-permanent35q3465/result.json,
+ivar-default-caller-frame-neighbors35q3466/result.json,
+ivar-frame-collision-baseline35q3468/result.json, and
+lavinmq-ivar-default-frame-restore35q3463/result.json.
+All 1,916 compiler files match
+build.ivar-default-caller-frame-restore35q3460.source.json
+(SHA-256 6f6a538cc9739fe2bcccec151aaf2fa724f568ce8fbd45f9d5092b52eb9d84de).
+Compiler SHA-256: 96c6d558ad887131a5e6a56c81c61392fd8341b07c204328540609d812fcd101;
+ast_to_hir.cr: febe0fe0e3a0dee9205f59e7dbaef76481df78189d7c4295dd0f7403ecd8ae60.
+LavinMQ input-manifest SHA-256:
+c47e46f8fa703f337dd2ecdf27724b2e806dff9304ae2d1499da4058ee02d477.
+Refresh after caller-frame isolation/restoration, branch merges, Proc
+materialization or initializer ownership changes. Rollback is this atomic
+compiler commit. Unrelated WIP is preserved.
