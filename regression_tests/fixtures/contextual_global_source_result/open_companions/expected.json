@@ -1,0 +1,18 @@
+{
+  "open_void_callback_rejected.cr": {
+    "status": 1,
+    "diagnostic_regex": "must return Int32",
+    "open_reason": "Stock rejects a value-discarding Void callback, but the baseline accepts it."
+  },
+  "open_owner_overload_before_global.cr": {
+    "status": 0,
+    "stdout": "A\n",
+    "run_exit": 0,
+    "open_reason": "Stock falls back from an incompatible owner overload to a matching global overload; ordinary lowering rejects it."
+  },
+  "exact_global_void_owner_cache_guard.cr": {
+    "status": 1,
+    "diagnostic_regex": "must return Int32",
+    "open_reason": "Stock rejects the Void result at its Int32 return restriction. Baseline and candidate reject earlier at the unrelated owner overload, so this intended return diagnostic remains unverified."
+  }
+}

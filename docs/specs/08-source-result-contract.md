@@ -104,6 +104,16 @@ namespace inherited from the demand site cannot own a nested field annotation.
 Included-module declarations still resolve their fields in the module's own
 lexical scope.
 
+Contextual bare-call inference must retain the normal owner-first overload
+query. If no owner declaration applies, query the exact global overload with
+the same positional/named argument shape. Its result belongs to the selected
+definition and retained arena, not a same-name family cache. Infer actual
+arguments in the caller's context while keeping the global body's owner empty.
+An explicitly returning method named `raise` remains a returning method;
+NoReturn follows the selected declaration rather than a spelling heuristic.
+The bounded lookup repair does not settle source-level Void results or the
+ordinary lowering path's fallback from an incompatible owner overload.
+
 Known open probes include broad or mixed-kind annotated results consumed
 before their exact body facts are available, callback method-variable defaults,
 unknown external-label admission, and class/instance body reuse through keyword
@@ -128,6 +138,7 @@ and check semantic diagnostics and absence of an executable for rejections.
 - `regression_tests/source_default_block_slot_repro.sh`
 - `regression_tests/source_named_forall_contract_repro.sh`
 - `regression_tests/generic_declaration_namespace_repro.sh`
+- `regression_tests/contextual_global_source_result_repro.sh`
 
 Source, toolchain, input manifests, commands, and outcomes belong in the
 corresponding LANDMARK entry. Refresh after result publication, return

@@ -31629,16 +31629,17 @@ module Adamas::HIR
                   end
                 end
               end
-              if exact = lookup_function_def_for_call(
-                   base,
-                   call_arg_count,
-                   false,
-                   arg_types,
-                   false,
-                   call_has_named_args,
-                   named_arg_names,
-                   raw_positional_count,
-                 )
+              owner_exact = lookup_function_def_for_call(
+                base,
+                call_arg_count,
+                false,
+                arg_types,
+                false,
+                call_has_named_args,
+                named_arg_names,
+                raw_positional_count,
+              )
+              if exact = owner_exact
                 exact_name = exact[0]
                 receiver_ref = type_ref_for_name(self_type_name)
                 if inferred = resolve_return_type_from_def(
@@ -31660,6 +31661,51 @@ module Adamas::HIR
                   end
                   if inferred = infer_return_type_from_callsite(exact[1], self_type_name, expr_node.args, expr_node.named_args, self_type_name)
                     return inferred if inferred != TypeRef::VOID
+                  end
+                end
+              end
+              # A bare call inside an instance body can select a top-level
+              # overload when this owner has no applicable declaration. Use
+              # the same inferred argument vector as the owner query; never
+              # answer from a same-name global family cache, which may belong
+              # to a different overload or argument shape.
+              unless owner_exact
+                if exact_global = lookup_function_def_for_call(
+                     method_name,
+                     call_arg_count,
+                     false,
+                     arg_types,
+                     false,
+                     call_has_named_args,
+                     named_arg_names,
+                     raw_positional_count,
+                   )
+                  global_name = exact_global[0]
+                  global_def = exact_global[1]
+                  registered_def = @function_defs[global_name]?
+                  registered_arena = @function_def_arenas[global_name]?
+                  declaration_arena = registered_arena_for_def(global_def)
+                  if registered_def && registered_def.same?(global_def) &&
+                     registered_arena && declaration_arena && registered_arena.same?(declaration_arena)
+                    if inferred = resolve_return_type_from_def(
+                         global_name,
+                         strip_type_suffix(global_name),
+                         nil,
+                         call_arg_count,
+                         global_def,
+                       )
+                      return inferred if inferred != TypeRef::VOID
+                    end
+                    if global_def.return_type.nil?
+                      if !arg_types.empty? && arg_types.all? { |type| type != TypeRef::VOID && type != TypeRef::POINTER }
+                        if completed = completed_function_return_type(strip_type_suffix(global_name), arg_types)
+                          return completed if completed != TypeRef::VOID
+                        end
+                      end
+                      if inferred = infer_return_type_from_callsite(global_def, nil, expr_node.args, expr_node.named_args, self_type_name)
+                        return inferred if inferred != TypeRef::VOID
+                      end
+                    end
                   end
                 end
               end

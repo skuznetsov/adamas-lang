@@ -1,0 +1,55 @@
+{
+  "global_noreturn_constructed_arg.cr": {
+    "status": 0,
+    "stdout": "A\n",
+    "run_exit": 0
+  },
+  "owner_returning_raise.cr": {
+    "status": 0,
+    "stdout": "B\n",
+    "run_exit": 0
+  },
+  "global_wrong_argument.cr": {
+    "status": 1,
+    "diagnostic_regex": "(no overload matches.*terminal|expected argument.*terminal.*Problem)"
+  },
+  "unannotated_caller_argument.cr": {
+    "status": 0,
+    "stdout": "B\n",
+    "run_exit": 0
+  },
+  "live_global_terminal.cr": {
+    "status": 0,
+    "stdout": "",
+    "run_exit": 97
+  },
+  "live_yield_int32.cr": {
+    "status": 0,
+    "stdout": "B\n",
+    "run_exit": 0
+  },
+  "dead_noreturn_callback.cr": {
+    "status": 0,
+    "stdout": "A\n",
+    "run_exit": 0
+  },
+  "live_noreturn_callback.cr": {
+    "status": 0,
+    "stdout": "",
+    "run_exit": 97
+  },
+  "bool_callback_rejected.cr": {
+    "status": 1,
+    "diagnostic_regex": "must return Int32.*Bool"
+  },
+  "global_forall_string_then_int.cr": {
+    "status": 0,
+    "stdout": "AI\n",
+    "run_exit": 0
+  },
+  "global_forall_int_then_string.cr": {
+    "status": 0,
+    "stdout": "IA\n",
+    "run_exit": 0
+  }
+}

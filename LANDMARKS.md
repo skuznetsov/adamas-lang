@@ -24622,3 +24622,60 @@ ast_to_hir.cr: 8d2508d9c8bd78694d90733f3a67249111e76535f15b5dd013348d23ee514fff.
 Refresh after template capture/replay, namespace lookup, generic reopening,
 field-type publication or layout refresh changes. Rollback is this atomic
 compiler commit. No standard-library or application changes are included.
+
+## 2026-11-06 — Contextual result inference must query the exact global overload
+
+The actual String#[] failure was not a parser problem or a special property
+of the spelling `raise`. While inferring its callback in a String instance
+context, inference queried String#raise and missed. The registered global
+raise(Exception):NoReturn declaration was present with its exact arena, but
+global family return caches were empty (35q2888). Inference therefore left
+the block result unknown and the consumer produced Char | Void.
+
+Keep the owner-first applicability query, and only after it misses query the
+global overload with the identical positional/named argument vector. Resolve
+that selected declaration's result only while its registered Def and arena
+still agree. For an unannotated global, retain caller context for actual
+argument inference while keeping the callee owner nil. No name-based terminal
+heuristic, application change, or stdlib change is admitted.
+
+The original-first contextual_global_source_result_repro.sh gate passes 11
+controls on Crystal 1.22.1 and exact-source S1 35q2897 (35q2922): returning
+owner methods, wrong global arguments, live/dead terminal callbacks, strict
+Bool-return rejection, caller-owned argument lookup, and opposite-order
+String/Int32 global forall calls. All 28 named-forall, class-block dispatch,
+and generic-namespace neighboring controls pass (35q2910). The small controls
+also pass on the baseline; they are guards, not a claimed minimal reproducer.
+
+The decisive before/after comparison is unchanged LavinMQ: baseline 35q2817
+stops at String#[] returning Char | Void; candidate 35q2899 reaches
+`defaulted call target body has no complete source binding:
+Fiber::ExecutionContext::Parallel#wake_scheduler$Int32`. The input comparison
+35q2911 finds no changed project, shard, or stdlib bytes; only ast_to_hir.cr
+differs among the 1,916 compiler files. Both actual probes leave inputs
+unchanged. This establishes front-end progress, not object/link/runtime parity.
+The scoped Adversary verdict is ROBUST for this exact-global lookup repair.
+
+Three stock-qualified open companions remain excluded from candidate success.
+Both baseline and candidate accept the source-Void callback incorrectly and
+reject the otherwise-valid owner/global fallback case. A third fixture should
+reject a Void result at its Int32 return restriction, but both candidates
+reject earlier at the unrelated owner overload (35q2915–35q2917); that earlier
+error does not qualify its intended return check. Global named/forall source
+projection, full Void source-result semantics, prelude, initializer replay,
+previous_def chains, bootstrap and LavinMQ upstream parity remain open.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+contextual-global-source-final-original-first35q2922/result.json,
+contextual-global-result-neighbors35q2910/result.json,
+contextual-global-source-lineage35q2911.json, and
+lavinmq-contextual-global-exact35q2899/result.json.
+All 1,916 compiler files match
+build.contextual-bare-global-exact35q2897.source.json.
+Compiler SHA-256: 5018919ce5d5ae98f3944eee6bc363bdaa78978ad53e46c3a079f772b9afe8b5;
+ast_to_hir.cr: 61a8a0e582753dd0778acf62abcc5182e7370da4ce1a62fd357a3b422ed2acf3.
+Refresh after owner/global applicability, contextual argument inference,
+return-result ownership, arena registration, or named/forall binding changes.
+Rollback is this atomic compiler commit. The next discriminating probe records
+the existing wake_scheduler body and its source binding before the strict
+default-target guard; it must add no lookup or materialization.

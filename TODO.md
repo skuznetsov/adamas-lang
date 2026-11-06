@@ -25659,3 +25659,25 @@ integration, fresh bootstrap, or LavinMQ parity.
   on stock and excluded from candidate success (35q2840). Preserve these obligations.
 - [ ] Close callback bottom/result ownership and initializer replay, then
   refresh stock prelude, bootstrap, LavinMQ execution and upstream test parity.
+
+### 2026-11-06 — Query exact global results after a contextual owner miss
+
+- [x] Preserve owner-first lookup inside instance-body inference, then query
+  the applicable global declaration with the same argument shape. Check its
+  exact Def and arena before resolving the result; keep caller argument scope
+  separate from the global body's empty owner. Do not special-case `raise`.
+- Original-first contextual_global_source_result_repro.sh passes 11 controls
+  on Crystal 1.22.1 and exact-source S1 35q2897 (35q2922). All 28 named-forall,
+  class-block dispatch and generic-namespace neighbors pass too (35q2910).
+  These small controls also pass on the baseline; the decisive before/after
+  falsifier is the identical unchanged LavinMQ input manifest (35q2911).
+- Actual LavinMQ passes String#[] returning Char | Void and reaches a missing
+  complete source binding for Parallel#wake_scheduler$Int32 (35q2899).
+- [ ] Close source-level Void callback results and ordinary owner/global
+  fallback. Three stock-qualified companions retain these obligations and
+  are excluded from candidate success; an earlier wrong-owner argument error
+  does not qualify the intended Void-return rejection (35q2915–35q2917).
+- [ ] Repair the wake_scheduler body producer/binding boundary. Preserve
+  exact declaration, arena, and default slots; do not bypass its guard.
+  Prelude, initializer replay, previous_def chains, bootstrap and unchanged
+  LavinMQ execution/upstream test parity remain open.
