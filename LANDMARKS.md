@@ -24089,3 +24089,31 @@ The bounded adversary is ROBUST for this source/ABI distinction. Refresh after
 overload admission, rest packing, or exact-target binding changes. Named/rest
 forall body facts, declared returns, bootstrap, and unchanged LavinMQ execution
 and upstream test parity remain open.
+
+## 2026-11-05 — Named candidate admission consumes formal-order source facts
+
+Named lookup previously projected TypeRefs into formal slots while discarding
+class-object and mixed source facts. Carrier equality therefore admitted an
+instance (or an instance/class merge) to a metaclass restriction. Project types
+and facts together, validate alignment/cardinality before use, and include
+nested source facts in both the memo fingerprint and full-key equality.
+Candidate scoring, owner selection, and final admission use the same projection.
+Integer autocast refreshes the fact for its new value instead of retaining the
+pre-conversion carrier.
+
+The original-first named_source_argument_kind_repro.sh passes with Crystal
+1.22.1 and exact-source S1 35q2191 (fresh gate 35q2280). Both invalid calls are
+accepted on baseline 35q2180 (35q2279). Fresh existing named admission and named
+integer-autocast scripts pass (35q2277). All receipts are under
+/opt/mldata_ssd/adamas_codex_oct29_rootcause. Compiler SHA-256:
+1bc9059ad2d7773563923e9abeade90ff0d1340736af6c8ec8cbbc2055ab86d4;
+ast_to_hir.cr: fbc9660cf44798b4ddafeb7773e9081fdf08dd2d10884664d53ebcb5ee971a8a.
+The scoped source review is ROBUST for admission projection and memo identity.
+Refresh after named projection, source-fact ownership, autocast, or memo changes.
+
+This does not close ordinary named target ownership: an instance-first sibling
+can still execute for choose(value: Int32), printing X instead of A. The
+35q2278 fixture and 35q2279 stock/baseline/candidate receipts preserve that
+falsifier. Method-forall inference with omitted defaults, named/rest deferred
+body/receiver binding, declared returns, bootstrap, and unchanged LavinMQ
+execution/upstream test parity remain open.

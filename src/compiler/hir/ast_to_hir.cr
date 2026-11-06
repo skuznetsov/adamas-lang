@@ -1790,8 +1790,8 @@ module Adamas::HIR
       # positional prefix of a def (slots before `*` / "already specified").
       getter raw_positional_count : Int32?
       getter source_named_types : Bool
-      # Exact per-slot source facts are supplied only by the ordinary plain-
-      # positional lower_call boundary. They are a projection of the existing
+      # Exact per-source-slot facts are projected from lowered ValueIds at the
+      # positional and named call boundaries. They are views of the existing
       # SSA source-fact owner, not a second inference authority.
       getter source_argument_facts : Array(SourceCallArgument?)?
 
@@ -56522,6 +56522,7 @@ module Adamas::HIR
       exact_target : SelectedCallTarget? = nil,
     ) : Bool
       return false unless owner_directly_declares_instance_method?(owner, method_name)
+      return false if input.source_named_types && !source_named_facts_complete_for?(input)
 
       owner_names = Set(String).new
       owner_names << normalize_method_owner_name(owner)
@@ -56545,10 +56546,11 @@ module Adamas::HIR
 
         arg_types = input.arg_types
         return true unless arg_types
-        return true if arg_types.any? { |type_ref| type_ref == TypeRef::VOID }
+        return true if !input.source_named_types && arg_types.any? { |type_ref| type_ref == TypeRef::VOID }
 
         match_arg_types = arg_types
         match_param_infos : Array(DefParamInfo)? = nil
+        argument_facts = exact_target ? input.source_argument_facts : nil
         if input.source_named_types
           raw_count = input.raw_positional_count || return false
           names = input.named_names || return false
@@ -56558,15 +56560,15 @@ module Adamas::HIR
             raw_count,
             names,
             function_context_for_lookup_candidate(input.func_name, candidate_name),
+            argument_facts,
           ) || next
-          match_arg_types, match_param_infos = view
+          match_arg_types, match_param_infos, argument_facts = view
         end
 
         context = function_context_for_lookup_candidate(input.func_name, candidate_name)
-        argument_facts = exact_target ? input.source_argument_facts : nil
         candidate_scope = enter_lookup_candidate_scope(candidate_name, context)
         compatible = begin
-          if mismatch = source_generic_argument_mismatch_for_def(def_node, match_arg_types, context)
+          if mismatch = source_generic_argument_mismatch_for_def(def_node, match_arg_types, context, match_param_infos)
             false
           elsif candidate_map = lookup_candidate_restriction_param_map(candidate_name, def_node)
             with_type_param_map(candidate_map) do
@@ -60946,9 +60948,11 @@ module Adamas::HIR
       def_node : Adamas::Compiler::Frontend::DefNode,
       arg_types : Array(TypeRef),
       context : String?,
+      param_infos : Array(DefParamInfo)? = nil,
     ) : Tuple(String, String)?
       return nil if arg_types.empty? || arg_types.any? { |type_ref| type_ref == TypeRef::VOID }
-      params = method_forall_call_param_infos(def_node, arg_types, function_param_infos(def_node), context)
+      declared_params = function_param_infos(def_node)
+      params = method_forall_call_param_infos(def_node, arg_types, param_infos || declared_params, context)
       return nil if params.any? { |param| param.is_splat || param.is_double_splat || named_only_separator?(param) }
       arg_index = 0
       params.each do |param|
@@ -78530,11 +78534,23 @@ module Adamas::HIR
       selected_name : String?,
     ) : Bool
       slots = input.source_argument_facts || return true
-      return false if input.has_named || input.has_splat || slots.size != input.arg_count
+      return false if input.has_splat || slots.size != input.arg_count
       context = function_context_for_lookup_candidate(input.func_name, selected_name || input.func_name)
       formals = source_block_type_param_names(definition, context)
       params = function_param_infos(definition)
-      if arg_types = input.arg_types
+      arg_types = input.arg_types
+      if input.source_named_types
+        # Final admission uses the same formal-order projection as scoring.
+        types = arg_types || return false
+        names = input.named_names || return false
+        count = input.raw_positional_count || return false
+        view = named_call_candidate_type_view(definition, types, count, names, context, slots) || return false
+        arg_types, params, projected_slots = view
+        slots = projected_slots || return false
+      elsif input.has_named
+        return false
+      end
+      if arg_types
         params = method_forall_call_param_infos(definition, arg_types, params, context)
       end
       params = params.reject { |param| param.is_block || named_only_separator?(param) }
@@ -108489,17 +108505,19 @@ module Adamas::HIR
               if arity_match
                 live_params : Array(DefParamInfo)? = nil
                 match_arg_types = call_arg_types
+                source_argument_facts = selection_input.try(&.source_argument_facts)
                 if input = selection_input
                   if input.source_named_types && (types = call_arg_types)
                     next unless raw_count = input.raw_positional_count
                     next unless names = input.named_names
-                    view = named_call_candidate_type_view(effective_member, types, raw_count, names, strip_generic_args(module_name))
+                    view = named_call_candidate_type_view(
+                      effective_member, types, raw_count, names, strip_generic_args(module_name), source_argument_facts,
+                    )
                     next unless view
-                    match_arg_types, live_params = view
+                    match_arg_types, live_params, source_argument_facts = view
                   end
                 end
                 if match_arg_types
-                  source_argument_facts = selection_input.try(&.source_argument_facts)
                   live_params ||= if params = effective_member.params
                                   build_param_infos_from_params(
                                     params,
@@ -128396,17 +128414,30 @@ module Adamas::HIR
       raw_positional_count : Int32,
       named_arg_names : Array(String),
       context : String?,
-    ) : Tuple(Array(TypeRef), Array(DefParamInfo))?
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
+    ) : Tuple(Array(TypeRef), Array(DefParamInfo), Array(SourceCallArgument?)?)?
       return nil if raw_positional_count < 0 || source_arg_types.size != raw_positional_count + named_arg_names.size
+      facts = source_argument_facts || return nil
+      return nil if facts.size != source_arg_types.size
+      facts.each_with_index do |fact, index|
+        fact = fact || return nil
+        return nil if fact.type_ref != source_arg_types[index]
+        if fact.type_ref == TypeRef::VOID
+          return nil unless fact.value_facts.try { |values| !values.empty? }
+        end
+      end
 
-      named_types = Hash(String, TypeRef).new
+      named_types = Hash(String, {TypeRef, SourceCallArgument?}).new
       named_arg_names.each_with_index do |name, index|
         return nil if named_types.has_key?(name)
-        named_types[name] = source_arg_types[raw_positional_count + index]
+        source_index = raw_positional_count + index
+        source_fact = facts[source_index]
+        named_types[name] = {source_arg_types[source_index], source_fact}
       end
 
       types = [] of TypeRef
       infos = [] of DefParamInfo
+      projected_facts = [] of SourceCallArgument?
       positional_index = 0
       declared_positional_index = 0
       named_only = false
@@ -128438,6 +128469,7 @@ module Adamas::HIR
           until positional_index >= raw_positional_count
             type_ref = source_arg_types[positional_index]
             types << type_ref
+            projected_facts << facts[positional_index]
             infos << DefParamInfo.new(param.name, param.external_name, param.type_annotation, nil, false, false, false)
             positional_index += 1
           end
@@ -128449,14 +128481,17 @@ module Adamas::HIR
 
         if !named_only && positional_index < raw_positional_count
           types << source_arg_types[positional_index]
+          projected_facts << facts[positional_index]
           infos << DefParamInfo.new(param.name, param.external_name, param.type_annotation, nil, false, false, false)
           positional_index += 1
           next
         end
 
         if label = named_parameter_label(param)
-          if type_ref = named_types.delete(label)
+          if value = named_types.delete(label)
+            type_ref, source_fact = value
             types << type_ref
+            projected_facts << source_fact
             infos << DefParamInfo.new(param.name, param.external_name, param.type_annotation, nil, false, false, false)
           end
         end
@@ -128464,7 +128499,51 @@ module Adamas::HIR
 
       return nil unless positional_index == raw_positional_count
       return nil unless named_types.empty?
-      {types, infos}
+      {types, infos, projected_facts}
+    end
+
+    private def source_named_facts_complete_for?(input : CallResolutionInput) : Bool
+      return false unless input.source_named_types
+      types = input.arg_types || return false
+      facts = input.source_argument_facts || return false
+      return false if facts.size != types.size
+      facts.each_with_index do |fact, index|
+        return false unless fact && fact.type_ref == types[index]
+        if fact.type_ref == TypeRef::VOID
+          return false unless fact.value_facts.try { |values| !values.empty? }
+        end
+      end
+      true
+    end
+
+    private def call_resolution_memo_mix_source_argument(
+      hash : UInt64,
+      argument : SourceCallArgument?,
+    ) : UInt64
+      unless value = argument
+        return call_resolution_memo_mix(hash, UInt64::MAX - 4_u64)
+      end
+
+      result = call_resolution_memo_mix(hash, value.type_ref.id.to_u64)
+      result = call_resolution_memo_mix(result, value.type_literal ? 1_u64 : 0_u64)
+      if rest_values = value.rest_values
+        result = call_resolution_memo_mix(result, rest_values.size.to_u64)
+        rest_values.each do |rest_value|
+          result = call_resolution_memo_mix_source_argument(result, rest_value)
+        end
+      else
+        result = call_resolution_memo_mix(result, UInt64::MAX - 5_u64)
+      end
+      if value_facts = value.value_facts
+        result = call_resolution_memo_mix(result, value_facts.size.to_u64)
+        value_facts.each do |(type_ref, type_literal)|
+          result = call_resolution_memo_mix(result, type_ref.id.to_u64)
+          result = call_resolution_memo_mix(result, type_literal ? 1_u64 : 0_u64)
+        end
+      else
+        result = call_resolution_memo_mix(result, UInt64::MAX - 6_u64)
+      end
+      result
     end
 
     private def call_resolution_memo_mix(hash : UInt64, value : UInt64) : UInt64
@@ -128529,12 +128608,7 @@ module Adamas::HIR
       if source_argument_facts = input.source_argument_facts
         hash = call_resolution_memo_mix(hash, source_argument_facts.size.to_u64)
         source_argument_facts.each do |argument|
-          if argument
-            hash = call_resolution_memo_mix(hash, argument.type_ref.id.to_u64)
-            hash = call_resolution_memo_mix(hash, argument.type_literal ? 1_u64 : 0_u64)
-          else
-            hash = call_resolution_memo_mix(hash, UInt64::MAX - 2_u64)
-          end
+          hash = call_resolution_memo_mix_source_argument(hash, argument)
         end
       else
         hash = call_resolution_memo_mix(hash, UInt64::MAX - 3_u64)
@@ -129628,7 +129702,14 @@ module Adamas::HIR
         # Retain that failure before any later carrier-only return probe can
         # rediscover and materialize the incompatible declaration.
         saw_source_candidate = true if collect_source_rejections
-        next unless call_source_argument_kinds_match?(input, def_node, name)
+        # Source-shaped named calls are checked below after each candidate has
+        # projected their argument facts into that candidate's formal order.
+        source_kinds_match = if input.source_named_types
+                               source_named_facts_complete_for?(input)
+                             else
+                               call_source_argument_kinds_match?(input, def_node, name)
+                             end
+        next unless source_kinds_match
 
         score = 0
         compatible = true
@@ -129637,32 +129718,35 @@ module Adamas::HIR
           func_context = function_context_for_lookup_candidate(func_name, name)
           candidate_scope = enter_lookup_candidate_scope(name, func_context)
           begin
+            match_arg_types = arg_types
+            match_param_infos : Array(DefParamInfo)? = nil
+            match_source_argument_facts = input.source_argument_facts
+            if input.source_named_types
+              next unless raw_count = input.raw_positional_count
+              next unless names = named_arg_names
+              view = named_call_candidate_type_view(
+                def_node, arg_types, raw_count, names, func_context, input.source_argument_facts,
+              )
+              next unless view
+              match_arg_types, match_param_infos, match_source_argument_facts = view
+            end
             if collect_source_rejections
               saw_source_candidate = true
-              if mismatch = source_generic_argument_mismatch_for_def(def_node, arg_types, func_context)
+              if mismatch = source_generic_argument_mismatch_for_def(def_node, match_arg_types, func_context, match_param_infos)
                 source_rejection ||= mismatch
               else
                 all_source_candidates_rejected = false
               end
             end
-            match_arg_types = arg_types
-            match_param_infos : Array(DefParamInfo)? = nil
-            if input.source_named_types
-              next unless raw_count = input.raw_positional_count
-              next unless names = named_arg_names
-              view = named_call_candidate_type_view(def_node, arg_types, raw_count, names, func_context)
-              next unless view
-              match_arg_types, match_param_infos = view
-            end
             candidate_param_map = lookup_candidate_restriction_param_map(name, def_node)
             compatible = if candidate_param_map
                            with_type_param_map(candidate_param_map) do
                              params_compatible_with_args?(def_node, match_arg_types, func_context, match_param_infos, ovl_trace,
-                               source_argument_facts: input.source_argument_facts)
+                               source_argument_facts: match_source_argument_facts)
                            end
                          else
                            params_compatible_with_args?(def_node, match_arg_types, func_context, match_param_infos, ovl_trace,
-                               source_argument_facts: input.source_argument_facts)
+                               source_argument_facts: match_source_argument_facts)
                          end
             STDERR.puts "[OVL]   cand=#{name} pc=#{param_count} req=#{required} ctx=#{func_context} compat=#{compatible}" if ovl_trace
             if compatible && (single_candidate_fast_path || source_constructor_family)
@@ -129680,10 +129764,10 @@ module Adamas::HIR
               end
               score = if candidate_param_map
                         with_type_param_map(candidate_param_map) do
-                          params_match_score(def_node, match_arg_types, func_context, match_param_infos, input.source_argument_facts)
+                          params_match_score(def_node, match_arg_types, func_context, match_param_infos, match_source_argument_facts)
                         end
                       else
-                        params_match_score(def_node, match_arg_types, func_context, match_param_infos, input.source_argument_facts)
+                        params_match_score(def_node, match_arg_types, func_context, match_param_infos, match_source_argument_facts)
                       end
               score += class_method_owner_match_bonus(func_name, name, arg_types)
               score += named_args_match_score(def_node, named_arg_names)
@@ -129737,7 +129821,10 @@ module Adamas::HIR
           # the lossy one previously won the param_count tiebreak). Only the score-tie ordering
           # changes; a strictly higher score still wins regardless of exactness.
           cand_exact = if input.source_named_types
-                         if view = named_call_candidate_type_view(def_node, arg_types, input.raw_positional_count.not_nil!, named_arg_names.not_nil!, function_context_for_lookup_candidate(func_name, name))
+                         if view = named_call_candidate_type_view(
+                              def_node, arg_types, input.raw_positional_count.not_nil!, named_arg_names.not_nil!,
+                              function_context_for_lookup_candidate(func_name, name), input.source_argument_facts,
+                            )
                            view[1].each_with_index.all? do |param, index|
                              param_annotation = param.type_annotation
                              param_annotation && (declared_type_match_score(view[0][index], param_annotation) || 0) >= 2
@@ -130528,6 +130615,7 @@ module Adamas::HIR
       candidate_def : Adamas::Compiler::Frontend::DefNode,
       has_block_call : Bool = false,
       positional_slot_exprs : Array(ExprId?)? = nil,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : Tuple(String, Adamas::Compiler::Frontend::DefNode, Array(TypeRef))?
       positional_sources = positional_slot_exprs || positional_args.map { |id| id.as(ExprId?) }
       return nil unless positional_sources.size + names.size == source_types.size
@@ -130536,6 +130624,10 @@ module Adamas::HIR
       return nil unless named_args_compatible_with_def?(candidate_def, names, positional_sources.size, positional_sources.size)
       context = function_context_for_lookup_candidate(func_name, candidate_name)
       converted_types = source_types.dup
+      converted_facts = source_argument_facts.try(&.dup)
+      if source_argument_facts
+        return nil unless converted_facts && converted_facts.size == source_types.size
+      end
       changed = false
       positional_index = 0
       in_named_only = false
@@ -130562,14 +130654,21 @@ module Adamas::HIR
         )
         next unless target_type
         converted_types[slot] = target_type
+        if facts = converted_facts
+          fact = facts[slot] || return nil
+          return nil if fact.type_literal || fact.value_facts.try(&.any? { |(_, type_literal)| type_literal })
+          facts[slot] = SourceCallArgument.new(target_type, false)
+        end
         changed = true
       end
       return nil unless changed
+      return nil unless source_argument_facts
       # The unchanged resolver must select this very declaration with the
       # validated vector, as in the positional path.
       selected = lookup_function_def_for_call(
         func_name, converted_types.size, has_block_call, converted_types,
         false, true, names, positional_sources.size, true,
+        source_argument_facts: converted_facts,
       )
       return nil unless selected && selected[1].same?(candidate_def)
       {selected[0], candidate_def, converted_types}
@@ -130584,6 +130683,7 @@ module Adamas::HIR
       call_arena : Adamas::Compiler::Frontend::ArenaLike,
       has_block_call : Bool = false,
       positional_slot_exprs : Array(ExprId?)? = nil,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : Tuple(String, Adamas::Compiler::Frontend::DefNode, Array(TypeRef))?
       return nil unless source_types.any? { |type| signed_integer_primitive?(type) || unsigned_integer_type?(type) }
       candidates = [] of Tuple(String, Adamas::Compiler::Frontend::DefNode, Array(TypeRef))
@@ -130596,7 +130696,7 @@ module Adamas::HIR
         next unless candidate_def
         candidate_entry = source_named_integer_autocast_candidate_entry(
           func_name, positional_args, named_exprs, names, source_types, call_arena,
-          candidate_name, candidate_def, has_block_call, positional_slot_exprs,
+          candidate_name, candidate_def, has_block_call, positional_slot_exprs, source_argument_facts,
         )
         next unless candidate_entry
         duplicate = candidates.any? do |existing|
@@ -130993,14 +131093,21 @@ module Adamas::HIR
       # selection must retain the proven nominal enum identity. The helper
       # follows only explicit enum provenance; it does not infer enums from an
       # Int32 value or change the emitted value representation.
-      source_types = positional_values.map { |id| enum_tracked_type(ctx, id) }
-      names.each { |name| source_types << enum_tracked_type(ctx, named_values[name]) }
+      source_argument_facts = [] of SourceCallArgument?
+      positional_values.each do |id|
+        source_argument_facts << source_call_argument(ctx, id, preserve_value_facts: true)
+      end
+      names.each do |name|
+        source_argument_facts << source_call_argument(ctx, named_values[name], preserve_value_facts: true)
+      end
+      source_types = source_argument_facts.map { |argument| argument.not_nil!.type_ref }
       # The source shape carries positional values and an explicit keyword
       # list even when it is empty. Keep overload policy tied to the actual
       # presence of keywords, independently of that source-shape contract.
       selected = lookup_function_def_for_call(
         func_name, source_types.size, has_block_call, source_types,
         false, !names.empty?, names, positional_values.size, true,
+        source_argument_facts: source_argument_facts,
       )
       # Integer literals autocast to named restrictions exactly as they do to
       # positional ones (`AdjustedMantissa.new(power2: 0, mantissa: 0)`).
@@ -131020,6 +131127,7 @@ module Adamas::HIR
           lookup_names.each do |lookup_name|
             autocast = source_named_integer_autocast_entry(
               lookup_name, positional_args, named_exprs, names, source_types, call_arena, has_block_call, positional_slot_exprs,
+              source_argument_facts: source_argument_facts,
             )
             next unless autocast
             converted_types = autocast[2]
@@ -131042,8 +131150,13 @@ module Adamas::HIR
               else
                 named_values[names[slot - positional_values.size]] = converted
               end
+              converted_fact = source_call_argument(ctx, converted, preserve_value_facts: true)
+              unless converted_fact.type_ref == target_type && !converted_fact.type_literal
+                raise LoweringError.new("no overload matches #{func_name}: integer autocast result lost its target source type")
+              end
+              source_argument_facts[slot] = converted_fact
+              source_types[slot] = converted_fact.type_ref
             end
-            source_types = converted_types
             selected = {autocast[0], autocast[1]}
             break
           end

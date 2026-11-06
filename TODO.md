@@ -25404,3 +25404,20 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Close named/rest forall body bindings and declared-return source facts.
   Successful admission alone does not establish the parameter/result contract.
 - Bootstrap and unchanged LavinMQ execution/upstream test parity remain open.
+
+### 2026-11-05 — Preserve named argument source facts during admission
+
+- [x] Project each supplied named argument's type and source value kind into the
+  selected candidate's formal order together. Refuse incomplete or misaligned
+  fact vectors; keep nested rest/value facts in memo identity and refresh facts
+  after a validated integer autocast.
+- The original-first named_source_argument_kind_repro.sh passes with S1 35q2191:
+  a class-only positive, equal-carrier keyword reordering, and two strict
+  rejection cases. Baseline 35q2180 accepts the invalid instance and mixed-kind
+  calls. The existing named admission and integer-autocast scripts also pass.
+- [ ] Repair the separate ordinary named target/body mismatch: an instance-first
+  Int32 / Int32.class overload pair still prints X instead of Crystal's A for
+  choose(value: Int32). Admission does not establish emitted target ownership.
+- [ ] Close omitted-default forall inference, named/rest body and receiver
+  transport, declared-result facts, bootstrap, and unchanged LavinMQ runtime
+  and upstream test parity.
