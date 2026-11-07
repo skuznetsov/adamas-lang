@@ -25734,3 +25734,42 @@ This is an open value-evaluator gap, not proof of complete statement semantics.
 The ensure-only concern was retracted as a required capability: stock rejects
 executing ExceptionHandler in a macro. Next: fix handler-free sequence evaluation
 without admitting handlers or changing stdlib.
+
+
+## 2026-11-06 — Initializer replay owns its captured binding context
+
+The Thread#initialize replay rejection was caused by a constructor call writing
+`__block_return__` into a shared declaration map: a blockless source changed from
+{} to {__block_return__: Nil} while its Def, arena and namespace stayed identical
+(35q3902). That per-call hint is not a generic declaration substitution. Keep
+operational source bindings, separate optional exact/base registry snapshots and
+a scoped replay-consumer view. Compare live declaration facts before and after
+replay; exclude only that shared hint. A distinct exact target's hint and all
+real generic/other ABI keys remain strict, alongside existing callback, parameter,
+source/arena/namespace and retired-result guards.
+
+The original foreign-hint source/replay controls fail on unmodified source
+(35q3913). Final initializer_binding_owner_repro.sh passes 21 HIR examples and
+six native stock/lazy/eager result controls (35q3951). Separate-map/absence and
+exact-hint controls use synthetic captures to test consumers and the raw guard;
+they do not prove every production map-capture path. Stronger guard attacks still
+reject real T/ABI/source/return changes. Bounded Adversary verdict: ROBUST for
+this replay-ownership contract; source review is correlated.
+
+Fresh stock-prelude hello passes Thread replay but stops at the independent
+Event#heap_previous? exact-source guard (35q3926). Scalar trace 35q3932 shows two
+Def objects in the same arena during ordinary lowering, not initializer replay.
+Do not relax that binder or claim complete prelude, executable LavinMQ, bootstrap
+or upstream test parity. Shared-hint consumers outside replay remain separate.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+initializer-binding-owner-final-gate35q3951/result.json,
+thread-initializer-owner-final-units35q3950/result.json,
+prelude-thread-initializer-replay-owner35q3926/result.json, and
+prelude-event-exact-source-trace35q3932/result.json.
+All 1,916 compiler files match build.thread-initializer-replay-owner35q3925.source.json
+(SHA-256 94734f0f2144849bc0ea32dfe1d58993987f57146ade24c4aff16bd60a0f1a96).
+Compiler SHA-256: a521a8a0d3e8faf63c564107162201b330eaf8cbf13435ce2d93a9781d6db803.
+Refresh after binding-map lookup/writes, initializer capture/replay, callback ABI,
+source ownership or layout invalidation changes. Rollback is this atomic commit.
+Application, stdlib and unrelated WIP are unchanged.

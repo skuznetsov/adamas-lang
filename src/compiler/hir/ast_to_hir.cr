@@ -1614,6 +1614,10 @@ module Adamas::HIR
       getter source_arena : Adamas::Compiler::Frontend::ArenaLike
       getter namespace : String?
       getter bindings : Hash(String, String)
+      getter declaration_bindings : Hash(String, String)
+      getter registered_base_name : String
+      getter registered_target_bindings : Hash(String, String)?
+      getter registered_base_bindings : Hash(String, String)?
       getter parameter_types : Array(TypeRef)
       getter block_parameters : Array(Bool)
       getter heap_block_param : Bool
@@ -1638,6 +1642,9 @@ module Adamas::HIR
         @source_arena : Adamas::Compiler::Frontend::ArenaLike,
         @namespace : String?,
         @bindings : Hash(String, String),
+        @registered_base_name : String,
+        @registered_target_bindings : Hash(String, String)?,
+        @registered_base_bindings : Hash(String, String)?,
         @parameter_types : Array(TypeRef),
         @block_parameters : Array(Bool),
         @heap_block_param : Bool,
@@ -1653,6 +1660,17 @@ module Adamas::HIR
         @call_enum_names : Array(String?)?,
         @return_result_invalidated : Bool = false,
       )
+        @declaration_bindings = self.class.declaration_bindings(@bindings)
+      end
+
+      # A shared source-name map also receives callsite hints. The callback
+      # result belongs to the selected call, not to its declaration's generic
+      # substitutions. Keep the operational snapshot for default inference;
+      # callback and Function ABI contracts remain separate replay guards.
+      def self.declaration_bindings(bindings : Hash(String, String)) : Hash(String, String)
+        result = bindings.dup
+        result.delete("__block_return__")
+        result
       end
 
       def invalidate_return_result : MaterializedInitializerSource
@@ -1660,7 +1678,8 @@ module Adamas::HIR
 
         MaterializedInitializerSource.new(
           @function, @source_name, @source_def, @source_arena, @namespace,
-          @bindings, @parameter_types, @block_parameters, @heap_block_param,
+          @bindings, @registered_base_name, @registered_target_bindings, @registered_base_bindings,
+          @parameter_types, @block_parameters, @heap_block_param,
           @callback_abi, @callback_source, @return_type, @owner, @owner_type,
           @lowering_namespace, @lowering_bindings, @call_types, @call_literals,
           @call_enum_names, true,
@@ -8540,6 +8559,7 @@ module Adamas::HIR
     @inherited_virtual_bottom_certificates = [] of InheritedVirtualBottomCertificate
     @deferred_union_variant_contracts : Array(DeferredUnionVariantContract)
     @materialized_initializer_sources = {} of String => MaterializedInitializerSource
+    @active_initializer_replay_source : MaterializedInitializerSource? = nil
     @included_forall_virtual_body_demands : Array(IncludedForallVirtualBodyDemand) = [] of IncludedForallVirtualBodyDemand
     @included_forall_virtual_body_provenance : Hash(String, IncludedForallVirtualBodyProvenance) = {} of String => IncludedForallVirtualBodyProvenance
     # Dedup replay work at the (child, parent, method, args_hash, flags) grain:
@@ -24592,7 +24612,7 @@ module Adamas::HIR
       params.delete("__block_return__")
       params.delete("__yield_call_abi__")
       if full_name != base_name
-        if selected_params = @function_type_param_maps[full_name]?
+        if selected_params = function_type_param_map_for_name(full_name)
           {"__block_return__", "__yield_call_abi__"}.each do |key|
             if hint = selected_params[key]?
               params[key] = hint
@@ -24728,6 +24748,13 @@ module Adamas::HIR
     private def function_type_param_map_for_name(name : String) : Hash(String, String)?
       return nil unless v2_string_readable?(name)
       return nil if name.empty?
+      # A later call may update shared hints, but replay owns its captured
+      # callee context. Nested replay restores this view at its own boundary.
+      if source = @active_initializer_replay_source
+        return source.registered_target_bindings if name == source.function.name
+        return source.registered_base_bindings if name == source.registered_base_name
+        return source.bindings if name == source.source_name
+      end
       if map = @function_type_param_maps[name]?
         if env_get("DEBUG_TYPE_PARAM_RETRIEVE") && debug_type_param_lookup_name?(name)
           STDERR.puts "[TYPE_PARAM_RETRIEVE] found name=#{name} map=#{map}"
@@ -24750,12 +24777,7 @@ module Adamas::HIR
     private def function_type_param_map_value?(name : String, key : String) : String?
       return nil unless v2_string_readable?(name)
       return nil if name.empty?
-      return nil unless @function_type_param_maps.has_key?(name)
-
-      map = @function_type_param_maps[name]
-      return nil unless map.has_key?(key)
-
-      map[key]
+      function_type_param_map_for_name(name).try(&.[key]?)
     end
 
     private def function_type_param_map_for(name1 : String, name2 : String) : Hash(String, String)?
@@ -50177,7 +50199,7 @@ module Adamas::HIR
       source_binding_param_index = 0
       whole_double_splat_layout = bind_whole_double_splat_formal(node, effective_full_name_override, method_forall_bindings)
       if raw_callback_contract.try(&.wildcard)
-        if exact_bindings = effective_full_name_override.try { |name| @function_type_param_maps[name]? }
+        if exact_bindings = effective_full_name_override.try { |name| function_type_param_map_for_name(name) }
           forall_type_param_names(node).each do |name|
             if bound = exact_bindings[name]?
               method_forall_bindings[name] = bound
@@ -50688,6 +50710,10 @@ module Adamas::HIR
       # Retrieve stored type param map for lazy lowering of generic class methods.
       # When a monomorphized class's method is lowered, we need the type parameter
       # substitutions (e.g., T => UInt8) that were stored during method registration.
+      # Preserve both registry entries, including absence: an exact target can
+      # shadow a different shared base context. Replay must retain that lookup.
+      initializer_registered_target_bindings = is_initialize_method ? function_type_param_map_for_name(full_name).try(&.dup) : nil
+      initializer_registered_base_bindings = is_initialize_method ? function_type_param_map_for_name(base_name).try(&.dup) : nil
       if registered_params = function_type_param_map_for(full_name, base_name)
         extra_type_params.merge!(registered_params)
         if debug_env_filter_match?("DEBUG_LOWER_METHOD_TPM", full_name, base_name)
@@ -51361,7 +51387,8 @@ module Adamas::HIR
          (source_arena = @function_def_arenas[source_name]?) &&
          (body_arena = included_forall_body_method_arena) &&
          arena_map_key(source_arena) == arena_map_key(body_arena)
-        bindings = function_type_param_map_for_name(source_name) || EMPTY_DEFERRED_TYPE_PARAM_SNAPSHOT
+        bindings = initializer_replay_source.try(&.bindings) ||
+                   function_type_param_map_for_name(source_name) || EMPTY_DEFERRED_TYPE_PARAM_SNAPSHOT
         # Replay does not select an overload or expand named/default arguments:
         # those choices already belong to this exact source and ABI vector.
         # Capture the block carrier separately from positional call types.
@@ -51370,6 +51397,7 @@ module Adamas::HIR
         source = MaterializedInitializerSource.new(
           func, source_name, source_def, source_arena,
           function_namespace_override_for(source_name), bindings.dup,
+          base_name, initializer_registered_target_bindings, initializer_registered_base_bindings,
           func.params.map(&.type), func.params.map(&.is_block), func.heap_block_param,
           copy_initializer_callback_abi(raw_callback_contract),
           copy_initializer_callback_source(raw_callback_source_binding_for(full_name)), func.return_type,
@@ -127447,7 +127475,10 @@ module Adamas::HIR
       prior.function.name == current.function.name &&
         prior.source_name == current.source_name && prior.source_def.same?(current.source_def) &&
         arena_map_key(prior.source_arena) == arena_map_key(current.source_arena) &&
-        prior.namespace == current.namespace && prior.bindings == current.bindings &&
+        prior.namespace == current.namespace && prior.declaration_bindings == current.declaration_bindings &&
+        prior.registered_base_name == current.registered_base_name &&
+        prior.registered_target_bindings == current.registered_target_bindings &&
+        prior.registered_base_bindings == current.registered_base_bindings &&
         prior.owner == current.owner && prior.owner_type == current.owner_type &&
         prior.lowering_namespace == current.lowering_namespace && prior.lowering_bindings == current.lowering_bindings &&
         prior.call_types == current.call_types && prior.call_literals == current.call_literals &&
@@ -127489,8 +127520,24 @@ module Adamas::HIR
     private def initializer_source_definition_current?(source : MaterializedInitializerSource) : Bool
       return false unless @function_defs[source.source_name]?.try(&.same?(source.source_def)) &&
                           @function_def_arenas[source.source_name]?.try { |arena| arena_map_key(arena) == arena_map_key(source.source_arena) }
-      bindings = function_type_param_map_for_name(source.source_name) || EMPTY_DEFERRED_TYPE_PARAM_SNAPSHOT
-      function_namespace_override_for(source.source_name) == source.namespace && bindings == source.bindings &&
+      # Validate live generic facts rather than the scoped body-consumer view.
+      bindings = @function_type_param_maps[source.source_name]? || EMPTY_DEFERRED_TYPE_PARAM_SNAPSHOT
+      target_bindings = @function_type_param_maps[source.function.name]?
+      base_bindings = @function_type_param_maps[source.registered_base_name]?
+      # Only shared declaration keys admit unrelated block-result updates. An
+      # exact specialization owns its own hint and cannot borrow that exception.
+      target_is_shared = source.function.name == source.source_name || source.function.name == source.registered_base_name
+      target_current = if target_is_shared
+                         MaterializedInitializerSource.declaration_bindings(target_bindings || EMPTY_DEFERRED_TYPE_PARAM_SNAPSHOT) ==
+                           MaterializedInitializerSource.declaration_bindings(source.registered_target_bindings || EMPTY_DEFERRED_TYPE_PARAM_SNAPSHOT)
+                       else
+                         target_bindings == source.registered_target_bindings
+                       end
+      declaration_bindings = MaterializedInitializerSource.declaration_bindings(bindings)
+      function_namespace_override_for(source.source_name) == source.namespace && declaration_bindings == source.declaration_bindings &&
+        target_current &&
+        MaterializedInitializerSource.declaration_bindings(base_bindings || EMPTY_DEFERRED_TYPE_PARAM_SNAPSHOT) ==
+          MaterializedInitializerSource.declaration_bindings(source.registered_base_bindings || EMPTY_DEFERRED_TYPE_PARAM_SNAPSHOT) &&
         @class_info[source.owner]?.try(&.type_ref) == source.owner_type
     end
 
@@ -127514,6 +127561,8 @@ module Adamas::HIR
         raise LoweringError.new("initializer replay callback source changed for #{name}", source.source_def)
       end
       info = @class_info[source.owner]
+      old_replay_source = @active_initializer_replay_source
+      @active_initializer_replay_source = source
       old_class = @current_class
       old_method = @current_method
       old_method_is_class = @current_method_is_class
@@ -127538,6 +127587,7 @@ module Adamas::HIR
                  function.params.map(&.is_block) == source.block_parameters &&
                  function.heap_block_param == source.heap_block_param &&
                  initializer_source_recipe_matches?(source, refreshed_source) &&
+                 initializer_source_definition_current?(source) &&
                  initializer_source_return_update_admitted?(source, refreshed_source, source) &&
                  function.same?(refreshed_source.function) &&
                  function.return_type == refreshed_source.return_type
@@ -127545,6 +127595,7 @@ module Adamas::HIR
           end
         end
       ensure
+        @active_initializer_replay_source = old_replay_source
         @current_class = old_class
         @current_method = old_method
         @current_method_is_class = old_method_is_class

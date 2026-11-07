@@ -26144,3 +26144,29 @@ integration, fresh bootstrap, or LavinMQ parity.
   executes its side effect on Crystal but fails on S1 35q3866 (35q3879/35q3880).
   Stock rejects ensure/rescue ExceptionHandler execution; do not add handler
   support as a substitute. This is the next bounded evaluator fix.
+
+
+### 2026-11-06 — Separate initializer declaration and replay binding owners
+
+- [x] Preserve operational source bindings and separate optional full-target/base
+  registry snapshots for initializer replay. Scope body lookups to those saved
+  entries, including absence and exact-before-base precedence; restore nested
+  replay context in ensure.
+- [x] Exclude only the foreign shared `__block_return__` hint from declaration
+  identity. Real generic bindings, other reserved ABI keys, exact-target hints,
+  Def/Arena/namespace and callback/parameter/result guards remain strict. Check
+  live source maps outside the captured lookup view before and after replay.
+- initializer_binding_owner_repro.sh passes 21 HIR checks and six stock/lazy/eager
+  native controls on exact S1 35q3925 (35q3951). Consumer/guard controls with
+  synthetic captures cover separate maps and absence; they do not certify every
+  producer of divergent registry contexts. The original foreign-hint cases fail
+  against the unmodified source (35q3913) and pass after the repair.
+- A fresh unchanged-prelude hello passes the Thread#initialize replay failure and
+  stops later at the strict Event#heap_previous? source-binding guard (35q3926).
+  No complete prelude, link/runtime, bootstrap or LavinMQ parity claim.
+- [ ] Move remaining consumers of shared callsite hints to their actual owners
+  when reached; do not broaden the declaration-key exception.
+- [ ] Identify the duplicate accessor Def producer for Event#heap_previous?.
+  Same arena, distinct Def identities were observed in ordinary lowering
+  (35q3932); keep the exact binder guard. Return to unchanged LavinMQ after the
+  nested macro Begin gate.

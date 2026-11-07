@@ -244,6 +244,34 @@ class/instance `next` plus `as(F)` and omitted-default Nil binding still fail
 identically on baseline and candidate (35q3225/35q3226, 35q3227/35q3228).
 This bounded transport contract does not close either parity obligation.
 
+### Initializer replay binding ownership
+
+A materialized initializer retains its exact source Def and arena, declaration
+bindings, selected full-target and base-name registry snapshots, and lowering
+context. Preserve absence of a registry entry as well as its values: full-target
+lookup may shadow a different base-name map. During replay, body consumers read
+these captured entries through a scoped view; nested replay restores the prior
+view in ensure. Default inference retains the saved source binding context.
+
+The shared declaration/base registry currently also receives the callsite hint
+`__block_return__`. That hint is not a generic declaration substitution. Ignore
+only that exact key when checking shared declaration identity; all real generic
+bindings and other reserved ABI keys remain strict. A distinct exact target's
+hint remains part of its selected context and cannot use the shared-key
+exception. Validate live maps outside the replay view before and after lowering,
+so the captured view cannot conceal changed source facts.
+
+Retain the independent checks for source/arena/namespace, selected callback
+source and ABI, parameter/block carriers, and the retired result lifecycle.
+A changed return result is admitted only by the existing exact retired-recipe
+replay contract. This repair does not certify other consumers of the shared
+callsite hint; moving them to per-invocation ownership remains separate work.
+
+The executable gate is `initializer_binding_owner_repro.sh COMPILER`: HIR
+source/replay guards plus stock/lazy/eager native result controls. A fresh
+prelude probe must also pass the original Thread replay boundary; a later
+independent source-binding failure does not establish full-prelude success.
+
 ### Enum primitive predecessor results
 
 An implicit Enum#value predecessor owns the concrete enum base type. Its Int
