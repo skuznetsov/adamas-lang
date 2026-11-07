@@ -758,6 +758,29 @@ unknown-method fallback, runtime double-splat binding, generated allocator
 ownership, full prelude, bootstrap or LavinMQ runtime/test parity. In particular,
 missing macro support may not silently erase required constructor keywords.
 
+### Completed initializer block carrier boundary
+
+The selected source initializer owns an untyped block's fallback carrier:
+raw callbacks and implicit yield use a code pointer; a captured block uses a
+heap Proc. Once the initializer body is complete, each physical block formal
+owns both its nominal type and raw/heap representation. An equal Proc TypeRef
+does not authorize constructing a heap record for a raw formal.
+
+Forward a raw block only with the same completed TypeRef and authenticated raw
+provenance. A heap formal may materialize a raw callback, but boxing preserves
+the code pointer and cannot change its normalized input/result signature.
+A source Void output is normalized to Nil before this boundary; boxing alone
+cannot supply an output adapter. Reject heap-to-raw and incompatible signature
+changes. Data formals retain the existing enum source proof and non-narrowing
+numeric adaptation.
+
+Gate: allocator_initializer_block_carrier_repro.sh COMPILER runs 30 HIR checks
+and three original-first native programs in lazy/eager modes. The heap control
+has an explicit zero-input signature to isolate this carrier boundary. The
+separate untyped captured-constructor input inference bug remains open.
+Refresh after allocator source selection, callback provenance, physical formal
+or coercion changes. Rollback is the atomic carrier commit.
+
 ### Exact generated initializer call boundary
 
 A generated allocator recipe may retain its one selected inner initialize

@@ -48573,7 +48573,9 @@ module Adamas::HIR
                   ptype = if ta = p.type_annotation
                             annotation_type_ref((safe_slice_to_string(ta) || ""), class_name)
                           else
-                            type_ref_for_name("Proc")
+                            # Share the selected body's raw/heap carrier decision.
+                            # A concrete callsite ABI may refine this slot later.
+                            untyped_block_parameter_type(matched_init_def, param_is_ivar)
                           end
                   block_param_info = {pname, ptype}
                   next
@@ -48612,7 +48614,7 @@ module Adamas::HIR
           # through the allocator so `initialize` receives a yield target.
           if initializer_has_block && block_param_info.nil? &&
              def_contains_yield?(matched_init_def, matched_init_arena.not_nil!)
-            block_param_info = {"__implicit_block", type_ref_for_name("Proc")}
+            block_param_info = {"__implicit_block", TypeRef::POINTER}
           end
         elsif trace_allocator_overload
           STDERR.puts "[ALLOC_OVERLOAD_TRACE] matched_init=nil"
@@ -49197,31 +49199,7 @@ module Adamas::HIR
           # Source selection and default binding precede this ABI adaptation.
           # The completed body owns every physical slot, including a block;
           # the earlier inference vector may still specialize a declared union.
-          physical_params = init_function.params.skip(1)
-          unless physical_params.size == init_call_args.size
-            raise LoweringError.new("completed initializer ABI disagrees with expanded allocator arguments: #{init_name}")
-          end
-          physical_params.each_with_index do |param, index|
-            actual_type = ctx.type_of(init_call_args[index])
-            next if actual_type == param.type
-            if numeric_primitive?(actual_type) && numeric_primitive?(param.type) &&
-               !allocator_numeric_source_autocast_compatible?(get_type_name_from_ref(actual_type), get_type_name_from_ref(param.type))
-              raise LoweringError.new("completed initializer ABI would narrow an allocator argument: #{init_name}")
-            end
-            if param.is_block &&
-               !(raw_proc_callback_source(ctx, init_call_args[index]) &&
-                 proc_materialization_type_for(actual_type, param.type) == param.type)
-              raise LoweringError.new("completed initializer block ABI disagrees with allocator: #{init_name}")
-            end
-          end
-          # Enum expressions retain nominal source proof beside their integer
-          # carrier. Materialize that proven identity at this completed ABI
-          # boundary; an unrelated integer or enum cannot acquire the type.
-          adapted_init_args = [] of ValueId
-          init_call_args.each_with_index do |arg, index|
-            adapted_init_args << coerce_enum_tracked_value_to_type(ctx, arg, physical_params[index].type)
-          end
-          init_call_args = adapted_init_args
+          init_call_args = adapt_allocator_initializer_arguments(ctx, init_call_args, init_function)
           initializer_return_type = init_function.return_type
           init_call = Call.with_receiver(ctx.next_id, initializer_return_type.not_nil!, alloc.id, init_name, init_call_args)
           ctx.emit(init_call)
@@ -49292,6 +49270,57 @@ module Adamas::HIR
       ensure
         @enum_value_types = saved_allocator_enum_value_types
       end
+    end
+
+    # The completed callee owns the physical carrier as well as the nominal
+    # type. A raw callback can have a concrete Proc type without being a heap
+    # Proc record; generic value coercion would materialize it unnecessarily.
+    private def adapt_allocator_initializer_arguments(
+      ctx : LoweringContext,
+      args : Array(ValueId),
+      initializer : Function,
+    ) : Array(ValueId)
+      physical_params = initializer.params.skip(1)
+      unless physical_params.size == args.size
+        raise LoweringError.new("completed initializer ABI disagrees with expanded allocator arguments: #{initializer.name}")
+      end
+      args.map_with_index do |arg, index|
+        param = physical_params[index]
+        actual_type = ctx.type_of(arg)
+        if param.is_block && !initializer.heap_block_param
+          unless actual_type == param.type && raw_proc_callback_source(ctx, arg)
+            raise LoweringError.new("completed initializer raw block ABI disagrees with allocator: #{initializer.name}")
+          end
+          next arg
+        end
+        if actual_type != param.type
+          if numeric_primitive?(actual_type) && numeric_primitive?(param.type) &&
+             !allocator_numeric_source_autocast_compatible?(get_type_name_from_ref(actual_type), get_type_name_from_ref(param.type))
+            raise LoweringError.new("completed initializer ABI would narrow an allocator argument: #{initializer.name}")
+          end
+          if param.is_block &&
+             !(raw_proc_callback_source(ctx, arg) &&
+               allocator_callback_materialization_compatible?(actual_type, param.type))
+            raise LoweringError.new("completed initializer block ABI disagrees with allocator: #{initializer.name}")
+          end
+        end
+        # Enum expressions retain nominal source proof beside their integer
+        # carrier. Only materialize a heap callback when the callee owns one.
+        coerce_enum_tracked_value_to_type(ctx, arg, param.type)
+      end
+    end
+
+    private def allocator_callback_materialization_compatible?(actual_type : TypeRef, expected_type : TypeRef) : Bool
+      actual = @module.get_type_descriptor(actual_type)
+      expected = @module.get_type_descriptor(expected_type)
+      return false unless actual && expected && actual.kind == TypeKind::Proc && expected.kind == TypeKind::Proc
+      actual_signature = actual.type_params
+      expected_signature = expected.type_params
+      return false if actual_signature.empty? || expected_signature.empty?
+      # Boxing preserves the code pointer; it cannot adapt a callback's input
+      # or result ABI. Source Void outputs are normalized to Nil and must have
+      # been lowered with that result contract before reaching this boundary.
+      actual_signature == expected_signature
     end
 
     # Admit only the initializer selected when this exact positional wrapper

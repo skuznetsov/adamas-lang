@@ -26922,3 +26922,25 @@ integration, fresh bootstrap, or LavinMQ parity.
   selection before inference, not the guard or method arity.
 - Full prelude, fresh bootstrap and unchanged LavinMQ object/link/server/upstream
   parity remain open. No stdlib/application or source restriction changes.
+
+
+### 2026-11-07 — Preserve the completed initializer's raw/heap callback carrier
+
+- [x] Share the selected initializer's untyped block fallback with body lowering.
+  Preserve raw code pointers at completed raw formals, including implicit yield;
+  materialize heap Proc records only for heap formals. Nominal Proc equality
+  cannot authorize a physical carrier change.
+- [x] Reject heap-to-raw and incompatible normalized callback signatures. Boxing
+  does not adapt inputs/results, including source Void normalized to Nil.
+- allocator_initializer_block_carrier_repro.sh passes 30 HIR controls and nine
+  stock/lazy/eager native runs on exact-source S1 35q5439 (35q5440). Both raw
+  programs formerly compiled then SIGBUS on S1 35q5351 (35q5396); they now print
+  A\n like Crystal 1.22.1. The typed captured-heap control also agrees.
+- [ ] Repair untyped captured-constructor block input ownership. The separate
+  q5423 fixture is rejected as Proc(Owner, Int32)#call with a spurious Owner
+  input on both old/new compilers (35q5422). The typed heap control isolates
+  representation; it does not close this measured inference failure.
+- [ ] Renew generated initializer receipts after authenticated body replay;
+  stale Function identity remains a separate compiler defect. Full prelude,
+  fresh bootstrap and unchanged LavinMQ object/link/server/upstream parity stay
+  open. No stdlib/application or source restriction changes.

@@ -27125,3 +27125,43 @@ selects nilary Object#hash, then rereads one-argument String#hash after receiver
 re-owning. The replay guard correctly rejects that lost source provenance.
 Full prelude, fresh bootstrap and unchanged LavinMQ object/link/server/upstream
 parity remain open; the Atomic gates cannot close those boundaries.
+
+
+## 2026-11-07 — Completed block formals own the physical callback carrier
+
+The allocator fallback used Proc for every untyped block while the selected
+initializer body could consume a raw callback. Completed ABI adaptation then
+ran generic coercion even for equal nominal Proc types; that coercion boxed the
+code pointer into a heap Proc before passing it to a raw formal. Both an
+explicit raw-block initializer and an implicit-yield initializer compiled then
+SIGBUS on S1 35q5351 (35q5396). IR 35q5402 identifies the incorrect MakeProc
+between the raw caller and raw initializer.
+
+Use the same source raw/heap fallback as body lowering. At the completed ABI
+boundary, forward exact raw values with raw provenance and skip heap boxing;
+keep ordinary enum and non-narrowing data adaptation. Heap materialization
+requires an unchanged normalized callback signature, because it preserves the
+code pointer and cannot adapt its inputs or result. Source Void is normalized
+to Nil before this boundary, not a license for pointer-only result adaptation.
+
+Scoped adversary verdict: ROBUST for this carrier boundary. Shipping gate
+35q5440 passes 30 HIR controls (including heap-to-raw, nominal mismatch and three
+signature mutation rejections) and nine stock/lazy/eager native runs; all print
+A\n on Crystal 1.22.1 and exact S1 35q5439. All executions use run_safe.sh.
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+raw-initializer-carrier-native35q5396/, raw-initializer-native-ir35q5402/,
+build.allocator-block-carrier-guard35q5439.{result,source}.json,
+allocator-block-carrier-guard35q5438/{result.json,spec.log,source.json}, and
+allocator-block-carrier-shipping35q5440/{result.json,gate.log,source.json}.
+S1 SHA-256: b4f80925a7c2afd6bc177ab0fa7362191d84e816e031d8a940823e988b567800.
+Compiler source manifest SHA-256:
+a32ba1e376ffe57d83b2bb149e3e1f8b3e86f8465e9abbca45279fc66746b027.
+Refresh after allocator source/ABI, callback provenance or coercion changes.
+Rollback is this atomic commit; unrelated WIP stays excluded.
+
+Residual boundaries: the heap control declares its empty input signature to
+isolate representation. Untyped captured-constructor input inference still
+injects the owner as a Proc input (baseline 35q5422, packet 35q5423). Authenticated
+initializer replay receipt renewal is separately in progress. Full prelude,
+fresh bootstrap and unchanged LavinMQ object/link/server/upstream parity are
+not established. No stdlib/application or source restriction changes.
