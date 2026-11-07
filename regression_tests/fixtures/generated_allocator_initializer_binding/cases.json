@@ -1,5 +1,5 @@
 {
-  "case_count": 27,
+  "case_count": 29,
   "cases": [
     {
       "name": "inherited_required_named",
@@ -198,6 +198,20 @@
       "source_sha256": "e34c7c223ccc15e2d80128ab8ab60f2f0c1556437e9bba74833b9838d1db097c",
       "ok": true,
       "expected": "AA\n"
+    },
+    {
+      "name": "canonical_inherited_branch_owner",
+      "source": "canonical_inherited_branch_owner.cr",
+      "source_sha256": "a7efd1996dff7514d8936586ba18b63251e1d55fead6686566519a8e17beff25",
+      "ok": true,
+      "expected": "B\n"
+    },
+    {
+      "name": "canonical_inherited_branch_fallback",
+      "source": "canonical_inherited_branch_fallback.cr",
+      "source_sha256": "c94a6d4d31097660e69edb8015d14f4fe47ec3ed7afb1ae90f47cb2204e1ac1a",
+      "ok": true,
+      "expected": "C\n"
     }
   ]
 }

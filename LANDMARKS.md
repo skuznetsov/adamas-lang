@@ -26656,3 +26656,60 @@ falsifier. Empty-option zero-arg outer wrappers remain open (35q4870).
 Full prelude, fresh bootstrap, unchanged LavinMQ object/link/server and upstream
 Crystal parity remain open. No stdlib/application source or type restriction
 was changed. User-owned WIP is excluded.
+
+
+## 2026-11-07 — Concrete receiver owns inherited initializer body identity
+
+The strict self guard exposed a physical body cache collision: full prelude
+selected File::AlreadyExistsError self 545 but reused a body with
+File::NotFoundError self 544 (35q4868). The source-only prediction was confirmed
+without prelude or runtime rest binding: 35q4898 has BindError self 38 versus
+ConnectError self 37, with all Def/Arena/Function/data-slot receipts current.
+Stock prints B\n (35q4896); the old exact S1 rejects it (35q4897).
+
+Canonical inherited allocator bodies now use a deterministic concrete-owner,
+allocator/source/shape physical key. Bind the exact selected Def/Arena before
+materialization and retain the selected declaration namespace on that unique
+key. Defaults still use the source entry. Selected/private allocator identity
+and the strict receiver/source/physical ABI proof remain unchanged.
+
+Scoped verdict: ROBUST for sibling self separation in the qualified allocator
+corpus. All 29 original-first native/strict-negative controls pass (35q4907),
+including branch/factory code 66 and 67; 11 HIR checks pass (35q4910), including
+actual sibling receiver ABI and distinct physical bodies. Source-only agent
+review is correlated, not independent execution. Generic sibling forwarding
+also matches stock AB\n (35q4912/35q4914). Two wrong-type controls produce
+actual overload rejections. The explicit Int32 alias control reaches an inner
+receipt guard, so it does not establish diagnostic parity. The oracle refuted
+that alleged alias positive: copied Child.new uses
+Child::Code, while Parent#initialize uses Parent::Code. Preserve both boundaries.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+build.canonical-initializer-owner-only35q4905.result.json and .source.json,
+canonical-owner-original-first35q4907/result.json and gate.log,
+canonical-owner-hir35q4910/result.json and spec.log,
+inherited-union-no-rest-original35q4896/result.json,
+inherited-union-no-rest-diagnostic35q4898/compile.log,
+inherited-union-owner-candidate35q4906/result.json,
+concrete-owner-generic-original35q4912/result.json,
+concrete-owner-generic-candidate35q4914/result.json, and
+concrete-owner-default-alias-before35q4915/result.json.
+Compiler source manifest SHA-256:
+5f65cda1a8e795cc6480f0f1aa531e91250832e1cacf809a80d10510f4e015ac.
+S1 SHA-256: 8a663371791c0eba4d92be392f33a215545bb88fab41e5b82e620e05cec7321a.
+Fixture manifest SHA-256:
+1f08e040e0ef470057d33b98f5db055b1d4ba9ba1f46c8fa32d74d381bc360d1.
+Refresh after allocator body naming/materialization, declaration namespace,
+source selection or replay changes. Rollback is this atomic source/test/doc
+commit. User-owned WIP is excluded.
+
+Residual boundaries: an omitted parent alias default still fails on both old
+and new S1 (35q4915/35q4914); this is not a new regression or a passed control.
+The wider raw typed-block constructor case boxes a raw callback into MakeProc
+although the completed initializer has heap_block_param=false (35q4888).
+The two other wide-block compile errors also occur on the previous compiler
+(35q4889); their common cause is not established. Rest-binding original-first
+qualification (35q4891) passes 14/18 candidate positives, while all 21 stock
+cases pass. Four inherited-union and separate zero-arg outer witnesses remain
+open. No full prelude/bootstrap/LavinMQ object/link/server/upstream parity claim.
+No stdlib/application source or type restriction was changed.

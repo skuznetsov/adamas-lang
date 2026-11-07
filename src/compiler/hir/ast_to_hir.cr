@@ -46558,6 +46558,37 @@ module Adamas::HIR
       candidate
     end
 
+    # A public allocator can select an inherited initialize Def while lowering
+    # its body with the concrete receiver class. Keep that physical body apart
+    # from the ancestor's other allocator bodies: the source Def/Arena remains
+    # the authority, while the concrete owner and allocator shape own self ABI.
+    private def allocator_concrete_initializer_body_target(
+      class_name : String,
+      allocator_name : String,
+      initializer_name : String,
+      source_name : String,
+    ) : String
+      identity_fields = [class_name, allocator_name, initializer_name, source_name]
+      identity = String.build do |io|
+        identity_fields.each do |field|
+          io << field.bytesize.to_s
+          io << ':'
+          io << field
+        end
+      end
+      encoded_identity = String.build do |io|
+        identity.each_byte do |byte|
+          io << byte.to_s
+          io << '_'
+        end
+      end
+      target = join_owner_method_name(class_name, '#', "__adamas_allocator_initialize_#{encoded_identity}")
+      if suffix = parse_method_name(initializer_name).suffix
+        target = "#{target}$#{suffix}"
+      end
+      target
+    end
+
     # Encode the canonical source-level named shape into a generated symbol.
     # Length-prefixing keeps distinct names unambiguous even when they contain
     # adjacent text that could otherwise form the same concatenated spelling.
@@ -48774,6 +48805,38 @@ module Adamas::HIR
           initializer_return_type = ctx.type_of(terminal_default)
           ctx.terminate(Unreachable.new) unless control_flow_dead_block?(ctx, ctx.current_block)
         else
+          # The selected declaration continues to own source defaults and
+          # visibility. Its lowered self ABI, however, belongs to this concrete
+          # allocator receiver. An inherited source spelling can otherwise
+          # reuse a body first lowered for a sibling class, with that sibling's
+          # self parameter type. Bind the exact selected Def/Arena under a
+          # concrete, shape-specific physical name before materialization.
+          if selected_init_target.nil? && matched_init_name && matched_init_def && matched_init_arena
+            source_name = matched_init_name.not_nil!
+            if function_context_from_name(source_name) != class_name
+              body_target = allocator_concrete_initializer_body_target(
+                class_name, overload_name, init_name, source_name,
+              )
+              bind_exact_source_call_target(
+                body_target,
+                source_name,
+                matched_init_def.not_nil!,
+                matched_init_arena.not_nil!,
+                nil,
+                "public allocator initializer body",
+              )
+              # The private body name is concrete, but annotations and nested
+              # type names still belong to the exact selected declaration.
+              # Keep that lexical namespace on this unique target so lazy
+              # lowering cannot resolve names relative to the concrete child.
+              if source_namespace = initializer_declaration_namespace(
+                   source_name, matched_init_def.not_nil!, matched_init_arena.not_nil!,
+                 )
+                store_function_namespace_override(body_target, body_target, source_namespace, store_base: false)
+              end
+              init_name = body_target
+            end
+          end
           init_call_args.each_with_index do |arg_id, index|
             actual_type = ctx.type_of(arg_id)
             if index >= init_param_types.size

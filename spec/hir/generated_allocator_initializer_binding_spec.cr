@@ -31,6 +31,22 @@ class Adamas::HIR::AstToHir
     generated_allocator_initializer_call?(wrapper, call, require_settled_result: settled_result)
   end
 
+  def __test_concrete_allocator_receivers(owners : Array(String)) : Array({String, Adamas::HIR::TypeRef, Adamas::HIR::TypeRef, String, String})
+    rows = [] of {String, Adamas::HIR::TypeRef, Adamas::HIR::TypeRef, String, String}
+    @generated_allocator_layout_recipes.each do |name, recipe|
+      next unless owners.includes?(recipe.class_name)
+      next unless contract = recipe.initializer_call
+      wrapper = @module.function_by_name(name) || raise "missing allocator body"
+      call = wrapper.blocks.flat_map(&.instructions).compact_map(&.as?(Adamas::HIR::Call))
+        .find { |candidate| candidate.id == contract.id } || raise "missing initializer call"
+      generated_allocator_initializer_call?(wrapper, call, require_settled_result: true).should be_true
+      target = @module.function_by_name(contract.target_name) || raise "missing initializer body"
+      expected_self = @class_info[recipe.class_name].type_ref
+      rows << {recipe.class_name, expected_self, target.params.first.type, contract.source.symbol_name, target.name}
+    end
+    rows
+  end
+
   def __test_late_array_value_type : {Adamas::HIR::TypeRef, Adamas::HIR::TypeRef, Adamas::HIR::TypeRef}
     function = @module.create_function("__array_projection", Adamas::HIR::TypeRef::NIL)
     literal = Adamas::HIR::ArrayLiteral.new(function.next_value_id, Adamas::HIR::TypeRef::INT32, [] of Adamas::HIR::ValueId)
@@ -150,6 +166,10 @@ private def lower_generated_allocator_initializer_fixture(source : String = GENE
       classes << node
     when Adamas::Compiler::Frontend::DefNode
       converter.register_function(node)
+    when Adamas::Compiler::Frontend::ModuleNode
+      converter.register_module(node)
+    when Adamas::Compiler::Frontend::LibNode
+      converter.register_lib(node)
     else
       main << root.index.to_u64
     end
@@ -335,5 +355,22 @@ describe "canonical generated allocator initializer source binding" do
     projected.should_not eq(Adamas::HIR::TypeRef::VOID)
     projected.should eq(collected)
     converter.module.get_type_descriptor(projected).not_nil!.name.should eq("Array(Int32)")
+  end
+end
+
+
+describe "concrete inherited allocator initializer bodies" do
+  it "keeps source ownership while separating sibling self ABIs through deferred branch lowering" do
+    source = File.read(File.join(__DIR__, "../../regression_tests/fixtures/generated_allocator_initializer_binding/canonical_inherited_branch_owner.cr"))
+    converter = lower_generated_allocator_initializer_fixture(source)
+    rows = converter.__test_concrete_allocator_receivers(["ConnectError", "BindError"])
+    rows.map(&.[0]).uniq.sort.should eq(["BindError", "ConnectError"])
+    rows.each do |row|
+      row[2].should eq(row[1])
+      row[3].should contain("IOError#initialize")
+    end
+    connect_targets = rows.select { |row| row[0] == "ConnectError" }.map(&.[4])
+    bind_targets = rows.select { |row| row[0] == "BindError" }.map(&.[4])
+    (connect_targets & bind_targets).should be_empty
   end
 end

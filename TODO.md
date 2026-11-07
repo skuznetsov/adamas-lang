@@ -26636,12 +26636,13 @@ integration, fresh bootstrap, or LavinMQ parity.
   9 diagnostic-specific negative) on stock Crystal 1.22.1 and exact S1 35q4885
   (35q4887). Ten HIR controls pass on identical compiler source (35q4864),
   including public recipe identity, stale Def/Arena and shared array projection.
-- [ ] Give concretely lowered inherited initializer bodies a receiver-specific
+- [x] Give concretely lowered inherited initializer bodies a receiver-specific
   physical identity. Full-prelude diagnostic 35q4868 proves AlreadyExistsError
   receiver 545 is calling a body whose self parameter is NotFoundError 544.
   Source Def/Arena, Function identity and all data arguments match. Simple
   two-sibling no-prelude reducers pass (35q4874/35q4877/35q4884); they do not
   reproduce the deferred materialization path. Preserve the strict self check.
+  Closed by the owner-specific body key and branch/factory gate below.
 - [ ] Audit ArrayNew late value facts separately: hir.cr:736 also records raw
   Void, while lowering registers Array(T) in its context. The new projection
   deliberately covers ArrayLiteral only; prove ArrayNew behavior before widening.
@@ -26650,3 +26651,33 @@ integration, fresh bootstrap, or LavinMQ parity.
   (35q4870); do not label the wider source-control packet green.
 - Full prelude, bootstrap, unchanged LavinMQ object/link/server execution and
   upstream Crystal test parity remain open. No stdlib/application edits.
+
+
+### 2026-11-07 — Separate inherited initializer bodies by concrete receiver
+
+- [x] Give canonical inherited allocator initializer bodies a deterministic
+  physical key containing the concrete owner, allocator shape and exact source
+  identity. Bind the selected Def/Arena before lowering; preserve the source
+  declaration namespace and default binding. Selected/private allocators retain
+  their existing path. Keep the exact self/source/ABI guards.
+- The no-rest branch/factory reducer matches stock B\n after the repair
+  (35q4906), versus the old exact S1's sibling-self rejection (35q4897/35q4898).
+  All 29 original-first native/diagnostic controls pass (35q4907); 11 HIR
+  controls pass (35q4910), including distinct sibling physical self signatures.
+- Generic sibling Parent(Int64).build forwarding matches stock AB\n and
+  two wrong-type controls produce overload rejections (35q4912/35q4914).
+  The third alias case reaches an inner receipt guard, not semantic parity.
+  Stock rejects the initially proposed explicit alias positive: Child.new copies Child::Code
+  while the inherited initializer still expects Parent::Code. Do not broaden
+  admission on the assumption that those two scopes are the same.
+- [ ] Resolve omitted Parent::Code default under a shadowing Child::Code:
+  stock prints D\n, but both the previous S1 and owner-specific candidate
+  reject the inner receipt (35q4915/35q4914). It is not closed by body naming.
+- [ ] Preserve raw versus heap block carrier through physical initializer
+  adaptation. The wide typed-block program compiles but exits 138 (35q4888):
+  IR passes a MakeProc object to a raw yielding initializer. TypeRef equality
+  alone is insufficient; the completed Function owns heap_block_param.
+- [ ] Close separate zero-argument target and inherited-union outer slot
+  witnesses (35q4870/35q4891), then refresh full prelude and unchanged LavinMQ.
+  Fresh bootstrap, object/link/server and upstream test parity remain open.
+- No stdlib/application edit or weakened source restriction.
