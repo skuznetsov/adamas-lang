@@ -26584,3 +26584,36 @@ integration, fresh bootstrap, or LavinMQ parity.
   was stopped after repeating this known blocker; it is not green.
 - Full prelude, fresh bootstrap, unchanged LavinMQ object/link/server and
   upstream Crystal test parity remain open. No stdlib/application changes.
+
+### 2026-11-07 — Preserve the exact initializer call inside generated allocators
+
+- [x] Retain the selected source Def/Arena and exact physical initializer
+  Function, parameter vector, receiver and argument IDs inside each generated
+  allocator recipe. Receiver repair cannot reinterpret its default-filled
+  named ABI slots as a fresh positional source call.
+- [x] Repair this call's result from its authenticated physical Function,
+  including Void/Nil. The final pre-MIR check rejects stale source, body,
+  parameter or result evidence. Do not refresh arbitrary wrapper revisions.
+- [x] Stop positional constructor arity rejection at the nearest initializer
+  family while preserving same-owner/inherited explicit new overloads and
+  included-module fallback. A NoReturn actual defers the early arity proof;
+  returning actuals still require missing keywords and source type checks.
+- [x] Derive generated wrapper data formal types from the exact completed
+  initializer, not cached abstract Int source restrictions. A full-prelude
+  Time::Span diagnostic proved Int64/Int64 target parameters versus Int32/Int32
+  wrapper actuals (35q4802); the old candidate rejects the minimal reducer
+  (35q4809), while the corrected ABI preserves wide values (35q4808).
+- generated_allocator_initializer_binding_repro.sh passes all 24 original-first
+  native/strict-diagnostic controls on stock Crystal 1.22.1 and exact S1
+  35q4803 (35q4824). The new and existing HIR guard specs pass nine examples
+  (35q4804), including poisoned broad return caches and stale receipts.
+- [ ] Qualify the separate runtime **opts binding candidate and repeat full
+  prelude and LavinMQ. The combined private reducer now matches stock AB\n
+  (35q4796). Full prelude passes Time::Span after the physical-ABI fix, then
+  stops on RuntimeError.new$String's outer allocator witness with empty **opts
+  (35q4814); this does not certify prelude, bootstrap or application parity.
+- [ ] Correct short-circuit initializer result inference separately:
+  default_or_heap_block.cr fails wrapper : Token with Nil | Token on both
+  pre-change S1 and the candidate (35q4818/35q4815). The wider neighbor suite
+  stopped there and is not green.
+- No stdlib/application source or type restriction was changed.

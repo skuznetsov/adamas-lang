@@ -703,3 +703,34 @@ argument values. It does not certify parser-folded interpolation normalization,
 unknown-method fallback, runtime double-splat binding, generated allocator
 ownership, full prelude, bootstrap or LavinMQ runtime/test parity. In particular,
 missing macro support may not silently erase required constructor keywords.
+
+### Exact generated initializer call boundary
+
+A generated allocator recipe may retain its one selected inner initialize
+Call. The receipt binds Call ID, selected source Def/Arena at both source and
+physical keys, completed target Function identity, receiver/argument IDs and
+parameter vector. It is usable only while the wrapper's generated body witness
+is current. It cannot authorize another call, changed signature or body.
+
+Source restrictions select the initializer. Once its exact body is complete,
+its data formal types own the generated wrapper ABI and forwarded call; cached
+abstract source carriers must not narrow concrete arguments. Exclude self and
+block slots, and reject a mismatched data-slot count. An Int source restriction
+may admit Int64 without turning its physical parameter into Int32.
+
+Receiver repair must not rebind default-filled named ABI slots as positional
+source arguments. Result repair takes this exact Function's return, including
+Void/Nil, independently of broader source caches. Final pre-MIR validation
+requires the Call result to equal that physical return. The allocator itself
+continues to return the allocated instance. Ordinary calls gain no exception.
+
+Positional source arity rejection stops at the nearest initializer family.
+Matching explicit new candidates and included-module fallback retain their
+lookup; a NoReturn actual declines the eager proof because evaluation ends
+before construction. This does not admit missing keywords for flowing calls.
+Named/splat source binding remains outside that positional rejection proof.
+
+Gate: generated_allocator_initializer_binding_repro.sh COMPILER (24 stock-first
+native/strict-negative controls), plus generated_allocator_initializer_binding_spec.cr
+and generated_allocator_source_proof_repair_spec.cr (nine HIR controls).
+Refresh when source selection, ABI slots or either repair pass changes.

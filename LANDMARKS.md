@@ -26525,3 +26525,81 @@ dadc7106eae756b7c1d35b49865e7b9d7ff851bb2849dcf378b88d752d8aadc6.
 Refresh after macro collection rendering, suffix validation, keyword quoting,
 argument binding or source-kind conversion changes. Rollback is this atomic
 commit; pending rest-binding and string-normalization candidates are separate.
+
+## 2026-11-07 — Generated initializer source and physical ABI have one owner
+
+The default-filled inner initializer call is already bound to an exact source
+Def/Arena. Receiver repair previously treated its padded named slots as fresh
+positional arguments, retargeted the call and invalidated the wrapper witness.
+The generated allocator now records that one call's identity, physical target,
+receiver/ordered arguments and full parameter vector. Only a current layout
+body plus both source/physical Def-Arena entries can authenticate it. Unrelated
+calls and mutated wrappers cannot borrow this receipt.
+
+A second falsifier, 35q4769, shows a completed physical Void initializer paired
+with an Int32 Call. Generic result repair had discarded Void/Nil and recovered
+a broader cached result. This generated call now takes the exact authenticated
+Function return; final pre-MIR validation requires equality. The wrapper's new
+result remains the allocated instance. Ordinary call recovery is unchanged.
+
+The nearest initialize family also owns source constructor arity. Farther
+ancestors cannot authorize a missing required keyword; explicit new overloads
+retain their own lookup. Stock accepts a NoReturn actual before a missing
+keyword (35q4779), refuting the initial eager arity guard (35q4780). The corrected
+proof defers on bottom actuals. Stock also accepts the inherited one-argument
+new despite a child zero-argument explicit new (35q4782); do not apply the
+initializer-family cutoff to explicit new families.
+
+Full-prelude diagnostic 35q4802 exposed a separate producer error in
+Time::Span: the selected completed initializer expects Int64/Int64, but the
+wrapper reused cached carriers for source restrictions Int/Int and passed
+Int32/Int32. Its source, Function and body-revision receipts were current.
+The completed initializer's data formal types now own both wrapper parameters
+and the forwarded call. Source restrictions still select and reject arguments;
+they cannot replace the physical ABI. Exclude self/block slots and reject a
+slot-count mismatch rather than silently padding or narrowing.
+
+The permanent original-first generated_allocator_initializer_binding_repro.sh
+passes all 24 controls on stock Crystal 1.22.1 and exact S1 35q4803 (35q4824).
+The new Int64/reordered-keyword/mixed-width cases pass (35q4808); the prior
+candidate rejects the first with its strict receipt intact (35q4809).
+Seven new plus two existing HIR controls pass (35q4804): exact Nil and induced
+physical Void versus poisoned base caches, stale Def/Arena, replaced Function,
+changed parameters/body, unrelated same-ID calls and final result drift.
+Scoped source adversary verdict: ROBUST, including data-slot order, defaults,
+and the distinct block/forwarded-Proc corridors; source-only model review is
+correlated, not independent execution. Root ran the oracle and HIR gates.
+The wider heap/block neighbor stopped at default_or_heap_block.cr (35q4815):
+wrapper : Token receives Nil | Token. The exact same source and diagnostic
+fail on pre-change S1 35q4711 (35q4818), so this is a separately reproduced
+open inference defect, not a passed suite or an observed regression here.
+Five targeted callback controls still pass (35q4823): explicit forwarding,
+generic owner, recursive initializer, retained callback and required argument.
+Stock rejects inherited explicit new when the child declares its own
+initializer (35q4822); two strict-negative controls preserve this boundary,
+which differs from a child with only explicit new.
+The original stock-pass/direct-named failure remains in 35q4751/35q4752.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+build.allocator-initializer-physical-abi35q4803.result.json and .source.json,
+allocator-initializer-final-gate35q4824/result.json with gate.log,
+allocator-initializer-physical-hir35q4804/result.json with spec.log,
+allocator-initializer-span-oracle35q4807/result.json,
+allocator-initializer-span-candidate35q4808/result.json,
+allocator-initializer-span-old35q4809/result.json,
+hello-initializer-span-diagnostic35q4802/compile.log,
+allocator-initializer-hir-fixture-oracle35q4794/result.json, and
+allocator-initializer-result-hir35q4769/program.hir.hir.
+Compiler manifest SHA-256:
+f0814602ec72b1c810fbe126982463f7dba24153b90f64e7ba85d3a4fc59c982.
+S1 SHA-256: f72c83ff824ce4230eaf70a12ef71722d53e824e3f0a4bd52e626580246f9d25.
+Fixture manifest SHA-256:
+825a8aebab3b89c1d3840bff291c5aeec19fa38e454e42312084a404c3fec2bf.
+Refresh after allocator selection/materialization, receiver/result repair,
+source constructor lookup or source/ABI ownership changes. Rollback is this
+atomic commit. Runtime **opts binding is a separate candidate; its combined
+reducer passes (35q4796). The combined physical-ABI candidate passes the
+Time::Span boundary but full prelude stops at the outer RuntimeError.new$String
+witness with empty **opts (35q4814). Fresh bootstrap, unchanged LavinMQ
+object/link/server execution and upstream Crystal parity remain open.
+No stdlib/application source or argument restriction was changed.

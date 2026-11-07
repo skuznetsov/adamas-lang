@@ -1452,6 +1452,25 @@ module Adamas::HIR
       end
     end
 
+    # A synthesized wrapper owns this one initializer call. Its padded ABI
+    # cannot be reinterpreted as an ordinary positional source call later.
+    private struct GeneratedAllocatorInitializerCall
+      getter id : ValueId
+      getter receiver : ValueId
+      getter target : Function
+      getter target_name : String
+      getter args : Array(ValueId)
+      getter param_types : Array(TypeRef)
+
+      def initialize(call : Call, @target : Function)
+        @id = call.id
+        @receiver = call.receiver_value
+        @target_name = call.method_name
+        @args = call.args.dup
+        @param_types = @target.params.map(&.type)
+      end
+    end
+
     # Retain the exact source binding and ABI shape of a private synthesized
     # allocator so a later layout invalidation can recreate the same target.
     private class GeneratedAllocatorLayoutRecipe
@@ -1467,6 +1486,7 @@ module Adamas::HIR
       getter selected_initializer : Bool
       getter selected_init_target : SelectedCallTarget?
       getter call_arena : Adamas::Compiler::Frontend::ArenaLike
+      getter initializer_call : GeneratedAllocatorInitializerCall?
 
       def initialize(
         @target_name : String,
@@ -1481,6 +1501,7 @@ module Adamas::HIR
         @selected_initializer : Bool,
         @selected_init_target : SelectedCallTarget?,
         @call_arena : Adamas::Compiler::Frontend::ArenaLike,
+        @initializer_call : GeneratedAllocatorInitializerCall? = nil,
       )
       end
     end
@@ -46267,6 +46288,7 @@ module Adamas::HIR
     private def constructor_source_positional_arity_rejected?(class_name : String, arity : Int32) : Bool
       saw_initializer = false
       get_ancestor_chain(canonical_method_owner_name(class_name)).each do |owner|
+        owner_has_initializer = false
         {"#{owner}.new", "#{owner}#initialize"}.each do |base_name|
           candidates = function_def_overloads(base_name).dup
           if @function_defs.has_key?(base_name) && !candidates.includes?(base_name)
@@ -46280,7 +46302,10 @@ module Adamas::HIR
             return false unless candidate_def
             candidate_arena = @function_def_arenas[candidate_name]?
             return false unless candidate_arena && arena_fits_def?(candidate_arena, candidate_def)
-            saw_initializer = true if base_name.ends_with?("#initialize")
+            if base_name.ends_with?("#initialize")
+              saw_initializer = true
+              owner_has_initializer = true
+            end
             accepts_arity = with_arena(candidate_arena) do
               stats = function_param_stats(candidate_name, candidate_def)
               param_count, required, has_splat, has_double_splat, skip = effective_arity_stats_for_call(stats, false)
@@ -46300,6 +46325,11 @@ module Adamas::HIR
            )
           return false
         end
+        # Crystal constructor lookup stops at the nearest initializer family.
+        # A farther ancestor cannot make this family's missing required keyword
+        # or incompatible positional arity callable. Same-owner explicit .new
+        # candidates were checked above before this rejection proof.
+        return true if owner_has_initializer
       end
       # A class without initialize retains Crystal's implicit zero-argument new.
       return false if !saw_initializer && arity == 0
@@ -48383,6 +48413,7 @@ module Adamas::HIR
       end
 
       bound_initializer_body_name : String? = nil
+      bound_initializer_param_types : Array(TypeRef)? = nil
       if selected = selected_init_target
         source_arena = selected.source_arena || resolve_arena_for_def(selected.def_node, @arena)
         source_owner = function_context_from_name(selected.symbol_name) || class_name
@@ -48409,6 +48440,22 @@ module Adamas::HIR
             end
           end
         end
+        physical_initializer = @module.function_by_name(body_name)
+        unless physical_initializer && @module.has_function_with_body?(body_name)
+          raise LoweringError.new("missing selected initializer ABI before allocator: #{body_name}")
+        end
+        # Source restrictions select the body; its completed formal types own
+        # the wrapper ABI. Reusing @init_params here can narrow an Int64 source
+        # actual through an Int restriction's cached Int32 carrier.
+        physical_data_types = physical_initializer.params.reject(&.is_block).skip(1).map(&.type)
+        allocator_data_count = forwarded_initializer_block_index || allocator_params.size
+        unless physical_data_types.size == allocator_data_count
+          raise LoweringError.new("selected initializer ABI disagrees with allocator slots: #{body_name}")
+        end
+        physical_data_types.each_with_index do |param_type, index|
+          allocator_params[index] = {allocator_params[index][0], param_type}
+        end
+        bound_initializer_param_types = physical_data_types
         bound_initializer_body_name = body_name
         if latest = @class_info[class_name]?
           class_info = latest
@@ -48585,6 +48632,7 @@ module Adamas::HIR
       end
 
       initializer_return_type : TypeRef? = nil
+      initializer_call_contract : GeneratedAllocatorInitializerCall? = nil
       init_base_name = resolve_method_with_inheritance(class_name, "initialize")
       if init_base_name
         init_allocator_params = if forwarded_block_index = forwarded_initializer_block_index
@@ -48592,7 +48640,7 @@ module Adamas::HIR
                                 else
                                   allocator_params
                                 end
-        init_param_types = allocator_initializer_param_types(
+        init_param_types = bound_initializer_param_types.try(&.dup) || allocator_initializer_param_types(
           class_name,
           init_allocator_params,
           initializer_call_arg_types,
@@ -48799,6 +48847,9 @@ module Adamas::HIR
           initializer_return_type = init_function.return_type
           init_call = Call.with_receiver(ctx.next_id, initializer_return_type.not_nil!, alloc.id, init_name, init_call_args)
           ctx.emit(init_call)
+          if selected_init_target
+            initializer_call_contract = GeneratedAllocatorInitializerCall.new(init_call, init_function)
+          end
           ctx.terminate(Unreachable.new) if noreturn_type?(initializer_return_type.not_nil!)
         end
       end
@@ -48834,6 +48885,7 @@ module Adamas::HIR
         selected_initializer,
         selected_layout_target,
         allocator_call_arena,
+        initializer_call_contract,
       )
       if !call_has_named_args && !initializer_has_block &&
          forwarded_initializer_block_index.nil? &&
@@ -59460,8 +59512,16 @@ module Adamas::HIR
               next unless inst.method_name.includes?('.')
             end
 
-            resolved_type = resolved_call_return_type_for_repair(inst, value_types)
-            next if resolved_type == TypeRef::VOID || resolved_type == TypeRef::NIL
+            # The exact generated initializer body owns even a discarded Void
+            # or Nil result. Generic cache recovery must not reinterpret that
+            # completed physical signature as an unresolved source result.
+            resolved_type = if generated_allocator_initializer_call?(func, inst)
+                              @module.function_by_name(inst.method_name).not_nil!.return_type
+                            else
+                              recovered = resolved_call_return_type_for_repair(inst, value_types)
+                              next if recovered == TypeRef::VOID || recovered == TypeRef::NIL
+                              recovered
+                            end
             next if resolved_type == inst.type
 
             method_name = method_short_from_name(inst.method_name) || inst.method_name
@@ -60592,6 +60652,46 @@ module Adamas::HIR
       end
     end
 
+    # Preserve the selected source initializer before receiver repair can
+    # mistake its default-filled named slots for a new positional call.
+    # Result repair still owns pending call types during receiver repair; the
+    # final pre-MIR boundary additionally requires its completed result ABI.
+    private def generated_allocator_initializer_call?(wrapper : Function, call : Call, *, require_settled_result : Bool = false) : Bool
+      recipe = @generated_allocator_layout_recipes[wrapper.name]?
+      contract = recipe.try(&.initializer_call)
+      return false unless recipe && contract && contract.id == call.id
+
+      selected = recipe.selected_init_target
+      source_arena = selected.try(&.source_arena)
+      target = @module.function_by_name(contract.target_name)
+      current_wrapper = materialized_generated_allocator(wrapper.name)
+      valid = selected && source_arena && current_wrapper && current_wrapper.same?(wrapper) &&
+              @function_defs[selected.symbol_name]?.try(&.same?(selected.def_node)) &&
+              @function_def_arenas[selected.symbol_name]?.try(&.same?(source_arena)) &&
+              @function_defs[contract.target_name]?.try(&.same?(selected.def_node)) &&
+              @function_def_arenas[contract.target_name]?.try(&.same?(source_arena)) &&
+              arena_fits_def?(source_arena, selected.def_node) &&
+              target && target.same?(contract.target) &&
+              @module.has_function_with_body?(contract.target_name) &&
+              call.method_name == contract.target_name && call.has_receiver? &&
+              call.receiver_value == contract.receiver && call.args == contract.args &&
+              !call.virtual && !call.has_block? && target.params.size == call.args.size + 1 &&
+              target.params.map(&.type) == contract.param_types &&
+              (!require_settled_result || call.type == target.return_type)
+      if valid && target
+        call.args.each_with_index do |arg, index|
+          if hir_value_type_in_function(wrapper, arg) != target.params[index + 1].type
+            valid = false
+            break
+          end
+        end
+      end
+      unless valid
+        raise LoweringError.new("generated allocator initializer lost its selected source or ABI: #{contract.target_name} in #{wrapper.name}")
+      end
+      true
+    end
+
     private def repair_receiver_bound_call_targets : Nil
       repaired = 0
       targets_to_lower = Set(String).new
@@ -60649,6 +60749,7 @@ module Adamas::HIR
             end
 
             next unless inst.is_a?(Call)
+            next if generated_allocator_initializer_call?(func, inst)
             receiver_literal_type = if inst.has_receiver?
                                       receiver_value_type_literal?(func, inst.receiver_value, literal_return_cache)
                                     else
@@ -69767,6 +69868,9 @@ module Adamas::HIR
       hir_module.functions.each do |caller|
         caller.blocks.each do |block|
           block.instructions.each do |instruction|
+            if initializer_call = instruction.as?(Call)
+              generated_allocator_initializer_call?(caller, initializer_call, require_settled_result: true)
+            end
             target_name = @generated_allocator_calls[{caller, instruction.id}]?
             next unless target_name
             unless call = instruction.as?(Call)
@@ -118884,7 +118988,10 @@ module Adamas::HIR
                     call_arg_types = expanded_types
                   end
                 end
+                # A NoReturn actual ends evaluation before the constructor is
+                # invoked. Its missing source arity must not reject that path.
                 if !call_has_named_args && !call_has_splat &&
+                   call_arg_types.none? { |type| noreturn_type?(type) } &&
                    constructor_source_positional_arity_rejected?(class_name_str, call_args.size)
                   raise LoweringError.new(
                     "no overload matches #{class_name_str}.new for #{call_args.size} positional arguments",
