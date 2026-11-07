@@ -26474,3 +26474,54 @@ Fixture manifest SHA-256:
 Refresh after local filtering, value-kind tracking, short-circuit CFG/joins,
 NoReturn propagation or scoped capture-proof changes. Rollback is this atomic
 commit; the diagnostic compiler is separate and is not part of this change.
+
+## 2026-11-07 — Macro double-splat must render entries, never erase them
+
+The stock system_error from_errno macro forwards opts.double_splat. Adamas had
+no HashLiteral/NamedTupleLiteral implementation, so unknown-method fallthrough
+returned MacroNilValue and erased required file keywords. Trace 35q4700 emits
+Error.consume(65,  ) from a call supplying file: 66. This was a macro primitive
+failure, not permission to accept a missing required initializer argument.
+
+Both collection values now render ordered entries as MacroId source, using the
+existing source renderer for values and Crystal's keyword quoting for named
+labels. One optional StringLiteral suffix follows only a nonempty collection.
+Char is explicitly excluded despite the internal string-value inheritance.
+Invalid suffix kinds/arity/labels and blocks still reject compilation.
+
+The permanent original-first macro_double_splat_contract_repro.sh passes all
+34 controls (18 native, 16 diagnostic-specific rejections) on stock Crystal
+1.22.1 and exact S1 35q4711 (35q4739). Controls cover four macro owner/binding
+shapes, entry ordering, nested literals, quoted labels, suffix use in real
+keyword calls and evaluation-once ordering. The prior S1 fails the fresh
+required-keyword falsifier (35q4723). Array/Tuple splat and the landed macro
+Begin gates pass on the same S1 (35q4725). Source-only adversary: ROBUST within
+the already evaluated HashLiteral/NamedTupleLiteral primitive boundary.
+
+OPEN: parser-folded constant StringInterpolation input normalization is a
+separate source-kind contract. Unknown macro method fallthrough remains
+ambiguous with legitimate Nil/empty results and needs an explicit dispatch
+result before strict errors can be generalized. Full-prelude hello now carries
+NamedTuple(file: String) into from_os_error but fails on the completed
+File::NotFoundError allocator target (35q4724). Runtime **opts constructor
+forwarding has a macro-free stock-pass/current-fail reducer (35q4743/35q4744).
+The structured-rendering neighbor was stopped after repeating this prelude
+blocker, not passed. Full prelude, fresh bootstrap and unchanged LavinMQ
+object/link/runtime/upstream parity remain open. No stdlib or application edit.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+build.macro-double-splat35q4711.result.json,
+macro-double-splat-literal-gate35q4739/result.json with gate.log,
+macro-double-splat-neighbors35q4725/result.json,
+macro-double-splat-baseline35q4723/result.json, and
+hello-macro-double-splat35q4724/result.json with compile.log.
+All 1,916 compiler sources match build.macro-double-splat35q4711.source.json,
+manifest SHA-256 bd815bfff2c66f75b651f8b2f4b80c32a7844c8f7c2e2b92391871f8fcb27518.
+S1 SHA-256: ff1253a2337ce31f5fa91d9ca4469451ff7aad4ce123175c2812415fa1561fc5.
+Permanent wrapper SHA-256:
+abdbf1c1b933715b0b7239b0542279e9be3464ba288776d8f65f5a3431f07886.
+Fixture manifest SHA-256:
+dadc7106eae756b7c1d35b49865e7b9d7ff851bb2849dcf378b88d752d8aadc6.
+Refresh after macro collection rendering, suffix validation, keyword quoting,
+argument binding or source-kind conversion changes. Rollback is this atomic
+commit; pending rest-binding and string-normalization candidates are separate.

@@ -26557,3 +26557,30 @@ integration, fresh bootstrap, or LavinMQ parity.
   stale-body guard; do not refresh every body change indiscriminately.
 - Full prelude, fresh bootstrap, unchanged LavinMQ object/link/server and
   upstream Crystal test parity remain open. No stdlib/application changes.
+
+### 2026-11-07 — Preserve macro double-splat entries and strict arguments
+
+- [x] Implement HashLiteral#double_splat and NamedTupleLiteral#double_splat as
+  ordered MacroId source rendering, including quoted keyword labels and the
+  optional StringLiteral separator. Drop the separator for empty collections;
+  reject invalid kinds, excess arguments, named arguments and blocks.
+- macro_double_splat_contract_repro.sh passes all 34 original-first controls
+  against stock Crystal 1.22.1 and exact S1 35q4711 (35q4739). The old S1
+  rejects the required-keyword reducer after erasing its macro opts (35q4723).
+  Array/Tuple splat and all macro Begin controls pass as neighbors (35q4725).
+- [ ] Normalize parser-folded constant string interpolation at the macro input
+  boundary without evaluating runtime expressions or treating commands as
+  strings. This separate input-kind gap is not certified by the primitive gate.
+- [ ] Replace ambiguous unknown-method-to-Nil fallthrough with an explicit
+  handled/unhandled result across macro value dispatch and reflection fallback.
+  Source-only audit found NumberLiteral#kind/#zero? and HashLiteral#to_a missing;
+  reproduce before implementing. Legitimate missing-key and empty results must
+  not become errors.
+- [ ] Close runtime **opts constructor forwarding. Full-prelude hello now carries
+  NamedTuple(file: String) into File::Error.new_from_os_error, then loses the
+  completed File::NotFoundError allocator target (35q4724). A macro-free reducer
+  passes stock but fails Adamas (35q4743/35q4744). Keep allocator witnesses and
+  required named arguments strict. The structured-rendering prelude neighbor
+  was stopped after repeating this known blocker; it is not green.
+- Full prelude, fresh bootstrap, unchanged LavinMQ object/link/server and
+  upstream Crystal test parity remain open. No stdlib/application changes.

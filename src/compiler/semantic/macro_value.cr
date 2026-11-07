@@ -49,6 +49,23 @@ module Adamas
           MacroIdValue.new(source)
         end
 
+        protected def double_splat_entries(source : String, empty : Bool, args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : MacroValue
+          if named_args && !named_args.empty?
+            raise ArgumentError.new("no parameter named '#{named_args.keys.first}'")
+          end
+          if args.size > 1
+            raise ArgumentError.new("double_splat expects at most one positional argument")
+          end
+          suffix = args.first?
+          if suffix && (!suffix.is_a?(MacroStringValue) || suffix.is_a?(MacroCharValue))
+            raise ArgumentError.new("argument to double_splat must be a StringLiteral, not #{suffix.class_name}")
+          end
+          # This is source text for interpolation, not a runtime ** operand.
+          # Crystal drops the optional separator when there are no entries.
+          source += suffix.value if !empty && suffix.is_a?(MacroStringValue)
+          MacroIdValue.new(source)
+        end
+
         # Call a method on this value
         def call_method(name : String, args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : MacroValue
           macro_node_call_method(name, args, named_args)
@@ -2440,6 +2457,9 @@ module Adamas
 
         def call_method(name : String, args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : MacroValue
           case name
+          when "double_splat"
+            source = @entries.map { |key, value| "#{::Symbol.quote_for_named_argument(key)}: #{value.to_macro_output}" }.join(", ")
+            double_splat_entries(source, @entries.empty?, args, named_args)
           when "size"
             MacroNumberValue.new(@entries.size.to_i64)
           when "empty?"
@@ -2511,6 +2531,9 @@ module Adamas
 
         def call_method(name : String, args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : MacroValue
           case name
+          when "double_splat"
+            source = @entries.map { |key, value| "#{key.to_macro_output} => #{value.to_macro_output}" }.join(", ")
+            double_splat_entries(source, @entries.empty?, args, named_args)
           when "size"
             MacroNumberValue.new(@entries.size.to_i64)
           when "empty?"

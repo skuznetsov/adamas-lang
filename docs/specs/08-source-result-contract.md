@@ -685,3 +685,21 @@ corresponding LANDMARK entry. Refresh after result publication, return
 validation, exact call binding, arena ownership, replay identity, generic
 substitution, or ABI coercion changes. Rollback is the atomic compiler commit;
 no application or standard-library migration is part of this contract.
+
+
+## Macro collection double-splat source contract
+
+HashLiteral#double_splat and NamedTupleLiteral#double_splat return MacroId
+source text in entry order, not a runtime ** operand or NilLiteral. Render
+values with their macro source representation; preserve and quote named labels.
+Accept at most one positional StringLiteral suffix, append it only when entries
+are nonempty, and reject other kinds, named arguments and blocks. CharLiteral
+is not StringLiteral even if internal value classes share an implementation.
+
+macro_double_splat_contract_repro.sh checks original-first entry and source
+kind, four binding/owner shapes, effect order, empty/nonempty separators and
+strict diagnostic controls. This boundary begins with evaluated collection and
+argument values. It does not certify parser-folded interpolation normalization,
+unknown-method fallback, runtime double-splat binding, generated allocator
+ownership, full prelude, bootstrap or LavinMQ runtime/test parity. In particular,
+missing macro support may not silently erase required constructor keywords.
