@@ -1,5 +1,5 @@
 {
-  "case_count": 29,
+  "case_count": 41,
   "cases": [
     {
       "name": "inherited_required_named",
@@ -212,6 +212,100 @@
       "source_sha256": "c94a6d4d31097660e69edb8015d14f4fe47ec3ed7afb1ae90f47cb2204e1ac1a",
       "ok": true,
       "expected": "C\n"
+    },
+    {
+      "name": "inherited_enum_symbol_default",
+      "source": "inherited_enum_symbol_default.cr",
+      "source_sha256": "1a0408331e9dedea61810e2f2f90d08257a00997015ef1fa972f34dfe702fd12",
+      "ok": true,
+      "expected": "A\n"
+    },
+    {
+      "name": "own_enum_symbol_default",
+      "source": "own_enum_symbol_default.cr",
+      "source_sha256": "588009fc3cf1b967ba580bad5f485936af5ce764458b5ecdb6a065c2a9c322d9",
+      "ok": true,
+      "expected": "A\n"
+    },
+    {
+      "name": "inherited_enum_constant_default",
+      "source": "inherited_enum_constant_default.cr",
+      "source_sha256": "79d3049485ec222ea7f5997d39756796b986e460208fef88c58dc0194af1344c",
+      "ok": true,
+      "expected": "A\n"
+    },
+    {
+      "name": "explicit_enum_symbol",
+      "source": "explicit_enum_symbol.cr",
+      "source_sha256": "c79f712bbf7127604c002d2ae733693a30c0352f5b6802b0c294215319ffde40",
+      "ok": true,
+      "expected": "B\n"
+    },
+    {
+      "name": "explicit_enum_constant",
+      "source": "explicit_enum_constant.cr",
+      "source_sha256": "80c0fba0584a870a0debac3b29bc9074fb457c836c666be274f58edb84b494da",
+      "ok": true,
+      "expected": "B\n"
+    },
+    {
+      "name": "unknown_enum_symbol_default",
+      "source": "unknown_enum_symbol_default.cr",
+      "source_sha256": "85030dd3d50fe88f1cd8081cfc10fb1080b3f71faedbb12724b55af558f06aea",
+      "ok": false,
+      "expected": "",
+      "original_diagnostic": "can't autocast :missing to Mode: no matching enum member",
+      "candidate_diagnostic_regex": "can't restrict Symbol to Mode"
+    },
+    {
+      "name": "wrong_integer_enum_default",
+      "source": "wrong_integer_enum_default.cr",
+      "source_sha256": "b9d9ada0ebd914338dda21d6a7411a32fc039fae8f5423fdf6895fcb52defe9f",
+      "ok": false,
+      "expected": "",
+      "original_diagnostic": "can't restrict Int32 to Mode",
+      "candidate_diagnostic_regex": "can't restrict Int32 to Mode"
+    },
+    {
+      "name": "wrong_enum_default",
+      "source": "wrong_enum_default.cr",
+      "source_sha256": "1a2799e7fb63d94313a69bd5e4e0f7fd4f55ac1c6dccac97fb3e2d39b6516768",
+      "ok": false,
+      "expected": "",
+      "original_diagnostic": "can't restrict OtherMode to Mode",
+      "candidate_diagnostic_regex": "can't restrict OtherMode to Mode"
+    },
+    {
+      "name": "wrong_integer_enum_argument",
+      "source": "wrong_integer_enum_argument.cr",
+      "source_sha256": "12db533a226e727b787d2973ad4a7d9ccc5cfc2332b16d1b6cdf8bf86b032113",
+      "ok": false,
+      "expected": "",
+      "original_diagnostic": "expected argument #1 to 'Child.new' to be Mode, not Int32",
+      "candidate_diagnostic_regex": "no overload matches.*Child.new.*Int32"
+    },
+    {
+      "name": "enum_caller_proof_retained",
+      "source": "enum_caller_proof_retained.cr",
+      "source_sha256": "d180bdbae787177157c069adf3ae66f4320839c22a3e335dffee0f73d73ede50",
+      "ok": true,
+      "expected": "ABC\n"
+    },
+    {
+      "name": "nested_enum_defaults",
+      "source": "nested_enum_defaults.cr",
+      "source_sha256": "b61fadafdf67ecd92008b8f6d8fae424b3588be8d3c7874f7f3b354155b0f2e2",
+      "ok": true,
+      "expected": "BA\n"
+    },
+    {
+      "name": "reject_enum_as_ffi_integer",
+      "source": "reject_enum_as_ffi_integer.cr",
+      "source_sha256": "2d7b07ff43b0c0afb8a3dc10569ac6448860f5337cb053831a6ace2ba1e99b9d",
+      "ok": false,
+      "expected": "",
+      "original_diagnostic": "must be Int32, not Mode",
+      "candidate_diagnostic_regex": "must be Int32, not Mode"
     }
   ]
 }

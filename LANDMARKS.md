@@ -26713,3 +26713,58 @@ qualification (35q4891) passes 14/18 candidate positives, while all 21 stock
 cases pass. Four inherited-union and separate zero-arg outer witnesses remain
 open. No full prelude/bootstrap/LavinMQ object/link/server/upstream parity claim.
 No stdlib/application source or type restriction was changed.
+
+
+## 2026-11-07 — Generated initializer enum facts have a Function owner
+
+Two failures crossed the same enum default boundary. Source-admitted :checked
+and Enum::Member lower to integer carriers plus a nominal enum proof. Generic
+ABI coercion ignored that proof, leaving Int32 at an initializer enum slot.
+Use the existing exact-provenance enum adapter at the completed target ABI;
+never infer enum identity from an arbitrary integer or another enum.
+
+Generated allocator Functions also shared the suspended caller's mutable
+ValueId-to-enum table. Their local default literal ids contaminated unrelated
+caller values: even Parent.new.code : Int32 was rejected as Mode at putchar.
+A narrow private adapter alone advanced the inherited ABI guard but still
+showed that FFI failure (35q4935). Isolating each synthetic allocator body's
+ledger and restoring its caller closes both paths (35q4943/35q4952). Retain
+finished ledgers under the actual Function name for late receiver repair.
+
+Scoped verdict: ROBUST for the tested generated allocator enum transition.
+Root executed 41 original-first controls (27 positive/14 diagnostic-specific
+negative), 35q4955, and 12 HIR checks, 35q4956. Nested enum defaults and caller
+enum-versus-Int32 overloads match stock; nominal enum values remain rejected
+at integer FFI slots. No source check, numeric guard or final ABI receipt was
+weakened. Source-only agent review is correlated, not independent execution.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+build.initializer-enum-scope35q4942.result.json and .source.json,
+initializer-enum-original-first35q4955/result.json and gate.log,
+initializer-enum-scope-hir35q4956/result.json and spec.log,
+initializer-enum-adversary-stock35q4945/ (the select keyword case was invalid),
+initializer-enum-caller-stock35q4951/result.json (corrected select_code case),
+initializer-enum-adversary-candidate35q4952/result.json, and
+enum-scope-rest-prelude35q4949/result.json and compile.log.
+Compiler source manifest SHA-256:
+f54190da54772e8b56f0b06cb3252cb1305adc8a96582664b999ed8370c3ef49.
+S1 SHA-256: 44890dae82500d86a14a9ac0fef414c9b4a849f0b4c067bacaafb35bb2ce328e.
+Fixture manifest SHA-256:
+576bbd9fef26eff4ebd3cd2797c82ae4f2d5b5246bc9e08924b8cd12ad5170f9.
+Refresh after generated body/default lowering, enum provenance/repair or ABI
+adaptation changes. Rollback is this atomic source/test/doc commit. User WIP
+is excluded. Completed enum build caches were removed (35q4953).
+
+The combined private rest-binding probe advances beyond Sync::Type, then fails
+RuntimeError.new$String's outer slots witness (35q4949). This does not certify
+full prelude, bootstrap or unchanged LavinMQ object/link/server/upstream parity.
+Other synthetic expression-lowering bodies still need targeted enum ownership
+falsifiers; allocator isolation does not establish global context isolation.
+No stdlib/application source or type restriction was changed.
+
+Correlated source adversary confirms all returns precede the enum scopes and
+ensure restores caller state on exceptions. Existing partial-body lifecycle
+and named enum-ledger cleanup after removal still need a recovery falsifier;
+this patch establishes normal completed-body ownership, not failed-generation
+recovery. Raw callback boxing at the same adaptation boundary remains a
+separately reproduced carrier bug, not covered by the enum closure.

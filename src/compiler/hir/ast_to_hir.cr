@@ -47527,6 +47527,11 @@ module Adamas::HIR
       # Return type is the class type (semantically)
       # LLVM backend converts to ptr for ABI
       func = @module.create_function(func_name, class_info.type_ref)
+      # ValueIds are local to this body. A default enum literal must not tag
+      # an unrelated value with the same id in the suspended caller.
+      saved_allocator_enum_value_types = @enum_value_types
+      begin
+      @enum_value_types = nil
       ctx = LoweringContext.new(func, @module, @arena)
 
       # Add parameters to new() that match initialize()
@@ -47755,6 +47760,10 @@ module Adamas::HIR
       end
 
       set_function_state(func_name, FunctionLoweringState::Completed)
+      retain_function_enum_value_types(func.name)
+      ensure
+        @enum_value_types = saved_allocator_enum_value_types
+      end
 
       generate_allocator_overload(
         class_name, class_info, call_arg_types, call_has_named_args, call_has_block,
@@ -48495,6 +48504,10 @@ module Adamas::HIR
       end
 
       func = @module.create_function(overload_name, class_info.type_ref)
+      # Synthetic wrappers own their enum ValueIds just like source methods.
+      saved_allocator_enum_value_types = @enum_value_types
+      begin
+      @enum_value_types = nil
       ctx = LoweringContext.new(func, @module, @arena)
 
       param_ids = [] of ValueId
@@ -48927,7 +48940,14 @@ module Adamas::HIR
               raise LoweringError.new("completed initializer block ABI disagrees with allocator: #{init_name}")
             end
           end
-          init_call_args = coerce_args_to_types(ctx, init_call_args, physical_params.map(&.type))
+          # Enum expressions retain nominal source proof beside their integer
+          # carrier. Materialize that proven identity at this completed ABI
+          # boundary; an unrelated integer or enum cannot acquire the type.
+          adapted_init_args = [] of ValueId
+          init_call_args.each_with_index do |arg, index|
+            adapted_init_args << coerce_enum_tracked_value_to_type(ctx, arg, physical_params[index].type)
+          end
+          init_call_args = adapted_init_args
           initializer_return_type = init_function.return_type
           init_call = Call.with_receiver(ctx.next_id, initializer_return_type.not_nil!, alloc.id, init_name, init_call_args)
           ctx.emit(init_call)
@@ -48994,6 +49014,10 @@ module Adamas::HIR
       # The synthetic wrapper has no source Def of its own. Publish its finished
       # state only after the body, layout recipe and initializer proof exist.
       set_function_state(overload_name, FunctionLoweringState::Completed)
+      retain_function_enum_value_types(func.name)
+      ensure
+        @enum_value_types = saved_allocator_enum_value_types
+      end
     end
 
     # Admit only the initializer selected when this exact positional wrapper

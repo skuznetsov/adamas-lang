@@ -170,6 +170,8 @@ private def lower_generated_allocator_initializer_fixture(source : String = GENE
       converter.register_module(node)
     when Adamas::Compiler::Frontend::LibNode
       converter.register_lib(node)
+    when Adamas::Compiler::Frontend::EnumNode
+      converter.register_enum(node)
     else
       main << root.index.to_u64
     end
@@ -372,5 +374,32 @@ describe "concrete inherited allocator initializer bodies" do
     connect_targets = rows.select { |row| row[0] == "ConnectError" }.map(&.[4])
     bind_targets = rows.select { |row| row[0] == "BindError" }.map(&.[4])
     (connect_targets & bind_targets).should be_empty
+  end
+end
+
+
+describe "enum initializer physical argument identity" do
+  it "materializes a proven inherited enum default before the exact ABI boundary" do
+    [":checked", "DefaultMode::Checked"].each do |expression|
+      source = <<-CRYSTAL
+        enum DefaultMode
+          Checked = 65
+        end
+        class DefaultParent
+          def initialize(mode : DefaultMode = #{expression})
+          end
+        end
+        class DefaultChild < DefaultParent
+        end
+        DefaultChild.new
+        CRYSTAL
+      converter = lower_generated_allocator_initializer_fixture(source)
+      wrapper, call, target, _, _ = converter.__test_generated_allocator_initializer_witness(public_source: true)
+      converter.__test_validate_generated_allocator_initializer(wrapper, call, settled_result: true).should be_true
+      call.args.size.should eq(1)
+      argument = wrapper.blocks.flat_map(&.instructions).find { |value| value.id == call.args.first } || raise "missing enum argument"
+      argument.type.should eq(target.params[1].type)
+      converter.module.get_type_descriptor(argument.type).not_nil!.name.should eq("DefaultMode")
+    end
   end
 end

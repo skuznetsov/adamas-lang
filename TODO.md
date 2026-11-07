@@ -26681,3 +26681,30 @@ integration, fresh bootstrap, or LavinMQ parity.
   witnesses (35q4870/35q4891), then refresh full prelude and unchanged LavinMQ.
   Fresh bootstrap, object/link/server and upstream test parity remain open.
 - No stdlib/application edit or weakened source restriction.
+
+
+### 2026-11-07 — Preserve enum identity in generated initializer wrappers
+
+- [x] Scope enum ValueId facts to each canonical/overload allocator Function,
+  retain the finished body's ledger, and restore the suspended caller on every
+  exit. A default literal's local ValueId must not tag the caller's Int32 as Mode.
+- [x] Materialize nominal enum identity at the completed initializer ABI only
+  from the existing exact enum proof. Preserve source admission, numeric
+  narrowing checks, and exact parameter/source/receiver receipts.
+- All 41 original-first controls pass on stock Crystal 1.22.1 and exact S1
+  35q4942 (35q4955): 27 native positives and 14 diagnostic-specific negatives.
+  This includes nested defaults, caller enum overload identity, ordinary Int32
+  and rejection of another enum/unknown member/enum passed to an Int32 FFI slot.
+  All 12 HIR checks pass on identical compiler source (35q4956).
+- The combined private runtime-rest candidate passes the previous Sync::Type
+  boundary, then fails the outer slots witness for RuntimeError.new$String
+  (35q4949). Full prelude, bootstrap and LavinMQ execution/parity remain open.
+- [ ] Audit other synthetic bodies that lower arbitrary expressions, including
+  lazy getters and class-variable initialization, for function-local enum ledger
+  ownership. Current native falsifiers cover allocator frames only; do not infer
+  global context isolation from this patch.
+- No stdlib/application source or type restriction was changed.
+- [ ] Qualify enum-ledger invalidation and partial-body cleanup during failed
+  synthetic-body regeneration. Existing removal paths may retain the named
+  ledger until a successful new retain; current exception tests do not certify
+  recovery under the same function name.
