@@ -26384,3 +26384,39 @@ integration, fresh bootstrap, or LavinMQ parity.
   under an empty prelude. Stock accepts value = String, Adamas rejects undefined
   constant String (35q4271). The passing String predicate fixtures explicitly
   reopen String to isolate source kind from this separate publication gap.
+
+### 2026-11-07 — Retain source-result continuations across generated callbacks
+
+- [x] Give generated Proc/block contexts a source-generation replay consumer,
+ separate from their own ABI/result owner. Retract their exact partial body
+ and restore lexical lowering state before propagating ExactResultPending.
+- [x] Retain the selected registry key and Def/Arena witness when an exact
+ call emits under a different symbol. Validate the witness and any existing
+ emitted-symbol registration; do not create a source alias for replay.
+- [x] Record actual bare top-level call shapes, including zero arguments, before
+ pending demand consumes them. Record and suspend their exact unresolved
+ results instead of publishing provisional Void into the callback contract.
+- The stock-first callback_replay_contract_repro.sh passes 16 native output
+ controls and four diagnostic-specific strict rejections per compiler on the
+ exact S1 (35q4370). The seven initial depth controls fail before these changes
+ (35q4303); depths zero through six now agree with stock, including nested Proc,
+ generic owner, inherited dispatch, ensure and call-shape isolation controls.
+- The pending-source-result, exact replay callshape/owner and initializer-binding
+ neighbor scripts all pass on the same compiler (35q4371).
+- [ ] Give direct initializer pre-lowering an authenticated result-demand
+ boundary. Actual unchanged LavinMQ still fails the FdLock callback contract.
+ Its trace proves lower_allocator_initializer_body directly enters TCPSocket's
+ initializer at force depth two with only the outer Proxy method's capture
+ active (35q4369); the initializer has no replay recipe when system_connect is
+ depth-refused. No application/stdlib changes or completed HIR claim.
+- [ ] Close source argument restriction checking for callback calls. The known
+ write(mode : Int32, & : -> F) call with true is accepted by the baseline
+ (35q4315), while stock rejects it (35q4314). This is excluded from passing
+ replay coverage. Source audit finds the final restriction check in lower_call
+ and source-rejection collection in resolve_call_tuple both skip block calls.
+- [ ] Qualify the sibling bare implicit-self call route, retained separately
+ under callback-result-bare-self-reducers35q4351. Constructor-only depth probes
+ pass (35q4359/35q4360); three Lock-entry variants fail before reaching the
+ constructor (35q4364/35q4365/35q4366), so they do not prove the initializer cause.
+- Full prelude, fresh bootstrap, unchanged LavinMQ object/link/server execution
+ and upstream test parity remain open.

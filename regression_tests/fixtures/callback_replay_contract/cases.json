@@ -1,0 +1,25 @@
+{
+  "schema": "callback_replay_contract_cases_v1",
+  "cases": [
+    {"name":"depth_0","source":"depth/depth_0.cr","sha256":"8e45af3faf7b88d4efd000301233a2d0422b1993e1c6c957dcb240132f250d04","ok":true,"expected":"A"},
+    {"name":"depth_1","source":"depth/depth_1.cr","sha256":"b22c65df9117aab07c9d292774796af739f64afa4415d77f0bc38f7d462b13c5","ok":true,"expected":"A"},
+    {"name":"depth_2","source":"depth/depth_2.cr","sha256":"3fd846d080cfb33423e3b00d8aa6743185ac5084d847243edfa1f3858f89efe0","ok":true,"expected":"A"},
+    {"name":"depth_3","source":"depth/depth_3.cr","sha256":"2a09489ae509bd32c341a8ac510cdca27e9ff302599fad372c57b2cec09eedb9","ok":true,"expected":"A"},
+    {"name":"depth_4","source":"depth/depth_4.cr","sha256":"3202ce1d36ed707276f7e833949d30610eb60f576db2feca8f0a0581bc582cd0","ok":true,"expected":"A"},
+    {"name":"depth_5","source":"depth/depth_5.cr","sha256":"12efda00b598852489bdc38e00f567ee36046d37fab9db348bc3ddce9324d78e","ok":true,"expected":"A"},
+    {"name":"depth_6","source":"depth/depth_6.cr","sha256":"9c8a0dd041b1c1aaf07661be87615e0e35972a54762e3da47affe0608c3b468c","ok":true,"expected":"A"},
+    {"name":"ensured_inherited","source":"depth/ensured_inherited.cr","sha256":"ef44c492fd67f19270ac0743b430dd249ed208e8c62c95efddc8c61c7e42928b","ok":true,"expected":"A"},
+    {"name":"arg_shape_first","source":"shape/arg_shape_first.cr","sha256":"f75d02c04dca47950c074585fa74423b6eb8e669eac7f14d424bcb8e67ce13bb","ok":true,"expected":"FBEA\n"},
+    {"name":"noarg_shape_first","source":"shape/noarg_shape_first.cr","sha256":"526391d251b398046a77d7b07a4be6c441078f0544ed707a3b82c4fc0cd2e76b","ok":true,"expected":"EAFB\n"},
+    {"name":"nested_proc","source":"shape/nested_proc.cr","sha256":"773a46dda2ec351b334caf9f23abca3cd7257fed500d7d07c01e14e67f44c861","ok":true,"expected":"EA\n"},
+    {"name":"one_hop_wrapper_no_proc","source":"shape/one_hop_wrapper_no_proc.cr","sha256":"35f3558ab92dc723e94ab311d732d7fef3d305a461fd4978a191b3dd47b7bfe7","ok":true,"expected":"EA\n"},
+    {"name":"generic_namespace_owner_isolation","source":"shape/generic_namespace_owner_isolation.cr","sha256":"60212fe74c8126ca1d87f73ff294604714bf728b580864d6a41aee44bfffb6bd","ok":true,"expected":"EAFB\n"},
+    {"name":"ensured_forall_control","source":"shape/ensured_forall_control.cr","sha256":"f992343fc6c99b1a88eabf460dd0f5e9e49e1951405b547e956965f2ced620e7","ok":true,"expected":"EA\n"},
+    {"name":"wrong_callback_result_rejects","source":"shape/wrong_callback_result_rejects.cr","sha256":"7343b9ef47849df3d8490f1aaaf5cb781a50367d8175e8e4bae1043e7cc7cda1","ok":false,"stock_diagnostic_regex":"expected block to return Int32, not Bool","candidate_diagnostic_regex":"expected block passed to Lock#write to return Int32, not Bool"},
+    {"name":"deep_nested_proc_generic_lock","source":"deep/deep_nested_proc_generic_lock.cr","sha256":"54693aee5c9c192e4db4ad79d9d9388576fd2c7c536a20305e2864fe080c30e3","ok":true,"expected":"EA\n"},
+    {"name":"deep_inherited_virtual_target","source":"deep/deep_inherited_virtual_target.cr","sha256":"d2930f8cdd53e3b7c82aa2248978dec74ed08b3404390fd8f4174e2147e9ad41","ok":true,"expected":"EA\n"},
+    {"name":"deep_callback_bool_rejects_int32","source":"deep/deep_callback_bool_rejects_int32.cr","sha256":"7618909c35c59b9fb28fcb7dad4c74fcfdc7d373668596a6f4735b5213165ac9","ok":false,"stock_diagnostic_regex":"expected block to return Int32, not Bool","candidate_diagnostic_regex":"expected block passed to Lock#write to return Int32, not Bool"},
+    {"name":"deep_replayed_result_annotation_rejects","source":"deep/deep_replayed_result_annotation_rejects.cr","sha256":"bfaa8536062e7c0f3c873ed23c44d8bf1a2fd024dbbfdf0a82f11c6d467523d1","ok":false,"stock_diagnostic_regex":"method ::hop0 must return Int32.*it is returning Bool","candidate_diagnostic_regex":"method hop0 must return Int32, but it is returning Bool"},
+    {"name":"ordinary_argument_restriction_no_callback","source":"deep/ordinary_argument_restriction_no_callback.cr","sha256":"74dfe4e3a028813521411b505e9a320ad2b2337ad87d1f51e01cd64b228b09cf","ok":false,"stock_diagnostic_regex":"expected argument #1 to 'Receiver#accept' to be Int32, not Bool","candidate_diagnostic_regex":"no overload matches Receiver#accept: expected argument restriction Int32, got Bool"}
+  ]
+}

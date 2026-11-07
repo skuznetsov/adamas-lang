@@ -48,7 +48,8 @@ module Adamas::HIR
 
   private record ForceLowerExactSourceBinding,
     source_def : Adamas::Compiler::Frontend::DefNode,
-    source_arena : Adamas::Compiler::Frontend::ArenaLike
+    source_arena : Adamas::Compiler::Frontend::ArenaLike,
+    source_registry_name : String? = nil
 
   private class ExactResultPending < Exception
     getter consumer : String
@@ -88,6 +89,11 @@ module Adamas::HIR
     # A synthetic Proc function inherits only the enclosing source declaration's
     # proven annotation bindings. Its generated name is not a source Def key.
     property source_annotation_type_params : Hash(String, String)? = nil
+
+    # Synthetic callbacks own their ABI result but are generated within the
+    # enclosing source method attempt. Forward only its replay consumer name;
+    # the existing exact Def/Arena capture remains the continuation authority.
+    property source_result_replay_consumer : String? = nil
 
     # Current block being built
     property current_block : BlockId
@@ -2103,7 +2109,8 @@ module Adamas::HIR
       source_arena : Adamas::Compiler::Frontend::ArenaLike,
       callsite : CallsiteArgs,
       entry_type_param_map : Hash(String, String),
-      entry_namespace_override : String?
+      entry_namespace_override : String?,
+      source_registry_name : String? = nil
 
     private class ForceLowerReplayCapture
       property binding : ForceLowerReplayCallsite?
@@ -96776,7 +96783,15 @@ module Adamas::HIR
             STDERR.puts "[IDENT_RESOLVE] name=#{name} full=#{full_name} args=#{call_args.size} return_type=#{return_type.id}"
           end
         end
+        selected_registry_name = selected_entry.try(&.[0])
+        selected_arena = bare_source_entry.try(&.[2]) ||
+                         selected_registry_name.try { |key| @function_def_arenas[key]? }
+        # A bare source call owns an explicit callshape too, including zero
+        # arguments. Retain it before demand can consume the pending entry so
+        # a depth-refused result can replay this exact source generation.
+        remember_callsite_arg_types(full_name, arg_types)
         lower_function_if_needed(full_name)
+        refused_before_call_force = @force_lower_depth_refused.size
         if return_type == TypeRef::VOID
           force_pending_call_targets_for_return_type(full_name, context: "bare_top_level")
           return_type = get_function_return_type(full_name, call_args.size, selected_def)
@@ -96784,6 +96799,10 @@ module Adamas::HIR
             return_type = get_function_return_type(name, call_args.size, selected_def)
           end
         end
+        record_force_lower_result_dependency(ctx, full_name, selected_def,
+          refused_before_call_force, selected_def, selected_arena, selected_registry_name)
+        suspend_depth_refused_source_result(ctx, full_name, return_type, selected_def,
+          selected_def, selected_arena, refused_before_call_force, selected_registry_name)
         call = Call.without_receiver(ctx.next_id, return_type, full_name, call_args)
         ctx.emit(call)
         ctx.register_type(call.id, return_type)
@@ -111493,8 +111512,8 @@ module Adamas::HIR
       end
       return false if discharged.empty?
       if replay = request.replay_callsite
-        return false unless @function_defs[name]?.try(&.same?(replay.source_def)) &&
-                            @function_def_arenas[name]?.try(&.same?(replay.source_arena))
+        return false unless force_lower_exact_source_matches?(name,
+          ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name))
         pending = @pending_arg_types[name]?
         return false if pending && pending != replay.callsite
       end
@@ -111551,8 +111570,8 @@ module Adamas::HIR
       bypass_inline_yield = request.bypass_inline_yield
       replay = request.replay_callsite
       raise pending unless force_lower_exact_source_matches?(producer, pending.producer_source) &&
-                           @function_defs[consumer]?.try(&.same?(replay.source_def)) &&
-                           @function_def_arenas[consumer]?.try(&.same?(replay.source_arena))
+                           force_lower_exact_source_matches?(consumer,
+                             ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name))
       unless settled_force_lower_result?(producer)
         work_mark = @force_lower_retry_work.size
         producer_settled = with_force_lower_exact_source(producer, pending.producer_source) do
@@ -111589,7 +111608,7 @@ module Adamas::HIR
     ) : Bool
       existing_callsite = @pending_arg_types[name]?
       return false if existing_callsite && existing_callsite != replay.callsite
-      source = ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena)
+      source = ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name)
       with_force_lower_exact_source(name, source) do
         @pending_arg_types[name] = replay.callsite
         begin
@@ -111627,8 +111646,17 @@ module Adamas::HIR
     end
 
     private def force_lower_exact_source_matches?(name : String, source : ForceLowerExactSourceBinding) : Bool
-      @function_defs[name]?.try(&.same?(source.source_def)) == true &&
-        @function_def_arenas[name]?.try(&.same?(source.source_arena)) == true
+      # A selected overload may emit under a concrete callsite symbol that has
+      # no registry alias. Retain its actual registration witness; neither the
+      # emitted spelling nor a later overload lookup can select replay source.
+      registered_name = source.source_registry_name || name
+      return false unless @function_defs[registered_name]?.try(&.same?(source.source_def)) == true &&
+                          @function_def_arenas[registered_name]?.try(&.same?(source.source_arena)) == true
+      if registered_name != name && (@function_defs.has_key?(name) || @function_def_arenas.has_key?(name))
+        return false unless @function_defs[name]?.try(&.same?(source.source_def)) == true &&
+                            @function_def_arenas[name]?.try(&.same?(source.source_arena)) == true
+      end
+      true
     end
 
     private def settled_force_lower_result?(name : String) : Bool
@@ -111645,22 +111673,24 @@ module Adamas::HIR
       selected_call_def : Adamas::Compiler::Frontend::DefNode?,
       selected_call_arena : Adamas::Compiler::Frontend::ArenaLike?,
       refused_mark : Int32,
+      selected_registry_name : String? = nil,
     ) : Nil
       # A depth-refused result is pending in ordinary method bodies too.
       # Suspend its exact consumer before narrowing or a declared-return check
       # consumes Void; the replay recipe and source identity checks below own
       # the continuation independently of the active inline context.
+      consumer = ctx.source_result_replay_consumer || ctx.function.name
       return unless return_type == TypeRef::VOID &&
                     @force_lower_depth_refused[refused_mark...].includes?(name) &&
-                    @force_lower_provisional_dependencies[ctx.function.name]?.try(&.includes?(name)) &&
-                    force_lower_replay_recipe_available?(ctx.function.name)
-      source = force_lower_exact_source_binding(name, selected_def, selected_call_def, selected_call_arena)
+                    @force_lower_provisional_dependencies[consumer]?.try(&.includes?(name)) &&
+                    force_lower_replay_recipe_available?(consumer)
+      source = force_lower_exact_source_binding(name, selected_def, selected_call_def, selected_call_arena, selected_registry_name)
       return unless source
 
       if env_has?("DEBUG_FORCE_LOWER_DEPTH")
-        STDERR.puts "[FORCE_LOWER_SUSPENDED] consumer=#{ctx.function.name} producer=#{name}"
+        STDERR.puts "[FORCE_LOWER_SUSPENDED] consumer=#{consumer} context=#{ctx.function.name} producer=#{name}"
       end
-      raise ExactResultPending.new(ctx.function.name, name, source)
+      raise ExactResultPending.new(consumer, name, source)
     end
 
     private def force_lower_replay_recipe_available?(name : String) : Bool
@@ -111668,8 +111698,8 @@ module Adamas::HIR
       return false unless capture
       replay = capture.not_nil!.binding
       return false unless replay
-      @function_defs[name]?.try(&.same?(replay.not_nil!.source_def)) == true &&
-        @function_def_arenas[name]?.try(&.same?(replay.not_nil!.source_arena)) == true
+      force_lower_exact_source_matches?(name,
+        ForceLowerExactSourceBinding.new(replay.not_nil!.source_def, replay.not_nil!.source_arena, replay.not_nil!.source_registry_name))
     end
 
     private def force_lower_exact_source_binding(
@@ -111677,18 +111707,21 @@ module Adamas::HIR
       selected_def : Adamas::Compiler::Frontend::DefNode?,
       selected_call_def : Adamas::Compiler::Frontend::DefNode?,
       selected_call_arena : Adamas::Compiler::Frontend::ArenaLike?,
+      selected_registry_name : String? = nil,
     ) : ForceLowerExactSourceBinding?
       return nil unless source_def = selected_def
       return nil if selected_call_def && !selected_call_def.same?(source_def)
-      registered_def = @function_defs[name]?
+      registered_name = selected_registry_name || name
+      registered_def = @function_defs[registered_name]?
       return nil unless registered_def.try(&.same?(source_def))
-      source_arena = @function_def_arenas[name]?
+      source_arena = @function_def_arenas[registered_name]?
       return nil unless source_arena
       return nil if selected_call_arena && !selected_call_arena.same?(source_arena)
       if retained_arena = registered_arena_for_def(source_def)
         return nil unless retained_arena.same?(source_arena)
       end
-      ForceLowerExactSourceBinding.new(source_def, source_arena)
+      source = ForceLowerExactSourceBinding.new(source_def, source_arena, selected_registry_name)
+      force_lower_exact_source_matches?(name, source) ? source : nil
     end
 
     # Returns true if the function is provably yield-free: no explicit &-param
@@ -112032,6 +112065,7 @@ module Adamas::HIR
       target_name = name
       callback_source_binding = raw_callback_source_binding_for(name)
       exact_replay_source = @force_lower_replay_source_bindings[name]?
+      selected_replay_registry_name = exact_replay_source.try(&.source_registry_name)
       func_def = callback_source_binding.try(&.source_def) || exact_replay_source.try(&.source_def) || @function_defs[name]?
       arena = callback_source_binding.try(&.source_arena) || exact_replay_source.try(&.source_arena) || @function_def_arenas[name]?
       if replay_source = exact_replay_source
@@ -112450,6 +112484,7 @@ module Adamas::HIR
             resolved_entry_name, resolved_entry_def = entry
             func_def = resolved_entry_def
             arena = @function_def_arenas[resolved_entry_name]?
+            selected_replay_registry_name = resolved_entry_name
             # If the requested name has a concrete type suffix (e.g. IO#puts$Int32)
             # but the resolved overload is an arity-wildcard (e.g. IO#puts$arity1),
             # keep the requested name so the caller can find it.
@@ -114473,8 +114508,8 @@ module Adamas::HIR
       # body environment from the exact source as in the first generation.
       # Family discovery and raw callbacks have separate source bindings.
       if replay_capture && !callback_source_binding && callsite_args &&
-         @function_defs[name]?.try(&.same?(resolved_func_def)) &&
-         @function_def_arenas[name]?.try(&.same?(arena))
+         force_lower_exact_source_matches?(name,
+           ForceLowerExactSourceBinding.new(resolved_func_def, arena, selected_replay_registry_name))
         replay_callsite = CallsiteArgs.new(
           callsite_args.types.dup,
           callsite_args.literals.try(&.dup),
@@ -114492,6 +114527,7 @@ module Adamas::HIR
           replay_callsite,
           @type_param_map.dup,
           @current_namespace_override,
+          selected_replay_registry_name,
         )
       end
 
@@ -115835,17 +115871,21 @@ module Adamas::HIR
       target : String,
       source : Adamas::Compiler::Frontend::DefNode?,
       refused_before_force : Int32,
+      selected_call_def : Adamas::Compiler::Frontend::DefNode? = nil,
+      selected_call_arena : Adamas::Compiler::Frontend::ArenaLike? = nil,
+      selected_registry_name : String? = nil,
     ) : Nil
       return unless source && source.return_type.nil?
-      return unless @function_defs[target]?.try(&.same?(source))
+      return unless force_lower_exact_source_binding(target, source, selected_call_def, selected_call_arena, selected_registry_name)
       return unless (!@module.has_function_with_body?(target) &&
                      @force_lower_depth_refused[refused_before_force...].includes?(target)) ||
                     @force_lower_provisional_dependencies.has_key?(target)
 
-      dependencies = @force_lower_provisional_dependencies[ctx.function.name] ||= Set(String).new
+      consumer = ctx.source_result_replay_consumer || ctx.function.name
+      dependencies = @force_lower_provisional_dependencies[consumer] ||= Set(String).new
       dependencies << target
       if env_has?("DEBUG_FORCE_LOWER_DEPTH")
-        STDERR.puts "[FORCE_LOWER_PROVISIONAL] caller=#{ctx.function.name} callee=#{target}"
+        STDERR.puts "[FORCE_LOWER_PROVISIONAL] caller=#{consumer} context=#{ctx.function.name} callee=#{target}"
       end
     end
 
@@ -125921,10 +125961,14 @@ module Adamas::HIR
       end
 
       # The yield-free retry above can be the first force to reach the depth cap.
-      record_force_lower_result_dependency(ctx, mangled_method_name, selected_return_def, refused_before_call_force)
+      record_force_lower_result_dependency(
+        ctx, mangled_method_name, selected_return_def, refused_before_call_force,
+        selected_call_entry_def, selected_call_entry_arena, selected_call_entry_name,
+      )
       suspend_depth_refused_source_result(
         ctx, mangled_method_name, return_type, selected_return_def,
         selected_call_entry_def, selected_call_entry_arena, refused_before_call_force,
+        selected_call_entry_name,
       )
 
       if unresolved_generic_return_type?(return_type)
@@ -150721,6 +150765,7 @@ module Adamas::HIR
       # into apparently compatible types before that check.
       proc_func = @module.create_function(proc_func_name, TypeRef::VOID)
       proc_ctx = LoweringContext.new(proc_func, @module, @arena)
+      proc_ctx.source_result_replay_consumer = ctx.source_result_replay_consumer || ctx.function.name
       lexical_owner = @block_owner[node.object_id]?
       lexical_owner_name = lexical_owner.try(&.class_name) ||
                            lexical_owner.try(&.namespace_override) ||
@@ -150948,6 +150993,19 @@ module Adamas::HIR
         @inline_yield_block_return_stack = [] of String?
         @inline_yield_name_stack = [] of String
         lower_body(proc_ctx, node.body)
+      rescue pending : ExactResultPending
+        if @module.function_by_name(proc_func.name).try(&.same?(proc_func)) == true
+          remove_hir_function(proc_func.name)
+        end
+        @current_class = saved_class
+        @current_method = saved_method
+        @current_method_is_class = saved_method_is_class
+        @current_namespace_override = saved_proc_namespace
+        @current_typeof_locals = saved_typeof_locals
+        @current_typeof_local_names = saved_typeof_local_names
+        @type_param_map = saved_type_param_map
+        @enum_value_types = saved_enum_value_types_pl
+        raise pending
       ensure
         @captured_block_return_owner = saved_proc_literal_return_owner
         @current_def_return_type = saved_proc_literal_return_type
@@ -152086,6 +152144,7 @@ module Adamas::HIR
       # Create standalone function for the block body
       proc_func = @module.create_function(proc_func_name, proc_return_type)
       proc_ctx = LoweringContext.new(proc_func, @module, block_arena)
+      proc_ctx.source_result_replay_consumer = ctx.source_result_replay_consumer || ctx.function.name
       saved_enum_value_types = @enum_value_types
       @enum_value_types = nil
 
@@ -152652,6 +152711,17 @@ module Adamas::HIR
       block_proc_enum_value_types = nil.as(Hash(ValueId, String)?)
       last_value = begin
         lower_closure_block_body(proc_ctx, block_node)
+      rescue pending : ExactResultPending
+        if @module.function_by_name(proc_func.name).try(&.same?(proc_func)) == true
+          remove_hir_function(proc_func.name)
+        end
+        @current_class = saved_class
+        @current_method = saved_method
+        @current_method_is_class = saved_method_is_class
+        @current_namespace_override = saved_proc_namespace
+        @current_typeof_locals = saved_typeof_locals
+        @current_typeof_local_names = saved_typeof_local_names
+        raise pending
       ensure
         @source_yield_context = saved_block_source_yield_context
         @captured_block_return_owner = saved_block_return_owner

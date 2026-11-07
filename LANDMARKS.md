@@ -26153,3 +26153,67 @@ Fixture-manifest SHA-256:
 Refresh after union descriptors, is_a? proof/branch selection, source value
 facts or class identity publication changes. Rollback is this atomic compiler
 commit. Full prelude, bootstrap, LavinMQ link/server and parity remain open.
+
+## 2026-11-07 — Generated callbacks retain the source generation continuation
+
+A standalone Proc owns its ABI and result contract but may be generated inside
+an exact source method attempt. Its deferred callee previously recorded the
+synthetic Proc symbol as replay consumer; that symbol has no source Def/Arena
+recipe. The result remained provisional Void and reached the strict generic
+block-result check. Callback contexts now retain the enclosing source-generation
+consumer separately from ABI ownership, retract only their matching partial
+HIR function and restore lexical state before propagating pending demand.
+
+Two adjacent lost witnesses prevented the same continuation from completing.
+A concrete emitted symbol need not itself be the selected source registry key.
+Replay now retains the already selected key, Def and Arena, verifies their
+current registration and rejects a conflicting emitted-symbol registration.
+It never fabricates a source alias or guesses another overload. Bare top-level
+calls now retain their actual expanded argument shape, including an empty
+vector, before demand can consume it, then record/suspend exact unresolved
+results like ordinary calls. Retain the selected Arena before nested forcing.
+
+The stock-first callback_replay_contract_repro.sh passes 16 native controls and
+four diagnostic-specific strict rejections on both current Crystal 1.22.1 and
+the final S1 (35q4370). Before the repair, all seven depth-zero-through-six
+reducers fail (35q4303); they now run with matching output. Adversary checks
+include nested Proc, generic namespace ownership, inherited virtual targets,
+ensure order, argument-shape order, declared result mismatches and an ordinary
+argument restriction. The pending-source-result, exact replay callshape/owner,
+and initializer-binding neighbor scripts also pass (35q4371). Bounded verdict:
+ROBUST for this exact source-result
+handoff; callback source-argument admission and initializer generation are not
+certified by these controls.
+
+OPEN: write(mode : Int32, & : -> F) incorrectly accepts true in baseline
+35q4315, while stock 35q4314 rejects it. It is not included in the passing
+fixture count. Source audit identifies both final lower_call source checking
+and resolve_call_tuple source-rejection collection as guarded by !has_block.
+OPEN: the sibling bare implicit-self continuation route; source fixtures are
+under callback-result-bare-self-reducers35q4351, not yet qualified.
+
+Actual unchanged LavinMQ still fails expected F, not Void on the separate
+rest-binding composition (35q4369). Its initializer entry stack proves
+lower_allocator_initializer_body directly lowers TCPSocket#initialize at
+force depth two, before creating the allocator body, with only the outer
+Proxy#handle_client replay capture active. A callback under this initializer
+cannot suspend when system_connect hits the depth cap. Direct-constructor
+depth controls all pass (35q4359/35q4360); three Lock-entry probes fail earlier
+than initializer entry (35q4364/35q4365/35q4366). Do not use those failures as
+initializer-specific evidence or loosen FdLock's source contract.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+callback-replay-contract35q4370/result.json,
+callback-result-depth-candidate35q4303/result.json,
+callback-replay-neighbors35q4371/result.json, and
+lavinmq-initializer-entry35q4369/result.json with unchanged compiler, project,
+installed stdlib and shard inputs. All 1,916 live compiler sources match
+build.callback-replay-exact-entry35q4352.source.json, SHA-256
+ea6e1a202823080f142e4ca402f5de23d043b05fa59d5862d1f75781e339ef73.
+Compiler SHA-256:
+612b0d1aa53105a7545a4fac66c8559643f65422799c94b00f7caa82bb8e0ffb.
+Fixture-manifest SHA-256:
+df88e44aaa023c34803e8511605c7d5b92b6190886a510180b23d8a77040c50d.
+Refresh after source lookup, callshape publication, Proc/block state ownership,
+source-result suspension or replay-driver changes. Rollback is this atomic
+commit. Full prelude, bootstrap, LavinMQ link/runtime and test parity remain open.
