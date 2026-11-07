@@ -27187,7 +27187,7 @@ unproven. The same S1 passes 30 carrier HIR controls and nine native runs
 (35q5463). All executions use run_safe.sh and unchanged Crystal 1.22.1 stdlib.
 
 Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
-initializer-receipt-baseline35q5447/, initializer-receipt-candidate35q5448/,
+generated-receipt-baseline35q5447/, generated-receipt-candidate35q5448/,
 build.generated-initializer-replay-receipt35q5446.{result,source}.json,
 initializer-receipt-shipping35q5462/, initializer-receipt-carrier-guards35q5463/,
 and initializer-receipt-owned35q5464.json.
