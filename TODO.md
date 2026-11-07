@@ -26420,3 +26420,29 @@ integration, fresh bootstrap, or LavinMQ parity.
  constructor (35q4364/35q4365/35q4366), so they do not prove the initializer cause.
 - Full prelude, fresh bootstrap, unchanged LavinMQ object/link/server execution
  and upstream test parity remain open.
+
+### 2026-11-07 — Preserve resolved union types through typeof
+
+- [x] Stop replacing a resolved type containing `|` with `Pointer(Void)`.
+  This erased both top-level unions and unions nested inside generic arguments
+  before a Proc annotation consumed the source type. Keep the existing
+  unresolved-result fallback and strict argument admission.
+- The stock-first typeof_union_contract_repro.sh passes seven native output
+  controls and four diagnostic-specific strict rejections per compiler on the
+  exact S1 (35q4470). Controls read both union arms, nullable values and generic
+  payloads, and reject a class object where an instance union is required.
+  All three initial positive controls fail before the repair (35q4442).
+- Actual LavinMQ's Proc(Pointer(Void), String, Int32, Fiber) mismatch is the
+  corresponding next frontier on the separate initializer/rest composition
+  (35q4409). Re-run the unchanged project after the initializer replay changes
+  are independently qualified. Full prelude, bootstrap and LavinMQ parity are
+  still open.
+- The separate typeof expression grammar gate passes on the same compiler
+  (35q4460). Two full-prelude neighbor scripts still stop at Path#bytesize on
+  Nil, the existing baseline hello frontier (35q4422); they are not green.
+- [ ] Replace unresolved typeof's Pointer(Void) sentinel with explicit result
+  provenance. `Box(typeof(missing_value) | Arm)` is incorrectly accepted by
+  both the prior S1 (35q4468) and this candidate (35q4465), while stock rejects
+  the undefined local (35q4467). This pre-existing admission hole is excluded
+  from the passing controls. A source-known Arm | Pointer(Void) must remain
+  valid; the native both-arm control passes on both compilers (35q4470).

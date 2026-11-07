@@ -19427,7 +19427,9 @@ module Adamas::HIR
     end
 
     private def normalize_typeof_type_name(type_name : String) : String
-      return "Pointer(Void)" if type_name.empty? || type_name == "Void" || type_name == "Unknown" || type_name.includes?('|')
+      # A resolved union is a precise type, including inside generic arguments.
+      # Only an unavailable result uses the legacy unresolved-type fallback.
+      return "Pointer(Void)" if type_name.empty? || type_name == "Void" || type_name == "Unknown"
       type_name
     end
 

@@ -1,0 +1,116 @@
+[
+  {
+    "name": "union_proc_positive",
+    "source": "union_proc_positive.cr",
+    "ok": true,
+    "expected_stdout": "union_proc_positive.stdout"
+  },
+  {
+    "name": "union_proc_wrong_string",
+    "source": "union_proc_wrong_string.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "no overload matches",
+      "#call",
+      "with type String"
+    ],
+    "candidate_diagnostic": [
+      "no overload matches",
+      "#call",
+      "with type String"
+    ],
+    "forbidden_diagnostic": [
+      "Proc(Pointer(Void)"
+    ]
+  },
+  {
+    "name": "nilable_proc_positive",
+    "source": "nilable_proc_positive.cr",
+    "ok": true,
+    "expected_stdout": "nilable_proc_positive.stdout"
+  },
+  {
+    "name": "nilable_proc_wrong_string",
+    "source": "nilable_proc_wrong_string.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "no overload matches",
+      "#call",
+      "with type String"
+    ],
+    "candidate_diagnostic": [
+      "no overload matches",
+      "#call",
+      "with type String"
+    ],
+    "forbidden_diagnostic": [
+      "Proc(Pointer(Void)"
+    ]
+  },
+  {
+    "name": "nested_generic_union_proc_positive",
+    "source": "nested_generic_union_proc_positive.cr",
+    "ok": true,
+    "expected_stdout": "nested_generic_union_proc_positive.stdout"
+  },
+  {
+    "name": "nested_generic_union_proc_wrong_box",
+    "source": "nested_generic_union_proc_wrong_box.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "no overload matches",
+      "#call",
+      "with type Box(String)"
+    ],
+    "candidate_diagnostic": [
+      "no overload matches",
+      "#call",
+      "with type Box(String)"
+    ],
+    "forbidden_diagnostic": [
+      "Proc(Pointer(Void)"
+    ]
+  },
+  {
+    "name": "union_payload_both_arms",
+    "source": "union_payload_both_arms.cr",
+    "ok": true,
+    "expected_stdout": "union_payload_both_arms.stdout"
+  },
+  {
+    "name": "nilable_payload_both_arms",
+    "source": "nilable_payload_both_arms.cr",
+    "ok": true,
+    "expected_stdout": "nilable_payload_both_arms.stdout"
+  },
+  {
+    "name": "nested_generic_union_payload",
+    "source": "nested_generic_union_payload.cr",
+    "ok": true,
+    "expected_stdout": "nested_generic_union_payload.stdout"
+  },
+  {
+    "name": "union_rejects_type_value",
+    "source": "union_rejects_type_value.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "no overload matches",
+      "#call",
+      "with type LeftArm.class"
+    ],
+    "candidate_diagnostic": [
+      "no overload matches",
+      "#call",
+      "with type LeftArm.class"
+    ],
+    "forbidden_diagnostic": [
+      "Proc(Pointer(Void)"
+    ]
+  },
+  {
+    "name": "known_pointer_union",
+    "source": "known_pointer_union.cr",
+    "ok": true,
+    "expected_stdout": "known_pointer_union.stdout"
+  }
+]

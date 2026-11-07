@@ -26217,3 +26217,50 @@ df88e44aaa023c34803e8511605c7d5b92b6190886a510180b23d8a77040c50d.
 Refresh after source lookup, callshape publication, Proc/block state ownership,
 source-result suspension or replay-driver changes. Rollback is this atomic
 commit. Full prelude, bootstrap, LavinMQ link/runtime and test parity remain open.
+
+## 2026-11-07 — typeof preserves source-resolved union identity
+
+The typeof normalizer replaced every type name containing `|` with
+Pointer(Void), even when that name came directly from a registered local
+TypeRef. This destroyed both a top-level union and a union inside generic
+arguments before constructing a Proc annotation. Remove that lossy predicate;
+retain the existing empty/Void/Unknown fallback and strict argument checks.
+The selected source type is already the authority at this boundary.
+
+The permanent stock-first typeof_union_contract_repro.sh passes seven native
+controls and four diagnostic-specific strict rejections per compiler (35q4470).
+It reads both union arms and nullable/generic payloads, accepts a genuine
+Pointer(Void) union member, rejects unrelated instances and rejects a class
+object supplied to an instance union. All three initial positive controls
+fail on the preceding S1 (35q4442). The typeof expression grammar neighbor
+passes on the same final S1 (35q4460). Bounded adversary verdict: ROBUST for
+preserving a resolved union TypeRef through typeof; this is not a claim that
+all typeof resolution or prelude compilation is correct.
+
+OPEN: unresolved typeof still uses the same string as a genuine Pointer(Void)
+result. Box(typeof(missing_value) | Arm) is wrongly admitted by both the prior
+S1 (35q4468) and the candidate (35q4465); stock rejects the undefined local
+(35q4467). Preserve real pointer unions while replacing this sentinel with an
+explicit unresolved/result contract. Two full-prelude neighbor scripts still
+fail on Path#bytesize for Nil (35q4460); baseline hello fails there too
+(35q4422). They do not contribute passing evidence.
+
+Actual unchanged LavinMQ reached the corresponding Proc(Pointer(Void), String,
+Int32, Fiber) argument mismatch on the separate initializer/rest composition
+(35q4409). That composition remains private and unqualified. Resume exact
+initializer/body replay qualification before retrying the project. Full prelude,
+bootstrap, object/link/server execution and upstream parity remain open.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+typeof-union-contract11-final35q4470/result.json,
+proc-typeof-union-baseline35q4442/result.json,
+typeof-union-neighbors35q4460/result.json and the unresolved probes above.
+All 1,916 live compiler sources match
+build.proc-typeof-union35q4455.source.json (manifest SHA-256
+18673e2842f8615606bcf3449f7be0b16ffbe41af2f1b891af5e0e38f60d6467).
+S1 SHA-256:
+a9f280fc4af6eefc75b60a2c77c62110191bcd81c26e8d8e0fb1208eac2bac95.
+Fixture SHA256SUMS SHA-256:
+a363a1bead2b082dad5c05b666564c9fed12c1e81a70dc0fd523ded58b91b817.
+Refresh after typeof resolution, Proc annotation, union representation or
+source-kind admission changes. Rollback is this atomic commit.
