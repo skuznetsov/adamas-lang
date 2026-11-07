@@ -26603,3 +26603,56 @@ Time::Span boundary but full prelude stops at the outer RuntimeError.new$String
 witness with empty **opts (35q4814). Fresh bootstrap, unchanged LavinMQ
 object/link/server execution and upstream Crystal parity remain open.
 No stdlib/application source or argument restriction was changed.
+
+## 2026-11-07 — Canonical allocator inner calls keep source and completed ABI
+
+Receiver repair rewrote BaseError#initialize$String to its Nil|String spelling
+inside RuntimeError.new$String, invalidating the outer wrapper revision
+(35q4836). Canonical public wrappers had no retained inner-call source receipt.
+Store SelectedCallTarget on GeneratedAllocatorInitializerCall, independent of
+the optional selected_init_target used to reconstruct layout replay. Promoting
+the public recipe would change its naming/default reconstruction semantics.
+Only matching registered source Def/Arena may mint the canonical receipt.
+
+Completed physical formals own the expanded inner call vector, including any
+block slot. The cached pre-body vector can specialize a union: 35q4857 proves
+String actual 15 versus Nil|String target 119 with all source/Function evidence
+current. Require exact count, reject numeric domain narrowing and unproven block
+ABI changes, then adapt admitted values. Do not use coercion as source admission.
+
+The Time::Location default array false rejection (35q4849) was a fact-projection
+bug: ArrayLiteral stores Void on Value#type and element_type owns Array(T).
+The direct and collected late lookups now share that projection. Self checks
+accept exact identity or actual class inheritance; sibling classes cannot pass.
+
+Scoped verdict: ROBUST for the tested canonical inner-call ownership and ABI
+transition. Root executed 27 original-first native/strict-negative controls
+(18/9), 35q4887, and ten HIR controls, 35q4864. Correlated source review is not
+independent execution. The no-rest reducer independently separates this repair
+from the private runtime **opts binder (35q4850). The previous S1 fails it.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+build.public-initializer-only35q4885.result.json and .source.json,
+public-initializer-final-gate35q4887/result.json and gate.log,
+public-initializer-only-spec35q4864/result.json and spec.log,
+canonical-sibling-old35q4874/result.json, and
+hello-public-initializer-receiver-diagnostic35q4868/compile.log.
+Compiler source manifest SHA-256:
+c734c732b13ae05003b27f6aa3b73036f20c4fd24a5b6b47ec6fc9404a163f1e.
+S1 SHA-256: c38070c52c9c53d7b8d167d1c6fa6fedf027cf697b5e25589637d684db9fe468.
+Fixture manifest SHA-256:
+ce88ba079bb71e126631452950e017ea6ca3af17ffea7e3b3dc2a264c8e008b4.
+
+Refresh after source/allocator materialization, late projection or repair
+changes. Rollback is this atomic source/test/doc commit. This does not certify
+full prelude: the combined rest-binding candidate passes the prior boundaries
+but strict self proof exposes a sibling body collision (35q4868):
+File::AlreadyExistsError self 545 versus File::NotFoundError self 544 under
+one shared IO::Error initializer physical name. A concretely lowered body
+must include concrete owner in its physical identity. Simple sibling reducers
+pass and do not exercise that fallback. Keep the self guard strict. ArrayNew
+also stores raw Void (source audit only); its projection needs a separate
+falsifier. Empty-option zero-arg outer wrappers remain open (35q4870).
+Full prelude, fresh bootstrap, unchanged LavinMQ object/link/server and upstream
+Crystal parity remain open. No stdlib/application source or type restriction
+was changed. User-owned WIP is excluded.

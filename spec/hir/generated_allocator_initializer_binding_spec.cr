@@ -4,9 +4,10 @@ require "../../src/compiler/frontend/lexer"
 require "../../src/compiler/frontend/parser"
 
 class Adamas::HIR::AstToHir
-  def __test_generated_allocator_initializer_witness : {Adamas::HIR::Function, Adamas::HIR::Call, Adamas::HIR::Function, String, String}
+  def __test_generated_allocator_initializer_witness(public_source : Bool = false) : {Adamas::HIR::Function, Adamas::HIR::Call, Adamas::HIR::Function, String, String}
     allocator_name = @generated_allocator_layout_recipes.keys.find do |name|
-      @generated_allocator_layout_recipes[name]?.try(&.initializer_call) != nil
+      recipe = @generated_allocator_layout_recipes[name]?
+      recipe && recipe.initializer_call && recipe.selected_init_target.nil? == public_source
     end
     raise "generated allocator initializer witness was not recorded" unless allocator_name
 
@@ -17,7 +18,7 @@ class Adamas::HIR::AstToHir
       .flat_map(&.instructions)
       .compact_map(&.as?(Adamas::HIR::Call))
       .find { |candidate| candidate.id == contract.id } || raise "generated allocator initializer call was not found"
-    selected = recipe.selected_init_target || raise "selected initializer source target was not recorded"
+    selected = contract.source
     target = @module.function_by_name(contract.target_name) || raise "selected initializer target was not materialized"
     {wrapper, call, target, selected.symbol_name, contract.target_name}
   end
@@ -28,6 +29,15 @@ class Adamas::HIR::AstToHir
     settled_result : Bool = false,
   ) : Bool
     generated_allocator_initializer_call?(wrapper, call, require_settled_result: settled_result)
+  end
+
+  def __test_late_array_value_type : {Adamas::HIR::TypeRef, Adamas::HIR::TypeRef, Adamas::HIR::TypeRef}
+    function = @module.create_function("__array_projection", Adamas::HIR::TypeRef::NIL)
+    literal = Adamas::HIR::ArrayLiteral.new(function.next_value_id, Adamas::HIR::TypeRef::INT32, [] of Adamas::HIR::ValueId)
+    function.blocks.first.add(literal)
+    projected = hir_value_type_in_function(function, literal.id) || raise "missing array value"
+    collected = collect_function_value_types(function)[literal.id]
+    {literal.type, projected, collected}
   end
 
   def __test_repair_stale_call_return_types : Nil
@@ -60,23 +70,23 @@ class Adamas::HIR::AstToHir
     block.instructions[index].as(Adamas::HIR::Call)
   end
 
-  def __test_replace_selected_initializer_def : Nil
+  def __test_replace_selected_initializer_def(public_source : Bool = false) : Nil
     allocator_name = @generated_allocator_layout_recipes.keys.find do |name|
-      @generated_allocator_layout_recipes[name]?.try(&.initializer_call) != nil
+      recipe = @generated_allocator_layout_recipes[name]?
+      recipe && recipe.initializer_call && recipe.selected_init_target.nil? == public_source
     end || raise "generated allocator initializer witness was not recorded"
-    selected = @generated_allocator_layout_recipes[allocator_name].selected_init_target ||
-               raise "selected initializer source target was not recorded"
+    selected = @generated_allocator_layout_recipes[allocator_name].initializer_call.not_nil!.source
     replacement = @function_defs.values.find { |candidate| !candidate.same?(selected.def_node) } ||
                   raise "fixture has no distinct source definition"
     set_function_def_entry(selected.symbol_name, replacement, record_current_arena: false)
   end
 
-  def __test_replace_selected_initializer_arena : Nil
+  def __test_replace_selected_initializer_arena(public_source : Bool = false) : Nil
     allocator_name = @generated_allocator_layout_recipes.keys.find do |name|
-      @generated_allocator_layout_recipes[name]?.try(&.initializer_call) != nil
+      recipe = @generated_allocator_layout_recipes[name]?
+      recipe && recipe.initializer_call && recipe.selected_init_target.nil? == public_source
     end || raise "generated allocator initializer witness was not recorded"
-    selected = @generated_allocator_layout_recipes[allocator_name].selected_init_target ||
-               raise "selected initializer source target was not recorded"
+    selected = @generated_allocator_layout_recipes[allocator_name].initializer_call.not_nil!.source
     set_function_def_arena(selected.symbol_name, Adamas::Compiler::Frontend::AstArena.new)
   end
 
@@ -116,9 +126,9 @@ private GENERATED_ALLOCATOR_INITIALIZER_SOURCE = <<-CRYSTAL
   AllocatorGrandchild.new(65, file: 66)
   CRYSTAL
 
-private def lower_generated_allocator_initializer_fixture : Adamas::HIR::AstToHir
+private def lower_generated_allocator_initializer_fixture(source : String = GENERATED_ALLOCATOR_INITIALIZER_SOURCE) : Adamas::HIR::AstToHir
   parser = Adamas::Compiler::Frontend::Parser.new(
-    Adamas::Compiler::Frontend::Lexer.new(GENERATED_ALLOCATOR_INITIALIZER_SOURCE),
+    Adamas::Compiler::Frontend::Lexer.new(source),
   )
   program = parser.parse_program
   parser.diagnostics.should be_empty
@@ -126,7 +136,7 @@ private def lower_generated_allocator_initializer_fixture : Adamas::HIR::AstToHi
   arena = program.arena
   converter = Adamas::HIR::AstToHir.new(
     arena,
-    sources_by_arena: {arena.object_id.to_u64 => GENERATED_ALLOCATOR_INITIALIZER_SOURCE},
+    sources_by_arena: {arena.object_id.to_u64 => source},
     paths_by_arena: {arena.object_id.to_u64 => "generated_allocator_initializer_binding.cr"},
   )
   converter.no_prelude = true
@@ -273,5 +283,57 @@ describe "generated allocator initializer source binding" do
     expect_raises(Adamas::HIR::LoweringError, /lost its selected source or ABI/) do
       converter.__test_validate_generated_allocator_initializer(wrapper, call, settled_result: true)
     end
+  end
+end
+
+private GENERATED_PUBLIC_ALLOCATOR_INITIALIZER_SOURCE = <<-CRYSTAL
+  class PublicAllocatorParent
+    def self.build(value : Int32?)
+      self.new(value)
+    end
+
+    def initialize(value : Int32? = nil)
+      return
+    end
+  end
+
+  class PublicAllocatorChild < PublicAllocatorParent
+  end
+
+  PublicAllocatorChild.build(65)
+  CRYSTAL
+
+describe "canonical generated allocator initializer source binding" do
+  it "owns the inherited physical call without promoting its public layout recipe" do
+    converter = lower_generated_allocator_initializer_fixture(GENERATED_PUBLIC_ALLOCATOR_INITIALIZER_SOURCE)
+    wrapper, call, target, selected_name, target_name = converter.__test_generated_allocator_initializer_witness(public_source: true)
+    selected_name.should contain("PublicAllocatorParent#initialize")
+    target_name.should eq(target.name)
+    converter.__test_validate_generated_allocator_initializer(wrapper, call, settled_result: true).should be_true
+  end
+
+  it "rejects stale source Def or arena on a canonical public wrapper" do
+    converter = lower_generated_allocator_initializer_fixture(GENERATED_PUBLIC_ALLOCATOR_INITIALIZER_SOURCE)
+    wrapper, call, _, _, _ = converter.__test_generated_allocator_initializer_witness(public_source: true)
+    converter.__test_replace_selected_initializer_def(public_source: true)
+    expect_raises(Adamas::HIR::LoweringError, /lost its selected source or ABI/) do
+      converter.__test_validate_generated_allocator_initializer(wrapper, call)
+    end
+
+    converter = lower_generated_allocator_initializer_fixture(GENERATED_PUBLIC_ALLOCATOR_INITIALIZER_SOURCE)
+    wrapper, call, _, _, _ = converter.__test_generated_allocator_initializer_witness(public_source: true)
+    converter.__test_replace_selected_initializer_arena(public_source: true)
+    expect_raises(Adamas::HIR::LoweringError, /lost its selected source or ABI/) do
+      converter.__test_validate_generated_allocator_initializer(wrapper, call)
+    end
+  end
+
+  it "uses the same runtime Array(T) projection in direct and collected late facts" do
+    converter = lower_generated_allocator_initializer_fixture("class Array(T)\nend\n")
+    raw_type, projected, collected = converter.__test_late_array_value_type
+    raw_type.should eq(Adamas::HIR::TypeRef::VOID)
+    projected.should_not eq(Adamas::HIR::TypeRef::VOID)
+    projected.should eq(collected)
+    converter.module.get_type_descriptor(projected).not_nil!.name.should eq("Array(Int32)")
   end
 end

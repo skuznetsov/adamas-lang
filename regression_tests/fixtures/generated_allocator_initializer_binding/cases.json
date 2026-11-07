@@ -1,5 +1,5 @@
 {
-  "case_count": 24,
+  "case_count": 27,
   "cases": [
     {
       "name": "inherited_required_named",
@@ -177,6 +177,27 @@
       "ok": false,
       "original_diagnostic": "missing argument: file",
       "candidate_diagnostic_regex": "no overload matches.*(initialize|new)"
+    },
+    {
+      "name": "canonical_inherited_source",
+      "source": "canonical_inherited_source.cr",
+      "source_sha256": "3d71ad61c1966ea91f77cfc795c7ef390e45a91acd585ac1437729059b1effe9",
+      "ok": true,
+      "expected": "A\n"
+    },
+    {
+      "name": "canonical_sibling_factory",
+      "source": "canonical_sibling_factory.cr",
+      "source_sha256": "8706e383155bd27822cdc870e10d87994a970421b32479dc7b8d95943be8a4eb",
+      "ok": true,
+      "expected": "AA\n"
+    },
+    {
+      "name": "canonical_sibling_direct",
+      "source": "canonical_sibling_direct.cr",
+      "source_sha256": "e34c7c223ccc15e2d80128ab8ab60f2f0c1556437e9bba74833b9838d1db097c",
+      "ok": true,
+      "expected": "AA\n"
     }
   ]
 }

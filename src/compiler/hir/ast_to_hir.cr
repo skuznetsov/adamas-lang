@@ -1461,8 +1461,9 @@ module Adamas::HIR
       getter target_name : String
       getter args : Array(ValueId)
       getter param_types : Array(TypeRef)
+      getter source : SelectedCallTarget
 
-      def initialize(call : Call, @target : Function)
+      def initialize(call : Call, @target : Function, @source : SelectedCallTarget)
         @id = call.id
         @receiver = call.receiver_value
         @target_name = call.method_name
@@ -48839,16 +48840,47 @@ module Adamas::HIR
             end
           end
           init_call_args << block_param_id.not_nil! if block_param_id
-          init_call_args = coerce_args_to_types(ctx, init_call_args, init_param_types)
           init_function = @module.function_by_name(init_name)
           unless init_function && @module.has_function_with_body?(init_name)
             raise LoweringError.new("missing completed initializer body before allocator call: #{init_name}")
           end
+          # Source selection and default binding precede this ABI adaptation.
+          # The completed body owns every physical slot, including a block;
+          # the earlier inference vector may still specialize a declared union.
+          physical_params = init_function.params.skip(1)
+          unless physical_params.size == init_call_args.size
+            raise LoweringError.new("completed initializer ABI disagrees with expanded allocator arguments: #{init_name}")
+          end
+          physical_params.each_with_index do |param, index|
+            actual_type = ctx.type_of(init_call_args[index])
+            next if actual_type == param.type
+            if numeric_primitive?(actual_type) && numeric_primitive?(param.type) &&
+               !allocator_numeric_source_autocast_compatible?(get_type_name_from_ref(actual_type), get_type_name_from_ref(param.type))
+              raise LoweringError.new("completed initializer ABI would narrow an allocator argument: #{init_name}")
+            end
+            if param.is_block &&
+               !(raw_proc_callback_source(ctx, init_call_args[index]) &&
+                 proc_materialization_type_for(actual_type, param.type) == param.type)
+              raise LoweringError.new("completed initializer block ABI disagrees with allocator: #{init_name}")
+            end
+          end
+          init_call_args = coerce_args_to_types(ctx, init_call_args, physical_params.map(&.type))
           initializer_return_type = init_function.return_type
           init_call = Call.with_receiver(ctx.next_id, initializer_return_type.not_nil!, alloc.id, init_name, init_call_args)
           ctx.emit(init_call)
-          if selected_init_target
-            initializer_call_contract = GeneratedAllocatorInitializerCall.new(init_call, init_function)
+          # Canonical positional allocators resolve an exact source winner too.
+          # Retain it on this internal call independently of the layout replay
+          # recipe: promoting it to selected_init_target would change the public
+          # wrapper's identity and default-argument reconstruction.
+          initializer_source = selected_init_target
+          if initializer_source.nil? && (source_name = matched_init_name) &&
+             (source_def = matched_init_def) && (source_arena = matched_init_arena) &&
+             @function_defs[init_name]?.try(&.same?(source_def)) &&
+             @function_def_arenas[init_name]?.try(&.same?(source_arena))
+            initializer_source = SelectedCallTarget.new(source_name, source_def, source_arena)
+          end
+          if initializer_source
+            initializer_call_contract = GeneratedAllocatorInitializerCall.new(init_call, init_function, initializer_source)
           end
           ctx.terminate(Unreachable.new) if noreturn_type?(initializer_return_type.not_nil!)
         end
@@ -60661,8 +60693,8 @@ module Adamas::HIR
       contract = recipe.try(&.initializer_call)
       return false unless recipe && contract && contract.id == call.id
 
-      selected = recipe.selected_init_target
-      source_arena = selected.try(&.source_arena)
+      selected = contract.source
+      source_arena = selected.source_arena
       target = @module.function_by_name(contract.target_name)
       current_wrapper = materialized_generated_allocator(wrapper.name)
       valid = selected && source_arena && current_wrapper && current_wrapper.same?(wrapper) &&
@@ -60678,6 +60710,12 @@ module Adamas::HIR
               !call.virtual && !call.has_block? && target.params.size == call.args.size + 1 &&
               target.params.map(&.type) == contract.param_types &&
               (!require_settled_result || call.type == target.return_type)
+      if valid && target
+        receiver_type = hir_value_type_in_function(wrapper, call.receiver_value)
+        valid = receiver_type &&
+                (receiver_repair_type_identity_matches?(receiver_type, target.params[0].type) ||
+                 receiver_repair_class_upcast?(receiver_type, target.params[0].type))
+      end
       if valid && target
         call.args.each_with_index do |arg, index|
           if hir_value_type_in_function(wrapper, arg) != target.params[index + 1].type
@@ -61811,6 +61849,17 @@ module Adamas::HIR
       end
     end
 
+    # ArrayLiteral deliberately stores Void on Value#type; its element type
+    # owns the runtime Array(T) identity. Late consumers must use this same
+    # projection after the lowering context has gone away.
+    private def late_hir_instruction_value_type(instruction : Value) : TypeRef
+      if instruction.is_a?(ArrayLiteral)
+        array_type_for_element_type(instruction.element_type) || instruction.type
+      else
+        instruction.type
+      end
+    end
+
     private def collect_function_value_types(func : Function) : Hash(ValueId, TypeRef)
       value_types = {} of ValueId => TypeRef
 
@@ -61824,12 +61873,7 @@ module Adamas::HIR
           # the runtime Array(T) identity only in LoweringContext. Late repair
           # runs after that context is gone, so reconstruct the same identity
           # instead of degrading typed empty arrays to Void.
-          value_types[inst.id] = if inst.is_a?(ArrayLiteral)
-                                   array_type_for_element_type(inst.element_type) ||
-                                     inst.type
-                                 else
-                                   inst.type
-                                 end
+          value_types[inst.id] = late_hir_instruction_value_type(inst)
         end
       end
 
@@ -79352,7 +79396,7 @@ module Adamas::HIR
       end
       function.blocks.each do |block|
         block.instructions.each do |instruction|
-          return instruction.type if instruction.id == value_id
+          return late_hir_instruction_value_type(instruction) if instruction.id == value_id
         end
       end
       nil

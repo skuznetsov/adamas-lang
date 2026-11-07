@@ -26617,3 +26617,36 @@ integration, fresh bootstrap, or LavinMQ parity.
   pre-change S1 and the candidate (35q4818/35q4815). The wider neighbor suite
   stopped there and is not green.
 - No stdlib/application source or type restriction was changed.
+
+### 2026-11-07 — Keep canonical allocator initializer source and physical slots
+
+- [x] Retain the exact source Def/Arena on canonical public allocators' inner
+  initializer calls, independently of selected layout replay identity. Receiver
+  repair must not reinterpret an authenticated internal ABI call as new source
+  overload selection. A no-rest reducer fails the previous S1 and matches stock
+  after the repair (35q4850), so this fix is independent of runtime **opts.
+- [x] Adapt source-admitted, default-expanded arguments to the completed physical
+  initializer parameters, including the block slot. Reject count disagreement,
+  numeric domain narrowing and unproven block carrier changes. Keep the source
+  checks and exact final ABI receipt; do not pad or relabel unknown values.
+- [x] Share ArrayLiteral runtime Array(T) projection between direct and collected
+  late value facts. Its raw HIR Value#type is deliberately Void, not its runtime
+  value type (35q4849). Validate self identity or a genuine class-ancestor upcast.
+- The original-first initializer gate passes all 27 controls (18 positive,
+  9 diagnostic-specific negative) on stock Crystal 1.22.1 and exact S1 35q4885
+  (35q4887). Ten HIR controls pass on identical compiler source (35q4864),
+  including public recipe identity, stale Def/Arena and shared array projection.
+- [ ] Give concretely lowered inherited initializer bodies a receiver-specific
+  physical identity. Full-prelude diagnostic 35q4868 proves AlreadyExistsError
+  receiver 545 is calling a body whose self parameter is NotFoundError 544.
+  Source Def/Arena, Function identity and all data arguments match. Simple
+  two-sibling no-prelude reducers pass (35q4874/35q4877/35q4884); they do not
+  reproduce the deferred materialization path. Preserve the strict self check.
+- [ ] Audit ArrayNew late value facts separately: hir.cr:736 also records raw
+  Void, while lowering registers Array(T) in its context. The new projection
+  deliberately covers ArrayLiteral only; prove ArrayNew behavior before widening.
+- Runtime rest-only binding is still a separate private candidate. Empty-option
+  zero-argument public wrappers additionally fail their outer-call witness
+  (35q4870); do not label the wider source-control packet green.
+- Full prelude, bootstrap, unchanged LavinMQ object/link/server execution and
+  upstream Crystal test parity remain open. No stdlib/application edits.
