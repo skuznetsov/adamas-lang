@@ -1,0 +1,182 @@
+{
+  "case_count": 24,
+  "cases": [
+    {
+      "name": "inherited_required_named",
+      "source": "inherited_required_named.cr",
+      "source_sha256": "1042f2382bc4496246765c7fc639acf448b89f88160758f1407b7fa67b4048c7",
+      "ok": true,
+      "expected": "AB\n"
+    },
+    {
+      "name": "parent_required_named",
+      "source": "parent_required_named.cr",
+      "source_sha256": "864c6d3e5175fd564e79e40c3b2fbb1289a3f152d1c00d5567e923b6a1c0182d",
+      "ok": true,
+      "expected": "AB\n"
+    },
+    {
+      "name": "sibling_source_specializations",
+      "source": "sibling_source_specializations.cr",
+      "source_sha256": "90817d1f281b0ba3fde66ab705b3583d869e68fb9742fbef6f12138ee45b1f49",
+      "ok": true,
+      "expected": "ABCD\n"
+    },
+    {
+      "name": "named_default_evaluates_once",
+      "source": "named_default_evaluates_once.cr",
+      "source_sha256": "60683894eb897977105e813872faf0f1439e7576c13942cbe4ed102d0b063b7a",
+      "ok": true,
+      "expected": "ABCABC\n"
+    },
+    {
+      "name": "same_abi_distinct_named_overloads",
+      "source": "same_abi_distinct_named_overloads.cr",
+      "source_sha256": "0e4dbd11b4f27875eedb933716f75e86ac0b115fa328dc084b7093afd2fbb7da",
+      "ok": true,
+      "expected": "ABDC\n"
+    },
+    {
+      "name": "reject_missing_required",
+      "source": "reject_missing_required.cr",
+      "source_sha256": "006fbf2c10ce034652a3e9714ce9ecd87ef76d0c4fe5f2df4ac836fbfac330d2",
+      "ok": false,
+      "original_diagnostic": "missing argument: file",
+      "candidate_diagnostic_regex": "(no overload matches.*(initialize|new)|missing argument: file)"
+    },
+    {
+      "name": "reject_wrong_named_type",
+      "source": "reject_wrong_named_type.cr",
+      "source_sha256": "52b0d84bf7b79d68849bc4776b5c7b38eb0d04f55d2d2361b211c60fad080e42",
+      "ok": false,
+      "original_diagnostic": "no overload matches 'MissingFileError.new'",
+      "candidate_diagnostic_regex": "(no overload matches.*(initialize|new)|missing argument: file)"
+    },
+    {
+      "name": "reject_named_class_object",
+      "source": "reject_named_class_object.cr",
+      "source_sha256": "410ab1fa2cefa892951cc6cf4bca459115bd43643369d0939fba69e3784374f2",
+      "ok": false,
+      "original_diagnostic": "no overload matches 'MissingFileError.new'",
+      "candidate_diagnostic_regex": "(no overload matches.*(initialize|new)|missing argument: file)"
+    },
+    {
+      "name": "inherited_required_keyword_rejects",
+      "source": "inherited_required_keyword_rejects.cr",
+      "source_sha256": "d4fd357a63ce8481611df8caa914d9644a3cae6b78fd8333c2bd75c1ba1b7795",
+      "ok": false,
+      "original_diagnostic": "missing argument: file",
+      "candidate_diagnostic_regex": "no overload matches.*(initialize|new)"
+    },
+    {
+      "name": "nearest_initializer_rejects_ancestor_default_arity",
+      "source": "nearest_initializer_rejects_ancestor_default_arity.cr",
+      "source_sha256": "c4588174580543522301c3ee6da3d1db812c7f2ad0641ac3e6c7d8058aa3cc63",
+      "ok": false,
+      "original_diagnostic": "missing arguments: message, file",
+      "candidate_diagnostic_regex": "no overload matches.*(initialize|new)"
+    },
+    {
+      "name": "own_zero_initializer_cuts_parent_arity",
+      "source": "own_zero_initializer_cuts_parent_arity.cr",
+      "source_sha256": "4f8e3b2090f6435c89b9b9cecf55c647b47cb29a438fd3b22c6df369f2f99c49",
+      "ok": false,
+      "original_diagnostic": "wrong number of arguments for 'Child.new'",
+      "candidate_diagnostic_regex": "no overload matches.*(initialize|new)"
+    },
+    {
+      "name": "explicit_new_keeps_inherited_other_arity",
+      "source": "explicit_new_keeps_inherited_other_arity.cr",
+      "source_sha256": "64acf3268ced5ef3ae3f0b065a2fa1952188af2473e0c3eded37e18fe8b01c36",
+      "ok": true,
+      "expected": "B"
+    },
+    {
+      "name": "child_without_initializer_inherits_parent_one_arg",
+      "source": "child_without_initializer_inherits_parent_one_arg.cr",
+      "source_sha256": "c023784d808f4670b9ed59c53e6bb86c820e3c8aa04bfed61abeb0b60eb4b1c6",
+      "ok": true,
+      "expected": "A\n"
+    },
+    {
+      "name": "own_optional_named_keyword_accepts_one_arg",
+      "source": "own_optional_named_keyword_accepts_one_arg.cr",
+      "source_sha256": "215a0bd47293db99d78a729fcaddeac7cb062386a727730b12efc4c5638b54ea",
+      "ok": true,
+      "expected": "A\n"
+    },
+    {
+      "name": "same_owner_explicit_new_matching_arity",
+      "source": "same_owner_explicit_new_matching_arity.cr",
+      "source_sha256": "4ebdd590703b54a31a3c0360ef576e98f373c69ba5b859c129a83211a1c346d6",
+      "ok": true,
+      "expected": "A\n"
+    },
+    {
+      "name": "inherited_explicit_new_without_local_initializer",
+      "source": "inherited_explicit_new_without_local_initializer.cr",
+      "source_sha256": "313c0b4ca01c20b8a7d19c17e38dbc22b0f2171144d9b23ac41e91887e936b79",
+      "ok": true,
+      "expected": "B\n"
+    },
+    {
+      "name": "included_module_initializer_is_visible",
+      "source": "included_module_initializer_is_visible.cr",
+      "source_sha256": "cc5be49c650beee8fd3f8d7f89abbb276b4986aba656a9d74e9f98f65a1f7d60",
+      "ok": true,
+      "expected": "A\n"
+    },
+    {
+      "name": "bottom_actual_ends_before_required_keyword",
+      "source": "bottom_actual_ends_before_required_keyword.cr",
+      "source_sha256": "825cd25600e09e0f2de4104c2ac282abc22f9cbebdec69cfdbb3e3e440b0cf3a",
+      "ok": true,
+      "expected": ""
+    },
+    {
+      "name": "wide_int64_both_named",
+      "source": "wide_int64_both.cr",
+      "source_sha256": "1352f6b4ecff57e69a8c2f4aafdbdf027d027311d26a34f1c09d2ebd4592fa58",
+      "ok": true,
+      "expected": "A\n"
+    },
+    {
+      "name": "wide_int64_reversed_named_order",
+      "source": "wide_int64_reversed_named.cr",
+      "source_sha256": "d774ae270228a7ed9ab8a5da5c82ebd214460889a64e55373968436513a783a4",
+      "ok": true,
+      "expected": "A\n"
+    },
+    {
+      "name": "mixed_int32_int64_named",
+      "source": "mixed_int32_int64_named.cr",
+      "source_sha256": "836e55675c61441c8c765d8a19e28affabbc628a75f602549cf28bb0d7421546",
+      "ok": true,
+      "expected": "A\n"
+    },
+    {
+      "name": "reject_bool_to_int_named",
+      "source": "reject_bool_to_int_named.cr",
+      "source_sha256": "b4c92cbbbf126c874320544e51c7ed947f0343a63826d96814dba8f1b84a62f0",
+      "ok": false,
+      "original_diagnostic": "no overload matches 'SpanProbe.new'",
+      "candidate_diagnostic_regex": "no overload matches.*(initialize|new)"
+    },
+    {
+      "name": "reject_inherited_explicit_new_own_zero_init",
+      "source": "reject_inherited_explicit_new_own_zero_init.cr",
+      "source_sha256": "03e5a1935c250fc5ed455148116669f8edca63aa9727e23e351ab4f0e329e1eb",
+      "ok": false,
+      "original_diagnostic": "wrong number of arguments for 'Child.new'",
+      "candidate_diagnostic_regex": "no overload matches.*(initialize|new)"
+    },
+    {
+      "name": "reject_inherited_explicit_new_own_required_keyword_init",
+      "source": "reject_inherited_explicit_new_own_required_keyword_init.cr",
+      "source_sha256": "1347a42b03129d1796f5459487aa61f87b2dab6e244b2064c058de6190b11590",
+      "ok": false,
+      "original_diagnostic": "missing argument: file",
+      "candidate_diagnostic_regex": "no overload matches.*(initialize|new)"
+    }
+  ]
+}
