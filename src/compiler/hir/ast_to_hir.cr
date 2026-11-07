@@ -41364,12 +41364,13 @@ module Adamas::HIR
       end
 
       source_return_name = explicit_return_type_for_registration(node, source_binding_arena)
-      source_discards_method_result = false
+      source_discard_result_type = nil.as(TypeRef?)
       if source_return_name
-        source_discards_method_result = source_return_annotation_discards_value?(
+        source_discard_result_type = source_return_annotation_discard_result_type?(
           source_return_name, module_name, extra_type_params,
         )
       end
+      source_discards_method_result = !source_discard_result_type.nil?
       if source_return_name &&
          source_return_name != "self" &&
          !abstract_return_constraint &&
@@ -41453,7 +41454,7 @@ module Adamas::HIR
         nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
         ctx.emit(nil_lit)
         last_value = nil_lit.id
-        if return_type == TypeRef::VOID
+        if return_type == TypeRef::VOID && source_discard_result_type != TypeRef::VOID
           return_type = TypeRef::NIL
           func.return_type = TypeRef::NIL
         end
@@ -41475,10 +41476,10 @@ module Adamas::HIR
         block.terminator = Return.new(last_value)
       end
 
-      normalize_function_return_terminators(ctx, func.return_type)
+      normalize_function_return_terminators(ctx, func.return_type, source_discard_result_type)
 
       retain_function_enum_value_types(func.name)
-      publish_source_return_value_facts(ctx, node, module_declaration_arena)
+      publish_source_return_value_facts(ctx, node, module_declaration_arena, source_discard_result_type)
       @enum_value_types = old_enum_value_types
       @closure_ref_cells = saved_closure_ref_cells_mm
       @closure_ref_prefer_cell = saved_closure_ref_prefer_mm
@@ -51423,7 +51424,10 @@ module Adamas::HIR
       end
       ctx = LoweringContext.new(func, @module, def_arena)
       source_return_name = readable_explicit_return_type_name || explicit_return_type_for_registration(node, @arena)
-      source_discards_method_result = !!source_return_name.try { |name| source_return_annotation_discards_value?(name, class_name, extra_type_params) }
+      source_discard_result_type = source_return_name.try do |name|
+        source_return_annotation_discard_result_type?(name, class_name, extra_type_params)
+      end
+      source_discards_method_result = !source_discard_result_type.nil?
       if source_return_name == "self"
         # `self` in an enum method names the enum, while the function's
         # return type is the enum's base-integer carrier (its placeholder
@@ -51874,7 +51878,7 @@ module Adamas::HIR
         nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
         ctx.emit(nil_lit)
         last_value = nil_lit.id
-        if return_type == TypeRef::VOID
+        if return_type == TypeRef::VOID && source_discard_result_type != TypeRef::VOID
           return_type = TypeRef::NIL
           func.return_type = TypeRef::NIL
         end
@@ -51889,7 +51893,7 @@ module Adamas::HIR
         block.terminator = Return.new(last_value)
       end
 
-      normalize_function_return_terminators(ctx, return_type)
+      normalize_function_return_terminators(ctx, return_type, source_discard_result_type)
       stop_after_pending_target_lower_method_phase(
         "lower_method_returns_done",
         "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_RETURNS_DONE",
@@ -51950,7 +51954,7 @@ module Adamas::HIR
       @current_typeof_local_names = old_typeof_local_names
 
       retain_function_enum_value_types(func.name)
-      publish_source_return_value_facts(ctx, node, def_arena)
+      publish_source_return_value_facts(ctx, node, def_arena, source_discard_result_type)
       @enum_value_types = old_enum_value_types
       @closure_ref_cells = saved_closure_ref_cells_lm
       @closure_ref_prefer_cell = saved_closure_ref_prefer_lm
@@ -80803,9 +80807,16 @@ module Adamas::HIR
       ctx : LoweringContext,
       definition : Adamas::Compiler::Frontend::DefNode,
       declaration_arena : Adamas::Compiler::Frontend::ArenaLike,
+      discard_result_type : TypeRef? = nil,
     ) : Nil
       function = ctx.function
-      function.source_return_value_facts = proc_reachable_result_value_facts(ctx)
+      function.source_return_value_facts = if discard_result_type == TypeRef::VOID
+                                             [] of {TypeRef, Bool}
+                                           elsif discard_result_type == TypeRef::NIL
+                                             [{TypeRef::NIL, false}] of {TypeRef, Bool}
+                                           else
+                                             proc_reachable_result_value_facts(ctx)
+                                           end
       function.source_return_definition_id = definition.object_id.to_u64
       function.source_return_arena_key = arena_map_key(declaration_arena)
     end
@@ -85138,6 +85149,7 @@ module Adamas::HIR
       old_typeof_local_names = @current_typeof_local_names
       materializing_function = nil.as(Function?)
       explicit_discard_return = false
+      explicit_discard_result_type = nil.as(TypeRef?)
       begin
       if recovered = source_recovered_def_for(node, @arena)
         return lower_def(
@@ -85602,7 +85614,10 @@ module Adamas::HIR
           with_type_param_map(extra_type_params) do
             rt_string = safe_slice_to_string(rt) || ""
             resolved_return = lower_def_resolve_type_annotation(rt_string, node)
-            explicit_discard_return = source_return_annotation_discards_value?(rt_string, @current_class, extra_type_params)
+            explicit_discard_result_type = source_return_annotation_discard_result_type?(
+              rt_string, @current_class, extra_type_params,
+            )
+            explicit_discard_return = !explicit_discard_result_type.nil?
           end
           if resolved_return != TypeRef::VOID || return_type == TypeRef::VOID
             return_type = resolved_return
@@ -85801,7 +85816,7 @@ module Adamas::HIR
         block.terminator = Return.new(last_value)
       end
 
-      normalize_function_return_terminators(ctx, return_type)
+      normalize_function_return_terminators(ctx, return_type, explicit_discard_result_type)
 
       # Infer return type from last expression if not explicitly specified
       # This handles methods with implicit returns like `def root_buffer; @buffer - @offset; end`
@@ -85843,7 +85858,7 @@ module Adamas::HIR
         if definition.same?(node)
           if declaration_arena = @function_def_arenas[full_name]?
             if @module.has_function_with_body?(full_name)
-              publish_source_return_value_facts(ctx, node, declaration_arena)
+              publish_source_return_value_facts(ctx, node, declaration_arena, explicit_discard_result_type)
             end
           end
         end
@@ -108338,30 +108353,110 @@ module Adamas::HIR
       raise LoweringError.new("method #{ctx.function.name} must return #{get_type_name_from_ref(target_type)} but it is returning #{actual_name}")
     end
 
-    private def source_return_annotation_discards_value?(
+    # Resolve a source discard annotation to its exact ABI carrier. A :Nil
+    # method returns the Nil instance after discarding its body value. A :Void
+    # method has no ABI result, though Crystal gives its call expression Nil.
+    # Keep that distinction beside the shared predicate so callers cannot
+    # infer source result kind from an ABI carrier alone.
+    private def source_return_annotation_discard_result_type?(
       source_name : String,
       owner : String?,
       type_params : Hash(String, String),
-    ) : Bool
+    ) : TypeRef?
       with_type_param_map(type_params) do
         resolved_name = substitute_type_params_in_type_name(
           resolve_typeof_in_type_string(source_name).strip,
         ).strip
         contract = annotation_type_contract_fragment(resolved_name, owner)
         restriction = contract.restriction_name.lchop("::")
-        return true if restriction == "Void" || restriction == "Nil"
+        return TypeRef::VOID if restriction == "Void"
+        return TypeRef::NIL if restriction == "Nil"
 
         # Nullable substitution can canonicalize to Nil (`T?` with T bound to
         # Nil) even though its source restriction spelling remains `Nil?`.
         # Require the source-pattern proof as well as the canonical carrier so
         # Nil.class, unknown names, and non-Nil unions do not become discards.
-        return false unless contract.type_ref == TypeRef::NIL
+        return nil unless contract.type_ref == TypeRef::NIL
 
         pattern = build_source_block_result_pattern(
           resolved_name, owner, [] of String, @type_param_map,
         )
-        pattern.valid && !pattern.has_unbound_formal? &&
-          pattern.restriction_name.lchop("::") == "Nil"
+        if pattern.valid && !pattern.has_unbound_formal? &&
+           pattern.restriction_name.lchop("::") == "Nil"
+          TypeRef::NIL
+        end
+      end
+    end
+
+    private def source_return_annotation_discards_value?(
+      source_name : String,
+      owner : String?,
+      type_params : Hash(String, String),
+    ) : Bool
+      !source_return_annotation_discard_result_type?(source_name, owner, type_params).nil?
+    end
+
+    # Demand elision is valid only for the exact source declaration selected
+    # at this callsite. The declaration owner and every generic substitution
+    # are projected from its Def/Arena witness, never the ambient caller map.
+    private def exact_source_discard_result_type_for_call(
+      target_name : String,
+      selected_return_def : Adamas::Compiler::Frontend::DefNode?,
+      selected_call_def : Adamas::Compiler::Frontend::DefNode?,
+      selected_arena : Adamas::Compiler::Frontend::ArenaLike?,
+      selected_name : String?,
+      arg_types : Array(TypeRef),
+      source_binding : SourceCallBinding?,
+    ) : TypeRef?
+      return nil if target_name.empty?
+      return nil unless source_def = selected_return_def
+
+      source = force_lower_exact_source_binding(
+        target_name, source_def, selected_call_def, selected_arena, selected_name,
+      ) || return nil
+      owner = exact_source_declaration_owner(target_name, source) || return nil
+      source_name = source.source_registry_name || target_name
+      return_slice = source_def.return_type || return nil
+      return_name = safe_slice_to_string(return_slice) || return nil
+      return nil if return_name.strip.empty?
+
+      contract_bindings = type_param_map_for_generic_type_name(owner)
+      forall_names = forall_type_param_names(source_def)
+      return_formals = forall_names.select { |formal| contains_type_param_token?(return_name, formal) }
+      unless return_formals.empty?
+        binding = source_binding || return nil
+        return nil unless method_forall_positional_signature?(source_def)
+        return nil unless binding.selected_name == source_name &&
+                          source_call_binding_matches?(binding, source_def, source.source_arena)
+        actuals = source_call_binding_actual_arguments(binding)
+        return nil unless actuals.size == arg_types.size
+        actuals.each_with_index do |actual, index|
+          return nil unless actual && actual.not_nil!.type_ref == arg_types[index] &&
+                            actual.not_nil!.type_ref != TypeRef::VOID
+        end
+        forall_bindings = method_forall_call_bindings(
+          source_def,
+          arg_types,
+          owner,
+          source_binding: binding,
+          declaration_arena: source.source_arena,
+        )
+        return nil unless return_formals.all? { |formal| forall_bindings.has_key?(formal) }
+        forall_bindings.each { |formal, actual| contract_bindings[formal] = actual }
+      end
+
+      old_class = @current_class
+      @current_class = owner
+      begin
+        with_arena(source.source_arena) do
+          with_namespace_override_or_clear(owner) do
+            with_isolated_type_param_map(contract_bindings) do
+              source_return_annotation_discard_result_type?(return_name, owner, contract_bindings)
+            end
+          end
+        end
+      ensure
+        @current_class = old_class
       end
     end
 
@@ -108648,15 +108743,37 @@ module Adamas::HIR
       end
     end
 
-    private def normalize_function_return_terminators(ctx : LoweringContext, return_type : TypeRef) : Nil
+    private def normalize_function_return_terminators(
+      ctx : LoweringContext,
+      return_type : TypeRef,
+      discard_result_type : TypeRef? = nil,
+    ) : Nil
       saved_block = ctx.current_block
       @narrowed_body_returns.delete(ctx.function.name)
-      return if return_type == TypeRef::VOID
+      if return_type == TypeRef::VOID
+        if discard_result_type == TypeRef::VOID
+          # A :Void body keeps the ABI's void return, but its body expression
+          # is evaluated and discarded on every explicit and implicit exit.
+          ctx.function.blocks.each do |block|
+            block.terminator = Return.new(nil) if block.terminator.is_a?(Return)
+          end
+        end
+        return
+      end
       materialize_raw_proc_returns(ctx, return_type)
 
       ctx.function.blocks.each_with_index do |block, idx|
         ret = block.terminator.as?(Return)
         next unless ret
+        if discard_result_type == TypeRef::NIL
+          # A :Nil declaration discards each path's body value. This is
+          # stronger than ABI equality: Nil.class may share the Nil carrier,
+          # but the source result remains the Nil instance.
+          ctx.current_block = idx.to_u32
+          nil_id = nil_return_value_for(ctx, TypeRef::NIL) || return
+          block.terminator = Return.new(nil_id)
+          next
+        end
         value_id = ret.value
         unless value_id
           ctx.current_block = idx.to_u32
@@ -126972,13 +127089,37 @@ module Adamas::HIR
         contract && contract.self_source_def &&
           !@module.has_function_with_body?(target)
       end
+      # Exact :Nil/:Void annotations fix the source result contract even while
+      # the selected body is pending. Authenticate the selected Def/Arena and
+      # physical owner before eliding only that eager result demand.
+      exact_source_discard_result_type = if !call_virtual && !has_block_call && block_id.nil? &&
+                                             generated_allocator_call_target.nil? &&
+                                             !allocator_explicit_new_call && method_name != "new" &&
+                                             !noreturn_type?(return_type)
+                                          exact_source_discard_result_type_for_call(
+                                            mangled_method_name,
+                                            selected_return_def,
+                                            selected_call_entry_def,
+                                            selected_call_entry_arena,
+                                            selected_call_entry_name,
+                                            arg_types,
+                                            source_call_binding,
+                                          )
+                                        end
+      if discard_result_type = exact_source_discard_result_type
+        unless noreturn_type?(return_type)
+          return_type = discard_result_type
+          return_type_pinned = true
+        end
+      end
       force_return_type_needed = !!dependent_callback_return_pending ||
-                                 selected_source_result_pending?(mangled_method_name, selected_return_def) ||
                                  (allocator_explicit_new_call && !has_block_call) ||
-                                 return_type == TypeRef::VOID ||
-                                 is_union_type?(return_type) ||
-                                 unresolved_generic_return_type?(return_type) ||
-                                 !abstract_numeric_return_constraint_for_function(mangled_method_name).nil?
+                                 (exact_source_discard_result_type.nil? &&
+                                  (selected_source_result_pending?(mangled_method_name, selected_return_def) ||
+                                   return_type == TypeRef::VOID ||
+                                   is_union_type?(return_type) ||
+                                   unresolved_generic_return_type?(return_type) ||
+                                   !abstract_numeric_return_constraint_for_function(mangled_method_name).nil?))
       if force_return_type_needed && debug_env_filter_match?("DEBUG_CALL_LOOKUP", ctx.function.name, primary_mangled_name, mangled_method_name, base_method_name)
         selected_identity = if def_node = selected_return_def
                               selected_arena = selected_call_entry_name.try { |entry_name| @function_def_arenas[entry_name]? }
@@ -127035,7 +127176,7 @@ module Adamas::HIR
         rt_name = get_type_name_from_ref(return_type)
         STDERR.puts "[GET_CACHE_RT] 3. before_re-check return_type=#{rt_name} mangled=#{mangled_method_name}"
       end
-      if return_type == TypeRef::VOID
+      if return_type == TypeRef::VOID && exact_source_discard_result_type.nil?
         return_type = get_function_return_type(
           mangled_method_name,
           return_def_arg_count,
@@ -127056,7 +127197,7 @@ module Adamas::HIR
       # carrier can also represent a mixed instance/metaclass result. Inline
       # lowering suppresses the ordinary force pass before consumers see that
       # contract. Demand the exact selected source with the yield-free guard.
-      if !@module.has_function_with_body?(mangled_method_name)
+      if exact_source_discard_result_type.nil? && !@module.has_function_with_body?(mangled_method_name)
         if source = force_lower_exact_source_binding(
              mangled_method_name, selected_return_def,
              selected_call_entry_def, selected_call_entry_arena,
@@ -127086,7 +127227,7 @@ module Adamas::HIR
 
       # If return type is still VOID, the function may have been deferred due to inside_lowering?.
       # Force-lower it now to get the correct return type.
-      if return_type == TypeRef::VOID
+      if return_type == TypeRef::VOID && exact_source_discard_result_type.nil?
         force_lowered = false
         debug_force = env_get("DEBUG_FORCE_LOWER") && method_name == "get_cache"
         if debug_force
@@ -127177,7 +127318,7 @@ module Adamas::HIR
         selected_call_entry_name,
       )
 
-      if unresolved_generic_return_type?(return_type)
+      if unresolved_generic_return_type?(return_type) && exact_source_discard_result_type.nil?
         [primary_mangled_name, mangled_method_name, base_method_name].uniq.each do |name|
           next if name.empty?
           next if (unselected_family_body || exact_return_target_authoritative || base_return_def_foreign) && name == base_method_name
@@ -127221,7 +127362,7 @@ module Adamas::HIR
         end
       end
 
-      if name_pointer_fallback_deferred && return_type == TypeRef::VOID
+      if name_pointer_fallback_deferred && return_type == TypeRef::VOID && exact_source_discard_result_type.nil?
         return_type = TypeRef::POINTER
       end
 
@@ -127315,7 +127456,7 @@ module Adamas::HIR
         end
       end
 
-      if receiver_id
+      if exact_source_discard_result_type.nil? && receiver_id
         return_type = specialize_type_with_receiver_map(return_type, ctx.type_of(receiver_id))
       end
 
@@ -128002,7 +128143,8 @@ module Adamas::HIR
       # even when the callee body was not lowered far enough to publish it.
       # Freezing these calls as VOID corrupts later field/getter dispatch
       # (for example Array(TypeInfoEntry)#unsafe_fetch -> UInt64#type_id).
-      if receiver_id && (return_type == TypeRef::VOID || return_type == TypeRef::NIL)
+      if exact_source_discard_result_type.nil? && receiver_id &&
+         (return_type == TypeRef::VOID || return_type == TypeRef::NIL)
         if inferred = infer_unannotated_search_return_type(method_name, ctx.type_of(receiver_id))
           return_type = inferred unless inferred == TypeRef::VOID || inferred == TypeRef::NIL
         end
@@ -128014,7 +128156,7 @@ module Adamas::HIR
       # a proven builtin receiver.  This keeps the fallback fail-closed for
       # user-defined `Foo#to_i?` methods and preserves the question-mark union
       # returned by conversion_method_return_type.
-      if return_type == TypeRef::VOID && receiver_id
+      if exact_source_discard_result_type.nil? && return_type == TypeRef::VOID && receiver_id
         receiver_type = ctx.type_of(receiver_id)
         builtin_conversion_receiver = receiver_type == TypeRef::STRING ||
                                       receiver_type == TypeRef::CHAR ||
@@ -128080,7 +128222,7 @@ module Adamas::HIR
       # owner generic before a method-level forall. Restore the exact selected
       # included method's result only at emission, after every such fallback,
       # and only while the final symbol and DefNode still match the call map.
-      if receiver_id && !call_virtual && !ctx.type_literal?(receiver_id) && !has_block_call && block_id.nil? &&
+      if exact_source_discard_result_type.nil? && receiver_id && !call_virtual && !ctx.type_literal?(receiver_id) && !has_block_call && block_id.nil? &&
          !has_splat && !has_named_args && emit_method_name == mangled_method_name
         if selected_def = selected_call_entry_def
           if emitted_def = @function_defs[emit_method_name]?
@@ -128163,7 +128305,7 @@ module Adamas::HIR
       # application here as well, after shared function-return caches have had
       # their last chance to overwrite the concrete result. The origin must
       # still agree with the resolver selection and the final emitted target.
-      if receiver_id && node.args.empty? && node.named_args.nil? &&
+      if exact_source_discard_result_type.nil? && receiver_id && node.args.empty? && node.named_args.nil? &&
          !ctx.type_literal?(receiver_id) && !has_block_call && block_id.nil? &&
          !has_splat && !splat_packed && !has_named_args && !call_virtual &&
          emit_method_name == mangled_method_name
@@ -128287,6 +128429,14 @@ module Adamas::HIR
         end
       end
       write_back_block_proc_captures(ctx, uncoerced_args)
+      result_id = if exact_source_discard_result_type == TypeRef::VOID && !call.virtual &&
+                     !control_flow_dead_block?(ctx, ctx.current_block)
+                    # Crystal's source expression for an effectful :Void call is
+                    # Nil, even though its emitted HIR Call retains a void ABI.
+                    nil_value(ctx)
+                  else
+                    call.id
+                  end
       # Keep the selected target's bottom effect separate from VOID, which
       # also represents an unresolved ABI. A virtual call needs every target.
       unless call_virtual || generated_allocator_call_target
@@ -128301,7 +128451,16 @@ module Adamas::HIR
         # object returned there cannot turn the allocated instance into a
         # type literal at the caller.
         ctx.register_source_value_facts(call.id, [{return_type, false}])
-      elsif !call.virtual && register_materialized_source_return_value_facts(ctx, call.id, call.method_name)
+      elsif !call.virtual && control_flow_dead_block?(ctx, ctx.current_block) &&
+            (exact_source_discard_result_type == TypeRef::NIL ||
+             exact_source_discard_result_type == TypeRef::VOID)
+        ctx.register_source_value_facts(call.id, [] of {TypeRef, Bool})
+      elsif !call.virtual && call.method_name == mangled_method_name &&
+            (exact_source_discard_result_type == TypeRef::NIL ||
+             exact_source_discard_result_type == TypeRef::VOID)
+        # The exact selected source declaration proves a Nil expression.
+        ctx.register_source_value_facts(result_id, [{TypeRef::NIL, false}])
+      elsif !call.virtual && register_materialized_source_return_value_facts(ctx, result_id, call.method_name)
         # The emitted call owns the actual dispatch mode and target. A module
         # owner can leave the provisional classifier virtual even though its
         # receiverless call is direct. True virtual calls need a family join.
@@ -128349,7 +128508,7 @@ module Adamas::HIR
       if source_return_flow_trace_match?(lookup_name, base_method_name, mangled_method_name, emit_method_name)
         location = source_location_for_node(call_arena, node).try(&.to_s) || "unknown"
         arg_text = arg_types.map { |type| get_type_name_from_ref(type) }.join(",")
-        facts = source_block_result_value_facts(ctx, call.id).map { |(type, literal)| proc_source_type_name(type, literal) }.join("|")
+        facts = source_block_result_value_facts(ctx, result_id).map { |(type, literal)| proc_source_type_name(type, literal) }.join("|")
         source_args = call_resolution_source_argument_facts(ctx, args, arg_types)
         source_arg_text = source_args.try { |items| items.map { |item| item.try { |actual| proc_source_type_name(actual) } || "unknown" }.join(",") } || "nil"
         STDERR.puts "[SOURCE_RETURN_FLOW] stage=call_result lookup=#{lookup_name} base=#{base_method_name} mangled=#{mangled_method_name} emit=#{emit_method_name} selected=#{selected_call_entry_name || "-"} def=#{selected_call_entry_def.try(&.object_id) || "-"} arena=#{selected_call_entry_arena.try(&.object_id) || "-"} caller=#{ctx.function.name} args=#{arg_text} source_args=#{source_arg_text} abi_return=#{get_type_name_from_ref(return_type)} type_literal=#{ctx.type_literal?(call.id)} facts=#{facts} location=#{location}"
@@ -128361,7 +128520,7 @@ module Adamas::HIR
         mangled_method_name,
         "[CALL_TRACE] stage=after_emit method=#{method_name} mangled=#{mangled_method_name} recv_type=#{receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "nil"} virtual=#{call_virtual}",
       )
-      call.id
+      result_id
     end
 
     # Materialize every target needed by an already-classified virtual call.
@@ -148440,7 +148599,19 @@ module Adamas::HIR
                       mangled_name
                     end
       selected_return_def = @function_defs[actual_name]?
-      if selected_return_def.nil? && args.empty? && member_name != "new"
+      selected_static_source_entry = source_default_entry_out.first?
+      if selected_static_source_entry.nil? && member_name != "new"
+        if selected = lookup_function_def_for_call(
+             full_method_name, args.size, false, arg_types, false, false,
+           )
+          selected_name, selected_def = selected
+          selected_arena = @function_def_arenas[selected_name]? || registered_arena_for_def(selected_def) || @arena
+          selected_static_source_entry = {selected_name, selected_def, selected_arena}
+        end
+      end
+      if static_source_entry = selected_static_source_entry
+        selected_return_def = static_source_entry[1]
+      elsif selected_return_def.nil? && args.empty? && member_name != "new"
         selected_return_def = lookup_function_def_for_call(full_method_name, 0, false, arg_types).try(&.[1])
       end
       return_type = get_function_return_type(actual_name, args.size, selected_return_def)
@@ -148472,14 +148643,35 @@ module Adamas::HIR
       if actual_name != mangled_name
         lower_function_if_needed(actual_name)
       end
+      exact_source_discard_result_type = if member_name != "new" && generated_allocator_target.nil? &&
+                                             abstract_numeric_return_constraint_for_function(actual_name).nil? &&
+                                             !noreturn_type?(return_type)
+                                          selected_static_source_entry.try do |entry|
+                                            selected_name, selected_def, selected_arena = entry
+                                            exact_source_discard_result_type_for_call(
+                                              actual_name,
+                                              selected_def,
+                                              selected_def,
+                                              selected_arena,
+                                              selected_name,
+                                              arg_types,
+                                              nil,
+                                            )
+                                          end
+                                        end
+      if discard_result_type = exact_source_discard_result_type
+        return_type = discard_result_type
+      end
       refused_before_force = @force_lower_depth_refused.size
-      if return_type == TypeRef::VOID && selected_source_result_pending?(actual_name, selected_return_def)
+      if exact_source_discard_result_type.nil? && return_type == TypeRef::VOID && selected_source_result_pending?(actual_name, selected_return_def)
         force_lower_function_for_return_type(actual_name, bypass_inline_yield: true, pending_call_target_context: "static_member_access_exact")
-      elsif source_new_entry || !abstract_numeric_return_constraint_for_function(actual_name).nil?
+      elsif exact_source_discard_result_type.nil? &&
+            (source_new_entry || !abstract_numeric_return_constraint_for_function(actual_name).nil?)
         force_pending_call_targets_for_return_type(actual_name, mangled_name, full_method_name, context: "static_member_access")
       end
       record_force_lower_result_dependency(ctx, actual_name, selected_return_def, refused_before_force)
-      if return_type == TypeRef::VOID || source_new_entry || !abstract_numeric_return_constraint_for_function(actual_name).nil?
+      if exact_source_discard_result_type.nil? &&
+         (return_type == TypeRef::VOID || source_new_entry || !abstract_numeric_return_constraint_for_function(actual_name).nil?)
         refreshed = get_function_return_type(actual_name, args.size, selected_return_def)
         return_type = refreshed unless refreshed == TypeRef::VOID
       end
@@ -148488,13 +148680,26 @@ module Adamas::HIR
       call = Call.without_receiver(ctx.next_id, return_type, actual_name, args)
       ctx.emit(call)
       ctx.register_type(call.id, return_type)
-      if register_materialized_source_return_value_facts(ctx, call.id, actual_name)
+      result_id = if exact_source_discard_result_type == TypeRef::VOID &&
+                     !control_flow_dead_block?(ctx, ctx.current_block)
+                    nil_value(ctx)
+                  else
+                    call.id
+                  end
+      if control_flow_dead_block?(ctx, ctx.current_block) &&
+         (exact_source_discard_result_type == TypeRef::NIL ||
+          exact_source_discard_result_type == TypeRef::VOID)
+        ctx.register_source_value_facts(call.id, [] of {TypeRef, Bool})
+      elsif exact_source_discard_result_type == TypeRef::NIL ||
+            exact_source_discard_result_type == TypeRef::VOID
+        ctx.register_source_value_facts(result_id, [{TypeRef::NIL, false}])
+      elsif register_materialized_source_return_value_facts(ctx, result_id, actual_name)
         # Exact completed body facts own this direct call's value kind.
       elsif function_returns_type_literal?(actual_name, full_method_name)
-        ctx.mark_type_literal(call.id)
+        ctx.mark_type_literal(result_id)
       end
       track_enum_return_value(call.id, actual_name, return_type)
-      call.id
+      result_id
     end
 
     private def lower_multiple_assign(ctx : LoweringContext, node : Adamas::Compiler::Frontend::MultipleAssignNode) : ValueId

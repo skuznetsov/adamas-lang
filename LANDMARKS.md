@@ -26962,3 +26962,40 @@ Exception#inspect_with_backtrace$IO in Crystal.exit (35q5217); the explicit :Nil
 result-discard contract is a separate owner obligation. This patch does not
 certify full prelude, fresh bootstrap or unchanged LavinMQ link/runtime/upstream
 parity. Do not turn a front-end frontier advance into a runtime success claim.
+
+
+## 2026-11-07 — Exact source Nil/Void results own value discarding
+
+The source definition's discard annotation owns its result independently of
+the body's last value and the emitted call's ABI. Previously :Nil/:Void bodies
+could publish Nil.class or an incidental body value, and repeated inference
+could overwrite the discard carrier. Normalize every return after body effects,
+publish source Nil, and retain the valueless Void call ABI. Direct demand
+elision requires the exact selected Def/Arena, declaration owner and call-local
+forall proof. It does not grant a virtual family the base annotation.
+
+Scoped verdict: ROBUST for the original-first eleven-case regression packet
+(35q5265, nine native positives and two diagnostic-specific negatives), all
+60 source-kind HIR controls (35q5267), and the strict Proc29 packet (35q5268,
+ten native positives and nineteen semantic negatives) on Crystal 1.22.1 and
+S1 35q5246. Early/implicit returns, side-effect order, Nil aliases, nullable
+forall, bare/module/instance paths, actual Nil.class rejection and all-terminal
+control flow are covered. All compiler/native runs used run_safe.sh.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+build.source-discard35q5246.{result,source}.json,
+source-return-discard-shipping-gate35q5265/{result.json,gate.log,source.json},
+discard-source-contract-guards35q5267/{result.json,spec.log,source.json},
+discard-proc-contract-guards35q5268/{result.json,gate.log}, and
+source-return-discard-shipped35q5270.json.
+Source manifest SHA-256: 347e1143e4e2f339ef4fda495ada28ef96f7408c998fd6b431359df666159208.
+S1 SHA-256: 0e50c2a85de99240b436e914b66c804a52b0f921441547e86d9f4046690fec64.
+Shipped source/test manifest SHA-256: d18b64644a3b0568cf0c33d3aaeada9f1f5ca9dcc12d9179ad21dab269353b5d.
+Refresh after source result publication, return normalization, exact call
+binding or Nil/Void ABI inference changes. Rollback is this atomic commit.
+Unrelated WIP remains excluded. No stdlib/application changes.
+
+Stock-prelude hello still refuses pending virtual
+Exception#inspect_with_backtrace$IO (35q5250); it needs the actual target-family
+contract. Full prelude, fresh bootstrap and unchanged LavinMQ object/link/server/
+upstream parity remain open. The direct discard packet does not close them.

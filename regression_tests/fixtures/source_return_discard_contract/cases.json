@@ -1,0 +1,68 @@
+[
+  {
+    "name": "accept_nil_discard_class",
+    "source": "accept_nil_discard_class.cr",
+    "ok": true,
+    "expected": "AAA\n"
+  },
+  {
+    "name": "reject_nil_class_value",
+    "source": "reject_nil_class_value.cr",
+    "ok": false,
+    "expected": ""
+  },
+  {
+    "name": "accept_void_discard",
+    "source": "accept_void_discard.cr",
+    "ok": true,
+    "expected": "VA\n"
+  },
+  {
+    "name": "reject_non_nil_return",
+    "source": "reject_non_nil_return.cr",
+    "ok": false,
+    "expected": ""
+  },
+  {
+    "name": "accept_nil_branch_order_instance",
+    "source": "accept_nil_branch_order_instance.cr",
+    "ok": true,
+    "expected": "IMBM\n"
+  },
+  {
+    "name": "accept_void_branch_order_module",
+    "source": "accept_void_branch_order_module.cr",
+    "ok": true,
+    "expected": "VAWA\n"
+  },
+  {
+    "name": "accept_nil_alias_static_routes",
+    "source": "accept_nil_alias_static_routes.cr",
+    "ok": true,
+    "expected": "LALA\n"
+  },
+  {
+    "name": "accept_nil_forall_nullable",
+    "source": "accept_nil_forall_nullable.cr",
+    "ok": true,
+    "expected": "FA\n"
+  },
+  {
+    "name": "accept_bare_self_nil_result",
+    "source": "accept_bare_self_nil_result.cr",
+    "ok": true,
+    "expected": "IA\n"
+  },
+  {
+    "name": "accept_top_level_bare_nil_result",
+    "source": "accept_top_level_bare_nil_result.cr",
+    "ok": true,
+    "expected": "TA\n"
+  },
+  {
+    "name": "accept_terminal_nil_annotation",
+    "source": "accept_terminal_nil_annotation.cr",
+    "ok": true,
+    "expected": ""
+  }
+]

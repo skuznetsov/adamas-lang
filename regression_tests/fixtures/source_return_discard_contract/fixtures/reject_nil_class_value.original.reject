@@ -1,0 +1,1 @@
+no overload matches 'Proc(Nil, Int32)#call' with type Nil.class

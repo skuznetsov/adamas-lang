@@ -1,0 +1,1 @@
+method bad_return must return Int32, but it is returning String

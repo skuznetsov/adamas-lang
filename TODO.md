@@ -26823,3 +26823,24 @@ integration, fresh bootstrap, or LavinMQ parity.
   :Nil discard result. Its pending source-result ownership remains open.
 - No stdlib/application or type restriction edits. Full prelude, bootstrap and
   unchanged LavinMQ object/link/server/upstream parity are not established.
+
+
+### 2026-11-07 — Normalize exact Nil/Void discard result contracts
+
+- [x] Normalize explicit and implicit exits of :Nil/:Void source definitions
+  after evaluating body effects. Publish the Nil instance as the source result;
+  retain the valueless Void ABI and distinguish genuine Nil.class values.
+- [x] Authenticate selected Def/Arena, physical owner and call-local generic
+  bindings before eliding a direct call result-body demand. Later ABI inference
+  cannot replace that exact discard contract. Virtual targets remain separate.
+- Original-first source_return_discard_contract_repro.sh passes all 11 cases
+  on Crystal 1.22.1 and S1 35q5246 (35q5265): nine native positives, two precise
+  semantic negatives. Covers body side effects, early returns, aliases, forall
+  specialization, bare/module/instance calls and all-terminal control flow.
+  Source-kind HIR controls pass 60/60 (35q5267), and the strict Proc29 gate
+  passes ten native positives and nineteen diagnostic-specific negatives
+  (35q5268).
+- [ ] Qualify the virtual discard family from its actual targets. Stock-prelude
+  hello still stops at pending Exception#inspect_with_backtrace$IO (35q5250);
+  the direct-call repair does not certify overrides or full prelude. Unchanged
+  LavinMQ object/link/server/upstream parity and fresh bootstrap remain open.
