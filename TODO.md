@@ -26861,9 +26861,10 @@ integration, fresh bootstrap, or LavinMQ parity.
   ten newly shipped replay/annotation controls (35q5324). Both genuine Atomic
   gates pass (13 cases, 35q5325/5326). Force-depth limits and source restrictions
   remain strict; no stdlib/application edits.
-- [ ] Settle StaticArray(UInt8, 20)#to_slice replay. Unchanged LavinMQ reaches
-  this pending result inside Crystal::System.print_error$String_Tuple(UInt64)
-  on the exact final S1 (35q5329). Its known ABI does not discharge dependencies.
+- [x] Settle StaticArray(UInt8, 20)#to_slice replay. Unchanged LavinMQ formerly
+  stopped here inside Crystal::System.print_error$String_Tuple(UInt64)
+  (35q5329); retaining the real nilary callshape passes this chain (35q5349).
+  Its known ABI still cannot discharge body dependencies by itself.
 - [ ] Carry exact intrinsic permission from HIR to MIR. Two ordinary unannotated
   Atomic::Ops.load/cmpxchg programs print B on stock (35q5327) and A on this S1
   (35q5328). Genuine Atomic positives alone do not prove sibling isolation.
@@ -26873,3 +26874,23 @@ integration, fresh bootstrap, or LavinMQ parity.
 - Full prelude, fresh bootstrap, unchanged LavinMQ linking/runtime and upstream
   test parity remain open. The new SDD intrinsic boundary is design-sealed;
   current MIR behavior is explicitly measured-red.
+
+
+### 2026-11-07 — Retain the actual nilary member callshape before body demand
+
+- [x] Publish an empty source callshape for a real bare member call before
+  result inference can suspend its annotated body. Keep the selected Def/Arena,
+  generic owner and depth limit; missing replay data must still fail closed.
+- The focused baseline fails only the missing replay receipt; explicit
+  parentheses, both refused child dependencies, the same-owner required-arg
+  sibling and stale Def/Arena controls pass (35q5361). The five-line repair
+  passes all three focused HIR controls (35q5362), 82 existing HIR guards
+  (35q5350), and all nine original-first source-body cases, lazy/eager (35q5344).
+- Unchanged LavinMQ passes the StaticArray#to_slice dependency chain on exact
+  S1 35q5341 and next refuses Object#hash's source result (35q5349). Prelude
+  hello separately rejects a String#hash replay owner change (35q5342).
+- [ ] Authenticate hash-family materialization with its original selected
+  source and callshape. Do not turn missing callsite evidence into nilary
+  permission or bypass the exact source guard.
+- No stdlib/application or type restriction changes. Full prelude, fresh
+  bootstrap, unchanged LavinMQ object/link/server and upstream parity stay open.

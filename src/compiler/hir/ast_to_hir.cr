@@ -147144,6 +147144,11 @@ module Adamas::HIR
           actual_name, default_source[0], default_source[1], default_source[2], node,
         )
         remember_callsite_arg_types(actual_name, arg_types, has_named_args: defaulted_has_named_args)
+      elsif args.empty? && @function_defs.has_key?(actual_name) && @function_def_arenas.has_key?(actual_name)
+        # An actual nilary member call still owns an empty source callshape.
+        # Publish it before result inference can force or suspend the target;
+        # Def/Arena alone cannot replay an annotated provisional body.
+        remember_callsite_arg_types(actual_name, arg_types)
       end
       if proc_owner = receiver_proc_owner
         if selected_target = selected_proc_member_target

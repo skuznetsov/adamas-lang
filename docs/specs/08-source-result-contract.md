@@ -1,9 +1,11 @@
 # Source Result Ownership — Frontier SDD
 
-Status: IN_PROGRESS, 2026-11-07. Exact-source S1 35q5321 passes the nine-case
-source-body demand packet, 82 HIR controls and 13 genuine Atomic controls.
-Stock-prelude/LavinMQ compilation still refuses pending StaticArray#to_slice
-(35q5329). Ordinary Atomic::Ops siblings are incorrectly substituted in MIR
+Status: IN_PROGRESS, 2026-11-07. Exact-source S1 35q5341 passes the nine-case
+source-body demand packet and 85 HIR controls, including the nilary replay
+falsifier and strict arity/Def/Arena controls (35q5344/5350/5362).
+Stock-prelude/LavinMQ compilation passes StaticArray#to_slice replay, then
+refuses source ownership in the hash family (35q5342/5349).
+Ordinary Atomic::Ops siblings are incorrectly substituted in MIR
 (35q5327/5328): the intrinsic phase boundary below is measured-red.
 Fresh bootstrap and unchanged LavinMQ execution/upstream parity remain open.
 The selected-default contract passes 37 main cases and ten block-slot cases
@@ -40,6 +42,15 @@ kind, including an annotated producer with a known ABI. Replay retains the
 same definition, arena, call shape, and source arguments. A completed generic
 family restriction may settle through its validated concrete result facts;
 an unresolved method formal cannot use that route.
+
+A real nilary member call owns an explicit empty source callshape. Publish it
+before result inference can force, depth-refuse or suspend the selected body.
+Def/Arena identity alone cannot reconstruct that replay recipe. Empty actuals
+do not authorize a required-argument sibling, and a missing callshape is not
+evidence of an empty call. Parenthesized and bare nilary syntax retain the same
+source contract. `nilary_source_retry_recipe_repro.sh` checks the actual retry
+receipt after both annotated child dependencies are refused; it also rejects
+stale Def/Arena ownership and keeps explicit-parentheses/strict-arity controls.
 
 ## Exact primitive source ownership
 

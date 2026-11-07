@@ -27043,3 +27043,40 @@ independent MIR permission defect: ordinary unannotated Atomic::Ops.load and
 cmpxchg bodies print B on stock (35q5327), A on S1 (35q5328). The SDD pins exact
 source permission transport before implementation; passing genuine Atomic tests
 cannot close that measured-red sibling counterfactual.
+
+
+## 2026-11-07 — A real nilary member needs an explicit replay callshape
+
+StaticArray#to_slice retained its exact Def/Arena after both annotated child
+dependencies were refused, but bare member lowering had never published the
+actual empty source callsite. The retry therefore correctly declined an
+annotated provisional body with no replay recipe. Record that real callshape
+before result inference; retain the existing source/arena and depth guards.
+
+Scoped verdict: ROBUST for this replay ownership boundary. The baseline
+35q5361 fails only the absent bare-member recipe, while explicit parentheses,
+both refused dependencies, a same-owner required-argument sibling, strict
+arity lookup, and stale Def/Arena rejection pass. The exact five-line repair
+passes all three focused checks (35q5362), all 82 previous HIR guards
+(35q5350), and nine original-first source-body cases in lazy/eager modes
+(35q5344). Compiler and native executions used run_safe.sh.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+build.nilary-member-callshape35q5341.{result,source}.json,
+nilary-replay-baseline35q5361/{result.json,spec.log,source.json},
+nilary-replay-candidate35q5362/{result.json,spec.log,source.json},
+nilary-member-guards35q5350/{result.json,spec.log,source.json},
+nilary-member-source-body35q5344/{result.json,gate.log,source.json}, and
+lavinmq-nilary-member-callshape35q5349/{result.json,compile.log}.
+S1 SHA-256: e5dd4b785f936eaa8cec9dcac069d55318549836ce3e30d6549e8cd4a0e5a7a6.
+Compiler source manifest SHA-256:
+82d8f71872109dfdcd0dd8081bea287eae587c451ec41101011808e603d02b7c.
+Refresh after member selection, callsite publication or exact replay changes.
+Rollback is this atomic commit. No stdlib/application or restriction changes;
+unrelated user WIP is excluded.
+
+Unchanged LavinMQ now passes StaticArray#to_slice and stops in Object#hash
+(35q5349); prelude hello stops at a different-source String#hash replay
+(35q5342). This is frontier advancement, not full prelude, object, runtime,
+fresh bootstrap or upstream parity closure. MIR Atomic permission remains a
+separate measured-red boundary until its exact call transport is qualified.
