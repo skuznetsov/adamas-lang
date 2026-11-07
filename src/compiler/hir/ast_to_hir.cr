@@ -4026,6 +4026,38 @@ module Adamas::HIR
       @class_info.has_key?(requested_owner)
     end
 
+    # A concrete value receiver has no runtime type-id dispatch. If an exact
+    # Object nilary wrapper delegates through `self`, materialize that body
+    # under the concrete value owner so its inner lookup keeps the receiver's
+    # static type. The selected Object Def/Arena remains the lexical source;
+    # the inherited-source receipt validates the physical alias before use.
+    private def preserve_requested_value_self_redispatch_wrapper_owner?(
+      requested_name : String,
+      resolved_name : String,
+      resolved_def : Adamas::Compiler::Frontend::DefNode,
+      resolved_arena : Adamas::Compiler::Frontend::ArenaLike,
+      receiver_type : TypeRef,
+    ) : Bool
+      requested_parts = parse_method_name(requested_name)
+      resolved_parts = parse_method_name(resolved_name)
+      return false unless requested_parts.is_instance && resolved_parts.is_instance
+      return false unless requested_parts.suffix.nil? && resolved_parts.suffix.nil?
+      return false unless resolved_parts.owner == "Object"
+      return false unless requested_parts.method == resolved_parts.method
+
+      requested_owner = requested_parts.owner
+      return false if requested_owner.empty?
+      return false unless normalize_method_owner_name(get_type_name_from_ref(receiver_type)) == requested_owner
+      return false unless inherited_value_dispatch_needs_origin?(requested_owner)
+      return false unless @function_defs[resolved_name]?.try(&.same?(resolved_def)) == true &&
+                          @function_def_arenas[resolved_name]?.try(&.same?(resolved_arena)) == true
+      return false unless object_wrapper_source_redispatches_through_self?(resolved_name, resolved_def)
+
+      !inherited_nilary_member_source_binding_for_target(
+        requested_name, resolved_name, resolved_def, resolved_arena, 0, false, false,
+      ).nil?
+    end
+
     private def object_wrapper_source_redispatches_through_self?(
       resolved_name : String,
       resolved_def : Adamas::Compiler::Frontend::DefNode,
@@ -147932,6 +147964,27 @@ module Adamas::HIR
           actual_name = primitive_target
           base_method_name = strip_type_suffix(primitive_target)
           resolved_method_name = base_method_name
+        end
+      end
+      # Preserve a self-redispatching Object wrapper on a concrete value only
+      # after numeric-template re-owning has finished. This path carries the
+      # selected Object source via inherited_nilary_member_source_binding; it
+      # must not acquire Int/Float primitive-template authority.
+      if args.empty? && !receiver_is_module_type && !ctx.type_literal?(object_id)
+        if source_name = selected_member_registry_name
+          if source_def = selected_member_def
+            if source_arena = selected_member_arena
+              concrete_owner = receiver_proc_owner || normalize_method_owner_name(get_type_name_from_ref(receiver_type))
+              value_wrapper_target = "#{concrete_owner}##{member_name}"
+              if preserve_requested_value_self_redispatch_wrapper_owner?(
+                   value_wrapper_target, source_name, source_def, source_arena, receiver_type,
+                 )
+                actual_name = value_wrapper_target
+                base_method_name = value_wrapper_target
+                resolved_method_name = value_wrapper_target
+              end
+            end
+          end
         end
       end
       # Return inference below can force-lower `actual_name`. Publish the exact

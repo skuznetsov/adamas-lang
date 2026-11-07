@@ -955,3 +955,23 @@ modes. instance_fixed_arity_admission_spec.cr retains default/rest/named-only
 and self-redispatch controls; inherited and primitive-source suites protect
 adjacent provenance boundaries. Refresh after method indexing, source selection,
 callshape or registration changes. Rollback is the atomic arity-guard commit.
+
+
+### Concrete value self in an inherited redispatching wrapper
+
+An ordinary nilary Object wrapper that calls another overload through self
+retains its concrete value receiver as the physical body owner. Its selected
+Object Def/Arena remains the lexical source owner. Re-owning the body to Object
+would erase the concrete receiver before its internal overload is selected.
+
+Admit only an exact inherited nilary source receipt, the current Object source,
+and a concrete value receiver whose wrapper redispatches through self. Keep
+primitive-template authorization separate; an inherited ordinary wrapper is
+not a numeric primitive. Changed source/owner or nonmatching call shapes retain
+the existing guards.
+
+Gate: value_self_wrapper_source_repro.sh COMPILER compares stock/lazy/eager
+native output and extra-argument rejection; value_self_wrapper_source_contract_spec.cr
+checks physical owner and exact source identity. Refresh after inherited source
+selection, numeric owner rewriting, self-call lowering or replay changes.
+Rollback is the atomic concrete-value wrapper commit.

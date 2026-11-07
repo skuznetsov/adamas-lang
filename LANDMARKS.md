@@ -27376,3 +27376,29 @@ d2b1e90c59bc219b9615df9d2215744271741357b2b37a03757531f334306991.
 Refresh after source registration, method indexing, receiver/callshape or
 selection changes. Rollback is the atomic guard commit. Full prelude,
 bootstrap and LavinMQ runtime/upstream parity remain open.
+
+
+## 2026-11-07 — Inherited Object self redispatch keeps the concrete value owner
+
+An inherited nilary Object wrapper lost its UInt64 physical self when numeric
+owner rewriting selected Object. Its internal self call could then demand the
+abstract Object#hash body. Preserve the concrete value owner only for the exact
+ordinary inherited source receipt whose Object body redispatches through self;
+retain the selected lexical Def/Arena and do not grant primitive authority.
+
+Scoped adversary verdict: ROBUST for this inherited ordinary value-wrapper
+corridor. Exact-source S1 35q5669 passes six native stock/lazy/eager controls
+(35q5672), including extra-argument rejection. All 63 focused HIR controls pass
+(35q5673). Unchanged LavinMQ HIR compilation passes the former Object#hash
+frontier and next stops at pending Hash(Void, Void)#update_linear_scan result
+(35q5674, input manifest unchanged). No object/link/runtime parity follows.
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+value-self-arity-native35q5672/ and its qualification JSON,
+value-self-arity-neighbors35q5673/, lavinmq-value-self-arity35q5674/ and
+build.value-self-arity-current35q5669.{source,result}.json.
+S1 SHA-256: 3eb0a58a7244e19dcf70d0b89474a9eedef6046c26e633f683eaad4d71804583.
+Compiler source manifest SHA-256:
+00f3be937afce8e2f9f3f6c8e5275db14c4e7d98b2696c2dfcd71fad746bc9f6.
+Refresh after inherited selection, numeric owner rewriting, self-call lowering,
+source registration or replay changes. Rollback is the atomic wrapper commit.
+Full prelude, fresh bootstrap and LavinMQ runtime/upstream parity remain open.

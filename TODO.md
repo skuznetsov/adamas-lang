@@ -27066,3 +27066,19 @@ integration, fresh bootstrap, or LavinMQ parity.
   guard does not certify general overload resolution.
 - Full prelude, bootstrap and unchanged LavinMQ runtime/upstream parity remain
   open. No stdlib/application edits.
+
+
+### 2026-11-07 — Keep concrete value self through an inherited Object wrapper
+
+- [x] Preserve the physical concrete value owner of an exact inherited nilary
+  Object wrapper that redispatches through self. Retain its lexical Def/Arena
+  and keep primitive authorization separate.
+- [x] Exact-source S1 35q5669 passes six stock/lazy/eager native controls
+  (35q5672). All 63 adjacent HIR controls pass (35q5673), including strict arity
+  rejection. No stdlib or application edits.
+- [x] Unchanged LavinMQ HIR compilation passes the former UInt64/Object#hash
+  demand and reaches Hash(Void, Void)#update_linear_scan pending result
+  (35q5674; inputs unchanged).
+- [ ] Resolve that Hash specialization/result owner before object/link/server
+  and upstream test comparison. HIR progress does not certify those stages;
+  full prelude and fresh bootstrap also remain open.
