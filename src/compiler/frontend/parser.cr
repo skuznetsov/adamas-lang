@@ -1715,6 +1715,14 @@ module Adamas
             token = current_token
             stop_reason = nil.as(String?)
 
+            if token.kind == Token::Kind::Typeof
+              atom = parse_typeof_annotation
+              return Slice(UInt8).empty unless atom
+              buffer.write(atom)
+              last_type_token = previous_token
+              next
+            end
+
             # Stop conditions when not nested in type delimiters
             if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0
               if token.kind == Token::Kind::Newline
@@ -5286,71 +5294,69 @@ module Adamas
           end
         end
 
-        # Phase 40: Parse typeof (type introspection)
-        # Grammar: typeof(expr) | typeof(expr1, expr2, ...)
+        # typeof owns a nonempty list of ordinary expressions in every type
+        # context. Keep its grammar here instead of scanning type-token lists.
         private def parse_typeof : ExprId
           typeof_token = current_token
           advance
           skip_trivia
-
-          # Expect opening parenthesis
           unless current_token.kind == Token::Kind::LParen
-            emit_unexpected(current_token)
+            @diagnostics << Diagnostic.new("expecting ( after typeof", current_token.span)
             return PREFIX_ERROR
           end
-          advance # consume (
-          skip_trivia
 
-          args_b = ExprIdBuffer.new(2)
-
-          # Parse at least one argument (treat contents as regular expressions for tolerance)
-          with_pointer_suffix do
-            loop do
-              arg = parse_expression(0)
-              return PREFIX_ERROR if arg.invalid?
-              args_b << arg
-
-              skip_trivia
-              break if current_token.kind != Token::Kind::Comma
-
-              advance # consume comma
-              skip_trivia
-            end
-          end
-
-          # Expect closing parenthesis (tolerate stray tokens by fast-forwarding)
-          unless current_token.kind == Token::Kind::RParen
-            scan_idx = @index
-            paren_balance = 0
-            while scan_idx < @tokens.size
-              tok = @tokens[scan_idx]
-              if tok.kind == Token::Kind::LParen
-                paren_balance += 1
-              elsif tok.kind == Token::Kind::RParen
-                if paren_balance == 0
-                  @index = scan_idx
-                  @previous_token = scan_idx > 0 ? @tokens[scan_idx - 1] : nil
-                  break
-                else
-                  paren_balance -= 1
-                end
-              end
-              scan_idx += 1
-            end
-            unless current_token.kind == Token::Kind::RParen
-              emit_unexpected(current_token)
+          previous_paren_depth = @paren_depth
+          @paren_depth += 1
+          begin
+            advance
+            skip_whitespace_and_optional_newlines
+            if current_token.kind == Token::Kind::RParen
+              @diagnostics << Diagnostic.new("missing typeof argument", current_token.span)
               return PREFIX_ERROR
             end
-          end
-          rparen_token = current_token
-          advance
 
-          @arena.add_typed(
-            TypeofNode.new(
-              typeof_token.span.cover(rparen_token.span),
-              args_b.to_a
-            )
-          )
+            args_b = ExprIdBuffer.new(2)
+            with_pointer_suffix do
+              loop do
+                diagnostics_before = @diagnostics.size
+                arg = parse_op_assign
+                if arg.invalid?
+                  if @diagnostics.size == diagnostics_before
+                    @diagnostics << Diagnostic.new("expecting a typeof argument", current_token.span)
+                  end
+                  return PREFIX_ERROR
+                end
+                args_b << arg
+                skip_whitespace_and_optional_newlines
+                break unless current_token.kind == Token::Kind::Comma
+                advance
+                skip_whitespace_and_optional_newlines
+                break if current_token.kind == Token::Kind::RParen
+              end
+            end
+
+            # Recovery must not silently discard malformed payload expressions.
+            unless current_token.kind == Token::Kind::RParen
+              @diagnostics << Diagnostic.new("expecting ) after typeof arguments", current_token.span)
+              return PREFIX_ERROR
+            end
+            rparen_token = current_token
+            advance
+            @arena.add_typed(TypeofNode.new(typeof_token.span.cover(rparen_token.span), args_b.to_a))
+          ensure
+            @paren_depth = previous_paren_depth
+          end
+        end
+
+        # Type annotations still store source text. Validate their typeof atom
+        # with the same expression parser before retaining its exact source.
+        private def parse_typeof_annotation : Slice(UInt8)?
+          start_token = current_token
+          expression = parse_typeof
+          return nil if expression.invalid?
+          end_token = previous_token
+          return nil unless end_token
+          retained_token_span_slice(start_token, end_token)
         end
 
         # Phase 41: Parse sizeof (size in bytes)
@@ -14150,42 +14156,6 @@ current_token.kind == Token::Kind::Identifier &&
         end
 
         private def parse_generic_type_argument_expr : ExprId
-          # Special-case typeof(...) so we consume the full parenthesized payload (including yields)
-          if current_token.kind == Token::Kind::Typeof
-            start_token = current_token
-            end_token = start_token
-            advance
-            skip_trivia
-
-            # Consume balanced parentheses after typeof(
-            if current_token.kind == Token::Kind::LParen
-              depth = 1
-              advance
-              while depth > 0 && current_token.kind != Token::Kind::EOF
-                token = current_token
-                case token.kind
-                when Token::Kind::LParen
-                  depth += 1
-                when Token::Kind::RParen
-                  depth -= 1
-                end
-                end_token = token
-                advance
-              end
-              skip_trivia
-            end
-
-            span = start_token.span.cover(end_token.span)
-            slice = retained_token_span_slice(start_token, end_token)
-
-            return @arena.add_typed(
-              IdentifierNode.new(
-                span,
-                @string_pool.intern(slice)
-              )
-            )
-          end
-
           # First, try to parse a type annotation as a whole (covers pointer suffixes, unions, proc types, etc.)
           # Only treat it as a type-argument when we actually consumed tokens (index advanced).
           start_token = current_token
@@ -17646,27 +17616,9 @@ current_token.kind == Token::Kind::Identifier &&
             skip_trivia
             return start_token.slice
           when Token::Kind::Typeof
-            # typeof(expr)
-            advance
+            slice = parse_typeof_annotation
             skip_trivia
-            return nil unless current_token.kind == Token::Kind::LParen
-
-            advance # consume (
-            paren_depth = 1
-            end_token = start_token
-            while paren_depth > 0 && current_token.kind != Token::Kind::EOF
-              token = current_token
-              if token.kind == Token::Kind::LParen
-                paren_depth += 1
-              elsif token.kind == Token::Kind::RParen
-                paren_depth -= 1
-              end
-              end_token = token
-              advance
-            end
-            skip_trivia
-
-            return retained_token_span_slice(start_token, end_token)
+            slice
           when Token::Kind::Identifier
             # Type name, possibly with :: path and generics
             had_generic_args = false

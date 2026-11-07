@@ -612,6 +612,27 @@ call. Source rendering must not replace value evaluation or choose the result's
 truthiness. The stock-first macro_is_a_value_repro.sh gate covers both selected
 branches, value effects, output, logical operands and strict error admission.
 
+## Typeof expression grammar ownership
+
+All typeof payloads, including source-backed annotations, belong to the
+ordinary expression parser. Collected annotations and structured types delegate
+to parse_typeof; generic arguments use the common type parser, which preserves
+the suffix, union and following argument outside the typeof atom. Retain the
+validated atom's exact source in the AST arena instead of borrowing a temporary
+buffer or maintaining another token whitelist.
+
+The query owns its parenthesis depth and a nonempty assignment-expression list.
+A trailing comma and multiline payload are legal; adjacent operands, missing
+operands and doubled commas are errors. Recovery must preserve the first
+required-argument or required-delimiter diagnostic. It must not skip invalid
+payload tokens to manufacture a valid closing parenthesis.
+
+This is a grammar contract. Successful parsing does not certify the semantic
+query result or its absence of runtime effects. The source-text typeof resolver
+still has recorded failures for Char, queried FFI calls and a multi-expression
+is_a? query; those require a separate result-owner repair, not permissive Proc
+argument checking or a syntax-specific fallback type.
+
 ## Falsifiers and recovery
 
 Run each script with the exact candidate as its argument. The scripts first
@@ -651,6 +672,8 @@ and check semantic diagnostics and absence of an executable for rejections.
 - `regression_tests/macro_source_declaration_repro.sh`
 - `regression_tests/macro_call_projection_repro.sh`
 - `regression_tests/macro_is_a_value_repro.sh`
+- `regression_tests/typeof_expression_owner_repro.sh`
+- `spec/parser/parser_typeof_expression_owner_spec.cr`
 - `spec/semantic/macro_call_args_projection_spec.cr`
 - `spec/parser/macro_def_parameter_cache_spec.cr`
 - `spec/parser/macro_keyword_type_declaration_spec.cr`

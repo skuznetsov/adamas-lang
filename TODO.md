@@ -26324,3 +26324,31 @@ integration, fresh bootstrap, or LavinMQ parity.
   trailing comma in spawn's generated Proc (35q4157). Return to that exact
   application input after this parser repair; link/server and test parity are
   still open. No application, shards or stdlib changes.
+
+### 2026-11-06 — Parse every typeof payload with one expression grammar
+
+- [x] Delegate typeof atoms in collected annotations, structural types and
+  generic arguments to parse_typeof. Own its delimiter depth, parse nonempty
+  assignment-expression lists, accept a trailing comma and retain exact source.
+  Required operand/delimiter errors must survive tooling recovery suppression.
+- New source-oracle parser coverage passes 133 examples against installed
+  Crystal 1.22.1; the combined parser neighbor gate passes 188 (35q4217).
+  The stock-first typeof_expression_owner_repro.sh gate passes four native
+  output controls and five strict syntax/type rejections per compiler (35q4219).
+  The previous compiler rejects two now-valid native cases and incorrectly
+  accepts adjacent operands/doubled commas in typeof annotations (35q4199).
+- [ ] Unify semantic inference for typeof source text with its expression owner.
+  The expanded twelve-case native probe exposes three open mismatches (35q4197):
+  typeof('a') and typeof(Native.putchar(88)) in Proc restrictions become
+  Pointer(Void); is_a?(typeof(true, 1,)) misses the Int32 arm at runtime. These
+  are retained as failing frontier probes under typeof-expression-native35q4190,
+  not counted as passing parser coverage. Keep the no-runtime-effect oracle for
+  queried calls and exact Proc argument checking when repairing this boundary.
+- [x] Remove the separate generic-argument typeof scanner. Its early return
+  discarded suffixes (?, *, **, [N], .class and unions); the source-qualified
+  adversary probe fails seven valid cases before this removal (35q4213) and
+  passes with exact generic argument text/arity afterward (35q4217).
+- Unchanged LavinMQ now passes the generated spawn. The next actual failure is
+  Crystal::FdLock#write's block result: expected F, received Void (35q4203,
+  composed rest-binding candidate, complete input manifest unchanged).
+  No application/stdlib changes, full prelude/bootstrap or runtime parity claim.

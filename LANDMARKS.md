@@ -26049,3 +26049,57 @@ Fixture-manifest SHA-256:
 Refresh after Proc parameter parsing, trivia/token consumption, type annotation
 parsing or macro reparse changes. Rollback is this atomic compiler commit.
 Application, stock stdlib, shards and unrelated WIP remain unchanged.
+
+## 2026-11-06 — One expression grammar owns typeof payloads
+
+Unchanged LavinMQ's spawn emits Proc restrictions typeof(@config.amqp_port)
+and typeof(true). The annotation token collector rejects these ordinary
+expressions, while separate balanced-token scanners in generic/structured types
+admit malformed payloads. The canonical expression parser also discarded stray
+tokens and did not own parenthesis depth. The repair delegates every typeof
+atom to parse_typeof, parses nonempty assignment-expression lists, permits a
+trailing comma, restores its delimiter depth and retains exact arena-owned
+source. Required operand/delimiter diagnostics bypass recovery suppression.
+Generic arguments now use the existing common type parser; removing their
+separate scanner also preserves suffixes and unions after typeof.
+
+The installed Crystal 1.22.1 syntax oracle qualifies 133 new parser examples;
+all 188 combined typeof/Proc/declaration neighbor examples pass (35q4217).
+The stock-first typeof_expression_owner_repro.sh passes four native output
+controls and five diagnostic-specific syntax/type rejections per compiler
+(35q4219). Before the repair, two valid native cases fail and adjacent operands
+and doubled commas are wrongly accepted (35q4199). The suffix adversary exposes
+seven valid failures before removing the generic early return (35q4213);
+exact retained argument text and arity now pass. Bounded Adversary verdict:
+ROBUST for payload grammar, delimiter ownership, suffix retention and these
+strict rejections. Broader semantic typeof correctness is not certified.
+
+Three expanded native probes remain OPEN (35q4197): typeof('a') and
+typeof(Native.putchar(88)) in Proc restrictions become Pointer(Void), and
+is_a?(typeof(true, 1,)) misses the Int32 arm. Their sources remain under
+typeof-expression-native35q4190; preserve the no-runtime-effect oracle for
+queried calls. Do not weaken Proc restrictions to admit these cases.
+
+On the composed rest-binding candidate, actual LavinMQ advances through spawn
+to expected block passed to Crystal::FdLock#write to return F, not Void
+(35q4203). Its compiler/project/stdlib/shard input manifest is unchanged.
+This is a frontend frontier probe, not an object/link/runtime result or proof
+that HEAD alone has all composed fixes. Full prelude, bootstrap and test parity
+remain open.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+typeof-expression-before35q4199/result.json,
+typeof-suffix-before35q4213/result.json,
+typeof-generic-owner-exact35q4217/result.json,
+typeof-expression-owner-final35q4219/result.json, and
+lavinmq-typeof-owner-resume35q4203/result.json.
+All 1,916 live compiler sources match
+build.typeof-expression-owner35q4216.source.json, SHA-256
+4e5f627ebf5fc02f8fd5ffbe24584e98774d3521739b16f94e9491825785d038.
+Compiler SHA-256:
+f2597c4ebd89b5e5a0141ea4319374fe91fe9f8a84862868f6ec30de524187cf.
+Fixture-manifest SHA-256:
+dcba875d23b83d765ccac34c274823f6f4950e35284d8bf68d9c53c0e990ba1a.
+Refresh after typeof parsing, expression grammar, annotation source retention,
+type suffix parsing or macro reparse changes. Rollback is this atomic commit.
+Application, stock stdlib, shards and unrelated WIP remain unchanged.

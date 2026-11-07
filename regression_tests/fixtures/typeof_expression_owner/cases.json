@@ -1,0 +1,87 @@
+[
+  {
+    "name": "spawn_shaped_member_query",
+    "source": "spawn_shaped_member_query.cr",
+    "ok": true,
+    "expected_stdout": "spawn_shaped_member_query.stdout"
+  },
+  {
+    "name": "proc_multiline_query_list",
+    "source": "proc_multiline_query_list.cr",
+    "ok": true,
+    "expected_stdout": "proc_multiline_query_list.stdout"
+  },
+  {
+    "name": "ivar_annotation_declaration",
+    "source": "ivar_annotation_declaration.cr",
+    "ok": true,
+    "expected_stdout": "ivar_annotation_declaration.stdout"
+  },
+  {
+    "name": "generic_nested_typeof",
+    "source": "generic_nested_typeof.cr",
+    "ok": true,
+    "expected_stdout": "generic_nested_typeof.stdout"
+  },
+  {
+    "name": "wrong_argument_type",
+    "source": "wrong_argument_type.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "no overload matches",
+      "with type Bool"
+    ],
+    "candidate_diagnostic": [
+      "no overload matches",
+      "with type Bool"
+    ]
+  },
+  {
+    "name": "empty_query",
+    "source": "empty_query.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "missing typeof argument"
+    ],
+    "candidate_diagnostic": [
+      "missing typeof argument",
+      "parser errors"
+    ]
+  },
+  {
+    "name": "incomplete_query",
+    "source": "incomplete_query.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "unexpected token: \")\""
+    ],
+    "candidate_diagnostic": [
+      "expecting a typeof argument",
+      "parser errors"
+    ]
+  },
+  {
+    "name": "adjacent_query_arguments",
+    "source": "adjacent_query_arguments.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "expecting token ')', not '66'"
+    ],
+    "candidate_diagnostic": [
+      "expecting ) after typeof arguments",
+      "parser errors"
+    ]
+  },
+  {
+    "name": "doubled_query_comma",
+    "source": "doubled_query_comma.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "unexpected token: \",\""
+    ],
+    "candidate_diagnostic": [
+      "expecting a typeof argument",
+      "parser errors"
+    ]
+  }
+]
