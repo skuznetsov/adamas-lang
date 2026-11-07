@@ -26352,3 +26352,35 @@ integration, fresh bootstrap, or LavinMQ parity.
   Crystal::FdLock#write's block result: expected F, received Void (35q4203,
   composed rest-binding candidate, complete input manifest unchanged).
   No application/stdlib changes, full prelude/bootstrap or runtime parity claim.
+
+### 2026-11-06 — Prove checked-union membership before scalar disjointness
+
+- [x] Query exact checked-union members before declaring a scalar or Nil
+  disjoint. A concrete Nil is a member of T?, not an impossible branch.
+  Source-kind-sensitive predicates reuse the canonical source pattern with a
+  nominal tri-state relation; Proc restriction adaptation is not an is_a? proof.
+- [x] Admit a new static class-object proof only with an explicit source runtime
+  identity matching its carrier. An aggregate type-literal bit on a parameter
+  is insufficient. Preserve the legacy path when that identity is unavailable.
+- The stock-first is_a_checked_union_repro.sh gate passes 29 native output
+  controls and four diagnostic-specific type rejections per compiler (35q4289).
+  It includes nullable/union aliases, class/instance kind, receiver evaluation,
+  and virtual/Proc/inline-yield block results. The existing scalar nominal gate
+  also passes on the exact final S1 (35q4291). Eight of thirteen initial controls
+  fail before the repair (35q4250), including a wrongly admitted Nil#seconds.
+- Actual LavinMQ's previous FdLock block failure is traced to a Void argument
+  produced by an impossible Nil#seconds after the wrong nullable guard
+  (35q4247). Retry the unchanged project with this fix and the separate rest
+  candidate; object/link/server and upstream test parity remain open.
+- [ ] Preserve mixed class/instance facts through runtime predicates and erased
+  parameter specializations. With class K; end and check(x : K | K.class)
+  printing x.is_a?(K), check(K); check(K.new) must produce BA, not AA.
+  Stock passes, while both the prior compiler and the final admission guard
+  retain the mismatch (35q4279/35q4282/35q4288). A rejected private candidate
+  changed this to BB (35q4280/35q4285); ordinary HIR IsA is not a sufficient
+  fallback because MIR can fold the erased carrier again. This is not fixed by
+  the checked-union repair and must not be counted as passing coverage.
+- [ ] Publish builtin String as a class constant without a source declaration
+  under an empty prelude. Stock accepts value = String, Adamas rejects undefined
+  constant String (35q4271). The passing String predicate fixtures explicitly
+  reopen String to isolate source kind from this separate publication gap.

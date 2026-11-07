@@ -1,0 +1,220 @@
+[
+  {
+    "name": "nil_in_nullable",
+    "source": "nil_in_nullable.cr",
+    "ok": true,
+    "expected_stdout": "A.out"
+  },
+  {
+    "name": "nil_in_explicit_union",
+    "source": "nil_in_explicit_union.cr",
+    "ok": true,
+    "expected_stdout": "A.out"
+  },
+  {
+    "name": "nil_in_nullable_alias",
+    "source": "nil_in_nullable_alias.cr",
+    "ok": true,
+    "expected_stdout": "A.out"
+  },
+  {
+    "name": "nil_unless_nullable",
+    "source": "nil_unless_nullable.cr",
+    "ok": true,
+    "expected_stdout": "A.out"
+  },
+  {
+    "name": "nil_unless_grouped_nullable",
+    "source": "nil_unless_grouped_nullable.cr",
+    "ok": true,
+    "expected_stdout": "A.out"
+  },
+  {
+    "name": "span_in_nullable",
+    "source": "span_in_nullable.cr",
+    "ok": true,
+    "expected_stdout": "A.out"
+  },
+  {
+    "name": "integer_outside_nullable",
+    "source": "integer_outside_nullable.cr",
+    "ok": true,
+    "expected_stdout": "A.out"
+  },
+  {
+    "name": "nil_class_outside_nullable",
+    "source": "nil_class_outside_nullable.cr",
+    "ok": true,
+    "expected_stdout": "A.out"
+  },
+  {
+    "name": "nil_in_metaclass_union",
+    "source": "nil_in_metaclass_union.cr",
+    "ok": true,
+    "expected_stdout": "A.out"
+  },
+  {
+    "name": "nil_class_in_metaclass_union",
+    "source": "nil_class_in_metaclass_union.cr",
+    "ok": true,
+    "expected_stdout": "A.out"
+  },
+  {
+    "name": "nil_seconds_unfiltered",
+    "source": "nil_seconds_unfiltered.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "undefined method 'seconds' for Nil"
+    ],
+    "candidate_diagnostic": [
+      "undefined method 'seconds' for Nil"
+    ]
+  },
+  {
+    "name": "nil_seconds_nonnullable_guard",
+    "source": "nil_seconds_nonnullable_guard.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "undefined method 'seconds' for Nil"
+    ],
+    "candidate_diagnostic": [
+      "undefined method 'seconds' for Nil"
+    ]
+  },
+  {
+    "name": "nil_seconds_inside_matching_guard",
+    "source": "nil_seconds_inside_matching_guard.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "undefined method 'seconds' for Nil"
+    ],
+    "candidate_diagnostic": [
+      "undefined method 'seconds' for Nil"
+    ]
+  },
+  {
+    "name": "nil_predicate_value",
+    "source": "nil_predicate_value.cr",
+    "ok": true,
+    "expected_stdout": "A.out"
+  },
+  {
+    "name": "span_predicate_value",
+    "source": "span_predicate_value.cr",
+    "ok": true,
+    "expected_stdout": "A.out"
+  },
+  {
+    "name": "nil_class_predicate_value",
+    "source": "nil_class_predicate_value.cr",
+    "ok": true,
+    "expected_stdout": "A.out"
+  },
+  {
+    "name": "nil_metaclass_predicate_value",
+    "source": "nil_metaclass_predicate_value.cr",
+    "ok": true,
+    "expected_stdout": "A.out"
+  },
+  {
+    "name": "nil_class_metaclass_predicate_value",
+    "source": "nil_class_metaclass_predicate_value.cr",
+    "ok": true,
+    "expected_stdout": "A.out"
+  },
+  {
+    "name": "predicate_receiver_once",
+    "source": "predicate_receiver_once.cr",
+    "ok": true,
+    "expected_stdout": "RA.out"
+  },
+  {
+    "name": "rooted_nullable_alias",
+    "source": "rooted_nullable_alias.cr",
+    "ok": true,
+    "expected_stdout": "A.out"
+  },
+  {
+    "name": "else_nil_remains_invalid",
+    "source": "else_nil_remains_invalid.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "undefined method 'seconds' for Nil"
+    ],
+    "candidate_diagnostic": [
+      "undefined method 'seconds' for Nil"
+    ]
+  },
+  {
+    "name": "nil_class_object_predicate",
+    "source": "nil_class_object_predicate.cr",
+    "ok": true,
+    "expected_stdout": "A.out"
+  },
+  {
+    "name": "string_class_outside_nullable",
+    "source": "string_class_outside_nullable.cr",
+    "ok": true,
+    "expected_stdout": "A.out"
+  },
+  {
+    "name": "string_class_inside_metaclass_union",
+    "source": "string_class_inside_metaclass_union.cr",
+    "ok": true,
+    "expected_stdout": "A.out"
+  },
+  {
+    "name": "string_instance_outside_metaclass_union",
+    "source": "string_instance_outside_metaclass_union.cr",
+    "ok": true,
+    "expected_stdout": "A.out"
+  },
+  {
+    "name": "integer_class_not_float_class",
+    "source": "integer_class_not_float_class.cr",
+    "ok": true,
+    "expected_stdout": "A.out"
+  },
+  {
+    "name": "integer_instance_not_float_union",
+    "source": "integer_instance_not_float_union.cr",
+    "ok": true,
+    "expected_stdout": "A.out"
+  },
+  {
+    "name": "integer_instance_outside_metaclass_union",
+    "source": "integer_instance_outside_metaclass_union.cr",
+    "ok": true,
+    "expected_stdout": "A.out"
+  },
+  {
+    "name": "integer_class_inside_metaclass_union",
+    "source": "integer_class_inside_metaclass_union.cr",
+    "ok": true,
+    "expected_stdout": "A.out"
+  },
+  {
+    "name": "integer_class_outside_nullable",
+    "source": "integer_class_outside_nullable.cr",
+    "ok": true,
+    "expected_stdout": "A.out"
+  },
+  {
+    "name": "module_virtual_block",
+    "source": "module_virtual_block.cr",
+    "ok": true,
+    "expected_stdout": "A.out"
+  },
+  {
+    "name": "module_proc_virtual_block",
+    "source": "module_proc_virtual_block.cr",
+    "ok": true,
+    "expected_stdout": "A.out"
+  },
+  {
+    "name": "module_inline_yield_block",
+    "source": "module_inline_yield_block.cr",
+    "ok": true,
+    "expected_stdout": "A.out"
+  }
+]

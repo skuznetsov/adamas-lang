@@ -26050,6 +26050,7 @@ Refresh after Proc parameter parsing, trivia/token consumption, type annotation
 parsing or macro reparse changes. Rollback is this atomic compiler commit.
 Application, stock stdlib, shards and unrelated WIP remain unchanged.
 
+
 ## 2026-11-06 — One expression grammar owns typeof payloads
 
 Unchanged LavinMQ's spawn emits Proc restrictions typeof(@config.amqp_port)
@@ -26103,3 +26104,52 @@ dcba875d23b83d765ccac34c274823f6f4950e35284d8bf68d9c53c0e990ba1a.
 Refresh after typeof parsing, expression grammar, annotation source retention,
 type suffix parsing or macro reparse changes. Rollback is this atomic commit.
 Application, stock stdlib, shards and unrelated WIP remain unchanged.
+
+## 2026-11-06 — Checked-union predicates retain exact membership and source kind
+
+Actual unchanged LavinMQ reaches Socket#connect with timeout = nil. Its
+is_a?(Time::Span?) guard was folded false because statically_is_a_type? rejected
+Nil before inspecting the checked union. The resulting impossible Nil#seconds
+produces Void, which becomes Socket#system_connect's argument and eventually
+the strict Crystal::FdLock#write block-result failure (35q4247). This trace
+distinguishes the cause from a permissive block-contract or allocator repair.
+
+The type relation now consults exact checked-union members first. The value
+query keeps source class/instance kind, using the canonical source pattern and
+a nominal tri-state relation, not the restriction matcher's Proc adaptations.
+New class-object proofs require the existing explicit runtime source identity
+matching the carrier. Parameter facts can mark a type-literal bit but do not
+publish this identity; a bit alone cannot authorize the new proof. This guard
+was source-audited and preserves the prior mixed-parameter output (35q4288).
+
+The stock-first is_a_checked_union_repro.sh gate passes 29 native outputs and
+four diagnostic-specific rejections per compiler (35q4289). It covers guard and
+value positions, aliases, metaclass/instance distinctions, one receiver effect,
+and three block/virtual-call compositions. Existing scalar nominal neighbors
+also pass (35q4291). Eight of thirteen original controls fail before the repair
+(35q4250); a reachable invalid Nil#seconds must now be rejected. Bounded
+Adversary verdict: ROBUST for exact static membership, new proof admission,
+and these strict rejections. It does not certify runtime mixed-kind predicates.
+
+OPEN: a mixed K | K.class parameter/PHI still loses its value kind. Stock's BA
+is AA before this repair and with the final admission guard; a rejected private
+candidate produced BB instead (35q4279/35q4282/35q4280/35q4285/35q4288).
+An undecidable HIR predicate can be folded again from its erased carrier in
+MIR. Keep this as a separate representation/contract frontier, not a successful
+runtime fallback. Also OPEN: undeclared builtin String as a class constant with
+an empty prelude; the passing String fixtures explicitly declare the class.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+lavinmq-argument-provenance-trace35q4247/result.json,
+nilable-static-filter-before35q4250/result.json,
+is-a-checked-union-qualified35q4289/result.json, and
+is-a-union-neighbor35q4291/result.json. All 1,916 live compiler sources match
+build.is-a-union-exact-identity35q4287.source.json, SHA-256
+f9d130833f1f63de75a1843e6aa9179172e4f9b8e57f8779c537cace2f7ce5a2.
+Compiler SHA-256:
+9f3f18d086b8b70d88c273578d0116e4dc9102763bbb56573f908ee42b392d60.
+Fixture-manifest SHA-256:
+66f5e079c97470d2b5180c91881706b773b25ebc01290d73a1cbed7f165c1381.
+Refresh after union descriptors, is_a? proof/branch selection, source value
+facts or class identity publication changes. Rollback is this atomic compiler
+commit. Full prelude, bootstrap, LavinMQ link/server and parity remain open.

@@ -101242,6 +101242,14 @@ module Adamas::HIR
       check_type : TypeRef,
       check_name : String? = nil,
     ) : ValueId
+      if source_kind_sensitive_is_a_query?(ctx, value_id, check_name)
+        static = statically_is_a_value_type?(ctx, value_id, check_type, check_name)
+        unless static.nil?
+          lit = Literal.new(ctx.next_id, TypeRef::BOOL, static)
+          ctx.emit(lit)
+          return lit.id
+        end
+      end
       if is_union_type?(check_type)
         if is_union_type?(ctx.type_of(value_id))
           if expanded = emit_union_value_is_a_union_check(ctx, value_id, ctx.type_of(value_id), check_type)
@@ -101296,6 +101304,31 @@ module Adamas::HIR
       check_name : String?,
     ) : Bool?
       value_type = ctx.type_of(value_id)
+      # Instance and class-object values can share an ABI carrier. Keep the
+      # source contract's union and value-kind rules before the carrier query.
+      # A partially matching union still needs a runtime predicate.
+      if source_kind_sensitive_is_a_query?(ctx, value_id, check_name)
+        return nil if check_type == TypeRef::VOID || check_name.nil?
+        owner = @current_class || @current_namespace_override
+        pattern = build_source_block_result_pattern(
+          check_name, owner, [] of String, annotation_type_bindings(owner),
+        )
+        if pattern.valid && !pattern.has_unbound_formal?
+          facts = ctx.source_value_facts(value_id) || source_block_result_value_facts(ctx, value_id)
+          expanded = expand_case_type_set_source_facts(facts)
+          return nil unless expanded && !expanded.empty?
+          outcomes = [] of Bool?
+          expanded.each do |(actual, literal)|
+            outcomes << statically_is_a_source_pattern?(actual, literal, pattern)
+          end
+          return true if outcomes.all? { |outcome| outcome == true }
+          return false if outcomes.all? { |outcome| outcome == false }
+        end
+        return nil
+      end
+      # The new checked-union relation is about instance types. Without an
+      # exact class-object identity, preserve the existing predicate path.
+      return nil if ctx.type_literal?(value_id) && is_union_type?(check_type)
       if check_name && (value_type == TypeRef::BOOL || value_type == TypeRef::CHAR || value_type == TypeRef::SYMBOL)
         relation = fixed_scalar_nominal_guard(ctx, value_id, value_type, check_name)
         return relation unless relation.nil?
@@ -101309,6 +101342,60 @@ module Adamas::HIR
         string_instance_check = !facts.empty? && facts.none? { |_, literal| literal }
       end
       statically_is_a_type?(value_type, check_type, string_instance_check: string_instance_check)
+    end
+
+    private def source_kind_sensitive_is_a_query?(
+      ctx : LoweringContext,
+      value_id : ValueId,
+      check_name : String?,
+    ) : Bool
+      if ctx.type_literal?(value_id)
+        # Aggregate parameter kinds can outlive an erased specialization. Only
+        # an exact explicit source identity authorizes a new class-object proof.
+        identity = ctx.runtime_type_identity?(value_id)
+        return !identity.nil? && identity.origin.explicit_type_literal? &&
+               identity.semantic_type == ctx.type_of(value_id)
+      end
+      ctx.type_of(value_id) == TypeRef::NIL ||
+        (!check_name.nil? && proc_annotation_has_type_literal_arm?(check_name))
+    end
+
+    # Reuse the canonical source pattern's identities and kinds, but retain
+    # is_a?'s nominal, tri-state relation. Restriction matching can adapt Proc
+    # results; it must not supply a false or converting predicate proof here.
+    private def statically_is_a_source_pattern?(
+      actual : TypeRef,
+      literal : Bool,
+      pattern : SourceBlockResultPattern,
+    ) : Bool?
+      return nil unless pattern.valid && !pattern.has_unbound_formal?
+      return nil if actual == TypeRef::VOID
+      if pattern.kind == SourceBlockResultPattern::Kind::Union
+        outcomes = [] of Bool?
+        pattern.children.each do |child|
+          outcomes << statically_is_a_source_pattern?(actual, literal, child)
+        end
+        return true if outcomes.any? { |outcome| outcome == true }
+        return false if !outcomes.empty? && outcomes.all? { |outcome| outcome == false }
+        return nil
+      end
+      # Include/extend needs its own source graph, and absence of an edge on
+      # an abstract receiver is not a proof about its runtime descendants.
+      return nil if source_block_result_module_restriction_key(pattern)
+      if literal && pattern.kind == SourceBlockResultPattern::Kind::Concrete &&
+         {"Class", "Value", "Object"}.includes?(pattern.restriction_name.lchop("::"))
+        return true
+      end
+      return false unless source_block_result_type_literal_pattern?(pattern) == literal
+      expected = pattern.type_ref || return nil
+      return nil if expected == TypeRef::VOID
+      actual_name = get_type_name_from_ref(actual)
+      expected_name = source_block_result_carrier_name(pattern.restriction_name).lchop("::")
+      if primitive_class_name(actual)
+        relation = primitive_is_a_hierarchy?(actual_name, expected_name)
+        return relation unless relation.nil?
+      end
+      statically_is_a_type?(actual, expected, string_instance_check: actual == TypeRef::STRING && !literal)
     end
 
     # A concrete scalar has a source class even when its fixed ABI type has
@@ -101346,6 +101433,19 @@ module Adamas::HIR
     ) : Bool?
       return true if value_type == check_type
       return nil if value_type == TypeRef::VOID || check_type == TypeRef::VOID
+
+      # A checked union admits a value if any exact member admits it. Do this
+      # before the scalar/Nil disjointness checks; Nil is a member of T?.
+      # Incomplete or nested descriptors retain the conservative runtime path.
+      if is_union_type?(check_type)
+        members = source_block_result_union_members(check_type)
+        return nil unless members
+        return nil if members.any? { |member| is_union_type?(member) }
+        relations = members.map { |member| statically_is_a_type?(value_type, member) }
+        return true if relations.any? { |relation| relation == true }
+        return false if relations.all? { |relation| relation == false }
+        return nil
+      end
 
       if value_type == TypeRef::NIL
         return check_type == TypeRef::NIL
@@ -154440,6 +154540,11 @@ module Adamas::HIR
         ctx.emit(lit)
         ctx.register_type(lit.id, TypeRef::BOOL)
         return lit.id
+      end
+
+      # Keep source kind ahead of primitive/union carrier shortcuts.
+      if source_kind_sensitive_is_a_query?(ctx, value_id, target_name)
+        return emit_is_a_check_for_type(ctx, value_id, check_type, target_name)
       end
 
       # Check if value is a union type - use UnionIs for runtime type check
