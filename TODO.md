@@ -26446,3 +26446,33 @@ integration, fresh bootstrap, or LavinMQ parity.
   the undefined local (35q4467). This pre-existing admission hole is excluded
   from the passing controls. A source-known Arm | Pointer(Void) must remain
   valid; the native both-arm control passes on both compilers (35q4470).
+
+### 2026-11-07 — Exact initializer body demand and dependency replay
+
+- [x] Give allocator pre-lowering an authenticated body demand, distinct from
+  a result demand. Retain the selected initializer Def/Arena, registry key,
+  full source callshape, and actual force-frame continuation before entering
+  the body. Suspend before layout mutation when that exact body is depth-refused.
+- [x] Retain nested and sequential producer chains across unwind; replay
+  queued producers before their consumers. A completed Void body can satisfy
+  body demand, but cannot satisfy an ordinary result demand. Independent queue
+  progress does not certify the initial request, and stale source/ABI receipts
+  cannot authorize replay or satisfy a dependency.
+- The permanent initializer_body_demand_replay_repro.sh passes ten parsed-source
+  HIR/queue controls (35q4563), including a real initializer suspension with a
+  bounded force budget, field payload/layout, a second producer, stale Def/Arena,
+  changed callback ABI, mutable binding snapshots, and dependency cycles.
+  These internal controls are separate from native program parity.
+- Five native neighbor groups pass on the exact clean S1 (35q4559): pending
+  source result, exact callshape/owner, initializer source result, initializer
+  binding owner, and callback replay. The callback group includes sixteen
+  native output controls and four diagnostic-specific strict rejections,
+  qualified against stock Crystal 1.22.1. Source review verdict: ROBUST within
+  this initializer/replay boundary; inline/yield-free guards remain strict.
+- [ ] Close the next full-prelude result-owner failure: decode_frame lowers an
+  untyped yield with no registered callback ABI and receives an enclosing
+  Nil | String block result (35q4561). This later produces Unknown tuple fields
+  in function_or_symbol_name. Do not relax the exact-result contract.
+- Retry unchanged LavinMQ with this independently qualified initializer change.
+  Full prelude, fresh bootstrap, LavinMQ object/link/server and upstream test
+  parity remain open. The separate rest-binding candidate is not in this change.

@@ -26264,3 +26264,56 @@ Fixture SHA256SUMS SHA-256:
 a363a1bead2b082dad5c05b666564c9fed12c1e81a70dc0fd523ded58b91b817.
 Refresh after typeof resolution, Proc annotation, union representation or
 source-kind admission changes. Rollback is this atomic commit.
+
+## 2026-11-07 — Initializer demand owns its body replay, not its value result
+
+Allocator inference could directly enter initialize without an authenticated
+force-frame continuation. A nested source-result refusal then left no exact
+initializer recipe to suspend and resume before layout mutation. Retain the
+selected source Def/Arena and registry key, complete callshape and entry scope
+at that boundary. Inference-side allocator requests use their actual active
+force capture; lexical names and same-name overloads are not replay authority.
+Body demand is distinct from result demand: Completed plus a real body and no
+provisional dependencies settles the former, while the latter still requires
+the exact concrete result contract. Nested/sequential demand chains retain
+their actual parents. The queue drains authenticated producers first, detects
+non-progress/cycles, and revalidates the initial source and demand before
+reporting success. Callback replay receipts snapshot mutable source facts and
+retain strict source/ABI checks; an ABI receipt is not Proc materialization.
+
+Ten parsed-source HIR/queue controls pass through the permanent
+initializer_body_demand_replay_repro.sh (35q4563). They include actual initializer
+body suspension under a bounded force budget, payload/layout, sequential
+producer discovery, body/result demand strength, queue non-progress/cycles,
+stale Def/Arena and callback ABI/callshape mutation. Five native regression
+groups pass on the exact clean S1 (35q4559); callback replay includes sixteen
+native output controls and four diagnostic-specific strict rejections against
+stock Crystal 1.22.1. A separate source-only adversarial review found no bypass
+of exact source, demand strength, or inline-yield guards. Bounded verdict:
+ROBUST for the initializer/body replay contract and these controls.
+
+OPEN: full-prelude hello still fails later. In 35q4561 decode_frame has no raw
+callback ABI, block parameter inference is unavailable, and yield inference
+falls back to an enclosing Nil | String map entry. Its consumer then has
+Unknown tuple fields. This observation does not certify the early callback
+ABI gap's proposed repair. Existing raw_callback_abi_spec controls also retain
+two baseline return-type errors (35q4530); do not claim the whole HIR suite is
+green. The separate rest-binding candidate remains private. Full prelude,
+bootstrap, unchanged LavinMQ object/link/runtime and test parity remain open.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+build.initializer-replay-final35q4558.result.json,
+initializer-replay-guards-strict35q4554/result.json,
+initializer-body-demand-final35q4563/result.json,
+initializer-replay-final-gate35q4559/result.json, and
+callback-yield-owner-hello35q4561/result.json with compile.log.
+All 1,916 live compiler sources match
+build.initializer-replay-final35q4558.source.json, manifest SHA-256
+8e76c7c39430cb03abe54de7467a4b10d487389526869d14dd274dea38f16c0b.
+S1 SHA-256:
+c80ccce59ed47c93c8b49437aa73fe86ab4566d41d15f5cb1c5f5e8b65d28065.
+The permanent regression wrapper SHA-256 is
+31c261c1469c5e145d54d2fb196dd239262cd284ec9dc2bd607b2b41e1cccce4.
+Refresh after allocator entry, exact source/callshape binding, force ownership,
+callback ABI, suspension, or retry scheduling changes. Rollback is this atomic
+commit. No stdlib or application source was changed.
