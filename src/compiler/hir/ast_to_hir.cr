@@ -81158,6 +81158,7 @@ module Adamas::HIR
                                            end
       function.source_return_definition_id = definition.object_id.to_u64
       function.source_return_arena_key = arena_map_key(declaration_arena)
+      function.source_return_discard_type = discard_result_type
     end
 
     # A completed source body owns the result kind only while its exact Def and
@@ -97188,6 +97189,7 @@ module Adamas::HIR
         extern_func.varargs,
         extern_func.noreturn,
         variadic_fixed_types,
+        abi_return_type,
       )
       ctx.emit(extern_call)
       ctx.register_type(extern_call.id, abi_return_type)
@@ -97211,7 +97213,12 @@ module Adamas::HIR
         if env_get("DEBUG_MEM_INTRINSIC")
           STDERR.puts "[MEM_INTRINSIC] emit method=#{method_name} args=#{arg_ids.size} func=#{ctx.function.name}"
         end
-        return emit_extern_call(ctx, ExternFunction.new(method_name, method_name, nil, Array(TypeRef).new, TypeRef::VOID), arg_ids)
+        # This legacy incomplete shape has no resolved C or intrinsic
+        # signature. Preserve its provisional carrier without certifying it.
+        call = ExternCall.new(ctx.next_id, TypeRef::VOID, method_name, arg_ids)
+        ctx.emit(call)
+        ctx.register_type(call.id, TypeRef::VOID)
+        return call.id
       end
 
       len_id = arg_ids[2]
@@ -97242,7 +97249,8 @@ module Adamas::HIR
         TypeRef::VOID,
         intrinsic_name,
         [arg_ids[0], arg_ids[1], len_id, arg_ids[3]],
-        false
+        false,
+        declared_return_type: TypeRef::VOID,
       )
       ctx.emit(extern_call)
       ctx.register_type(extern_call.id, TypeRef::VOID)
@@ -117384,7 +117392,9 @@ module Adamas::HIR
       return false unless function
 
       return_type = function.not_nil!.return_type
-      return false if return_type == TypeRef::VOID
+      if return_type == TypeRef::VOID
+        return authenticated_void_source_result?(name, Set(String).new)
+      end
 
       type_name = get_type_name_from_ref(return_type)
       generic_family = @generic_templates.has_key?(type_name)
@@ -117406,6 +117416,72 @@ module Adamas::HIR
         end
       end
       true
+    end
+
+    # Void is also a legitimate completed ABI result. Prove it from the
+    # current source-owned body, never from a temporary SSA carrier or a
+    # syntax-only hint. Recompute the graph so in-place HIR edits cannot keep
+    # an obsolete result certificate alive. Recursive proof cycles fail closed.
+    private def authenticated_void_source_result?(name : String, active : Set(String)) : Bool
+      return false unless active.add?(name)
+      begin
+        return false unless function_state(name).completed?
+        return false if @force_lower_provisional_dependencies.has_key?(name)
+        return false unless @module.has_function_with_body?(name)
+        function = @module.function_by_name(name)
+        return false unless function && function.return_type == TypeRef::VOID
+        definition = @function_defs[name]?
+        declaration_arena = @function_def_arenas[name]?
+        return false unless definition && declaration_arena
+        return false unless function.source_return_definition_id == definition.object_id.to_u64 &&
+                            function.source_return_arena_key == arena_map_key(declaration_arena)
+        return false if function.source_return_value_facts.nil?
+
+        returns = reachable_blocks(function).compact_map(&.terminator.as?(Return))
+        return false if returns.empty?
+        if function.source_return_discard_type == TypeRef::VOID
+          return returns.all? { |ret| ret.value.nil? }
+        end
+        values = {} of ValueId => Value
+        function.blocks.each { |block| block.instructions.each { |value| values[value.id] = value } }
+        returns.all? do |ret|
+          if value = ret.value
+            authenticated_void_value?(values, value, active, Set(ValueId).new)
+          else
+            false
+          end
+        end
+      ensure
+        active.delete(name)
+      end
+    end
+
+    private def authenticated_void_value?(
+      values : Hash(ValueId, Value), value_id : ValueId,
+      active_functions : Set(String), active_values : Set(ValueId),
+    ) : Bool
+      return false unless active_values.add?(value_id)
+      begin
+        value = values[value_id]?
+        return false unless value && value.type == TypeRef::VOID
+        case value
+        when ExternCall
+          value.declared_return_type == TypeRef::VOID && !value.noreturn
+        when Copy
+          authenticated_void_value?(values, value.source, active_functions, active_values)
+        when Phi
+          !value.incoming_values.empty? && value.incoming_values.all? do |incoming|
+            authenticated_void_value?(values, incoming, active_functions, active_values)
+          end
+        when Call
+          !value.virtual && !value.has_block? &&
+            authenticated_void_source_result?(value.method_name, active_functions)
+        else
+          false
+        end
+      ensure
+        active_values.delete(value_id)
+      end
     end
 
     # A depth-refused exact result remains provisional when embedded in a

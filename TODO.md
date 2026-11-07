@@ -26962,3 +26962,24 @@ integration, fresh bootstrap, or LavinMQ parity.
   do not prove source reachability.
 - Full prelude, fresh bootstrap and unchanged LavinMQ object/link/server/upstream
   parity remain open. No stdlib/application or type restriction changes.
+
+
+### 2026-11-07 — Distinguish completed Void results from pending carriers
+
+- [x] Settle an exact completed Void body only through current source ownership
+  and known return producers. Preserve unresolved carrier, pending/provisional,
+  stale-source, NoReturn and virtual/cyclic result guards.
+- [x] Keep the incomplete memory-intrinsic fallback unauthenticated; a synthetic
+  Void declaration cannot certify that legacy shape.
+- Released S1 35q5446 rejects the six-call C-Void chain as pending void_leaf
+  (35q5487); Crystal passes. Exact-source S1 35q5482 passes all nine stock/lazy/
+  eager native controls and three incompatible-C-argument rejections (35q5483).
+  The new HIR and existing dependency/source-fact suites pass 27 checks (35q5481).
+- In a separate private combination with inherited-source preservation, prelude
+  hello passes Pointer#clear and next stops at Crystal::AtExitHandlers.run
+  (35q5486). That combination is not the scoped shipped Void result evidence.
+- [ ] Close AtExitHandlers.run result replay and inherited nilary method source
+  ownership. Abstract virtual Object#hash body demand and untyped captured
+  allocator callback ABI remain separate measured frontiers.
+- Full prelude, fresh bootstrap and unchanged LavinMQ object/link/server/upstream
+  parity remain open. No stdlib/application or source restriction changes.

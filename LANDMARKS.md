@@ -27198,3 +27198,49 @@ Refresh after replay identity, source/ABI, wrapper lifetime, call repair or
 result-category changes. Rollback is the atomic receipt-renewal commit;
 unrelated WIP is excluded. Whole-wrapper NoReturn regeneration, full prelude,
 fresh bootstrap and unchanged LavinMQ runtime/upstream parity remain open.
+
+
+## 2026-11-07 — Known Void results are distinct from provisional Void carriers
+
+A source result demand unconditionally rejected Function.return_type == Void,
+so a real completed C-Void leaf could never release its suspended source caller.
+Released S1 35q5446 rejects a six-call srand chain at pending void_leaf
+(35q5487); the unchanged original Crystal 1.22.1 program runs and prints A\n.
+The fix proves current reachable return producers under the exact completed
+Def/Arena publication with no provisional dependencies. It does not accept a
+carrier or a published fallback Void fact alone.
+
+ExternCall emission retains the resolved C/intrinsic return carrier separately
+from mutable SSA type. Legacy raw calls remain unknown. Source-only adversary
+identified the short-arity memory intrinsic fallback as a synthesized-declaration
+hole; it now emits the same provisional raw call and its actual emission-path
+negative test refuses completion. Direct known-source Void call chains, copies
+and PHIs can carry proof; NoReturn, virtual calls, unknown leaves and proof
+cycles fail closed. Source :Void discards preserve the existing Nil-expression
+versus ABI distinction.
+
+Scoped verification: 27 HIR checks pass (35q5481), including pending/provisional,
+stale Def/Arena, conflicting/absent declarations, NoReturn, live graph mutation,
+cycles and virtual calls. Nine original-first stock/lazy/eager native runs plus
+three incompatible-C-argument rejections pass on exact S1 35q5482 (35q5483).
+All compiler/native executions use run_safe.sh; stdlib/application and source
+restrictions are unchanged. Scoped adversary verdict: ROBUST for current
+source-produced HIR after closing the short-arity intrinsic certificate hole.
+This is a bounded completion proof, not a general validator for source call
+selection or all Void expressions. A future post-emission extern-binding rewrite
+must renew the stored declaration carrier; no such rewrite was found in the
+current source pipeline.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+void-result-chain-stock35q5475/, void-result-shipping-baseline35q5487/,
+authenticated-void-result-hir35q5481/,
+build.authenticated-void-result35q5482.{result,source}.json,
+authenticated-void-native35q5483/ and its qualification JSON.
+S1 SHA-256: 273cdc7107a63caa6983043a1a15c44191b05ee926dd70208bdee0b33b562241.
+Compiler source manifest SHA-256:
+81a1a1ae9282998302b1a4025000d011dbda04fac0f9c43651a4906ef0885101.
+Refresh after body producers/CFG, exact source stamps, extern emission or result
+settlement changes. Rollback is this atomic commit; unrelated WIP is excluded.
+Full prelude, fresh bootstrap and unchanged LavinMQ runtime/test parity remain
+open. A private inherited-source combination advances prelude from Pointer#clear
+to AtExitHandlers.run (35q5486); it does not widen this scoped result claim.

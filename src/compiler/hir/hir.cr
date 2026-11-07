@@ -1341,6 +1341,9 @@ module Adamas::HIR
     # nil is a non-variadic/internal call; [] is a C variadic declaration
     # with no fixed parameters. Types are ABI types (Proc -> raw Pointer).
     getter variadic_fixed_types : Array(TypeRef)?
+    # Present only when emission consumed a resolved C declaration or an
+    # internal intrinsic signature. A Void SSA carrier alone is provisional.
+    getter declared_return_type : TypeRef?
 
     def initialize(
       id : ValueId,
@@ -1350,6 +1353,7 @@ module Adamas::HIR
       @varargs : Bool = false,
       @noreturn : Bool = false,
       variadic_fixed_types : Array(TypeRef)? = nil,
+      @declared_return_type : TypeRef? = nil,
     )
       super(id, type)
       @variadic_fixed_types = variadic_fixed_types.try(&.dup)
@@ -2166,6 +2170,8 @@ module Adamas::HIR
     property source_return_value_facts : Array({TypeRef, Bool})? = nil
     property source_return_definition_id : UInt64? = nil
     property source_return_arena_key : UInt64? = nil
+    # Resolved source discard annotation, published with the same Def/Arena.
+    property source_return_discard_type : TypeRef? = nil
     @revision_ledger : FunctionRevisionLedger
 
     def initialize(

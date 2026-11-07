@@ -832,3 +832,31 @@ its exact Function receipt; call, body-witness and untracked-generation mutation
 must remain rejected. Refresh after initializer replay, source publication,
 wrapper invalidation, call repair or result-category changes. Rollback is the
 atomic receipt-renewal commit.
+
+
+### Completed Void result materialization
+
+Void is a legitimate completed ABI result as well as a provisional lowering
+carrier. An exact source result demand must distinguish them. For a completed
+Void body, require its current selected Def/Arena publication, current completed
+state and no provisional dependencies. Recompute reachable return producers;
+source facts or an SSA Void type alone do not establish completion.
+
+A resolved C declaration or the compiler memory intrinsic signature supplies
+an immutable declared return carrier at ExternCall emission. A legacy raw
+ExternCall, including the incomplete memory-intrinsic fallback, supplies no
+such proof. Exclude NoReturn declarations. Copies and nonempty PHIs retain
+proof only when every leaf qualifies. A nonvirtual direct call can consume a
+completed source-owned Void body; recursive proof cycles and unknown leaves
+fail closed. An explicit resolved :Void discard retains its existing ABI/source
+Nil distinction and publication owner. These checks do not admit incompatible
+source arguments or replace ordinary return validation.
+
+Gates: authenticated_void_result_repro.sh COMPILER runs nine stock/lazy/eager
+native cases and three incompatible-C-argument rejections. HIR controls in
+authenticated_void_result_spec.cr cover pending/provisional state, stale
+Def/Arena, conflicting/absent declarations, NoReturn, producer mutation,
+recursive cycles, virtual calls and the actual incomplete-intrinsic emitter.
+Refresh after result publication, CFG/producers, source ownership or extern
+signature emission changes. Rollback is the atomic Void result commit.
+Full prelude, bootstrap and LavinMQ runtime/upstream parity remain separate.
