@@ -26809,3 +26809,56 @@ recursive/depth-refused mixed results, Nil.class truthiness and non-nil SSA
 transfer retain separate falsifiers/obligations. It does not close full prelude,
 bootstrap or unchanged LavinMQ startup/upstream test parity. User WIP excluded.
 Completed build/HIR caches were removed (35q5027, 518231880 bytes).
+
+
+## 2026-11-07 — Non-nil SSA operations retain their source type and kind proof
+
+The LavinMQ proxy loop narrows a nullable socket carrier, but downstream Proc
+admission walked through that narrowing to the original nullable input. A Copy
+carrier cannot own a semantic conversion. Give each nil-removing producer a
+fresh source-alternative proof instead: exact descriptor expansion, removal of
+instance Nil/Void, and retention of each remaining instance/class kind. Register
+it at all six singleton/reference/value-union result exits. Do not mutate the
+input proof or recover a kind from the destination type.
+
+Unknown union leaves require conservative original-carrier facts in both kinds;
+a known PHI sibling cannot erase that uncertainty. Empty input/expansion and
+empty filtering likewise cannot manufacture an admissible narrower proof.
+The first strict native gate exposed another actual owner omission: ordinary
+nilary member emission forced the body but omitted its exact result certificate.
+Publish it through the existing Def/Arena-checked helper for direct calls only;
+virtual calls cannot consume one body's certificate as family-wide evidence.
+
+Scoped verdict: ROBUST for these source-proof transitions and the tested input
+admission controls. Root ran 47 HIR controls (35q5039) and 29 original-first
+Crystal 1.22.1/S1 controls (35q5042): 10 exact-output native positives and
+19 semantic-diagnostic negatives. Opposite class/instance restrictions,
+reassignment and capture-cell invalidation remain strict. Source-only agent
+review was correlated and did not execute the compiler. All compiler/test
+executions used run_safe.sh. Source checks and Proc all-alternatives admission
+were not relaxed; no stdlib or application source changed.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+non-nil-member-owner-hir35q5039/{result.json,spec.log,source.json},
+build.non-nil-member-owner35q5040.{result,source}.json,
+non-nil-member-owner-original-first35q5042/{result.json,gate.log},
+non-nil-exact-producer-original-first35q5034/ (refuted incomplete candidate),
+and non-nil-member-owner-shipped35q5046.json.
+Compiler source manifest SHA-256:
+2c88244dfbaa3598f7f3611c017e24a638b90e3d2c6e0136348f3dee3ff3519b.
+S1 SHA-256: 02243715a835aab0d1193963d6363e0aed0b7a6fc54bfbf8fd7a6445b633407b.
+Shipped source/fixture manifest SHA-256:
+490b8b0193290f91c089f344db49f19d9c67ebd55a00be2e72934d9fa84bca27.
+Refresh after nil-removing lowering, source return publication, descriptor
+expansion or Proc kind admission changes. Rollback is this atomic source/test/
+doc commit. Existing unrelated user WIP is excluded.
+
+This does not certify class-object runtime carriers. The separately retained
+singleton_class_union.cr in proc-singleton-kind-packet35q5011 prints A\n on
+stock but only a newline on S1 35q5033: q5034's LLVM choose$$Bool body emits null
+for both Token and nil. Its source-kind negative is now rejected, but its
+positive runtime behavior remains open. Nil.class literal folding, unknown
+scalar source kinds and virtual-family certificates also require their own
+falsifiers. Full prelude/bootstrap and unchanged LavinMQ object/link/server/
+upstream parity remain open. Completed first-candidate caches were removed
+(35q5037, 259252548 bytes).

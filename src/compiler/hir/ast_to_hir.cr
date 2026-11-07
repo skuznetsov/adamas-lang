@@ -101520,9 +101520,10 @@ module Adamas::HIR
         return nil if descriptor.variants.empty?
 
         descriptor.variants.each do |variant|
-          # Void has no runtime value to admit. All other variants must resolve
-          # to the exact registered arm before the aggregate fact can be split.
-          next if variant.full_name == "Void"
+          # A Void instance has no runtime value to admit. A class-valued arm
+          # must retain its kind or make this proof decline conservatively.
+          # Every remaining arm needs an exact registered identity.
+          next if variant.full_name == "Void" && !type_literal
           exact_type = exact_hir_type_ref_for_union_variant(variant)
           return nil if exact_type == TypeRef::VOID || exact_type == type_ref
           pending << {exact_type, type_literal}
@@ -146947,6 +146948,9 @@ module Adamas::HIR
       call = Call.with_receiver_virtual(ctx.next_id, return_type, object_id, actual_name, args, call_virtual)
       ctx.emit(call)
       ctx.register_type(call.id, return_type)
+      # The exact completed member body owns the same source result facts as
+      # an ordinary call. A virtual target cannot borrow one body's proof.
+      register_materialized_source_return_value_facts(ctx, call.id, actual_name) unless call_virtual
       # As in lower_call: an exact bottom target ends the block, so an
       # enclosing call does not resolve against the NoReturn value.
       unless call_virtual
@@ -152692,6 +152696,103 @@ module Adamas::HIR
         end
       end
       facts.uniq
+    end
+
+    # Collect source facts only when every reachable leaf carries an exact
+    # source identity and kind. A bare union-typed producer has only a carrier
+    # type; its type-literal bit cannot describe the kinds of its members.
+    # Keep that distinction local to nil narrowing rather than changing the
+    # general source-result walker used by other contracts.
+    private def collect_non_nil_source_leaf_facts(
+      ctx : LoweringContext,
+      value : ValueId,
+    ) : {Array({TypeRef, Bool}), Bool}
+      pending = [value]
+      seen = Set(ValueId).new
+      facts = [] of {TypeRef, Bool}
+      unknown_leaf = false
+      until pending.empty?
+        current = pending.pop
+        next unless seen.add?(current)
+        if source_facts = ctx.source_value_facts(current)
+          if source_facts.empty?
+            unknown_leaf = true
+          else
+            facts.concat(source_facts)
+          end
+          next
+        end
+        actual = enum_tracked_type(ctx, current)
+        next if noreturn_type?(actual)
+        producer = ctx.value_for(current)
+        case producer
+        when Phi
+          if producer.incoming_values.empty?
+            unknown_leaf = true
+          else
+            pending.concat(producer.incoming_values)
+          end
+        when UnionWrap
+          pending << producer.value
+        when Copy
+          pending << producer.source
+        else
+          if is_union_type?(actual)
+            unknown_leaf = true
+          else
+            facts << {actual, ctx.type_literal?(current)}
+          end
+        end
+      end
+      {facts.uniq, unknown_leaf}
+    end
+
+    # A nil-removing HIR operation owns the source alternatives of its result.
+    # Preserve source kind on the new SSA ID instead of recovering it from the
+    # narrowed carrier, which cannot encode mixed instance/class alternatives.
+    # Expand only exact registered union descriptors; absent identity evidence
+    # leaves the result conservative. Nil/Void class objects remain truthy.
+    private def register_non_nil_narrowed_source_facts(
+      ctx : LoweringContext,
+      source_id : ValueId,
+      narrowed_id : ValueId,
+    ) : Nil
+      return if source_id == narrowed_id
+
+      source_facts = [] of {TypeRef, Bool}
+      unknown_leaf = false
+      if explicit_source_facts = ctx.source_value_facts(source_id)
+        source_facts = explicit_source_facts
+      else
+        source_facts, unknown_leaf = collect_non_nil_source_leaf_facts(ctx, source_id)
+      end
+
+      narrowed_facts = if unknown_leaf || source_facts.empty?
+                         # A missing kind on any leaf invalidates the whole
+                         # refinement. The original carrier in both kinds is
+                         # an over-approximation and cannot authorize a
+                         # narrowed Proc admission check.
+                         source_type = ctx.type_of(source_id)
+                         [{source_type, false}, {source_type, true}]
+                       else
+                         expanded_facts = expand_case_type_set_source_facts(source_facts)
+                         filtered_facts = expanded_facts.try do |facts|
+                           facts.reject do |(source_type, type_literal)|
+                             !type_literal && (source_type == TypeRef::NIL || source_type == TypeRef::VOID)
+                           end
+                         end
+                         # Expansion can fail on an unresolved descriptor, and
+                         # filtering can remove every alternative. In either
+                         # case retain the nonempty source proof rather than
+                         # inventing a kind from the narrowed destination.
+                         if filtered_facts && !filtered_facts.empty?
+                           filtered_facts
+                         else
+                           source_facts
+                         end
+                       end
+      ctx.register_source_value_facts(narrowed_id, narrowed_facts)
+      ctx.mark_type_literal(narrowed_id) if narrowed_facts.all? { |(_, type_literal)| type_literal }
     end
 
     private def validate_source_block_result(
@@ -159398,6 +159499,7 @@ module Adamas::HIR
         unwrap = UnionUnwrap.new(ctx.next_id, non_nil_type, value_id, non_nil_variant, false)
         ctx.emit(unwrap)
         ctx.register_type(unwrap.id, non_nil_type)
+        register_non_nil_narrowed_source_facts(ctx, value_id, unwrap.id)
         # Register enum type for the unwrapped value so predicates work correctly
         if enum_name = enum_value_name_for(ctx, value_id)
           (@enum_value_types ||= {} of ValueId => String)[unwrap.id] = enum_name
@@ -159417,6 +159519,7 @@ module Adamas::HIR
               copy = Copy.new(ctx.next_id, narrowed_type, value_id)
               ctx.emit(copy)
               ctx.register_type(copy.id, narrowed_type)
+              register_non_nil_narrowed_source_facts(ctx, value_id, copy.id)
               return copy.id
             end
 
@@ -159426,7 +159529,10 @@ module Adamas::HIR
             # coercer emits the -2 remap sentinel so the backend preserves the
             # payload while translating the positional variant id.
             narrowed = coerce_value_to_type(ctx, value_id, narrowed_type)
-            return narrowed if ctx.type_of(narrowed) == narrowed_type
+            if ctx.type_of(narrowed) == narrowed_type
+              register_non_nil_narrowed_source_facts(ctx, value_id, narrowed)
+              return narrowed
+            end
           end
         end
       end
@@ -159480,6 +159586,7 @@ module Adamas::HIR
               copy = Copy.new(ctx.next_id, narrowed_type, value_id)
               ctx.emit_to_block(block_id, copy)
               ctx.register_type(copy.id, narrowed_type)
+              register_non_nil_narrowed_source_facts(ctx, value_id, copy.id)
               return copy.id
             end
 
@@ -159491,6 +159598,7 @@ module Adamas::HIR
             wrap = UnionWrap.new(ctx.next_id, narrowed_type, value_id, -2)
             ctx.emit_to_block(block_id, wrap)
             ctx.register_type(wrap.id, narrowed_type)
+            register_non_nil_narrowed_source_facts(ctx, value_id, wrap.id)
             return wrap.id
           end
         end
@@ -159501,6 +159609,7 @@ module Adamas::HIR
       unwrap = UnionUnwrap.new(ctx.next_id, non_nil_type, value_id, non_nil_variant, false)
       ctx.emit_to_block(block_id, unwrap)
       ctx.register_type(unwrap.id, non_nil_type)
+      register_non_nil_narrowed_source_facts(ctx, value_id, unwrap.id)
       # Register enum type for the unwrapped value so predicates work correctly
       if enum_name = enum_value_name_for(ctx, value_id)
         (@enum_value_types ||= {} of ValueId => String)[unwrap.id] = enum_name

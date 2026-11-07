@@ -26724,10 +26724,40 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Audit remaining nilary implicit-self, bare-identifier and static-member
   result-demand conditions for the same source-kind obligation. Their existing
   body certificate consumers do not by themselves prove timely publication.
-- [ ] Complete non-nil operation result facts independently: removing Nil must
-  transfer source alternatives/kinds to the new SSA ID, including UnionUnwrap.
-  Unknown producer kind must not become a destination-derived instance proof.
+- [x] Complete non-nil operation result facts at the covered SSA producers;
+  see the source-fact transfer and exact member publication qualification below.
+  Missing scalar/virtual source owners retain separate audit obligations.
 - [ ] Fix Nil.class truthiness independently; current lower_truthy_check folds
   its Nil carrier to false and can skip a source-invalid branch (35q5006).
 - Full prelude, fresh bootstrap and unchanged LavinMQ object/link/server and
   upstream test parity remain open. No stdlib/application edits.
+
+
+### 2026-11-07 — Own source alternatives on non-nil SSA results
+
+- [x] Publish exact completed body result facts on direct nilary member calls.
+  A virtual member must not borrow a single target's result certificate.
+- [x] Transfer source alternatives and instance/class kinds at all six non-nil
+  result producers: singleton unwrap, reference Copy and value-union remap,
+  for both current and explicit branch blocks. Filter only instance Nil/Void.
+  Unknown union leaves, empty proofs and failed expansion remain conservative;
+  the narrowed destination is never evidence of a source kind.
+- All 47 HIR controls pass on the exact compiler source (35q5039). The 29-case
+  original-first Proc input gate passes on Crystal 1.22.1 and exact S1 35q5040
+  (35q5042): 10 native positives and 19 diagnostic-specific negatives. Tests
+  cover truthy while/if/unless, class-versus-instance restrictions, reassignment,
+  capture-cell writes, unknown union leaves and mixed-PHI uncertainty.
+- The strict producer collector first exposed missing member-call publication
+  (35q5034). Fix that owner boundary; do not regain the old apparent success by
+  treating an unregistered union call as an instance-only source proof.
+- [ ] Fix runtime class-object representation independently: guarded
+  Token.class | Nil compiles but prints only a newline instead of A\n
+  (35q5034). Its choose(Bool) true branch emits null for Token, just like nil.
+  The positive is not claimed by the source-admission gate; retain this native
+  falsifier. Nil.class condition folding is a second, distinct truthiness bug.
+- [ ] Audit missing scalar call kind and virtual-family return certificates.
+  Exact direct-member publication is not proof for an unmaterialized call or a
+  dynamic family. Keep refusal conservative until that source owner is known.
+- Full prelude, fresh bootstrap and unchanged LavinMQ object/link/server and
+  upstream test parity remain open. No stdlib/application or source-type guard
+  was changed.

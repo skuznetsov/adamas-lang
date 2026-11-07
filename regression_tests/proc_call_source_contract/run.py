@@ -10,8 +10,8 @@ import tempfile
 
 HERE = Path(__file__).resolve().parent
 FIXTURES = HERE / "fixtures"
-POSITIVE = ('top_level_class_union', 'exact_int8_input', 'exact_int16_input', 'exact_int32_input', 'exact_int64_input', 'exact_float32_input', 'exact_float64_input')
-NEGATIVE = ('reject_top_level_class_union_as_instance', 'reject_numeric_literal_int8_boundary', 'reject_numeric_negative_literal_int8_boundary', 'reject_numeric_integer_domain_widening', 'reject_numeric_float32_to_float64_expression', 'reject_numeric_int16_expression_to_float32', 'reject_numeric_int32_expression_to_float64', 'reject_int8_literal_overflow', 'reject_int8_int32_expression', 'reject_negative_int8_literal_underflow', 'reject_int32_expression_to_float32', 'reject_wrong_scalar', 'reject_missing_argument_member_access', 'reject_extra_argument_direct_call')
+POSITIVE = ('top_level_class_union', 'exact_int8_input', 'exact_int16_input', 'exact_int32_input', 'exact_int64_input', 'exact_float32_input', 'exact_float64_input', 'flow_while_truthy_union', 'flow_if_truthy_union', 'flow_unless_nil_union')
+NEGATIVE = ('reject_top_level_class_union_as_instance', 'reject_numeric_literal_int8_boundary', 'reject_numeric_negative_literal_int8_boundary', 'reject_numeric_integer_domain_widening', 'reject_numeric_float32_to_float64_expression', 'reject_numeric_int16_expression_to_float32', 'reject_numeric_int32_expression_to_float64', 'reject_int8_literal_overflow', 'reject_int8_int32_expression', 'reject_negative_int8_literal_underflow', 'reject_int32_expression_to_float32', 'reject_wrong_scalar', 'reject_missing_argument_member_access', 'reject_extra_argument_direct_call', 'reject_flow_unguarded_nullable', 'reject_flow_truthy_mixed_class_value', 'reject_flow_reassignment_after_guard', 'reject_flow_cell_write_after_guard', 'reject_singleton_class_as_instance')
 CASES = POSITIVE + NEGATIVE
 EXIT = re.compile(rb"\[EXIT: ([0-9]+)\] after ~[0-9]+(?:\.[0-9]+)? ?s\n")
 RESOURCE = re.compile(
