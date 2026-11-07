@@ -1,0 +1,56 @@
+[
+  {
+    "name": "bare_nullable_sync",
+    "source": "fixtures/bare_nullable_sync.cr",
+    "ok": true,
+    "expected": "G\n"
+  },
+  {
+    "name": "without_binding_capture",
+    "source": "fixtures/without_binding_capture.cr",
+    "ok": true,
+    "expected": "H\n"
+  },
+  {
+    "name": "explicit_value_call",
+    "source": "fixtures/explicit_value_call.cr",
+    "ok": true,
+    "expected": "I\n"
+  },
+  {
+    "name": "annotated_value_method",
+    "source": "fixtures/annotated_value_method.cr",
+    "ok": true,
+    "expected": "J\n"
+  },
+  {
+    "name": "prematerialized_value",
+    "source": "fixtures/prematerialized_value.cr",
+    "ok": true,
+    "expected": "K\n"
+  },
+  {
+    "name": "populated_cache_runtime_once",
+    "source": "fixtures/populated_cache_runtime_once.cr",
+    "ok": true,
+    "expected": "VM\n"
+  },
+  {
+    "name": "reject_class_valued_value",
+    "source": "fixtures/reject_class_valued_value.cr",
+    "ok": false,
+    "expected": ""
+  },
+  {
+    "name": "primitive_bodyful_sibling",
+    "source": "fixtures/primitive_bodyful_sibling.cr",
+    "ok": true,
+    "expected": "A\n"
+  },
+  {
+    "name": "primitive_empty_sibling",
+    "source": "fixtures/primitive_empty_sibling.cr",
+    "ok": true,
+    "expected": "A\n"
+  }
+]

@@ -26844,3 +26844,32 @@ integration, fresh bootstrap, or LavinMQ parity.
   hello still stops at pending Exception#inspect_with_backtrace$IO (35q5250);
   the direct-call repair does not certify overrides or full prelude. Unchanged
   LavinMQ object/link/server/upstream parity and fresh bootstrap remain open.
+
+
+### 2026-11-07 — Demand body-owned source kinds independently of return ABI
+
+- [x] Retain exact producer dependencies and replay when a declared return ABI
+  is already known. Nilary member syntax demands the selected body before using
+  its actual class/instance result; explicit parentheses are not a semantic fix.
+- [x] Authenticate bodyless primitive exclusions with the exact annotated
+  Def/Arena. Consume module annotations in their declaration scope and prevent
+  ordinary bodyful/empty siblings from inheriting intrinsic authority in HIR.
+- Original-first source_kind_body_demand_repro.sh passes eight native positives
+  and one complete semantic rejection on Crystal 1.22.1 and exact-source S1
+  35q5321, in both lazy and eager modes (35q5323). The populated-cache control
+  proves one runtime invocation. All 82 HIR controls pass (35q5320), including
+  ten newly shipped replay/annotation controls (35q5324). Both genuine Atomic
+  gates pass (13 cases, 35q5325/5326). Force-depth limits and source restrictions
+  remain strict; no stdlib/application edits.
+- [ ] Settle StaticArray(UInt8, 20)#to_slice replay. Unchanged LavinMQ reaches
+  this pending result inside Crystal::System.print_error$String_Tuple(UInt64)
+  on the exact final S1 (35q5329). Its known ABI does not discharge dependencies.
+- [ ] Carry exact intrinsic permission from HIR to MIR. Two ordinary unannotated
+  Atomic::Ops.load/cmpxchg programs print B on stock (35q5327) and A on this S1
+  (35q5328). Genuine Atomic positives alone do not prove sibling isolation.
+- [ ] Audit receiver-repair primitive availability queries: family membership
+  is not an exact source receipt. No behavioral failure has yet qualified this
+  remaining consumer hypothesis.
+- Full prelude, fresh bootstrap, unchanged LavinMQ linking/runtime and upstream
+  test parity remain open. The new SDD intrinsic boundary is design-sealed;
+  current MIR behavior is explicitly measured-red.

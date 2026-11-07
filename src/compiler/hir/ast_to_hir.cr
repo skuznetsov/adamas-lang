@@ -3316,6 +3316,14 @@ module Adamas::HIR
     # AST of function definitions for inline expansion
     @function_defs : Hash(String, Adamas::Compiler::Frontend::DefNode)
     @primitive_template_source_bindings : Hash(String, PrimitiveTemplateSourceBinding)
+    # An intrinsic annotation belongs to one declaration and arena, not every
+    # overload that shares the emitted method family.
+    @source_primitive_annotations : Hash(UInt64, {
+      Adamas::Compiler::Frontend::DefNode,
+      Adamas::Compiler::Frontend::ArenaLike,
+      String,
+      String,
+    })
     # Source-backed parameter recovery is kept as a sidecar keyed by the
     # original DefNode identity.  Self-hosted stage2 can retain the DefNode
     # header/body while its @params_storage is empty; the recovered node uses
@@ -8907,6 +8915,12 @@ module Adamas::HIR
       @union_descriptor_entries = [] of UnionDescriptorRegistration
       @function_defs = Hash(String, Adamas::Compiler::Frontend::DefNode).new(initial_capacity: 32768)
       @primitive_template_source_bindings = {} of String => PrimitiveTemplateSourceBinding
+      @source_primitive_annotations = {} of UInt64 => {
+        Adamas::Compiler::Frontend::DefNode,
+        Adamas::Compiler::Frontend::ArenaLike,
+        String,
+        String,
+      }
       @source_recovered_defs = {} of UInt64 => {
         Adamas::Compiler::Frontend::DefNode,
         Adamas::Compiler::Frontend::ArenaLike,
@@ -10396,6 +10410,19 @@ module Adamas::HIR
       @pending_primitive_kind = nil
     end
 
+    private def with_isolated_pending_effect_annotations(&)
+      old_pending_annotations = @pending_def_annotations
+      old_pending_primitive = @pending_primitive_kind
+      @pending_def_annotations = [] of Tuple(Adamas::Compiler::Frontend::AnnotationNode, Adamas::Compiler::Frontend::ArenaLike)
+      @pending_primitive_kind = nil
+      begin
+        yield
+      ensure
+        @pending_def_annotations = old_pending_annotations
+        @pending_primitive_kind = old_pending_primitive
+      end
+    end
+
     def seed_top_level_type_names(names : Enumerable(String)) : Nil
       observed = false
       names.each do |name|
@@ -10492,6 +10519,87 @@ module Adamas::HIR
       end
 
       summary
+    end
+
+    private def register_source_primitive(
+      name : String,
+      kind : String,
+      definition : Adamas::Compiler::Frontend::DefNode,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Nil
+      @module.register_primitive(name, kind)
+      @source_primitive_annotations[definition.object_id.to_u64] = {definition, arena, name, kind}
+    end
+
+    private def source_owned_bodyless_primitive?(
+      definition : Adamas::Compiler::Frontend::DefNode,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Bool
+      return false unless definition.body.nil? || definition.body.not_nil!.empty?
+      binding = @source_primitive_annotations[definition.object_id.to_u64]? || return false
+      binding[0].same?(definition) && binding[1].same?(arena) &&
+        @module.primitive_for(binding[2]) == binding[3]
+    end
+
+    private def source_owned_bodyless_primitive_target?(name : String) : Bool
+      if source = @force_lower_replay_source_bindings[name]?
+        return false unless force_lower_exact_source_matches?(name, source)
+        return source_owned_bodyless_primitive?(source.source_def, source.source_arena)
+      end
+      definition = @function_defs[name]? || return false
+      arena = @function_def_arenas[name]? || return false
+      source_owned_bodyless_primitive?(definition, arena)
+    end
+
+    private def source_primitive_kind_for_exact_target(
+      definition : Adamas::Compiler::Frontend::DefNode?,
+      arena : Adamas::Compiler::Frontend::ArenaLike?,
+    ) : String?
+      return nil unless definition && arena
+      receipt = @source_primitive_annotations[definition.object_id.to_u64]? || return nil
+      return nil unless receipt[0].same?(definition) && receipt[1].same?(arena)
+      return nil unless @module.primitive_for(receipt[2]) == receipt[3]
+      receipt[3]
+    end
+
+    private def source_primitive_family_registered?(name : String, fallback_name : String? = nil) : Bool
+      name_family = strip_type_suffix(name)
+      fallback_family = fallback_name.try { |candidate| strip_type_suffix(candidate) }
+      @source_primitive_annotations.each_value do |receipt|
+        return true if receipt[2] == name_family
+        return true if fallback_family && receipt[2] == fallback_family
+      end
+      false
+    end
+
+    private def primitive_kind_for_selected_call(
+      target_name : String,
+      fallback_name : String?,
+      definition : Adamas::Compiler::Frontend::DefNode?,
+      arena : Adamas::Compiler::Frontend::ArenaLike?,
+    ) : String?
+      if source_kind = source_primitive_kind_for_exact_target(definition, arena)
+        return source_kind
+      end
+
+      # A source annotation belongs to the exact selected Def/Arena receipt.
+      # Do not let the registry's family fallback transfer it to an ordinary
+      # sibling overload that has no primitive source receipt.
+      return nil if source_primitive_family_registered?(target_name, fallback_name)
+
+      @module.primitive_for(target_name) || fallback_name.try { |candidate| @module.primitive_for(candidate) }
+    end
+
+    private def primitive_kind_for_registered_target(target_name : String, fallback_name : String?) : String?
+      # The emitted target is the only source key available on the no-parens
+      # path. A family lookup here could recover a sibling Def and accidentally
+      # turn its receipt into authority for this call.
+      definition = @function_defs[target_name]?
+      arena = @function_def_arenas[target_name]?
+      if definition
+        arena ||= registered_arena_for_def(definition)
+      end
+      primitive_kind_for_selected_call(target_name, fallback_name, definition, arena)
     end
 
     private def remember_effect_annotation(
@@ -34280,28 +34388,30 @@ module Adamas::HIR
       node : Adamas::Compiler::Frontend::ModuleNode,
       exact_source : Bool,
     )
-      module_name = module_name_from_node(node) || ""
-      if module_name.empty?
-        if with_reparsed_module_from_current_source(node) do |reparsed_node, reparsed_id|
-             register_module(reparsed_node, reparsed_id)
-           end
-          return
+      with_isolated_pending_effect_annotations do
+        module_name = module_name_from_node(node) || ""
+        if module_name.empty?
+          if with_reparsed_module_from_current_source(node) do |reparsed_node, reparsed_id|
+               register_module(reparsed_node, reparsed_id)
+             end
+            return
+          end
         end
-      end
 
-      old_class = @current_class
-      old_override = @current_namespace_override
-      @current_class = nil
-      @current_namespace_override = nil
-      begin
-        if exact_source
-          register_module_with_name_in_current_arena(node, module_name)
-        else
-          register_module_without_source(node, module_name)
+        old_class = @current_class
+        old_override = @current_namespace_override
+        @current_class = nil
+        @current_namespace_override = nil
+        begin
+          if exact_source
+            register_module_with_name_in_current_arena(node, module_name)
+          else
+            register_module_without_source(node, module_name)
+          end
+        ensure
+          @current_class = old_class
+          @current_namespace_override = old_override
         end
-      ensure
-        @current_class = old_class
-        @current_namespace_override = old_override
       end
     end
 
@@ -34574,7 +34684,9 @@ module Adamas::HIR
               bootstrap_trace_puts "[MODULE_CHILD_MEMBER_FIRST] #{nested_first ? nested_first.not_nil!.index : -1}"
               if env_has?("ADAMAS_TRACE_MODULE_CALL_PROBE")
                 probe_name = safe_slice_to_string(nested_module.name) || ""
-                register_nested_module_in_current_arena(nested_module, "#{module_name}::#{probe_name}")
+                with_isolated_pending_effect_annotations do
+                  register_nested_module_in_current_arena(nested_module, "#{module_name}::#{probe_name}")
+                end
               end
             end
             return
@@ -34955,10 +35067,16 @@ module Adamas::HIR
               bootstrap_trace_puts "[CLASS_FRONTIER] module_pass2_before_member #{module_name} idx=#{body_idx} expr=#{expr_id.index}"
             end
             member = unwrap_visibility_member(@arena[expr_id])
+            unless member.is_a?(Adamas::Compiler::Frontend::AnnotationNode) ||
+                   member.is_a?(Adamas::Compiler::Frontend::DefNode)
+              clear_pending_effect_annotations
+            end
             if env_has?("ADAMAS_TRACE_CLASS_FRONTIER") && module_name == "Float::FastFloat"
               bootstrap_trace_puts "[CLASS_FRONTIER] module_pass2_member #{module_name} idx=#{body_idx} kind=#{Adamas::Compiler::Frontend.node_kind(member)}"
             end
             case member
+            when Adamas::Compiler::Frontend::AnnotationNode
+              remember_effect_annotation(member, @arena)
             when Adamas::Compiler::Frontend::ClassVarDeclNode
               safe_str_guard(member.name, "next")
               safe_str_guard(member.type, "next")
@@ -34998,6 +35116,8 @@ module Adamas::HIR
                 end
               end
             when Adamas::Compiler::Frontend::DefNode
+              pending_primitive_kind = @pending_primitive_kind
+              @pending_primitive_kind = nil
               unless safe_slice_guard?(member.name)
                 next unless def_receiver_is_self_from_node(member, @arena)
               end
@@ -35007,6 +35127,11 @@ module Adamas::HIR
               # while `def foo` defines an instance method meant to be mixed in via `include`.
               debug_receiver_probe("OWNER_RECV_MOD", module_name, method_name, member.receiver)
               is_class_method = def_receiver_is_self_from_node(member, @arena) || (!member.receiver && extend_self)
+              if prim = pending_primitive_kind
+                separator = is_class_method ? "." : "#"
+                primitive_name = "#{module_name}#{separator}#{method_name}"
+                register_source_primitive(primitive_name, prim, member, registration_member_arena_for(primitive_name, member))
+              end
               if is_class_method
                 base_name = "#{module_name}.#{method_name}"
                 member_arena = registration_member_arena_for(base_name, member)
@@ -38008,7 +38133,7 @@ module Adamas::HIR
       if (prim = @pending_primitive_kind) && !method_name.empty?
         @pending_primitive_kind = nil
         separator = def_receiver_is_self_from_node(def_node, @arena) ? "." : "#"
-        @module.register_primitive("#{class_name}#{separator}#{method_name}", prim)
+        register_source_primitive("#{class_name}#{separator}#{method_name}", prim, def_node, @arena)
       end
       register_type_method_from_def(def_node, class_name)
 
@@ -39704,7 +39829,9 @@ module Adamas::HIR
       expr_id : ExprId,
     )
       with_arena(module_declaration_arena(node, expr_id)) do
-        register_nested_module_in_current_arena(node, full_name)
+        with_isolated_pending_effect_annotations do
+          register_nested_module_in_current_arena(node, full_name)
+        end
       end
     end
 
@@ -39961,7 +40088,12 @@ module Adamas::HIR
             if env_has?("ADAMAS_TRACE_CLASS_FRONTIER") && full_name == "Float::FastFloat"
               bootstrap_trace_puts "[CLASS_FRONTIER] nested_module_pass2_member #{full_name} idx=#{body_idx} kind=#{Adamas::Compiler::Frontend.node_kind(member)}"
             end
-            case Adamas::Compiler::Frontend.node_kind(member)
+            member_kind = Adamas::Compiler::Frontend.node_kind(member)
+            unless member_kind == Adamas::Compiler::Frontend::NodeKind::Annotation ||
+                   member_kind == Adamas::Compiler::Frontend::NodeKind::Def
+              clear_pending_effect_annotations
+            end
+            case member_kind
             when Adamas::Compiler::Frontend::NodeKind::Annotation
               member = member.unsafe_as(Adamas::Compiler::Frontend::AnnotationNode)
               # Capture @[Primitive(:name)] (and other effect annotations) so the
@@ -39975,6 +40107,8 @@ module Adamas::HIR
               )
             when Adamas::Compiler::Frontend::NodeKind::Def
               member = member.unsafe_as(Adamas::Compiler::Frontend::DefNode)
+              pending_primitive_kind = @pending_primitive_kind
+              @pending_primitive_kind = nil
               method_name = def_method_name_from_node(member, @arena) || ""
               trace_nested_float_def = env_has?("ADAMAS_TRACE_CLASS_FRONTIER") && full_name == "Float::FastFloat"
               bootstrap_trace_puts "[CLASS_FRONTIER] nested_module_def_enter #{full_name}.#{method_name}" if trace_nested_float_def
@@ -39989,6 +40123,14 @@ module Adamas::HIR
                                 else
                                   @module_extend_self.includes?(full_name)
                                 end
+              if prim = pending_primitive_kind
+                separator = is_class_method ? "." : "#"
+                primitive_name = "#{full_name}#{separator}#{method_name}"
+                register_source_primitive(primitive_name, prim, member, registration_member_arena_for(primitive_name, member))
+                if env_get("DEBUG_PRIMITIVES")
+                  STDERR.puts "[PRIMITIVE_REG] #{primitive_name} → :#{prim}"
+                end
+              end
               unless is_class_method
                 # Instance methods (abstract ones included) belong to the
                 # module, as for a top-level module body: a call on a value of
@@ -40002,14 +40144,6 @@ module Adamas::HIR
                 STDERR.puts "[DEBUG_MODULE_LOOKUP] register #{full_name}.#{method_name}"
               end
               base_name = "#{full_name}.#{method_name}"
-              # Register pending @[Primitive(:name)] before processing the def body.
-              if prim = @pending_primitive_kind
-                @pending_primitive_kind = nil
-                @module.register_primitive(base_name, prim)
-                if env_get("DEBUG_PRIMITIVES")
-                  STDERR.puts "[PRIMITIVE_REG] #{base_name} → :#{prim}"
-                end
-              end
               member_arena = registration_member_arena_for(base_name, member)
               bootstrap_trace_puts "[CLASS_FRONTIER] nested_module_def_after_arena #{base_name}" if trace_nested_float_def
               # Keep nested-module defs anchored to their original arena.
@@ -40415,9 +40549,11 @@ module Adamas::HIR
       if body = node.body
         old_class = @current_class
         old_pending = @pending_def_annotations
+        old_pending_primitive = @pending_primitive_kind
         @current_class = module_name
         begin
           @pending_def_annotations = [] of Tuple(Adamas::Compiler::Frontend::AnnotationNode, Adamas::Compiler::Frontend::ArenaLike)
+          @pending_primitive_kind = nil
           body.each_with_index do |expr_id, idx|
             member = unwrap_visibility_member(@arena[expr_id])
             if member.is_a?(Adamas::Compiler::Frontend::AnnotationNode)
@@ -40440,7 +40576,10 @@ module Adamas::HIR
                                 else
                                   @module_extend_self.includes?(module_name)
                                 end
-              next unless is_class_method
+              unless is_class_method
+                clear_pending_effect_annotations
+                next
+              end
               STDERR.puts "      [#{module_name}] Method #{idx}: #{method_name}" if env_get("HIR_DEBUG")
               STDERR.flush if env_get("HIR_DEBUG")
               base_name = "#{module_name}.#{method_name}"
@@ -40464,7 +40603,10 @@ module Adamas::HIR
                 end
               end
               full_name = function_full_name_for_def(base_name, param_types, member.params, has_block)
-              next if @module.has_function?(full_name)
+              if @module.has_function?(full_name)
+                clear_pending_effect_annotations
+                next
+              end
               callsite_args = pending_callsite_args_for_def(member, base_name, full_name)
               call_arg_types = callsite_args ? callsite_args.types : nil
               call_arg_literals = callsite_args ? callsite_args.literals : nil
@@ -40517,6 +40659,7 @@ module Adamas::HIR
         ensure
           @current_class = old_class
           @pending_def_annotations = old_pending
+          @pending_primitive_kind = old_pending_primitive
         end
       end
     end
@@ -40584,6 +40727,8 @@ module Adamas::HIR
             shared_arity_name,
             callsite_args.try(&.has_named_args) || false,
           )
+        else
+          clear_pending_effect_annotations
         end
       when Adamas::Compiler::Frontend::GetterNode
         return unless member.is_class?
@@ -40791,6 +40936,10 @@ module Adamas::HIR
                             end
         STDERR.puts "[MATH_MIN_MODULE] module=#{module_name} method=#{method_name} override=#{full_name_override || "nil"} call_arg_types=#{call_type_names.join(",")} param_annotations=#{param_annotations.join(",")}"
       end
+
+      # Bodyless annotated declarations are intrinsic-owned. Their source
+      # signature still participates in selection; an empty body is not Nil.
+      return if source_owned_bodyless_primitive?(node, @arena)
 
       if binding = raw_callback_source_binding_for(full_name_override)
         unless same_def_node?(node, binding.source_def)
@@ -42970,7 +43119,7 @@ module Adamas::HIR
               # Register primitive from preceding @[Primitive(:name)] annotation
               if prim = @pending_primitive_kind
                 @pending_primitive_kind = nil
-                @module.register_primitive(base_name, prim)
+                register_source_primitive(base_name, prim, member, registration_member_arena_for(base_name, member))
                 if env_get("DEBUG_PRIMITIVES")
                   STDERR.puts "[PRIMITIVE_REG] #{base_name} → :#{prim}"
                 end
@@ -50358,7 +50507,7 @@ module Adamas::HIR
       # Skip primitive methods — they are handled at call site via intrinsics.
       if prim = @pending_primitive_kind
         @pending_primitive_kind = nil
-        @module.register_primitive(base_name, prim)
+        register_source_primitive(base_name, prim, node, @arena)
         if env_get("DEBUG_PRIMITIVES")
           STDERR.puts "[PRIMITIVE] Registered #{base_name} as primitive :#{prim}"
         end
@@ -50381,7 +50530,9 @@ module Adamas::HIR
       # lower_main asking for `UInt64#unsafe_div$Int32` before lower_call reaches
       # its intrinsic) arrives without it; a body-less def registered as a
       # primitive still has no source body to lower.
-      if (node.body.nil? || node.body.not_nil!.empty?) && (prim = @module.primitive_for(base_name))
+      primitive_def_arena = registered_arena_for_def(node) || @arena
+      if (node.body.nil? || node.body.not_nil!.empty?) &&
+         (prim = primitive_kind_for_selected_call(base_name, nil, node, primitive_def_arena))
         stop_after_pending_target_lower_method_phase(
           "lower_method_primitive_terminal",
           "ADAMAS_STOP_AFTER_HIR_PENDING_TARGET_LOWER_METHOD_PRIMITIVE_TERMINAL",
@@ -112146,6 +112297,10 @@ module Adamas::HIR
     ) : Bool
       return false unless v2_string_readable?(name)
       return false if name.empty?
+      # An intrinsic has no source body/result demand to suspend or replay.
+      # Require the exact selected declaration; a family primitive entry alone
+      # cannot exempt an ordinary sibling overload from validation.
+      return false if source_owned_bodyless_primitive_target?(name)
       if @suppress_force_lower_return_type_depth > 0
         # Inline-yield fallback suppresses recursive return discovery while it
         # is assembling the callback. An explicit bypass remains safe for an
@@ -112827,8 +112982,10 @@ module Adamas::HIR
       # consumes Void; the replay recipe and source identity checks below own
       # the continuation independently of the active inline context.
       consumer = ctx.source_result_replay_consumer || ctx.function.name
-      return unless return_type == TypeRef::VOID &&
-                    @force_lower_depth_refused[refused_mark...].includes?(name) &&
+      # A known ABI type does not settle the source value kind. An annotated
+      # producer refused at the depth cap needs the same exact-source replay
+      # before a consumer narrows it or admits it to a restriction.
+      return unless @force_lower_depth_refused[refused_mark...].includes?(name) &&
                     @force_lower_provisional_dependencies[consumer]?.try(&.includes?(name)) &&
                     force_lower_replay_recipe_available?(consumer)
       source = force_lower_exact_source_binding(name, selected_def, selected_call_def, selected_call_arena, selected_registry_name)
@@ -115703,6 +115860,10 @@ module Adamas::HIR
         )
       end
 
+      # Intrinsics own these empty declarations. Do not enqueue or capture an
+      # ordinary body recipe after the exact source/arena has been selected.
+      return if source_owned_bodyless_primitive?(resolved_func_def, arena)
+
       # Capture the selected source and callshape before body lowering.
       # Replay restores this entry environment, then recomputes the lexical
       # body environment from the exact source as in the first generation.
@@ -117079,8 +117240,10 @@ module Adamas::HIR
       selected_call_arena : Adamas::Compiler::Frontend::ArenaLike? = nil,
       selected_registry_name : String? = nil,
     ) : Nil
-      return unless source && source.return_type.nil?
-      return unless force_lower_exact_source_binding(target, source, selected_call_def, selected_call_arena, selected_registry_name)
+      return unless source
+      binding = force_lower_exact_source_binding(target, source, selected_call_def, selected_call_arena, selected_registry_name)
+      return unless binding
+      return if source_owned_bodyless_primitive?(binding.source_def, binding.source_arena)
       return unless (!@module.has_function_with_body?(target) &&
                      @force_lower_depth_refused[refused_before_force...].includes?(target)) ||
                     @force_lower_provisional_dependencies.has_key?(target)
@@ -117097,12 +117260,16 @@ module Adamas::HIR
     # selected source body has been lowered. Early returns can add Nil (or a
     # different result) even when the final expression looks concrete. Demand
     # that exact Def before its caller uses the hint for narrowing or dispatch.
+    # Consumers of body-owned value kinds also demand annotated definitions;
+    # a declared ABI bound is not a completed source result certificate.
     private def selected_source_result_pending?(
       name : String,
       selected_def : Adamas::Compiler::Frontend::DefNode?,
+      *,
+      include_annotated : Bool = false,
     ) : Bool
       return false unless selected_def
-      return false unless selected_def.return_type.nil? && selected_def.body
+      return false unless (include_annotated || selected_def.return_type.nil?) && selected_def.body
       return false unless @function_defs[name]?.try(&.same?(selected_def))
       return false unless @function_def_arenas.has_key?(name)
       return false if @module.has_function_with_body?(name)
@@ -122507,7 +122674,12 @@ module Adamas::HIR
         # Intrinsics use the selected primitive key and the caller context.
         if concrete_owner_name.nil? && receiver_id.nil? && static_class_name && @current_method_is_class &&
            callee_kind == Adamas::Compiler::Frontend::NodeKind::Identifier && !method_name.includes?('.') &&
-           @module.primitive_for(entry_name).nil?
+           primitive_kind_for_selected_call(
+             entry_name,
+             base_method_name,
+             entry_def,
+             selected_call_entry_arena || entry_def.try { |definition| registered_arena_for_def(definition) },
+           ).nil?
           concrete_owner_name = @current_class
         end
         if concrete_owner_name.nil? && receiver_id && ctx.type_literal?(receiver_id)
@@ -127585,7 +127757,15 @@ module Adamas::HIR
       end
 
       # Check if callee is a registered primitive — emit intrinsic instead of Call
-      if prim_kind = @module.primitive_for(mangled_method_name) || @module.primitive_for(base_method_name)
+      primitive_source_arena = selected_call_entry_arena || selected_call_entry_def.try do |definition|
+        registered_arena_for_def(definition)
+      end
+      if prim_kind = primitive_kind_for_selected_call(
+           mangled_method_name,
+           base_method_name,
+           selected_call_entry_def,
+           primitive_source_arena,
+         )
         if prim_result = lower_primitive_call(ctx, prim_kind, method_name, receiver_id, args, return_type, mangled_method_name)
           return prim_result
         end
@@ -131079,7 +131259,7 @@ module Adamas::HIR
       # to a single-element slice holding the tuple (wrong @size and garbage data),
       # breaking e.g. String::CHAR_TO_DIGIT and all non-decimal `to_i(base)`.
       if method_name == "literal" && full_method_name &&
-         @module.primitive_for(full_method_name) == "slice_literal"
+         primitive_kind_for_registered_target(full_method_name, nil) == "slice_literal"
         return {args, false}
       end
 
@@ -147412,9 +147592,10 @@ module Adamas::HIR
       member_return_def = @function_defs[actual_name]?
       refused_before_member_force = @force_lower_depth_refused.size
       unresolved_included_result = included_noarg_source_result && included_noarg_source_result[0].nil?
-      if !call_virtual && (!forced_return_type || unresolved_included_result) && resolved_method_name && actual_name == primary_name &&
-         (return_type == TypeRef::VOID || unresolved_generic_return_type?(return_type)) &&
-         selected_source_result_pending?(actual_name, member_return_def)
+      # A registered or declared ABI does not publish body-owned source facts.
+      # Nilary member syntax must demand the same exact result as value().
+      if !call_virtual && resolved_method_name && actual_name == primary_name &&
+         selected_source_result_pending?(actual_name, member_return_def, include_annotated: true)
         if force_lower_function_for_return_type(actual_name, bypass_inline_yield: true, pending_call_target_context: "member_access_exact")
           return_type = get_function_return_type(actual_name, 0, member_return_def)
         end
@@ -147584,7 +147765,7 @@ module Adamas::HIR
       # A primitive def has no body to call: lower_call's emitter turns it
       # into an intrinsic, and a no-parens call such as `e.crystal_type_id`
       # must get the same, or it reaches an abort stub at runtime.
-      if prim_kind = @module.primitive_for(actual_name) || base_method_name.try { |name| @module.primitive_for(name) }
+      if prim_kind = primitive_kind_for_registered_target(actual_name, base_method_name)
         if prim_result = lower_primitive_call(ctx, prim_kind, member_name, object_id, args, return_type, actual_name)
           return prim_result
         end

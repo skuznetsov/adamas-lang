@@ -1,0 +1,1 @@
+method LogBuilderProbeBuilder#for must return LogBuilderProbeEntry but it is returning (LogBuilderProbeEntry | LogBuilderProbeEntry.class)

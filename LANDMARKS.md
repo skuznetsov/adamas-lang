@@ -26999,3 +26999,47 @@ Stock-prelude hello still refuses pending virtual
 Exception#inspect_with_backtrace$IO (35q5250); it needs the actual target-family
 contract. Full prelude, fresh bootstrap and unchanged LavinMQ object/link/server/
 upstream parity remain open. The direct discard packet does not close them.
+
+
+## 2026-11-07 — A known ABI cannot settle a body-owned source value kind
+
+Bare nullable member calls could consume registration/annotation hints without
+lowering the exact producer, while replay dependencies excluded annotated
+producers. Demand body-owned source facts independently of ABI; retain selected
+Def/Arena and the existing depth cap when suspending/replaying. This repairs the
+reduced Log::Builder cache path, including actual class-result rejection and
+one runtime value invocation. Bodyless intrinsic declarations are excluded only
+with their exact source receipt. Isolate pending module annotations and require
+that receipt at HIR primitive emitters, including ordinary empty siblings.
+
+Scoped verdict: ROBUST for the eight native positives and one complete semantic
+negative of source_kind_body_demand_repro.sh on original Crystal 1.22.1 and
+S1 35q5321, lazy and eager (35q5323). All 82 targeted HIR checks pass (35q5320),
+the actual new replay wrapper passes its ten checks (35q5324), and both genuine
+Atomic gates pass thirteen cases (35q5325/5326). Baseline sibling falsifiers
+produce incorrect output or an abort before the exact source consumer repair.
+Compiler/native runs used run_safe.sh; no stdlib/application changes.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+build.exact-source-primitive-consumers35q5321.{result,source}.json,
+exact-source-primitive-consumers-hir35q5320/{result.json,spec.log,source.json},
+exact-source-kind-body-native35q5323/{result.json,gate.log,source.json},
+exact-source-replay-wrapper35q5324/{result.json,gate.log},
+exact-source-atomic-dispatch35q5325/{result.json,gate.log},
+exact-source-atomic-cmpxchg35q5326/{result.json,gate.log},
+lavinmq-exact-source-frontier35q5329/{result.json,compile.log}, and
+exact-source-kind-body-shipped35q5332.json.
+Compiler source manifest SHA-256:
+d0c8b1d8c8614fe86aee3ce3ca4cb87dc9c6fbe527c118ae59d47bae5d1cbb66.
+S1 SHA-256: f10b9077657f23e5aaeeab230431998273db4d382af1eac3ed5e91731da5ee68.
+Shipped source/test manifest SHA-256: 9c0d20e6532c0f3673a5c64b8ccb7c4920d2dbc1da289866388931198c2f8b22.
+Refresh after result-demand, replay, annotation scope or exact primitive consumer
+changes. Rollback is this atomic commit. Unrelated user WIP remains excluded.
+
+Residual boundary: unchanged LavinMQ still refuses pending
+StaticArray(UInt8, 20)#to_slice inside print_error (35q5329); no object, runtime,
+bootstrap or upstream parity is established. The adversary also confirmed an
+independent MIR permission defect: ordinary unannotated Atomic::Ops.load and
+cmpxchg bodies print B on stock (35q5327), A on S1 (35q5328). The SDD pins exact
+source permission transport before implementation; passing genuine Atomic tests
+cannot close that measured-red sibling counterfactual.

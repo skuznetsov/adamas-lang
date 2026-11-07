@@ -1,9 +1,11 @@
 # Source Result Ownership — Frontier SDD
 
-Status: IN_PROGRESS, 2026-11-06. The bounded return-owner implementation passes
-four original-first gates against Crystal 1.22.1 (116 fixtures,
-35q2635). Result-consumer precision, stock-prelude compilation, fresh bootstrap,
-and unchanged LavinMQ execution and upstream test parity remain open.
+Status: IN_PROGRESS, 2026-11-07. Exact-source S1 35q5321 passes the nine-case
+source-body demand packet, 82 HIR controls and 13 genuine Atomic controls.
+Stock-prelude/LavinMQ compilation still refuses pending StaticArray#to_slice
+(35q5329). Ordinary Atomic::Ops siblings are incorrectly substituted in MIR
+(35q5327/5328): the intrinsic phase boundary below is measured-red.
+Fresh bootstrap and unchanged LavinMQ execution/upstream parity remain open.
 The selected-default contract passes 37 main cases and ten block-slot cases
 on exact-source S1 35q2760 (35q2764); five companions remain explicitly open.
 
@@ -31,12 +33,43 @@ restriction may retain its ABI carrier while the completed body establishes
 more precise source facts. Dispatch and source restrictions consume source
 facts; LLVM calls must still agree with the function's emitted ABI.
 
-A registration hint is not a completed result. When the existing force-lower
-depth boundary postpones an exact producer, an ordinary or inline consumer
-must suspend before treating provisional Void as a value. Replay retains the
+A registration hint or known return ABI is not a completed source result.
+When the existing force-lower depth boundary postpones an exact producer, an
+ordinary or inline consumer must suspend before consuming its source value
+kind, including an annotated producer with a known ABI. Replay retains the
 same definition, arena, call shape, and source arguments. A completed generic
 family restriction may settle through its validated concrete result facts;
 an unresolved method formal cannot use that route.
+
+## Exact primitive source ownership
+
+An intrinsic annotation belongs to the exact source Def and retained arena.
+Consume it at that declaration, isolate it across module/nested scopes, and
+clear it across intervening non-declaration members. An annotated bodyless
+primitive has no ordinary body result to demand or replay. An ordinary sibling,
+including an empty sibling, still needs its real source body and restrictions.
+The HIR primitive emitter must not transfer a source annotation through a
+same-name family fallback. Synthetic builtin registrations retain their
+separate path; they cannot authenticate a source annotation.
+
+The HIR-to-MIR Atomic boundary is design-sealed, not yet admitted: attach an
+explicit capability only after authenticating the selected source annotation.
+Bind it to the exact emitted target and primitive kind; transport it with the
+HIR Call. A target-changing rewrite drops it. MIR may emit atomic operations
+only with this capability and matching operation/operand shape. Names, ABI
+shape, module identity and family registry membership cannot grant permission.
+An ordinary Atomic::Ops method must execute its source body. Absence of a
+capability takes the ordinary call path, never a name-based intrinsic fallback.
+
+Falsifiers: the original-first source_kind_body_demand_repro.sh packet includes
+bodyful/empty ordinary primitive-family siblings and a genuine class-valued
+rejection. module_primitive_annotation_scope_spec.cr exercises nested annotation
+isolation. The separate native load/cmpxchg counterfactuals (35q5327/5328)
+return B in Crystal and A in current Adamas despite having no Primitive
+annotation. Require B in both, an annotated-family ordinary sibling, and the
+13 genuine Atomic controls before admitting MIR transport. Stop if a sibling
+inherits permission or an honest intrinsic loses it; do not restore family
+authorization to recover a positive. Full prelude and bootstrap stay separate.
 
 ## Stable arity keys during declaration replay
 
@@ -644,6 +677,8 @@ and check semantic diagnostics and absence of an executable for rejections.
 - `regression_tests/source_method_void_result_repro.sh`
 - `regression_tests/source_method_declaration_key_repro.sh`
 - `regression_tests/source_array_helper_result_repro.sh`
+- `regression_tests/source_kind_body_demand_repro.sh`
+- `regression_tests/annotated_source_kind_replay_repro.sh`
 - `regression_tests/source_inline_callback_result_repro.sh`
 - `regression_tests/enum_value_source_result_repro.sh`
 - `regression_tests/inherited_type_source_precedence_repro.sh`
