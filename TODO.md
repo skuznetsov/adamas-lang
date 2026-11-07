@@ -26503,3 +26503,30 @@ integration, fresh bootstrap, or LavinMQ parity.
   closed. These are residual inference gaps, not admission exceptions.
 - Full prelude, fresh bootstrap, unchanged LavinMQ object/link/server execution
   and upstream Crystal test parity remain open. No stdlib/application edits.
+
+### 2026-11-07 — Keep source entry inputs across later nested assignments
+
+- [x] Infer an earlier direct alias from the selected call's entry formal type,
+  independently of later writes in the body. The old whole-body summary lost
+  `original_ip = ip` before a nested `ip -= 1`, leaving decode_frame's callback
+  input unknown despite concrete dladdr inputs.
+- The receipt requires the original CallNode/Arena, exact selected Def/Arena
+  and body, full ordinary positional slots, and a prefix proven not to modify
+  the formal. Named, rest/splat, omitted-default, contextless and Void inputs
+  cannot authorize this proof. Re-entrant inference restores its prior scope.
+- source_entry_yield_alias_repro.sh passes three native output controls and a
+  diagnostic-specific wrong-input rejection against stock Crystal 1.22.1 on
+  the exact S1 (35q4636). Before the repair the pointer case prints X instead
+  of A, the tuple case crashes, sibling specializations print XXX instead of
+  ACA, and the invalid Bool consumer is accepted (35q4615).
+- All 26 targeted HIR controls pass (35q4634); twenty callback replay cases
+  and the FFI out gate pass on the same S1 (35q4637). The wider HIR neighbor
+  set retains three identical baseline errors (35q4624), so it is not green.
+- [ ] Extend exact source entry bindings to the other call shapes only when
+  their formal mapping is authenticated; guessed/mangled vectors remain
+  insufficient. Prefix calls/operators and nested aliases require separate
+  flow/effect evidence.
+- [ ] Close the stock-prelude Path#basename failure at Nil#bytesize. The
+  decode_frame pending-result frontier is passed; full prelude, bootstrap,
+  unchanged LavinMQ object/link/server and upstream test parity remain open.
+  No stdlib or application source was changed.

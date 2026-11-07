@@ -26365,3 +26365,52 @@ S1 SHA-256: 4617dd486dbc9b3b30d2784c7aa478002e67ec70b122d7b72aae234c9a038e19.
 Refresh after external signature registration, out storage/formal checking,
 local-source inference, block input inference, or named/splat mapping changes.
 Rollback is this atomic commit.
+
+## 2026-11-07 — Source entry facts survive future writes, not unknown prefix effects
+
+Callback input inference merged all writes to a formal before typing its
+source aliases. A later nested `ip -= 1` then erased the type of the earlier
+`original_ip = ip`; consequently offset and decode_frame's yield input became
+Void. SourceBodyInferenceInputs now snapshots the callee's coerced entry
+formal types separately from its mutable discovered-local map. It requires
+an original call AST/arena, fully supplied ordinary positional actuals, exact
+selected Def/Arena/body identity, and a direct statement whose preceding
+source prefix cannot modify that formal. Calls/operators, unknown bare names,
+captures, pointerof/out and nested control flow cannot certify that prefix.
+Method entry and inference unwind restore this scope; an ambient or mangled
+vector is not authority. Other call shapes keep the existing inference route.
+
+The permanent stock-first source_entry_yield_alias_repro.sh passes three
+native output controls and a concrete wrong-input rejection on Crystal 1.22.1
+and this S1 (35q4636). Baseline 35q4615 instead prints X, crashes for the tuple,
+prints XXX for alternating specializations, and accepts the invalid Bool
+consumer. Four pointer-derived HIR examples distinguish the missing source
+input before lowering (35q4606); the final six targeted HIR groups pass all
+26 controls (35q4634). Final native neighbors pass twenty callback replay
+cases and the FFI out group (35q4637). The broader HIR neighbor set retains
+three identical baseline errors, recorded by 35q4624. It is not a full-suite
+claim. Source-only adversary verdict: ROBUST within the fully supplied
+positional entry-alias boundary, with absent shape metadata failing closed.
+
+OPEN: named/rest/default binding and effectful prefixes need their own exact
+source/flow proof. The stock-prelude next failure is Path#basename calling
+bytesize on Nil. Full prelude, fresh bootstrap and unchanged LavinMQ
+object/link/runtime/upstream test parity remain open. No stdlib/application
+edits, no weakened argument restriction, and no enclosing block result fallback.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+build.source-entry-alias-shape-final35q4635.result.json,
+source-entry-alias-final-native35q4636/result.json,
+source-entry-call-binding-final35q4634/result.json,
+source-entry-alias-final-neighbors35q4637/result.json, and
+source-entry-alias-neighbor-comparison35q4624.json, and
+hello-source-entry-alias-final35q4643/result.json with compile.log.
+All 1,916 compiler sources match
+build.source-entry-alias-shape-final35q4635.source.json, manifest SHA-256
+fdf2b73dad6ce481aa1fabbe02fc8fa6954b5783d0b7c7d97f7f1d6853c0c0b8.
+S1 SHA-256: 820abc301add95ad4cbec8fbcd0107dcb8439657fe2265212d8fc8b2c66877aa.
+Permanent native wrapper SHA-256:
+35ad845a14302e0b2c093e65c768622c4ecd0e8557e810e5bb693275bbed7ba2.
+Refresh after source call/formal binding, inference scope, alias collection,
+prefix effect checking, callback input inference or arena ownership changes.
+Rollback is this atomic commit.

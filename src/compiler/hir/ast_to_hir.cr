@@ -4647,6 +4647,24 @@ module Adamas::HIR
       end
     end
 
+    # Entry facts belong to one selected source inference scope, not to the
+    # mutable map of locals discovered while walking the body. A snapshot of a
+    # formal before a later reassignment still has the call's input type.
+    private class SourceBodyInferenceInputs
+      getter definition : Adamas::Compiler::Frontend::DefNode
+      getter arena : Adamas::Compiler::Frontend::ArenaLike
+      getter body : Array(ExprId)
+      @formal_types : Hash(String, TypeRef)
+
+      def initialize(@definition, @arena, @body, formal_types : Hash(String, TypeRef))
+        @formal_types = formal_types.dup
+      end
+
+      def type_for(name : String) : TypeRef?
+        @formal_types[name]?
+      end
+    end
+
     private record MethodBodyLoweringScopeSnapshot,
       inline_yield_block_stack : Array(Adamas::Compiler::Frontend::BlockNode),
       inline_yield_block_arena_stack : Array(Adamas::Compiler::Frontend::ArenaLike),
@@ -4658,6 +4676,7 @@ module Adamas::HIR
       inline_tuple_each_loop_exit_depth_stack : Array(Int32),
       inline_arenas : Array(Adamas::Compiler::Frontend::ArenaLike)?,
       infer_body_context : Array(ExprId)?,
+      source_body_inference_inputs : SourceBodyInferenceInputs?,
       current_def_return_type : TypeRef,
       captured_block_return_owner : Bool,
       inline_yield_caller_return_owner_stack : Array(Bool)
@@ -4674,6 +4693,7 @@ module Adamas::HIR
         @inline_tuple_each_loop_exit_depth_stack,
         @inline_arenas,
         @infer_body_context,
+        @source_body_inference_inputs,
         @current_def_return_type,
         @captured_block_return_owner,
         @inline_yield_caller_return_owner_stack
@@ -4690,6 +4710,7 @@ module Adamas::HIR
       @inline_tuple_each_next_stack = [] of Bool
       @inline_tuple_each_loop_exit_depth_stack = [] of Int32
       @inline_arenas = nil
+      @source_body_inference_inputs = nil
       @current_def_return_type = return_type
 
       snapshot
@@ -4706,6 +4727,7 @@ module Adamas::HIR
       @inline_tuple_each_loop_exit_depth_stack = snapshot.inline_tuple_each_loop_exit_depth_stack
       @inline_arenas = snapshot.inline_arenas
       @infer_body_context = snapshot.infer_body_context
+      @source_body_inference_inputs = snapshot.source_body_inference_inputs
       @current_def_return_type = snapshot.current_def_return_type
       @captured_block_return_owner = snapshot.captured_block_return_owner
       @inline_yield_caller_return_owner_stack = snapshot.inline_yield_caller_return_owner_stack
@@ -7967,6 +7989,7 @@ module Adamas::HIR
     @current_typeof_locals : Hash(String, TypeRef)?
     # Optional body context for local-type inference when resolving identifiers.
     @infer_body_context : Array(ExprId)?
+    @source_body_inference_inputs : SourceBodyInferenceInputs? = nil
     # Per-frame marker for return estimates that consumed assignment-RHS local summaries.
     @return_infer_unproven_local_reads : Array(Bool)
     @infer_callsite_return_stack : Set({UInt64, String?, Array(TypeRef), Array({String, TypeRef}), Bool})
@@ -31914,7 +31937,8 @@ module Adamas::HIR
                 owner_name = split_generic_base_and_args(recv_name).try(&.base) || recv_name
                 base_name = resolve_method_with_inheritance(owner_name, member_name) || "#{owner_name}##{member_name}"
                 call_arg_types = infer_arg_types_for_call(expr_node.args, self_type_name)
-                block_param_types = block_param_types_for_call(base_name, base_name, recv_type, call_arg_types)
+                block_param_types = block_param_types_for_call(base_name, base_name, recv_type, call_arg_types,
+                  !!expr_node.named_args, expr_node, @arena)
                 if block_return_name = infer_call_block_return_name(block_expr, block_pass_expr, expr_node.span, block_param_types, self_type_name)
                   if inferred = resolve_block_dependent_return_type(
                        base_name,
@@ -33101,7 +33125,8 @@ module Adamas::HIR
         bindings = source_block_result_bindings(selected[1], declaration_arena, selected[0],
           receiver_type, [] of TypeRef, source_binding)
         parameter_types = block_param_types_for_call(selected[0], declared_base, receiver_type,
-          source_call_types || infer_arg_types_for_call(call.args[0, Math.min(call_arg_count, call.args.size)], caller_self_type_name))
+          source_call_types || infer_arg_types_for_call(call.args[0, Math.min(call_arg_count, call.args.size)], caller_self_type_name),
+          !!call.named_args, call, @arena)
         if output_name = infer_call_block_return_name(block_expr, nil, call.span, parameter_types, caller_self_type_name)
           owner = return_declaration_owner_for(selected[0], declared_base)
           output_bindings = with_arena(declaration_arena) do
@@ -33541,7 +33566,8 @@ module Adamas::HIR
             end
             if value_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
               value_name = (safe_slice_to_string(value_node.name) || "")
-              inferred = infer_local_type_from_body(body, value_name, self_type_name, visited)
+              inferred = source_entry_type_before_alias(body, expr_id, value_name)
+              inferred ||= infer_local_type_from_body(body, value_name, self_type_name, visited)
               if inferred.nil? && !collect_assigned_vars(body).includes?(value_name)
                 # The identifier comes from the surrounding scope. Body-local
                 # dependencies must never fall back to stale ambient type state.
@@ -33822,6 +33848,63 @@ module Adamas::HIR
         collect_local_assignment_types(expr_node.expression, name, self_type_name, output, body, visited, binding_is_enclosing)
       when Adamas::Compiler::Frontend::MacroExpressionNode
         collect_local_assignment_types(expr_node.expression, name, self_type_name, output, body, visited, binding_is_enclosing)
+      end
+    end
+
+    private def source_entry_type_before_alias(
+      body : Array(ExprId),
+      assignment : ExprId,
+      name : String,
+    ) : TypeRef?
+      inputs = @source_body_inference_inputs || return nil
+      return nil unless inputs.body.same?(body) && inputs.arena.same?(@arena)
+      return nil unless @infer_body_context.try(&.same?(body))
+      return nil unless @current_def_node.try(&.same?(inputs.definition))
+      input_type = inputs.type_for(name) || return nil
+      return nil if input_type == TypeRef::VOID
+
+      # Only a direct statement in this exact source body has an established
+      # entry prefix. Nested loops/blocks may have already changed the formal
+      # on another iteration. Unknown prefix effects cannot certify an input.
+      body.each do |statement|
+        return input_type if statement == assignment
+        return nil unless source_entry_preserving_expression?(statement, name)
+      end
+      nil
+    end
+
+    private def source_entry_preserving_expression?(
+      expression : ExprId,
+      name : String,
+      depth : Int32 = 0,
+    ) : Bool
+      return false if depth > 64
+      node = node_for_expr(expression)
+      case node
+      when Adamas::Compiler::Frontend::NumberNode, Adamas::Compiler::Frontend::StringNode,
+           Adamas::Compiler::Frontend::CharNode, Adamas::Compiler::Frontend::BoolNode,
+           Adamas::Compiler::Frontend::NilNode, Adamas::Compiler::Frontend::SymbolNode,
+           Adamas::Compiler::Frontend::SelfNode
+        true
+      when Adamas::Compiler::Frontend::IdentifierNode
+        # An unbound bare identifier may invoke a method or expand a macro.
+        # Only an actual formal proves that this expression is a local read.
+        @source_body_inference_inputs.try(&.type_for(safe_slice_to_string(node.name) || "")) != nil
+      when Adamas::Compiler::Frontend::AssignNode
+        target = node_for_expr(node.target)
+        target.is_a?(Adamas::Compiler::Frontend::IdentifierNode) &&
+          !slice_eq?(target.name, name) &&
+          source_entry_preserving_expression?(node.value, name, depth + 1)
+      when Adamas::Compiler::Frontend::TypeDeclarationNode
+        !slice_eq?(node.name, name) &&
+          (node.value.nil? || source_entry_preserving_expression?(node.value.not_nil!, name, depth + 1))
+      when Adamas::Compiler::Frontend::GroupingNode
+        source_entry_preserving_expression?(node.expression, name, depth + 1)
+      else
+        # Calls/operators, captures, out/pointerof, macros and control flow require a
+        # separate flow/effect proof. Do not reuse the broad assignment scan:
+        # it intentionally omits several write forms and enclosing effects.
+        false
       end
     end
 
@@ -75888,7 +75971,8 @@ module Adamas::HIR
       end
       # Yielding defs are registered under their mangled block name.
       mangled_name = lookup_function_def_for_call(base_name, args.size, true, arg_types).try(&.[0]) || base_name
-      param_types = block_param_types_for_call(mangled_name, base_name, receiver_type, arg_types)
+      param_types = block_param_types_for_call(mangled_name, base_name, receiver_type, arg_types,
+        !!call.named_args, call, @arena)
 
       old_arena = @arena
       old_locals = @current_typeof_locals
@@ -77420,6 +77504,47 @@ module Adamas::HIR
       def_contains_yield?(func_def, def_arena)
     end
 
+    # The entry-alias proof may consume only actual, formally aligned inputs.
+    # A serialized suffix or a raw named/rest vector is not such a receipt.
+    # Other call shapes keep the existing inference path until their exact
+    # source binding is available here; do not promote its guessed local map.
+    private def source_entry_positional_call_binding(
+      selected_name : String,
+      definition : Adamas::Compiler::Frontend::DefNode,
+      call_arg_types : Array(TypeRef)?,
+      call_has_named_args : Bool,
+      call_node : Adamas::Compiler::Frontend::CallNode?,
+      call_arena : Adamas::Compiler::Frontend::ArenaLike?,
+      selection_input : CallResolutionInput?,
+    ) : SourceCallBinding?
+      actual_types = call_arg_types || return nil
+      # Missing shape metadata is not proof of a simple source call. Several
+      # legacy callers pass already expanded or inferred vectors here.
+      call = call_node || return nil
+      arena = call_arena || return nil
+      return nil if call_has_named_args || actual_types.any? { |type| type == TypeRef::VOID }
+      if input = selection_input
+        return nil if input.has_named || input.has_splat
+        return nil if (raw_count = input.raw_positional_count) && raw_count != actual_types.size
+      end
+      return nil if call.named_args.try { |named| !named.empty? }
+      args = call.args
+      if (last = args.last?) && arena[last].is_a?(Adamas::Compiler::Frontend::BlockNode)
+        args = args[0, args.size - 1]
+      end
+      return nil if args.size != actual_types.size
+      return nil if args.any? { |arg| arena[arg].is_a?(Adamas::Compiler::Frontend::SplatNode) }
+      hint = @function_def_arenas[selected_name]? || @arena
+      arena = registered_arena_for_def(definition) || resolve_arena_for_def(definition, hint)
+      params = function_param_infos(definition, arena).reject(&.is_block)
+      return nil if params.any? { |param| param.is_splat || param.is_double_splat || named_only_separator?(param) }
+      # Omitted defaults are not source actuals. Full supplied default slots
+      # are ordinary positional inputs, with body coercions owned below.
+      return nil unless params.size == actual_types.size
+      source_positional_call_binding(selected_name, definition, arena,
+        actual_types.map { |type| SourceCallArgument.new(type, false) })
+    end
+
     private def block_param_types_for_call(
       mangled_method_name : String,
       base_method_name : String,
@@ -77878,7 +78003,9 @@ module Adamas::HIR
              resolved_base,
              receiver_type_value,
              param_map.as(Hash(String, String)?),
-             call_arg_types_for_infer
+             call_arg_types_for_infer,
+             source_entry_positional_call_binding(resolved_mangled, func_def, call_arg_types,
+               call_has_named_args, call_node, call_arena, selection_input),
            )
           if debug_block_params
             STDERR.puts "[BLOCK_PARAMS] inferred_nil_type=#{inferred.map { |type_ref| get_type_name_from_ref(type_ref) }.join(",")}"
@@ -77911,7 +78038,9 @@ module Adamas::HIR
              resolved_base,
              receiver_type_value,
              param_map.as(Hash(String, String)?),
-             call_arg_types_for_infer
+             call_arg_types_for_infer,
+             source_entry_positional_call_binding(resolved_mangled, func_def, call_arg_types,
+               call_has_named_args, call_node, call_arena, selection_input),
            )
           if debug_block_params
             STDERR.puts "[BLOCK_PARAMS] inferred_empty_inputs=#{inferred.map { |type_ref| get_type_name_from_ref(type_ref) }.join(",")}"
@@ -79305,6 +79434,7 @@ module Adamas::HIR
       receiver_type : TypeRef,
       param_map : Hash(String, String)?,
       call_arg_types : Array(TypeRef)? = nil,
+      entry_binding : SourceCallBinding? = nil,
     ) : Array(TypeRef)?
       debug_trace_each = !!(env_get("DEBUG_TRACE_EACH_WITH_INDEX") &&
                             (func_name.includes?("each_with_index") || base_method_name.includes?("each_with_index")))
@@ -79315,6 +79445,7 @@ module Adamas::HIR
       def_arena = registered_arena_for_def(func_def) || resolve_arena_for_def(func_def, arena_hint)
       old_def_node = @current_def_node
       old_body_context = @infer_body_context
+      old_source_inputs = @source_body_inference_inputs
       old_arena = @arena
       old_locals = @current_typeof_locals
       old_names = @current_typeof_local_names
@@ -79398,6 +79529,20 @@ module Adamas::HIR
       @infer_body_context = body
       @arena = def_arena
       @current_typeof_locals = local_map
+      @source_body_inference_inputs = nil
+      if binding = entry_binding
+        if source_call_binding_matches?(binding, func_def, def_arena)
+          # The selected source binding proves formal alignment; the callee
+          # map owns each formal's entry type after declared-type coercions.
+          formal_types = {} of String => TypeRef
+          params.reject(&.is_block).each_with_index do |param, index|
+            if binding.supplied_types[index]? && (name = param.name) && (type = local_map[name]?)
+              formal_types[name] = type
+            end
+          end
+          @source_body_inference_inputs = SourceBodyInferenceInputs.new(func_def, def_arena, body, formal_types)
+        end
+      end
       @current_typeof_local_names = name_map
       @current_namespace_override = owner_override if owner_override
       # Expression inference is cached by AST identity, but its result also
@@ -79450,6 +79595,7 @@ module Adamas::HIR
       ensure
         @current_def_node = old_def_node
         @infer_body_context = old_body_context
+        @source_body_inference_inputs = old_source_inputs
         @current_typeof_locals = old_locals
         @current_typeof_local_names = old_names
         @current_namespace_override = old_namespace
