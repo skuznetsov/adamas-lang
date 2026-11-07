@@ -25876,3 +25876,47 @@ b24f2c07b6fbbfa87cd7649b95b72262266306b3e7f8b578d700345d63d19b5c.
 Refresh after declaration key generation, source publication order, Def/Arena
 ownership, overload selection or call-shape transport changes. Rollback is this
 atomic compiler commit. Application, stdlib and unrelated WIP are unchanged.
+
+
+## 2026-11-06 — Exact accessor receipts survive direct class replay
+
+The function registry can replace a source accessor Def while the optional
+source-order recording owner is nil: class registration has already visited
+that declaration. The direct accessor receipt then retains an older Def in the
+same arena, and exact source binding correctly rejects it. The actual prelude
+trace confirms this producer edge (35q4056). Keep the binder guard; repair the
+publication owner instead.
+
+Direct class-body registration supplies its own ownership receipt, independently
+of that deduplication flag. Publish only the exact currently registered Def and
+arena. Equal source order may refresh that registered pair, but an older source
+order or foreign registered arena cannot replace the winner. Direct class-body
+macro registration also retains the invocation's owner and source order for its
+nested definitions. Included-module expansion gains no direct-body permission.
+
+Five final HIR examples pass with unchanged source (35q4084): equal-order exact
+refresh, stale older replay, foreign arena rejection, and both macro/ordinary
+replacement orders. The macro-after-ordinary case fails before the invocation
+owner/order repair (35q4083). The same exact final S1 passes the 17-case
+original-first source key gate (35q4093). Bounded Adversary verdict: ROBUST for
+these publication invariants; the source review is correlated.
+
+Fresh stock-prelude hello passes the prior Event#wake_at? binding barrier and
+fails later at Nil#bytesize in Path#basename (35q4090). Do not promote this to a
+complete prelude, runtime, bootstrap, or LavinMQ parity claim. The separate
+rest-shape LavinMQ probe reaches missing Call#args reflection in spawn (35q4075).
+The latter candidate still has two known inherited-allocator shape failures;
+it is not this commit's tested compiler.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+event-accessor-origin-macro-units35q4084/result.json,
+event-accessor-origin-units35q4083/result.json,
+event-accessor-source-key-neighbor35q4093/result.json, and
+prelude-accessor-owner-macro35q4090/result.json.
+All 1,916 compiler sources match build.event-accessor-owner-macro35q4089.source.json
+(SHA-256 4321554a90ed50f1c4274d55cfe960a8c0b8741e3a0fd10b8d1b56352c18711a).
+Compiler SHA-256: cb2956d5c6633303d66a19ad3b7db49f351f443c15a59a2fbf2ef976563168d4.
+HIR spec SHA-256: 2768639d567c619c5eef2f27e98b3d628c054ab8ea88412c29344cd1997d3c9b.
+Refresh after direct class/macro publication, source-order recording, accessor
+winner selection, or exact Def/Arena binding changes. Rollback is this atomic
+commit. Application, stock stdlib, and unrelated WIP remain unchanged.

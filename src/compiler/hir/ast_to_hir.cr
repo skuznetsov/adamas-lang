@@ -25229,10 +25229,27 @@ module Adamas::HIR
       method_name : String,
       source_def : Adamas::Compiler::Frontend::DefNode? = nil,
       source_arena : Adamas::Compiler::Frontend::ArenaLike? = nil,
+      registered_name : String? = nil,
+      direct_source_owner : Bool = false,
     ) : Nil
       record_direct_owner_method_name(@direct_instance_def_names_by_owner, owner, method_name)
-      if source_def && @source_accessor_order_owner == owner
+      # The direct class-body registration path is authoritative for source
+      # ownership even when its source-order pass was already seen. Replayed
+      # registration can replace the current Def/Arena pair after that pass;
+      # exact registry checks below and source-order comparison still decide
+      # whether this is the current winner. Included-module registration does
+      # not use this direct-owner receipt.
+      if source_def && (direct_source_owner || @source_accessor_order_owner == owner)
+        name = registered_name || return
         def_arena = source_arena || @arena
+        registered_def = @function_defs[name]?
+        registered_arena = @function_def_arenas[name]?
+        # Publish a body origin only together with its exact registered logical
+        # function winner. Re-parsing may produce a new Def object at the same
+        # source order; the exact name/arena pair distinguishes that refresh
+        # from a stale declaration replay or a cross-arena candidate.
+        return unless registered_def.try(&.same?(source_def.not_nil!)) == true &&
+                      registered_arena.try(&.same?(def_arena)) == true
         stats = with_arena(def_arena) { build_param_stats(source_def.not_nil!) }
         if source_def_overlaps_zero_arg_accessor?(stats) && !def_contains_yield?(source_def.not_nil!, def_arena)
           record_direct_accessor_winner(
@@ -25241,6 +25258,7 @@ module Adamas::HIR
             :def,
             {source_def.not_nil!, def_arena},
             source_declaration_order_for(source_def.not_nil!, def_arena),
+            refresh_equal_registered_def: true,
           )
         end
       end
@@ -25278,15 +25296,30 @@ module Adamas::HIR
       winner : Symbol,
       source_origin : Tuple(Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike)?,
       source_order : Array(Int32),
+      refresh_equal_registered_def : Bool = false,
     ) : Nil
       return if owner.empty? || method_name.empty?
 
       info = generic_owner_info(owner)
       recorded_owner = info.try(&.owner) || owner
-      record_accessor_winner_for_owner(recorded_owner, method_name, winner, source_origin, source_order)
+      record_accessor_winner_for_owner(
+        recorded_owner,
+        method_name,
+        winner,
+        source_origin,
+        source_order,
+        refresh_equal_registered_def: refresh_equal_registered_def,
+      )
       return unless info && owner_info_is_uninstantiated_generic_template?(info)
 
-      record_accessor_winner_for_owner(info.base, method_name, winner, source_origin, source_order) unless info.base == recorded_owner
+      record_accessor_winner_for_owner(
+        info.base,
+        method_name,
+        winner,
+        source_origin,
+        source_order,
+        refresh_equal_registered_def: refresh_equal_registered_def,
+      ) unless info.base == recorded_owner
     end
 
     private def record_accessor_winner_for_owner(
@@ -25295,6 +25328,7 @@ module Adamas::HIR
       winner : Symbol,
       source_origin : Tuple(Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike)?,
       source_order : Array(Int32),
+      refresh_equal_registered_def : Bool = false,
     ) : Nil
       orders = @direct_accessor_source_order_by_owner[owner]?
       unless orders
@@ -25302,7 +25336,23 @@ module Adamas::HIR
         @direct_accessor_source_order_by_owner[owner] = orders
       end
       if previous_order = orders[method_name]?
-        return unless source_declaration_order_after?(source_order, previous_order)
+        unless source_declaration_order_after?(source_order, previous_order)
+          # A source declaration can be parsed again while a deferred body is
+          # forced. Equal source order alone must not replace the winner, but a
+          # newly registered exact Def/Arena pair is the current winner for
+          # this logical function key and must refresh the accessor receipt.
+          if refresh_equal_registered_def && source_order == previous_order &&
+             winner == :def && source_origin &&
+             @direct_accessor_winners_by_owner[owner]?.try(&.[method_name]?) == :def
+            origins = @direct_accessor_def_origins_by_owner[owner]?
+            unless origins
+              origins = {} of String => Tuple(Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike)
+              @direct_accessor_def_origins_by_owner[owner] = origins
+            end
+            origins[method_name] = source_origin
+          end
+          return
+        end
       end
 
       winners = @direct_accessor_winners_by_owner[owner]?
@@ -37516,7 +37566,7 @@ module Adamas::HIR
       set_function_def_entry(full_name, effective_member, record_current_arena: false)
       set_function_def_arena(full_name, member_arena)
       if record_source_accessor_order && !is_class_method
-        record_direct_instance_def_name(type_name, method_name, effective_member, member_arena)
+        record_direct_instance_def_name(type_name, method_name, effective_member, member_arena, full_name)
       end
       if env_get("DEBUG_ARENA_WRITE_TYPE") && (type_name.includes?("Slice") || full_name.includes?("Slice")) && method_name == "hash"
         arena_path = source_path_for(member_arena) || "(unknown)"
@@ -42879,7 +42929,14 @@ module Adamas::HIR
                 STDERR.puts "[ARENA_RESOLVE] full=#{full_name} current=#{current_path}:#{@arena.size} resolved=#{resolved_path}:#{member_arena.size} member.span=#{member.span.start_offset}..#{member.span.end_offset}"
               end
               set_function_def_arena(full_name, member_arena)
-              record_direct_instance_def_name(class_name, method_name, member, member_arena) unless is_class_method
+              record_direct_instance_def_name(
+                class_name,
+                method_name,
+                member,
+                member_arena,
+                full_name,
+                direct_source_owner: true,
+              ) unless is_class_method
               # Store type param map for lazy lowering of generic class methods.
               # When a monomorphized class registers its methods, the @type_param_map
               # contains substitutions (e.g., T => UInt8) needed for macro evaluation.
@@ -43084,14 +43141,24 @@ module Adamas::HIR
                     old_arena = @arena
                     @arena = macro_arena
                     begin
-                      register_class_members_from_expansion(
+                      # The exact class-body macro call is a direct declaration
+                      # site. Keep its source owner and order while registering
+                      # the expansion, so a replayed generated Def can refresh
+                      # its exact Def/Arena receipt without treating included
+                      # module expansions as class declarations.
+                      with_source_accessor_hook_order(
                         class_name,
-                        expanded_id,
-                        defined_class_method_full_names,
-                        Set(String).new,
-                        ivars,
-                        pointerof(offset)
-                      )
+                        source_declaration_order_for(member, old_arena),
+                      ) do
+                        register_class_members_from_expansion(
+                          class_name,
+                          expanded_id,
+                          defined_class_method_full_names,
+                          Set(String).new,
+                          ivars,
+                          pointerof(offset)
+                        )
+                      end
                     ensure
                       @arena = old_arena
                     end
@@ -43116,14 +43183,19 @@ module Adamas::HIR
                   old_arena = @arena
                   @arena = macro_arena
                   begin
-                    register_class_members_from_expansion(
+                    with_source_accessor_hook_order(
                       class_name,
-                      expanded_id,
-                      defined_class_method_full_names,
-                      Set(String).new,
-                      ivars,
-                      pointerof(offset)
-                    )
+                      source_declaration_order_for(member, old_arena),
+                    ) do
+                      register_class_members_from_expansion(
+                        class_name,
+                        expanded_id,
+                        defined_class_method_full_names,
+                        Set(String).new,
+                        ivars,
+                        pointerof(offset)
+                      )
+                    end
                   ensure
                     @arena = old_arena
                   end

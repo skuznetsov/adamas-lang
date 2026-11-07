@@ -58,6 +58,21 @@ overload priority and module-class return validation. ABI mangling must also
 retain a selected `**` source shape through later call specialization; equal
 NamedTuple carriers do not establish equal source overloads.
 
+## Direct accessor publication during declaration replay
+
+The exact registered Def and declaration arena own an accessor body receipt.
+Direct class-body registration retains that ownership even when its optional
+source-order recording pass has already been visited. A same-order reparse may
+refresh the receipt only for the exact current registered pair. Older declaration
+order and a foreign registered arena remain rejected refreshes.
+
+A macro invoked directly in a class body transports that invocation's owner and
+source order into registration of generated definitions. Replaying it must
+preserve both macro-before-ordinary and ordinary-before-macro winners. This
+permission does not extend to included-module expansion. Five focused HIR
+examples establish the bounded publication contract; complete stock-prelude and
+bootstrap execution remain separate obligations.
+
 ## Admission and rejection
 
 The candidate covers explicit and implicit returns in ordinary, class, and

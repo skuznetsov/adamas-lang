@@ -26239,3 +26239,29 @@ integration, fresh bootstrap, or LavinMQ parity.
   final call emission. Eight same-carrier no-block **/positional controls still
   print PP instead of AP/PA; the inherited factory and named-label cases also
   remain open (renewed baseline 35q3977). Keep pending-result and type guards.
+
+
+### 2026-11-06 — Refresh exact accessor origins during class replay
+
+- [x] Publish the current direct accessor Def/Arena pair even after the optional
+  source-order recording pass has been deduplicated. Require the exact registered
+  pair and preserve later source-order winners; included definitions gain no new
+  direct-owner permission.
+- [x] Retain the exact class-body macro invocation owner/order while registering
+  its generated definitions. This applies to CallNode and bare macro invocations,
+  preserving macro-before-ordinary and ordinary-before-macro replacements.
+- Five HIR examples pass at the exact final source (35q4084). The first candidate
+  fails the macro-after-ordinary replay control (35q4083), so equal-order refresh
+  alone is insufficient. The final S1 also passes all 17 original-first source
+  method key controls (35q4093), including strict rejection cases.
+- A fresh unchanged-prelude hello passes the former Event#wake_at? exact-source
+  guard and stops later at Nil#bytesize in Path#basename (35q4090). This verifies
+  progress past that source-binding barrier, not complete prelude compilation.
+- [ ] Diagnose suffix short-circuit narrowing in Path#basename without admitting
+  Nil#bytesize or changing stdlib. Complete prelude, fresh bootstrap, unchanged
+  LavinMQ link/server execution and upstream test parity remain open.
+- Unchanged LavinMQ on the separate rest-shape candidate passes the prior
+  Socket::BindError.from_os_error pending result and reaches missing Call#args
+  macro reflection in spawn (35q4075). Six stock-qualified no-prelude Call#args
+  controls all fail the existing compiler (35q4091/35q4092). Keep this separate
+  from accessor publication and retain strict macro iterable validation.
