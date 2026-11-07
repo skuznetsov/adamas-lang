@@ -55547,6 +55547,51 @@ module Adamas::HIR
       normalized.starts_with?("::") ? strip_absolute_name_prefix(normalized) : normalized
     end
 
+    # A nilary member call can be registered under an unrooted generic spelling
+    # while return inference requests the same selected method under its rooted
+    # spelling. Transport only that observed empty callshape, and only when both
+    # exact registry keys still identify the selected Def/Arena on the same
+    # canonical concrete receiver. Consumers remain exact-key only.
+    private def remember_same_selected_nilary_member_callsite(
+      source_name : String,
+      target_name : String,
+      receiver_owner : String,
+      member_name : String,
+      selected_def : Adamas::Compiler::Frontend::DefNode,
+      selected_arena : Adamas::Compiler::Frontend::ArenaLike,
+      arg_types : Array(TypeRef),
+    ) : Bool
+      return false unless arg_types.empty? && source_name != target_name
+      return false if @primitive_template_source_bindings.has_key?(source_name) ||
+                      @primitive_template_source_bindings.has_key?(target_name) ||
+                      @raw_callback_source_bindings.has_key?(source_name) ||
+                      @raw_callback_source_bindings.has_key?(target_name)
+
+      source_parts = parse_method_name_uncached(source_name)
+      target_parts = parse_method_name_uncached(target_name)
+      return false unless source_parts.separator == '#' && target_parts.separator == '#' &&
+                          source_parts.method == member_name && target_parts.method == member_name &&
+                          source_parts.suffix.nil? && target_parts.suffix.nil?
+
+      canonical_receiver = canonical_method_owner_name(receiver_owner)
+      return false if canonical_receiver.empty?
+      return false unless canonical_method_owner_name(source_parts.owner) == canonical_receiver &&
+                          canonical_method_owner_name(target_parts.owner) == canonical_receiver
+
+      return false unless @function_defs[source_name]?.try(&.same?(selected_def)) == true &&
+                          @function_def_arenas[source_name]?.try(&.same?(selected_arena)) == true &&
+                          @function_defs[target_name]?.try(&.same?(selected_def)) == true &&
+                          @function_def_arenas[target_name]?.try(&.same?(selected_arena)) == true
+
+      expected_callsite = CallsiteArgs.new([] of TypeRef, nil, nil)
+      if existing = @pending_arg_types[target_name]?
+        return false unless same_callsite_args_shell?(existing, expected_callsite)
+      end
+
+      remember_callsite_arg_types(target_name, arg_types)
+      true
+    end
+
     private def normalize_method_owner_name(name : String) : String
       return "" if name.unsafe_as(UInt64) == 0_u64
       return name if name.empty?
@@ -147648,6 +147693,24 @@ module Adamas::HIR
         # Publish it before result inference can force or suspend the target;
         # Def/Arena alone cannot replay an annotated provisional body.
         remember_callsite_arg_types(actual_name, arg_types)
+        if source_name = selected_member_registry_name
+          if source_def = selected_member_def
+            if source_arena = selected_member_arena
+              if resolved_name = resolved_method_name
+                target_name = mangle_function_name(resolved_name, arg_types)
+                remember_same_selected_nilary_member_callsite(
+                  source_name,
+                  target_name,
+                  get_type_name_from_ref(receiver_type),
+                  member_name,
+                  source_def,
+                  source_arena,
+                  arg_types,
+                )
+              end
+            end
+          end
+        end
       end
       if proc_owner = receiver_proc_owner
         if selected_target = selected_proc_member_target

@@ -27011,3 +27011,21 @@ integration, fresh bootstrap, or LavinMQ parity.
   allocator callback ABI remain separate measured frontiers.
 - Full prelude, fresh bootstrap and unchanged LavinMQ object/link/server/upstream
   parity remain open. No stdlib/application or source restriction changes.
+
+
+### 2026-11-07 — Publish exact canonical nilary member inputs before inference
+
+- [x] Carry the observed empty source callshape across equivalent generic owner
+  spellings only while source and target keys retain the same selected Def/Arena.
+  Keep target conflict, callback, method and typed-suffix guards strict.
+- [x] 54 focused HIR checks pass (35q5558); the regression wrapper passes its
+  five transport controls (35q5562). Exact-source S1 35q5543 completes the former
+  AtExitHandlers.run pending-result blocker with unchanged Crystal 1.22.1 prelude
+  (35q5546). No application/stdlib or restriction changes.
+- [ ] Repair the next recursive replay ownership conflict: after IO#flush
+  completes, Exception#inspect_with_backtrace has an existing callshape with
+  argument TypeRef 81 versus the saved TypeRef 312 (35q5561). Def/Arena remains
+  current. Identify their producer/ownership before changing replay; do not
+  weaken its equality guard.
+- Full prelude, fresh bootstrap and unchanged LavinMQ runtime/upstream parity
+  remain open.

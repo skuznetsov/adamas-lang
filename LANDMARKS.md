@@ -27282,3 +27282,39 @@ on baseline and candidate (35q5534/35q5532); its removed helper name was adjuste
 only in the private probes. A separate old abstract override return validation
 gap is measured by 35q5529/35q5530. Neither is hidden by this scoped gate.
 Full prelude, fresh bootstrap and LavinMQ runtime/upstream parity remain open.
+
+
+## 2026-11-07 — A canonical member target needs its actual source callshape early
+
+The unchanged prelude's `@@handlers.try(&.pop?)` records zero inputs under
+`Array(Proc(Int32, Nil | Exception, Nil))#pop?`, while exact result replay asks
+for `Array(Proc(::Int32, ::Nil | ::Exception, ::Nil))#pop?`. The same selected
+Def/Arena is present, but no callshape exists at the target. This is publication
+ordering, not permission to reconstruct inputs from arity or relax replay.
+Publish the observed empty shape before inference only across matching
+canonical receiver/method and exact source/target Def/Arena. Keep source entry,
+conflict, typed-suffix, primitive-template and raw-callback guards.
+
+Scoped adversary evidence: 54 HIR controls (35q5558) and the five-case regression
+wrapper (35q5562) pass. Fresh exact-source S1 35q5543 completes Array#pop? and
+AtExitHandlers.run (35q5546). Its next prelude error is Exception replay, where
+a diagnostic-only S1 proves source-current=true but pending and saved argument
+types/facts differ (35q5561). This is not full prelude or LavinMQ closure.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+canonical-callsite-final-hir35q5558/, canonical-callsite-script35q5562/ and its
+qualification JSON, build.canonical-callsite-exact35q5543.{source,result}.json,
+prelude-canonical-exact35q5546/, prelude-replay-callshape35q5561/,
+canonical-callsite-live-source35q5564.json.
+S1 SHA-256: 6dc21045a71112ee7ec4e71a050708d79696e402160309147e8596b041a94a7f.
+Compiler source manifest SHA-256:
+386b41330f57aa5ac24f5e020f42e65ed8675688010d31ef586e701a7d9df4b2.
+Refresh after owner normalization, source registration, callsite/callback or
+replay changes. Rollback is the atomic publisher commit; unrelated WIP is
+excluded. Full prelude, fresh bootstrap and LavinMQ parity remain open.
+
+Publisher adversary 35q5560 is ROBUST for actual empty-input provenance and
+callback exclusion. Residual structural falsifier: a same-shell target carrying
+conflicting source facts/binding must never authorize a different source on
+replay. No reachable producer was found; downstream exact source-binding guards
+remain required. This is an audit follow-up, not a measured runtime defect.

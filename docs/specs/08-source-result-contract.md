@@ -887,3 +887,27 @@ baseline rejects a changed String#hash replay source; the qualified candidate
 passes it and next stops at AtExitHandlers.run. This does not certify full
 prelude, bootstrap or LavinMQ. Refresh after source selection, registry aliases,
 declaration ownership or replay changes. Rollback is the atomic compiler commit.
+
+
+### Publish an observed nilary callshape before canonical target inference
+
+A source nilary member call owns an actual empty `CallsiteArgs` record even
+when its selected generic receiver has an unrooted spelling and the emitted
+receiver uses rooted type arguments. Publish that observed callshape under the
+exact target before the first return inference can suspend. Matching arity or
+a similar owner spelling alone cannot create this authority.
+
+Both registry keys must retain the selected Def/Arena, the same canonical
+receiver and method, and no typed suffix. Exclude primitive-template and raw
+callback receipts; reject a conflicting target callshape. Retain the source
+entry and exact-key replay consumers. No family fallback or source restriction
+change is admitted.
+
+The actual prelude discriminator is `@@handlers.try(&.pop?)`: the baseline
+suspends under rooted `Array(Proc(...))#pop?` without its callshape; the candidate
+completes `AtExitHandlers.run`. Five transport/negative controls and 49 adjacent
+HIR checks pass. Prelude next stops at an independent recursive argument-shape
+conflict in `Exception#inspect_with_backtrace`; full prelude, bootstrap and
+LavinMQ remain open. Refresh after owner canonicalization, callsite publication,
+source registry, callback receipts or replay changes. Rollback is this atomic
+publisher commit.
