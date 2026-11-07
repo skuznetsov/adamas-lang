@@ -27082,3 +27082,24 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Resolve that Hash specialization/result owner before object/link/server
   and upstream test comparison. HIR progress does not certify those stages;
   full prelude and fresh bootstrap also remain open.
+
+
+### 2026-11-07 — Retain bare explicit constructor default labels and ABI identity
+
+- [x] Keep named-only defaults attached to the exact selected source Def/Arena
+  for bare Type.new, and force only its physical ABI target rather than a
+  declaration-shaped registry alias.
+- [x] Exact-source S1 35q5683 passes six stock/lazy/eager native controls
+  (35q5688); 16 defaulted-target HIR controls pass (35q5685). Source-only
+  adversary found the guarded bare-member corridor ROBUST, with variadic
+  default expansion explicitly outside its coverage.
+- [ ] Repair explicit-new failed-selection fallback: the incompatible Int64
+  constructor fixture is rejected by a late initializer ABI guard on baseline
+  35q5669 as well (35q5687). This patch does not close semantic rejection for
+  that separate lower_call path.
+- [ ] Bind the source K/V block result before Enumerable#to_h lowers its typed
+  empty literal. The measured LavinMQ producer is enumerable.cr:2079 (`{} of
+  K => V`), currently Hash(Void, Void), not a missing first literal entry
+  (diagnostic 35q5693). Preserve strict pending-result/replay checks.
+- Full prelude, fresh bootstrap and LavinMQ object/link/runtime/upstream parity
+  remain open. No stdlib/application edits or relaxed restrictions.

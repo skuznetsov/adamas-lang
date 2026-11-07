@@ -975,3 +975,25 @@ native output and extra-argument rejection; value_self_wrapper_source_contract_s
 checks physical owner and exact source identity. Refresh after inherited source
 selection, numeric owner rewriting, self-call lowering or replay changes.
 Rollback is the atomic concrete-value wrapper commit.
+
+
+### Bare explicit constructors retain their defaulted source call shape
+
+A bare `Type.new` member access with an explicit source declaration retains
+named-only default labels after argument materialization. Recover those labels
+only from the exact selected Def/Arena and the defaults expanded for that same
+zero-argument source call. Bind the physical target with the exact-source
+binder and preserve the named call shape in its replay inputs. A declaration
+lookup key that encodes default/named slots is not an additional runtime ABI
+target to force. Uncertain identity or slot recovery rejects the call.
+
+Gate: defaulted_call_target_source_binding_spec.cr checks source/physical target
+identity, default labels and crossed Def/Arena/shape rejection;
+bare_constructor_source_shape_repro.sh compares stock/lazy/eager bare,
+parenthesized and explicit named output. Its negative control covers an
+incompatible ordinary defaulted method argument. An explicit constructor's
+incompatible Int64 argument still reaches a late allocator ABI guard on both
+baseline and candidate; that separate semantic-fallback defect remains open.
+Rest-before-named default expansion is also outside this qualified corridor.
+Refresh after default expansion, named slot mapping, target binding or replay
+changes. Rollback is the atomic bare-constructor source-shape commit.

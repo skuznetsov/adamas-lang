@@ -50,13 +50,46 @@ class Adamas::HIR::AstToHir
     raise "no separate source entry for #{target}"
   end
 
-  def __test_bind_defaulted_source_call_target(
+  def __test_bind_exact_source_call_target(
     target : String,
     selected_name : String,
     selected_def : Adamas::Compiler::Frontend::DefNode,
     selected_arena : Adamas::Compiler::Frontend::ArenaLike,
   ) : Nil
-    bind_defaulted_source_call_target(target, selected_name, selected_def, selected_arena)
+    bind_exact_source_call_target(target, selected_name, selected_def, selected_arena)
+  end
+
+  def __test_lookup_defaulted_target_shape(
+    source_name : String,
+    types : Array(Adamas::HIR::TypeRef),
+    has_named_args : Bool,
+    named_arg_names : Array(String)? = nil,
+    type_literal_flags : Array(Bool)? = nil,
+  ) : Tuple(String, Adamas::Compiler::Frontend::DefNode)?
+    source_facts = nil.as(Array(SourceCallArgument?)?)
+    if flags = type_literal_flags
+      raise "source kind vector does not match call types" unless flags.size == types.size
+      source_facts = [] of SourceCallArgument?
+      types.each_with_index do |type, index|
+        source_facts.not_nil! << SourceCallArgument.new(type, flags[index])
+      end
+    end
+    lookup_function_def_for_call(
+      source_name, types.size, false, types, false, has_named_args, named_arg_names,
+      nil, false, source_facts,
+    )
+  end
+
+  def __test_defaulted_target_type(name : String) : Adamas::HIR::TypeRef
+    type_ref_for_name(name)
+  end
+
+  def __test_defaulted_named_only_default_argument_names(
+    definition : Adamas::Compiler::Frontend::DefNode,
+    arena : Adamas::Compiler::Frontend::ArenaLike,
+    materialized_argument_count : Int32,
+  ) : Array(String)?
+    defaulted_named_only_default_argument_names(definition, arena, materialized_argument_count)
   end
 
   def __test_forget_defaulted_target_binding(target : String) : Nil
@@ -212,6 +245,22 @@ private def lower_defaulted_target_source_case(kind : String)
                                                             CRYSTAL
                                                           false,
                                                         }
+                                                      when "constructor_bare_single"
+                                                        {
+                                                          "DefaultedTargetConstructorBareSingleHIR",
+                                                          "new",
+                                                          <<-CRYSTAL,
+                                                            class DefaultedTargetConstructorBareSingleHIR
+                                                              def initialize(@pointer : Int64, @size : Int32, @read_only : Bool)
+                                                              end
+                                                              def self.new(size : Int32 = 3_i32, *, read_only = false) : Int32
+                                                                read_only ? 66_i32 : 65_i32
+                                                              end
+                                                            end
+                                                            DefaultedTargetConstructorBareSingleHIR.new
+                                                            CRYSTAL
+                                                          false,
+                                                        }
                                                       else
                                                         raise "unknown defaulted target case #{kind}"
                                                       end
@@ -301,6 +350,22 @@ describe "defaulted call target source binding" do
     end
   end
 
+  it "does not force a declaration-shaped defaulted .new name as a second ABI target" do
+    converter, prefix, definition, arena = lower_defaulted_target_source_case("constructor_bare_single")
+    targets = converter.__test_defaulted_source_targets(prefix, definition, arena, "__adamas_main")
+    targets.size.should eq(1)
+    target = targets.first? || raise "no materialized call target for #{prefix}"
+    target[1].should be_true
+    target[2].should be_true
+    target[3].should be_true
+    target[4].should be_true
+
+    # The selected source identity encodes the defaulted named-only slot, but
+    # only the exact runtime ABI target may be materialized as a function.
+    source_shaped_target = "#{prefix}$Int32$arity2_named_9_read_only"
+    converter.module.function_by_name(source_shaped_target).should be_nil
+  end
+
   it "passes a struct instance result directly to a nonvirtual Int32 consumer" do
     converter, prefix, _, _ = lower_defaulted_target_source_case("struct_instance_member")
     main = converter.module.function_by_name("__adamas_main")
@@ -320,6 +385,35 @@ describe "defaulted call target source binding" do
     take_call.args.should eq([value_call.id])
   end
 
+  it "recovers only exact named-only labels from materialized defaults" do
+    converter, _, constructor_definition, constructor_arena = lower_defaulted_target_source_case("constructor_bare")
+    converter.__test_defaulted_named_only_default_argument_names(
+      constructor_definition, constructor_arena, 2,
+    ).should eq(["read_only"])
+
+    converter, _, member_definition, member_arena = lower_defaulted_target_source_case("class_member")
+    converter.__test_defaulted_named_only_default_argument_names(
+      member_definition, member_arena, 3,
+    ).should eq(["group", "payload"])
+  end
+
+  it "keeps named-only new slots distinct from arbitrary positional arguments" do
+    converter, prefix, definition, _ = lower_defaulted_target_source_case("constructor_explicit")
+    int32 = converter.__test_defaulted_target_type("Int32")
+    bool = converter.__test_defaulted_target_type("Bool")
+    string = converter.__test_defaulted_target_type("String")
+
+    named = converter.__test_lookup_defaulted_target_shape(prefix, [int32, bool], true, ["read_only"])
+    named.should_not be_nil
+    named.not_nil![1].same?(definition).should be_true
+
+    converter.__test_lookup_defaulted_target_shape(prefix, [int32, bool], false).should be_nil
+    converter.__test_lookup_defaulted_target_shape(prefix, [int32, bool], true, ["unknown"]).should be_nil
+    converter.__test_lookup_defaulted_target_shape(prefix, [int32, bool, int32], true, ["read_only"]).should be_nil
+    converter.__test_lookup_defaulted_target_shape(prefix, [string, bool], true, ["read_only"]).should be_nil
+    converter.__test_lookup_defaulted_target_shape(prefix, [int32], false, nil, [true]).should be_nil
+  end
+
   it "rejects a foreign Def even when the source name is registered" do
     converter, prefix, definition, arena = lower_defaulted_target_source_case("module_scalar")
     target = converter.__test_defaulted_source_targets(prefix, definition, arena).first?.try(&.[0]) ||
@@ -334,7 +428,7 @@ describe "defaulted call target source binding" do
     end.first? || raise "foreign fixture has no Def"
 
     expect_raises(Adamas::HIR::LoweringError, /exact selected source binding/) do
-      converter.__test_bind_defaulted_source_call_target(target, source_name, foreign_def, arena)
+      converter.__test_bind_exact_source_call_target(target, source_name, foreign_def, arena)
     end
   end
 
@@ -349,7 +443,7 @@ describe "defaulted call target source binding" do
     foreign_arena = foreign_parser.parse_program.arena
 
     expect_raises(Adamas::HIR::LoweringError, /exact selected source binding/) do
-      converter.__test_bind_defaulted_source_call_target(target, source_name, definition, foreign_arena)
+      converter.__test_bind_exact_source_call_target(target, source_name, definition, foreign_arena)
     end
   end
 
@@ -368,7 +462,7 @@ describe "defaulted call target source binding" do
 
     converter.__test_replace_defaulted_target_def(target, foreign_def)
     expect_raises(Adamas::HIR::LoweringError, /target already has a different source definition/) do
-      converter.__test_bind_defaulted_source_call_target(target, source_name, definition, arena)
+      converter.__test_bind_exact_source_call_target(target, source_name, definition, arena)
     end
 
     (converter.__test_defaulted_target_def(target).try(&.same?(foreign_def)) == true).should be_true
@@ -388,7 +482,7 @@ describe "defaulted call target source binding" do
 
     converter.__test_replace_defaulted_target_arena(target, foreign_arena)
     expect_raises(Adamas::HIR::LoweringError, /target already has a different source arena/) do
-      converter.__test_bind_defaulted_source_call_target(target, source_name, definition, arena)
+      converter.__test_bind_exact_source_call_target(target, source_name, definition, arena)
     end
 
     (converter.__test_defaulted_target_def(target).try(&.same?(definition)) == true).should be_true
@@ -405,7 +499,7 @@ describe "defaulted call target source binding" do
 
     converter.__test_forget_defaulted_target_binding(target)
     expect_raises(Adamas::HIR::LoweringError, /body has no complete source binding/) do
-      converter.__test_bind_defaulted_source_call_target(target, source_name, definition, arena)
+      converter.__test_bind_exact_source_call_target(target, source_name, definition, arena)
     end
   end
 end

@@ -27402,3 +27402,40 @@ Compiler source manifest SHA-256:
 Refresh after inherited selection, numeric owner rewriting, self-call lowering,
 source registration or replay changes. Rollback is the atomic wrapper commit.
 Full prelude, fresh bootstrap and LavinMQ runtime/upstream parity remain open.
+
+
+## 2026-11-07 — Bare explicit new keeps named defaults and one physical target
+
+Bare Type.new expanded named-only defaults but discarded their labels, then
+could force its declaration-shaped registry alias as a third runtime target.
+Recover labels only from the exact selected Def/Arena/default expansion,
+retain them in the callshape and bind the actual ABI target with the shared
+exact-source guard. Keep declaration identity separate from materialization.
+
+Scoped adversary verdict: ROBUST for the reachable bare explicit-new corridor.
+Exact-source S1 35q5683 passes six stock/lazy/eager native controls (35q5688);
+16 defaulted-target HIR controls pass (35q5685), including wrong source,
+changed arena, named-only positional misuse and incompatible arguments.
+The native negative is an ordinary defaulted method call. An incompatible
+explicit constructor argument still reaches a late initializer ABI guard on
+baseline 35q5669 (35q5687); this separate semantic fallback is OPEN. A positional
+rest before named-only defaults is not qualified by this patch.
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+defaulted-new-current-hir35q5685/, bare-constructor-focused35q5688/ and its
+qualification JSON, constructor-negative-before35q5687/, and
+build.defaulted-new-current35q5683.{source,result}.json.
+S1 SHA-256: b1b5f1e9c090cfdc5f606d849de833fe65cba79f45cbdd2d10fb15ac72916f54.
+Compiler source manifest SHA-256:
+06d6767a87ef5e7c6923800062e12de1fc857b0ca1e338b2c718166131b83279.
+Live compiler sources were checked byte-for-byte against that manifest.
+Refresh after source/default expansion, named-slot mapping, ABI target binding
+or replay changes. Rollback is this atomic commit; unrelated WIP is excluded.
+
+The unchanged LavinMQ HIR discriminator remains pending Hash(Void, Void)
+update_linear_scan. Diagnostic S1 35q5692 (not production) traced its first
+factory call to the EMPTY typed literal enumerable.cr:2079 inside
+Array(String)#to_h (`{} of K => V`), with both annotation results Void
+(35q5693, inputs unchanged). The HTML/first-entry hypothesis is refuted for
+this observed factory call. Investigate block-result K/V binding before
+changing replay or accepting an unresolved result. Full prelude, fresh
+bootstrap and LavinMQ object/link/runtime/upstream parity remain open.

@@ -57508,6 +57508,43 @@ module Adamas::HIR
       nil
     end
 
+    # Recover the source labels for named-only parameters whose defaults were
+    # appended to a bare static call. The declaration's exact parameter order
+    # owns this mapping; positional arity cannot recreate it after expansion.
+    private def defaulted_named_only_default_argument_names(
+      def_node : Adamas::Compiler::Frontend::DefNode,
+      def_arena : Adamas::Compiler::Frontend::ArenaLike,
+      materialized_argument_count : Int32,
+    ) : Array(String)?
+      return nil if materialized_argument_count < 0
+
+      names = [] of String
+      named_only = false
+      splat_seen = false
+      argument_slot = 0
+      function_param_infos(def_node, def_arena).each do |param|
+        next if param.is_block
+        if named_only_separator?(param)
+          named_only = true
+          next
+        end
+        if param.is_double_splat
+          splat_seen = true
+          next
+        end
+        if param.is_splat
+          splat_seen = true
+          next
+        end
+        named_only = true if splat_seen
+        if named_only && param.default_value && argument_slot < materialized_argument_count
+          names << (named_parameter_label(param) || return nil)
+        end
+        argument_slot += 1
+      end
+      canonical_named_arg_names(names)
+    end
+
     private def named_args_compatible_with_def?(
       def_node : Adamas::Compiler::Frontend::DefNode,
       named_arg_names : Array(String)?,
@@ -149628,6 +149665,7 @@ module Adamas::HIR
       enum_name = resolve_enum_name(class_name_str) || resolve_enum_name(lookup_class_name)
 
       source_default_entry_out = [] of Tuple(String, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike)
+      defaulted_has_named_args = false
       args = if member_name != "new" && source_rest_keyword_slots_required?(full_method_name)
                # The receiver has already been evaluated. Bind the empty source
                # keyword set here, before defaults or ABI slots, without replaying
@@ -149648,7 +149686,7 @@ module Adamas::HIR
                source_default_entry_out << {selected_name, selected_def, binding.declaration_arena}
                bound[0]
              else
-               default_args, _, _ = apply_default_args(
+               default_args, defaulted_has_named_args, _ = apply_default_args(
                  ctx, [] of ValueId, member_name, full_method_name, false, false, nil,
                  source_default_entry_out,
                )
@@ -149690,6 +149728,28 @@ module Adamas::HIR
       end
       if selected = source_new_entry
         selected_name, selected_def = selected
+        selected_arena = @function_def_arenas[selected_name]? || @arena
+        selected_defaulted_named_arg_names = nil.as(Array(String)?)
+        if defaulted_has_named_args
+          # This MemberAccess path supplied no source positional or named
+          # arguments. Reconstruct only the named-only default slots that were
+          # materialized from this exact selected declaration; expanded ABI
+          # arity alone cannot distinguish them from positional arguments.
+          default_source = source_default_entry_out.first?
+          unless default_source && default_source[0] == selected_name &&
+                 default_source[1].same?(selected_def) && default_source[2].same?(selected_arena)
+            raise LoweringError.new("bare static new lost its exact defaulted source call shape: #{selected_name}")
+          end
+          selected_defaulted_named_arg_names = defaulted_named_only_default_argument_names(
+            selected_def, selected_arena, arg_types.size,
+          )
+          unless names = selected_defaulted_named_arg_names
+            raise LoweringError.new("bare static new cannot recover exact defaulted named slots: #{selected_name}")
+          end
+          if names.empty?
+            raise LoweringError.new("bare static new has no exact defaulted named slots: #{selected_name}")
+          end
+        end
         selected_params = function_param_infos(selected_name, selected_def)
         if selected_params.any? { |param| param.is_splat && !param.is_double_splat && !named_only_separator?(param) }
           mangled_name = "#{mangled_name}_splat" unless mangled_name.ends_with?("_splat")
@@ -149699,10 +149759,12 @@ module Adamas::HIR
             raise LoweringError.new("exact static call target #{mangled_name} already has a different materialized definition")
           end
         end
-        selected_arena = @function_def_arenas[selected_name]? || @arena
-        set_function_def_entry(mangled_name, selected_def, false)
-        set_function_def_arena(mangled_name, resolve_arena_for_def(selected_def, selected_arena))
-        remember_callsite_arg_types(mangled_name, arg_types)
+        bind_exact_source_call_target(mangled_name, selected_name, selected_def, selected_arena, binding_context: "bare static new")
+        remember_callsite_arg_types(
+          mangled_name, arg_types,
+          has_named_args: !selected_defaulted_named_arg_names.nil?,
+          named_arg_names: selected_defaulted_named_arg_names,
+        )
       end
       # DEBUG: Catch short names being used for method calls
       if env_has?("DEBUG_SHORT_NAMES") && full_method_name &&
@@ -149787,7 +149849,15 @@ module Adamas::HIR
         force_lower_function_for_return_type(actual_name, bypass_inline_yield: true, pending_call_target_context: "static_member_access_exact")
       elsif exact_source_discard_result_type.nil? &&
             (source_new_entry || !abstract_numeric_return_constraint_for_function(actual_name).nil?)
-        force_pending_call_targets_for_return_type(actual_name, mangled_name, full_method_name, context: "static_member_access")
+        if source_new_entry
+          # Exact explicit `.new` selection already binds the runtime ABI name
+          # to its source Def and call shape. `full_method_name` is the
+          # declaration-shaped lookup key (which can encode defaults and
+          # named-only slots), not another ABI target to force.
+          force_pending_call_targets_for_return_type(actual_name, mangled_name, context: "static_member_access")
+        else
+          force_pending_call_targets_for_return_type(actual_name, mangled_name, full_method_name, context: "static_member_access")
+        end
       end
       record_force_lower_result_dependency(ctx, actual_name, selected_return_def, refused_before_force)
       if exact_source_discard_result_type.nil? &&
