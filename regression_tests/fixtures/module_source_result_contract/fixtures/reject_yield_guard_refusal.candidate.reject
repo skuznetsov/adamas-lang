@@ -1,0 +1,1 @@
+no overload matches 'Proc(YieldGuardRefusalEntry, Int32)#call' with type YieldGuardRefusalEntry | YieldGuardRefusalEntry.class

@@ -1,0 +1,104 @@
+[
+  {
+    "name": "fetch_nested_default_forall",
+    "source": "fetch_nested_default_forall.cr",
+    "ok": true,
+    "expected": "A\n"
+  },
+  {
+    "name": "module_instance_union",
+    "source": "module_instance_union.cr",
+    "ok": true,
+    "expected": "AB\n"
+  },
+  {
+    "name": "declared_union_narrow_body",
+    "source": "declared_union_narrow_body.cr",
+    "ok": true,
+    "expected": ""
+  },
+  {
+    "name": "accept_owned_proc_block_call",
+    "source": "accept_owned_proc_block_call.cr",
+    "ok": true,
+    "expected": "A\n"
+  },
+  {
+    "name": "accept_mixed_kind_inline_forall",
+    "source": "accept_mixed_kind_inline_forall.cr",
+    "ok": true,
+    "expected": "A\n"
+  },
+  {
+    "name": "reject_class_arg_inline_yield",
+    "source": "reject_class_arg_inline_yield.cr",
+    "ok": false,
+    "expected": ""
+  },
+  {
+    "name": "reject_mixed_class_instance_arg_inline_yield",
+    "source": "reject_mixed_class_instance_arg_inline_yield.cr",
+    "ok": false,
+    "expected": ""
+  },
+  {
+    "name": "reject_module_mixed_param_proc_relay",
+    "source": "reject_module_mixed_param_proc_relay.cr",
+    "ok": false,
+    "expected": ""
+  },
+  {
+    "name": "reject_nested_depth_refusal",
+    "source": "reject_nested_depth_refusal.cr",
+    "ok": false,
+    "expected": ""
+  },
+  {
+    "name": "reject_recursive_in_progress_refusal",
+    "source": "reject_recursive_in_progress_refusal.cr",
+    "ok": false,
+    "expected": ""
+  },
+  {
+    "name": "reject_yield_guard_refusal",
+    "source": "reject_yield_guard_refusal.cr",
+    "ok": false,
+    "expected": ""
+  },
+  {
+    "name": "recursive_declared_union_instance_body",
+    "source": "recursive_declared_union_instance_body.cr",
+    "ok": false,
+    "expected": ""
+  },
+  {
+    "name": "reject_owned_proc_block_call",
+    "source": "reject_owned_proc_block_call.cr",
+    "ok": false,
+    "expected": ""
+  },
+  {
+    "name": "reject_recursive_union_outside_consumer",
+    "source": "reject_recursive_union_outside_consumer.cr",
+    "ok": false,
+    "expected": ""
+  },
+  {
+    "name": "accept_nonlocal_output_union",
+    "source": "accept_nonlocal_output_union.cr",
+    "ok": true,
+    "expected": "AB\n"
+  },
+  {
+    "name": "reject_nonlocal_input_bound_mixed",
+    "source": "reject_nonlocal_input_bound_mixed.cr",
+    "ok": false,
+    "expected": ""
+  },
+  {
+    "name": "accept_all_escape_block",
+    "source": "accept_all_escape_block.cr",
+    "ok": true,
+    "expected": "A\n"
+  }
+]

@@ -1,0 +1,1 @@
+expected block passed to input_bound to return InlineForallNonlocalRejectEntry, not InlineForallNonlocalRejectEntry | InlineForallNonlocalRejectEntry.class

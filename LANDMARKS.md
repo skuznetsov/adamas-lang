@@ -26862,3 +26862,57 @@ scalar source kinds and virtual-family certificates also require their own
 falsifiers. Full prelude/bootstrap and unchanged LavinMQ object/link/server/
 upstream parity remain open. Completed first-candidate caches were removed
 (35q5037, 259252548 bytes).
+
+
+## 2026-11-07 — Module and inline callback result facts have exact source owners
+
+A module call's ABI carrier cannot identify whether an actual argument/result
+is an instance or class object. Thread exact selected Def/Arena source facts
+through module-body lowering and direct result publication, including scalar
+carriers. An emitted virtual family cannot borrow one method's body proof.
+Validate module return annotations as restrictions, and retain the completed
+body's narrower result. A recursive call may consume a frozen declared union
+only while its exact body is in progress and the physical declaration/generic
+owner plus call-local binding are proved. Missing owners remain conservative.
+
+The strict native gate exposed an early forall binding bug: inferred carriers
+for class and instance callback results can be identical. Only source syntax
+that proves a kind may bind early; use the materialized callback facts for the
+other expressions. The named typed-Proc body demand guard remains distinct from
+implicit yield, and does not import unowned cached method-forall bindings.
+
+Scoped verdict: ROBUST for these transitions at the qualified source. Root ran
+60 HIR controls (35q5186), the 29-case original-first strict Proc gate (35q5193;
+10 native positives, 19 semantic negatives), and the 17-case module/callback
+packet (35q5199; 7 exact-output native positives, 10 semantic negatives), using
+Crystal 1.22.1 and S1 35q5179. Mixed-kind and input-bound forall negatives,
+recursive frozen restrictions, non-local/all-escape callbacks and typed Proc
+calls retain their semantic diagnostics. The final packet excludes incidental
+return-contract failures as a substitute for the relevant Proc rejection.
+Source-only agent reviews are correlated; root executed all qualification.
+All compiler/test binaries ran through run_safe.sh. No stdlib/application or
+source type guard was weakened.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+build.module-source-owner-inline35q5179.{result,source}.json,
+module-source-owner-inline-hir35q5186/{result.json,spec.log,source.json},
+module-source-owner-proc-gate35q5193/{result.json,gate.log},
+module-source-core-original-first35q5199/{result.json,gate.log,source.json},
+and module-source-core-shipped35q5207.json.
+Compiler source manifest SHA-256:
+b703c76935ca0740de2f548c54c19337113c0db6843fa448bd430a51b3154197.
+S1 SHA-256: 7e40aeb2692e86fcb1efb2098e881dfca3fbbc8585ac362e1a8978194d20dffc.
+Shipped source/test manifest SHA-256:
+c3641a33e244c4a27b35fad66d5ac35b5dab744a0d71c0ec34ce9c8b5fa90267.
+Refresh after source selection, body result publication, recursive owner proof,
+inline forall or typed-Proc body guard changes. Rollback is this atomic commit.
+Existing unrelated user WIP is excluded.
+
+Adversarial probes also exposed three separate pre-existing positive failures:
+inherited generic body annotation rebinding (stock 35q5187 vs HEAD 35q5197),
+Nil/Void discard source results (stock 35q5177/5195 vs HEAD 35q5204/5205), and
+typeof(yield) observing Pointer(Void) (stock 35q5200 vs HEAD 35q5202). Keep them
+open rather than counting an incidental rejection as contract correctness.
+This evidence does not certify full prelude, bootstrap, or unchanged LavinMQ
+object/link/server/upstream parity. Last full LavinMQ HIR probe 35q5141 stops
+at pending MFile#msync source-result demand; no runtime success is claimed.

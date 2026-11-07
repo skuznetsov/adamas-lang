@@ -26761,3 +26761,39 @@ integration, fresh bootstrap, or LavinMQ parity.
 - Full prelude, fresh bootstrap and unchanged LavinMQ object/link/server and
   upstream test parity remain open. No stdlib/application or source-type guard
   was changed.
+
+
+### 2026-11-07 — Preserve exact module and inline callback source contracts
+
+- [x] Use exact selected Def/Arena argument facts, including scalar class versus
+  instance kinds, while lowering module bodies; publish the completed body's
+  source alternatives at direct calls. Validate module return restrictions with
+  the same contract as ordinary definitions. A return annotation is a constraint,
+  not permission to widen a completed body's source result.
+- [x] Admit a recursive in-progress declared mixed-kind result only with an exact
+  source declaration, physical generic owner and call-local binding proof.
+  Ordinary pending results still need their completed body certificate. Bind
+  inline forall early only when syntax proves the source kind; materialized
+  callback results own ambiguous class/instance alternatives.
+- Exact S1 35q5179 passes all 60 HIR checks (35q5186), the strict 29-case Proc
+  input gate (35q5193), and the original-first 17-case module/callback gate on
+  Crystal 1.22.1 (35q5199): 7 native positives, 10 diagnostic-specific negatives.
+  Non-local and all-escape callbacks, recursive frozen restrictions, mixed-kind
+  arguments and opposite Proc restrictions are covered. The three early
+  incidental-return error markers were strengthened to require the actual
+  Proc argument mismatch; no source type check was relaxed.
+- [ ] Resolve inherited method-body return annotations under their physical
+  generic owner. A child rebinding T incorrectly changes a parent annotation;
+  stock accepts the recursive-union positive (35q5187), while the previous HEAD
+  also rejects it (35q5197). This is separate from the recursive proof above.
+- [ ] Normalize discard returns consistently: :Nil and :Void have source Nil
+  results even when the body produces a class object. Typed-lambda positives
+  pass stock (35q5177, 35q5195) and fail the previous HEAD (35q5204, 35q5205).
+  Retain side effects and the Void ABI when fixing their source result facts.
+- [ ] Fix typeof(yield) consuming an early Pointer(Void) callback carrier in a
+  mixed-kind, non-local-return block. The sharp generic-constructor positive
+  passes stock (35q5200) and fails the previous HEAD (35q5202); input-bound
+  forall constraints and non-local control flow must remain strict.
+- No stdlib/application source or type restrictions changed. Full stock prelude,
+  fresh bootstrap and unchanged LavinMQ object/link/server/upstream parity are
+  still open; the scoped module gate does not close those obligations.
