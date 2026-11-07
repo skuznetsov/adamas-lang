@@ -1088,6 +1088,17 @@ module Adamas
                   end
                 end
               end
+            elsif node.is_a?(Frontend::IsANode)
+              # The parser gives `is_a?` its own AST node. Its value must be
+              # the same BoolLiteral in assignments, output, and conditional
+              # operands; an opaque source AST would always be truthy.
+              receiver = evaluate_to_macro_value(node.expression, context)
+              type_name = intern_name(node.target_type)
+              result = receiver.call_method("is_a?", [MacroIdValue.new(type_name)], nil)
+              if ENV["DEBUG_MACRO_COND"]?
+                STDERR.puts "[MACRO_COND] is_a? recv=#{receiver.class_name} expected=#{type_name} -> #{result.truthy?}"
+              end
+              return result
             elsif node.is_a?(Frontend::TernaryNode)
               condition_value = evaluate_to_macro_value(node.condition, context)
               branch = condition_value.truthy? ? node.true_branch : node.false_branch
@@ -2805,7 +2816,8 @@ module Adamas
           if node.is_a?(Frontend::StringInterpolationNode) ||
              node.is_a?(Frontend::BinaryNode) ||
              node.is_a?(Frontend::UnaryNode) ||
-             node.is_a?(Frontend::TernaryNode) ||
+              node.is_a?(Frontend::TernaryNode) ||
+              node.is_a?(Frontend::IsANode) ||
              node.is_a?(Frontend::CallNode) ||
              node.is_a?(Frontend::MultipleAssignNode) ||
              node.is_a?(Frontend::YieldNode)
@@ -3701,13 +3713,7 @@ module Adamas
           end
 
           if node.is_a?(Frontend::IsANode)
-            receiver = evaluate_to_macro_value(node.expression, context)
-            type_name = intern_name(node.target_type)
-            result = receiver.call_method("is_a?", [MacroIdValue.new(type_name)], nil)
-            if ENV["DEBUG_MACRO_COND"]?
-              STDERR.puts "[MACRO_COND] is_a? recv=#{receiver.class_name} expected=#{type_name} -> #{result.truthy?}"
-            end
-            return {result.truthy?, context}
+            return {evaluate_to_macro_value(expr_id, context).truthy?, context}
           end
 
           # Handle boolean connectives && / || at the AST level so we can

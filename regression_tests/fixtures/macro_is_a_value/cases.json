@@ -1,0 +1,94 @@
+[
+  {
+    "name": "ternary_non_splat_arg",
+    "source": "ternary_non_splat_arg.cr",
+    "ok": true,
+    "expected_stdout": "ternary_non_splat_arg.stdout"
+  },
+  {
+    "name": "ternary_splat_arg",
+    "source": "ternary_splat_arg.cr",
+    "ok": true,
+    "expected_stdout": "ternary_splat_arg.stdout"
+  },
+  {
+    "name": "ternary_mixed_args",
+    "source": "ternary_mixed_args.cr",
+    "ok": true,
+    "expected_stdout": "ternary_mixed_args.stdout"
+  },
+  {
+    "name": "ternary_false_type_test",
+    "source": "ternary_false_type_test.cr",
+    "ok": true,
+    "expected_stdout": "ternary_false_type_test.stdout"
+  },
+  {
+    "name": "assigned_false_type_test",
+    "source": "assigned_false_type_test.cr",
+    "ok": true,
+    "expected_stdout": "assigned_false_type_test.stdout"
+  },
+  {
+    "name": "direct_output_false_type_test",
+    "source": "direct_output_false_type_test.cr",
+    "ok": true,
+    "expected_stdout": "direct_output_false_type_test.stdout"
+  },
+  {
+    "name": "direct_output_true_type_test",
+    "source": "direct_output_true_type_test.cr",
+    "ok": true,
+    "expected_stdout": "direct_output_true_type_test.stdout"
+  },
+  {
+    "name": "unary_not_false_type_test",
+    "source": "unary_not_false_type_test.cr",
+    "ok": true,
+    "expected_stdout": "unary_not_false_type_test.stdout"
+  },
+  {
+    "name": "logical_false_type_test",
+    "source": "logical_false_type_test.cr",
+    "ok": true,
+    "expected_stdout": "logical_false_type_test.stdout"
+  },
+  {
+    "name": "lazy_ternary_branch",
+    "source": "lazy_ternary_branch.cr",
+    "ok": true,
+    "expected_stdout": "lazy_ternary_branch.stdout"
+  },
+  {
+    "name": "type_test_evaluated_once",
+    "source": "type_test_evaluated_once.cr",
+    "ok": true,
+    "expected_stdout": "type_test_evaluated_once.stdout"
+  },
+  {
+    "name": "active_type_branch_raise",
+    "source": "active_type_branch_raise.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "Error: active type branch"
+    ],
+    "candidate_diagnostic": [
+      "error: active type branch"
+    ],
+    "forbidden_diagnostic": [
+      "inactive type branch"
+    ]
+  },
+  {
+    "name": "selected_branch_keeps_type_error",
+    "source": "selected_branch_keeps_type_error.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "undefined method 'to_i32!' for String"
+    ],
+    "candidate_diagnostic": [
+      "argument #1 of 'Native.putchar' must be Int32",
+      "Pointer(UInt8)"
+    ]
+  }
+]

@@ -26290,3 +26290,23 @@ integration, fresh bootstrap, or LavinMQ parity.
   rejects an unsupported callee instead of fabricating metadata.
 - Return to unchanged LavinMQ with the separate source-rest/allocator work.
   No new link/server, full prelude, fresh bootstrap or upstream parity claim.
+
+### 2026-11-06 — Give macro type predicates one value owner
+
+- [x] Evaluate the parser's dedicated IsANode as a MacroValue in the canonical
+  value evaluator. Output, assignments, unary/logical expressions, ternaries
+  and directive conditions consume that same result; evaluate its receiver
+  exactly once and preserve lazy branch/error behavior.
+- Eleven native controls and two strict rejections pass per compiler in the
+  original-first macro_is_a_value_repro.sh gate (35q4153). Ten of the thirteen
+  qualified cases fail before the repair (35q4147/35q4148), including a skipped
+  receiver effect and two incorrectly admitted erroneous branches.
+- The 22-case Call projection and 21-case Begin/error neighbors pass per
+  compiler on the exact final S1 (35q4154).
+- Unchanged LavinMQ on the separate rest-shape composition passes Call#args and
+  reaches an empty typeof() in spawn (35q4145). A predicate that was only
+  implemented in directive conditions became an always-truthy opaque AST in
+  value position. Return to this exact expansion with the shared value owner.
+- [ ] Complete prelude, unchanged LavinMQ link/server execution, fresh bootstrap
+  and upstream Crystal test parity. Keep projected literal operations and the
+  source-rest/allocator work separate from this predicate repair.

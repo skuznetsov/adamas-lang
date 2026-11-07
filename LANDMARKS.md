@@ -25036,6 +25036,50 @@ Refresh after inline stack ownership, source fact collection, callback result
 validation, forall substitution or default-provenance changes. Rollback is this
 atomic compiler commit. Application, stdlib and unrelated WIP are unchanged.
 
+## 2026-11-06 — Macro IsA has one first-class value result
+
+The parser emits a dedicated IsANode. Only evaluate_condition interpreted it;
+evaluate_to_macro_value instead returned an opaque source AST, which is truthy.
+Ternary/logical/unary operands and assignments therefore chose the wrong branch
+and could omit the receiver's effects. In unchanged LavinMQ, spawn's
+arg.is_a?(Splat) ? arg.exp : arg selected a nonexistent exp for a non-splat,
+rendering an empty typeof() (35q4145). Application, shards, stock stdlib and
+compiler inputs remained unchanged during that frontend probe.
+
+The canonical macro value evaluator now owns IsA evaluation; directive
+conditions and output consume its result. The receiver is evaluated once in
+the existing context and the shared AST-class predicate produces its value.
+No runtime expression is evaluated merely because its unevaluated macro
+argument is classified. No iterable, overload or runtime type guard is relaxed.
+
+All 13 stock-qualified native/admission controls pass on the exact final S1
+(35q4153): 11 native outputs and two strict rejections per compiler. Ten fail
+before the repair (35q4147/35q4148), including the receiver counter remaining
+zero and both erroneous selected branches being admitted. The 22-case Call
+projection and 21-case Begin/error neighbors also pass per compiler (35q4154).
+Bounded Adversary verdict: ROBUST
+for the measured predicate/value/branch/effect contract. This does not certify
+every macro AST operation, complete prelude, LavinMQ runtime, fresh bootstrap
+or upstream parity. Projected literal operation delegation and the separate
+source-rest/allocator and short-circuit type-filter roots remain open.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+macro-is-a-value-oracle35q4147/result.json,
+macro-is-a-value-before35q4148/result.json,
+macro-is-a-value-after35q4152/result.json,
+macro-is-a-value-final-gate35q4153/result.json, and
+macro-is-a-call-begin-neighbors35q4154/result.json.
+All 1,916 live compiler sources match
+build.macro-is-a-single-value-owner35q4150.source.json
+(SHA-256 499c52e5d58ed24e5d31684076e10f13ae0a7b53a0f01d4eaf83f116c0bfaa14).
+Compiler SHA-256: 9183335d0ad9ac1ba3a10faaf62c040978613d4865e9a49836f077f506c5e89e.
+Fixture-manifest SHA-256:
+5f3b4a3d9f9452f664e1fe090a246b1bdc20bcc2d54b18fca48113d448265712.
+Refresh after macro predicate/value dispatch, source AST classification,
+context effects, branch evaluation or macro error propagation changes.
+Rollback is this atomic compiler commit. Stdlib, application and unrelated WIP
+remain unchanged.
+
 
 ## 2026-11-06 — Enum primitive results keep their declared integer carrier
 

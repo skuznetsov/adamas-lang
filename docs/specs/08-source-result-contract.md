@@ -597,6 +597,21 @@ Call block/block_arg/global?, generalized id, safe navigation and complex
 callee projection remain separate open contracts. Preserve strict iterable
 validation and existing macro error propagation while extending this surface.
 
+## First-class macro type predicate results
+
+The parser's dedicated IsANode has one result owner: macro value evaluation.
+The result is the AST-class predicate's BoolLiteral, shared by output,
+assignments, directive conditions, unary/logical operands and ternary
+conditions. An opaque unevaluated IsA source node is not that Boolean result.
+Evaluate the receiver once in the existing macro context, preserve lazy
+unselected branches and propagate the first reached macro evaluation error.
+
+This is macro AST classification, not runtime type inference. A macro argument
+keeps its unevaluated source AST; classifying it must not execute its runtime
+call. Source rendering must not replace value evaluation or choose the result's
+truthiness. The stock-first macro_is_a_value_repro.sh gate covers both selected
+branches, value effects, output, logical operands and strict error admission.
+
 ## Falsifiers and recovery
 
 Run each script with the exact candidate as its argument. The scripts first
@@ -635,6 +650,7 @@ and check semantic diagnostics and absence of an executable for rejections.
 - `regression_tests/macro_array_predicate_repro.sh`
 - `regression_tests/macro_source_declaration_repro.sh`
 - `regression_tests/macro_call_projection_repro.sh`
+- `regression_tests/macro_is_a_value_repro.sh`
 - `spec/semantic/macro_call_args_projection_spec.cr`
 - `spec/parser/macro_def_parameter_cache_spec.cr`
 - `spec/parser/macro_keyword_type_declaration_spec.cr`
