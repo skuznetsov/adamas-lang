@@ -27439,3 +27439,50 @@ Array(String)#to_h (`{} of K => V`), with both annotation results Void
 this observed factory call. Investigate block-result K/V binding before
 changing replay or accepting an unresolved result. Full prelude, fresh
 bootstrap and LavinMQ object/link/runtime/upstream parity remain open.
+
+
+## 2026-11-07 — Callback Tuple output binding owns a structured source witness
+
+HIR Tuple descriptors retain slot ABI types but cannot by themselves certify
+class-object versus instance source kind. An early witness now retains each
+slot's type/kind recursively and checks descriptor agreement before matching an
+output-only forall. Read callback restrictions under the selected Def/Arena and
+its exact input bindings; read the block AST under its own lexical owner,
+namespace and original caller formals. Canonical identities must be rooted when
+re-entering source lookup, even after the lexical scope is cleared.
+
+The admitted lane is literals/type paths, plain callback parameters, straight-line
+block-local aliases and recursive Tuples. Calls, unproved captures, control flow,
+non-local returns, partial input maps, union inputs and abstract numeric inputs
+decline it. Existing completed callback-result validation remains authoritative.
+The annotation-only call route was refuted by 35q5756: a Bool annotation can have
+an actual NoReturn body. The early lexical-owner-only fix was also insufficient:
+35q5779/35q5780 showed a canonical root type being re-resolved as a callee's
+same-named nested type. Rooted canonical construction closes that measured case.
+
+Scoped adversary verdict: ROBUST for this literal/parameter/Tuple lane. Exact
+source S1 35q5784 passes 33 original Crystal 1.22.1/lazy/eager native controls
+(35q5785), including nested/local/class-valued slots, lexical shadowing and
+crossed-kind rejection. All 93 focused/adjacent HIR controls pass (35q5795),
+including malformed/stale tuple descriptor rejection. Baseline S1 35q5683
+rejects the class-key positive in 35q5790. No source restriction was relaxed.
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+tuple-source-canonical-values-native35q5785/ and its qualification JSON,
+tuple-source-scoped-neighbors35q5795/, tuple-before-class-key35q5790/,
+tuple-fixture-manifest35q5799.json and
+build.tuple-source-canonical-values35q5784.{source,result}.json.
+S1 SHA-256: aac296986dd62f67ca7bf0593d79f21b887a0c948f082a8b8243cd558f5e9cec.
+Compiler source manifest SHA-256:
+3e694a489ee682ab311a59fd45174e70306ddf4af123bdb12e4a040820ee0e13.
+Live compiler sources match that manifest byte-for-byte. Refresh after source
+selection, lexical scope, callback input/output binding, Tuple descriptors or
+result-proof changes. Rollback is the atomic Tuple witness commit.
+
+Unchanged LavinMQ still needs an actual completed member-result proof for
+header.to_slice before its Enumerable#to_h typed empty Hash can bind K/V. This
+commit alone does not close that frontier. Full prelude, fresh bootstrap and
+LavinMQ object/link/runtime/upstream parity remain open.
+
+Original-task refresh on the same S1: nested macro begin passes with ABC
+(35q5797); initializer binding/replay passes 29 HIR controls and six native
+stock/lazy/eager controls (35q5798). Full Thread/prelude runtime is not certified.

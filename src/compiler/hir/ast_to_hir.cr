@@ -1395,7 +1395,8 @@ module Adamas::HIR
       type_ref : TypeRef,
       type_literal : Bool,
       rest_values : Array(SourceCallArgument)? = nil,
-      value_facts : Array({TypeRef, Bool})? = nil
+      value_facts : Array({TypeRef, Bool})? = nil,
+      tuple_values : Array(SourceCallArgument)? = nil
 
     private record SourceCallBinding,
       selected_name : String,
@@ -77078,6 +77079,187 @@ module Adamas::HIR
       end
     end
 
+    # Build a source-kind witness for the deliberately small set of block
+    # expressions that can be read without lowering the callback. Tuple type
+    # descriptors retain ABI children, but those children alone do not prove
+    # whether a slot came from a class literal or an instance value.
+    private def inline_block_return_source_argument(
+      block : Adamas::Compiler::Frontend::BlockNode,
+      block_arena : Adamas::Compiler::Frontend::ArenaLike,
+      func_def : Adamas::Compiler::Frontend::DefNode,
+      callee_arena : Adamas::Compiler::Frontend::ArenaLike,
+      declaration_owner : String?,
+      input_bindings : Hash(String, String),
+      lexical_owner : BlockOwner,
+      lexical_bindings : Hash(String, String),
+    ) : SourceCallArgument?
+      return nil if block.unpacks
+
+      source_inputs = with_arena(callee_arena) do
+        block_param = func_def.params.try { |params| find_param(params) { |param| param.is_block } } || return nil
+        block_annotation = block_param.type_annotation || return nil
+        resolved_annotation = with_isolated_type_param_map(input_bindings) do
+          resolved_block_annotation_type_name(safe_slice_to_string(block_annotation) || "", declaration_owner)
+        end
+        input_names = proc_input_type_names(resolved_annotation) || return nil
+        input_names.map do |input_name|
+          with_isolated_type_param_map(input_bindings) do
+            inline_block_source_argument_for_type_name(input_name, declaration_owner) || return nil
+          end
+        end
+      end
+
+      old_class = @current_class
+      @current_class = lexical_owner.class_name
+      begin
+        with_namespace_override_or_clear(lexical_owner.namespace_override) do
+          with_isolated_type_param_map(lexical_bindings) do
+            with_arena(block_arena) do
+              params = block.params || [] of Adamas::Compiler::Frontend::Parameter
+              source_locals = {} of String => SourceCallArgument
+
+              # Parameter facts come from the selected callback annotation and its
+              # exact input bindings. Do not use the ambient typeof/name maps here:
+              # those maps contain ABI carriers and may have been seeded by another
+              # specialization.
+              if params.size == source_inputs.size && params.all? { |param| inline_yield_param_is_plain_unannotated?(param) }
+                params.each_with_index do |param, index|
+                  name = safe_slice_to_string(param.name.not_nil!) || return nil
+                  input = source_inputs[index]
+                  return nil if input.type_ref == TypeRef::VOID
+                  source_locals[name] = input
+                end
+              elsif !params.empty?
+                # A partial or destructured callback input map cannot safely name a
+                # leaf used by this witness.
+                return nil
+              end
+
+              body = block.body
+              return nil if body.empty?
+              # A non-local return is not the callback's source result.
+              tail = body.last
+              index = 0
+              while index < body.size - 1
+                assignment = node_for_expr(body[index]).as?(Adamas::Compiler::Frontend::AssignNode) || return nil
+                target = node_for_expr(assignment.target).as?(Adamas::Compiler::Frontend::IdentifierNode) || return nil
+                name = safe_slice_to_string(target.name) || return nil
+                return nil if name.empty?
+                value = inline_block_source_argument_for_expr(
+                  assignment.value, source_locals, lexical_owner.class_name,
+                ) || return nil
+                source_locals[name] = value
+                index += 1
+              end
+
+              inline_block_source_argument_for_expr(tail, source_locals, lexical_owner.class_name)
+            end
+          end
+        end
+      ensure
+        @current_class = old_class
+      end
+    end
+
+    private def inline_block_source_argument_for_expr(
+      expr : ExprId,
+      source_locals : Hash(String, SourceCallArgument),
+      self_type_name : String?,
+    ) : SourceCallArgument?
+      node = node_for_expr(expr) || return nil
+      if identifier = node.as?(Adamas::Compiler::Frontend::IdentifierNode)
+        name = safe_slice_to_string(identifier.name) || return nil
+        return source_locals[name]? if source_locals.has_key?(name)
+        # A remaining lowercase identifier may be a captured local or a
+        # nilary call; neither has a source witness here. Uppercase type
+        # paths use the registered source resolver even when the caller has
+        # no typeof-local inventory (for example, top-level code).
+        return nil if name.empty? || !name[0].ascii_uppercase?
+        if literal_name = infer_type_literal_name_from_expr(expr)
+          return with_canonical_type_scope do
+            source_call_argument_from_name(root_anchored_canonical_type_name("#{literal_name}.class"))
+          end
+        end
+        return nil
+      end
+
+      case node
+      when Adamas::Compiler::Frontend::PathNode,
+           Adamas::Compiler::Frontend::GenericNode
+        if literal_name = infer_type_literal_name_from_expr(expr)
+          return with_canonical_type_scope do
+            source_call_argument_from_name(root_anchored_canonical_type_name("#{literal_name}.class"))
+          end
+        end
+        nil
+      when Adamas::Compiler::Frontend::GroupingNode
+        inline_block_source_argument_for_expr(node.expression, source_locals, self_type_name)
+      when Adamas::Compiler::Frontend::TupleLiteralNode
+        node = node.as(Adamas::Compiler::Frontend::TupleLiteralNode)
+        values = node.elements.map do |element|
+          inline_block_source_argument_for_expr(
+            element, source_locals, self_type_name,
+          ) || return nil
+        end
+        return nil if values.empty?
+        tuple_name = "Tuple(#{values.map { |value| proc_source_type_name(value) }.join(", ")})"
+        tuple_type = canonical_bound_type_ref(tuple_name)
+        return nil if tuple_type == TypeRef::VOID
+        descriptor = @module.get_type_descriptor(tuple_type)
+        return nil unless descriptor && descriptor.kind == TypeKind::Tuple
+        return nil unless descriptor.type_params.size == values.size
+        values.each_with_index do |value, index|
+          return nil unless descriptor.type_params.unsafe_fetch(index) == value.type_ref
+        end
+        SourceCallArgument.new(tuple_type, false, tuple_values: values)
+      when Adamas::Compiler::Frontend::NumberNode,
+           Adamas::Compiler::Frontend::StringNode,
+           Adamas::Compiler::Frontend::CharNode,
+           Adamas::Compiler::Frontend::RegexNode,
+           Adamas::Compiler::Frontend::BoolNode,
+           Adamas::Compiler::Frontend::NilNode,
+           Adamas::Compiler::Frontend::SymbolNode
+        type = infer_type_from_expr(expr, self_type_name) || return nil
+        return nil if type == TypeRef::VOID || type.null_ptr?
+        SourceCallArgument.new(type, false)
+      else
+        nil
+      end
+    end
+
+    # A callback input restriction is exact source information for the
+    # callback's statically typed parameter. Preserve that information
+    # recursively for Tuple slots; the HIR Tuple descriptor may have already
+    # erased `.class` from its child names.
+    private def inline_block_source_argument_for_type_name(
+      source_name : String,
+      owner : String?,
+    ) : SourceCallArgument?
+      # A single tuple witness cannot describe separate union-arm slot
+      # kinds, and an abstract numeric restriction is not its ABI carrier.
+      # Leave those inputs to completed callback-result inference.
+      return nil if has_top_level_union_separator?(source_name)
+      return nil if source_name.ends_with?('?')
+      return nil if abstract_numeric_return_constraint_name?(source_name)
+      argument = source_call_argument_from_name(source_name, owner)
+      split = split_generic_base_and_args(source_name.strip)
+      return argument unless split && split.base.lchop("::") == "Tuple"
+
+      names = split_generic_type_args(split.args)
+      return nil if names.empty?
+      values = names.map do |name|
+        inline_block_source_argument_for_type_name(name, owner) || return nil
+      end
+      descriptor = @module.get_type_descriptor(argument.type_ref)
+      return nil unless descriptor && descriptor.kind == TypeKind::Tuple
+      return nil unless descriptor.type_params.size == values.size
+      values.each_with_index do |value, index|
+        return nil unless descriptor.type_params.unsafe_fetch(index) == value.type_ref
+      end
+      SourceCallArgument.new(argument.type_ref, argument.type_literal,
+        value_facts: argument.value_facts, tuple_values: values)
+    end
+
     # The typeof map holds a local's last assigned type, while branch narrowing
     # (`if body = node.body`, `is_a?`) re-registers only the lowering ctx's
     # local. A block inferred at this point reads the narrowed value, as
@@ -78028,7 +78210,8 @@ module Adamas::HIR
       return nil if actual_type == TypeRef::VOID
       inferred = {} of String => SourceCallArgument
       return nil unless source_block_result_pattern_match_into?(actual_type, pattern, inferred,
-        actual_literal: actual_value.type_literal, actual_facts: actual_value.value_facts)
+        actual_literal: actual_value.type_literal, actual_facts: actual_value.value_facts,
+        actual_tuple_values: actual_value.tuple_values)
       bindings = input_bindings.dup
       inferred.each do |formal, value|
         bindings[formal] ||= proc_source_type_name(value)
@@ -80885,6 +81068,9 @@ module Adamas::HIR
     private def proc_source_type_name(value : SourceCallArgument) : String
       if facts = value.value_facts
         return facts.map { |(type, literal)| proc_source_type_name(type, literal) }.uniq.sort.join(" | ")
+      end
+      if tuple_values = value.tuple_values
+        return "Tuple(#{tuple_values.map { |child| proc_source_type_name(child) }.join(", ")})"
       end
       proc_source_type_name(value.type_ref, value.type_literal)
     end
@@ -143372,21 +143558,43 @@ module Adamas::HIR
           # selected source call before consulting the current callback output.
           forall_type_param_names(func_def).each { |formal| inline_param_map.delete(formal) }
           inline_param_map.merge!(contract.type_bindings)
-          if inferred = inferred_block_return || inline_block_return_type_name(block, block_param_types, old_current_class)
+          declaration_owner = return_declaration_owner_for(inline_key, base_inline_name)
+          source_block_result = inline_block_return_source_argument(
+            block,
+            block_arena,
+            func_def,
+            callee_arena,
+            declaration_owner,
+            contract.type_bindings,
+            @block_owner[block.object_id],
+            @inline_caller_type_param_map_stack.last,
+          )
+          output_bindings = if source_block_result
+                              with_arena(callee_arena) do
+                                source_block_output_type_bindings(
+                                  func_def,
+                                  declaration_owner,
+                                  source_block_result.not_nil!,
+                                  contract.type_bindings,
+                                )
+                              end
+                            else
+                              nil
+                            end
+          if output_bindings.nil? && (inferred = inferred_block_return || inline_block_return_type_name(block, block_param_types, old_current_class))
             # `inferred` can be only the lowered carrier (for example, a
             # `yield` whose callback may return Entry or Entry.class). Binding
             # T from that single name would erase a mixed source kind before
             # the exact callback facts below are available.
             if inline_block_return_kind_is_explicit?(block, block_arena)
               output_bindings = with_arena(callee_arena) do
-                source_block_output_type_bindings(func_def,
-                  return_declaration_owner_for(inline_key, base_inline_name), inferred, contract.type_bindings)
-              end
-              if output_bindings
-                inline_param_map.merge!(output_bindings)
-                record_pending_type_param_map(inline_key, output_bindings)
+                source_block_output_type_bindings(func_def, declaration_owner, inferred, contract.type_bindings)
               end
             end
+          end
+          if output_bindings
+            inline_param_map.merge!(output_bindings)
+            record_pending_type_param_map(inline_key, output_bindings)
           end
           if source_return_flow_trace_match?(inline_key, base_inline_name, ctx.function.name, contract.selected_name)
             map_text = inline_param_map.map { |key, value| "#{key}=>#{value}" }.join(";")

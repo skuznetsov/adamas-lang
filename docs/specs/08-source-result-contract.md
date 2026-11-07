@@ -997,3 +997,33 @@ baseline and candidate; that separate semantic-fallback defect remains open.
 Rest-before-named default expansion is also outside this qualified corridor.
 Refresh after default expansion, named slot mapping, target binding or replay
 changes. Rollback is the atomic bare-constructor source-shape commit.
+
+
+### Source witnesses for callback Tuple output variables
+
+An early callback result witness may bind output-only forall variables before
+the yielding method constructs a value that depends on them. Preserve both the
+type and the class/instance kind of every Tuple slot, including nested Tuples.
+Each structured slot must agree with its HIR Tuple descriptor. Matching an ABI
+carrier alone does not establish the source kind.
+
+Read callback input restrictions in the exact selected Def/Arena and its input
+bindings. Resolve the block's own type paths and formals in its lexical owner,
+namespace and captured type bindings. These are separate lookup contexts.
+Admit only literal/type-path leaves, ordinary callback parameters, straight-line
+block-local assignments and recursive Tuple construction. Retain the existing
+completed callback-result validation after lowering.
+
+Unproved captures, calls, control flow, non-local returns, partial input maps,
+union inputs and abstract numeric input carriers decline this early witness.
+They require a completed source-result proof; a declared return annotation is
+not that proof. This boundary does not relax source restrictions or pending
+result/replay checks.
+
+Gate: inline_forall_tuple_source_binding_spec.cr and
+block_tuple_forall_source_binding_repro.sh COMPILER. Compare original Crystal,
+lazy and eager output for ordinary, class-valued, nested and block-local slots;
+reject crossed class/instance restrictions. Attack lexical shadowing with a
+root type and a same-named type inside the yielding method's owner. Refresh
+after source selection, lexical context, callback input/output binding, Tuple
+descriptors or result-proof changes. Rollback is the atomic witness commit.

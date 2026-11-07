@@ -27115,3 +27115,27 @@ integration, fresh bootstrap, or LavinMQ parity.
   sources (35q5727). The earlier fixture failure also occurs on the private
   ivar-source baseline (35q5724); it is not evidence against the pointer-store
   candidate. Pointer source-kind work and LavinMQ parity remain open.
+
+
+### 2026-11-07 — Preserve per-slot source witnesses before callback Tuple binding
+
+- [x] Bind output-only callback forall variables from structured source witnesses
+  before dependent typed empty values are lowered. Keep nested Tuple slot type
+  and class/instance kind together; descriptor agreement and late actual callback
+  validation remain mandatory.
+- [x] Separate the selected callback annotation's Def/Arena/input bindings from
+  the block's lexical owner, namespace and caller formal snapshot. Canonical type
+  identities re-enter the resolver rooted, avoiding same-named callee types.
+- [x] Exact-source S1 35q5784 passes 33 stock/lazy/eager native controls
+  (35q5785). All 93 focused/adjacent HIR controls pass (35q5795), including
+  mismatched descriptor rejection. Baseline 35q5683 rejects the class-key positive
+  (35q5790). No stdlib/application edits or weakened restrictions.
+- [ ] Add completed actual-result proof for member-call leaves. Unchanged
+  LavinMQ's callback contains header.to_slice; the literal/parameter/Tuple lane
+  deliberately declines that call. An annotation alone does not prove its result
+  (NoReturn discriminator 35q5756). Full prelude, bootstrap and LavinMQ
+  object/link/runtime/upstream parity remain open.
+
+Original-task refresh on the same S1: nested macro begin passes with ABC
+(35q5797); initializer binding/replay passes 29 HIR controls and six native
+stock/lazy/eager controls (35q5798). Full Thread/prelude runtime is not certified.

@@ -391,6 +391,7 @@ class Adamas::HIR::AstToHir
     require_unchanged : Bool = false,
     actual_literal : Bool = false,
     actual_facts : Array({TypeRef, Bool})? = nil,
+    actual_tuple_values : Array(SourceCallArgument)? = nil,
   ) : Bool
     return false unless pattern.valid
     module_restriction_key = source_block_result_module_restriction_key(pattern)
@@ -417,7 +418,8 @@ class Adamas::HIR::AstToHir
 
     if pattern.kind == SourceBlockResultPattern::Kind::Formal
       formal = pattern.formal_name || return false
-      value = SourceCallArgument.new(actual, actual_literal, value_facts: actual_facts)
+      value = SourceCallArgument.new(actual, actual_literal, value_facts: actual_facts,
+        tuple_values: actual_tuple_values)
       if previous = bindings[formal]?
         return previous == value
       end
@@ -453,7 +455,7 @@ class Adamas::HIR::AstToHir
     when SourceBlockResultPattern::Kind::Generic
       source_block_result_generic_match?(actual, pattern, bindings, require_unchanged)
     when SourceBlockResultPattern::Kind::Tuple
-      source_block_result_tuple_match?(actual, pattern, bindings)
+      source_block_result_tuple_match?(actual, pattern, bindings, actual_tuple_values)
     when SourceBlockResultPattern::Kind::NamedTuple
       source_block_result_named_tuple_match?(actual, pattern, bindings)
     else
@@ -1012,15 +1014,37 @@ class Adamas::HIR::AstToHir
     actual : TypeRef,
     pattern : SourceBlockResultPattern,
     bindings : Hash(String, SourceCallArgument),
+    actual_tuple_values : Array(SourceCallArgument)? = nil,
   ) : Bool
     descriptor = @module.get_type_descriptor(actual)
     return false unless descriptor && descriptor.kind == TypeKind::Tuple
     return false unless descriptor.type_params.size == pattern.children.size
+
+    candidate = bindings.dup
+    if values = actual_tuple_values
+      return false unless values.size == descriptor.type_params.size
+      values.each_with_index do |source_value, index|
+        # The structured witness and the actual HIR descriptor must describe
+        # the same tuple slot. This prevents a stale source witness from being
+        # paired with another specialization's ABI tuple.
+        return false unless descriptor.type_params.unsafe_fetch(index) == source_value.type_ref
+        return false unless source_block_result_pattern_match_into?(
+          source_value.type_ref,
+          pattern.children.unsafe_fetch(index),
+          candidate,
+          true,
+          actual_literal: source_value.type_literal,
+          actual_facts: source_value.value_facts,
+          actual_tuple_values: source_value.tuple_values,
+        )
+      end
+      replace_source_block_result_bindings!(bindings, candidate)
+      return true
+    end
+
     info = split_generic_base_and_args(descriptor.name) || return false
     source_names = split_generic_type_args(info.args)
     return false unless source_names.size == descriptor.type_params.size
-
-    candidate = bindings.dup
     descriptor.type_params.each_with_index do |element, index|
       source_value = source_call_argument_from_name(source_names[index])
       return false unless source_block_result_pattern_match_into?(element, pattern.children.unsafe_fetch(index), candidate, true,
