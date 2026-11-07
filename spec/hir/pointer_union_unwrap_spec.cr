@@ -137,9 +137,11 @@ private def lower_pointer_union_index_store_source : {Adamas::HIR::Function, Ada
   {function, converter}
 end
 
-private def lower_pointer_union_add_source : {Adamas::HIR::Function, Adamas::HIR::AstToHir}
+private def lower_pointer_union_add_source(
+  declared_return : String = "Pointer(UInt8) | Pointer(Void)",
+) : {Adamas::HIR::Function, Adamas::HIR::AstToHir}
   source = <<-CRYSTAL
-    def pointer_union_add(pointer : Pointer(UInt8) | Pointer(Void), offset : Int32) : Pointer(UInt8)
+    def pointer_union_add(pointer : Pointer(UInt8) | Pointer(Void), offset : Int32) : #{declared_return}
       pointer + offset
     end
   CRYSTAL
@@ -695,6 +697,12 @@ describe "pointer-union HIR normalization" do
     unwrap_desc = converter.module.get_type_descriptor(unwrap.not_nil!.as(Adamas::HIR::UnionUnwrap).type)
     unwrap_desc.should_not be_nil
     unwrap_desc.not_nil!.name.should eq("Pointer(Void)")
+  end
+
+  it "rejects narrowing a pointer-union arithmetic result to one pointer arm" do
+    expect_raises(Adamas::HIR::LoweringError, /must return Pointer\(UInt8\)/) do
+      lower_pointer_union_add_source("Pointer(UInt8)")
+    end
   end
 
   it "uses an explicit byte stride for Pointer(Void) fallback arithmetic" do

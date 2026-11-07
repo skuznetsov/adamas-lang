@@ -27103,3 +27103,15 @@ integration, fresh bootstrap, or LavinMQ parity.
   (diagnostic 35q5693). Preserve strict pending-result/replay checks.
 - Full prelude, fresh bootstrap and LavinMQ object/link/runtime/upstream parity
   remain open. No stdlib/application edits or relaxed restrictions.
+
+
+### 2026-11-07 — Keep pointer-union arithmetic regression source valid
+
+- [x] Declare both possible pointer result arms in the byte-stride fixture.
+  Original Crystal rejects its former Pointer(UInt8)-only return annotation
+  and accepts the union version (35q5725). Preserve the former source as an
+  explicit negative HIR control; do not weaken return checking.
+- [x] All 23 pointer-union HIR controls pass on unchanged current compiler
+  sources (35q5727). The earlier fixture failure also occurs on the private
+  ivar-source baseline (35q5724); it is not evidence against the pointer-store
+  candidate. Pointer source-kind work and LavinMQ parity remain open.
