@@ -25920,3 +25920,52 @@ HIR spec SHA-256: 2768639d567c619c5eef2f27e98b3d628c054ab8ea88412c29344cd1997d3c
 Refresh after direct class/macro publication, source-order recording, accessor
 winner selection, or exact Def/Arena binding changes. Rollback is this atomic
 commit. Application, stock stdlib, and unrelated WIP remain unchanged.
+
+## 2026-11-06 — Macro Call projections retain their source AST owner
+
+Unchanged LavinMQ's spawn reaches a Call AST whose args method was absent from
+MacroNodeValue. The generic unknown-method sentinel became Nil, and the macro
+for-loop correctly rejected that value (35q4075). Repair the missing producer
+API rather than admitting Nil as an iterable or modifying concurrent.cr.
+
+Call args/name/receiver/named_args, NamedArgument name/value and Splat/DoubleSplat
+exp now project the original source children. Definite MemberAccess syntax is
+classified as a zero-argument Call; arbitrary Identifiers retain their local
+ambiguity. Every AST child keeps its ExprId, arena, string pool and provider
+arena. Empty positional args is an ArrayLiteral; absent receiver/named_args is
+Nop. Field arity and unsupported callee shapes reject strictly.
+
+Twelve semantic/source-provider examples pass at the final source (35q4124),
+including separate arenas with equal child indices/spans. The original-first
+native gate passes 16 positives and five strict rejections per compiler
+(35q4126). Nested Begin retaining the args array passes separately on stock and
+the same S1 (35q4129/35q4130); the committed gate includes that seventeenth
+positive. All 21 Begin controls pass per compiler on this S1 (35q4132).
+The six original args controls and ten other field controls fail before the
+repair (35q4092/35q4097). Bounded Adversary verdict: ROBUST for measured field
+projection, source ownership and strict admission; source review is correlated.
+
+Do not promote this to complete macro AST compatibility. A qualified adjacent
+control exposes projected NumberLiteral arithmetic: call.args[0] + 1 emits 66
+in stock but currently produces an invalid expansion here (35q4129/35q4130).
+Literal operation delegation, unimplemented Call fields, safe navigation and
+complex callee shapes remain open. Global unknown-method behavior is unchanged;
+the non-call iterable control still rejects through the iterable diagnostic.
+Full prelude, unchanged LavinMQ link/server execution, fresh bootstrap and
+upstream test parity remain open.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+macro-projection-current-units35q4124/result.json,
+macro-call-projection-final-gate35q4126/result.json,
+macro-projection-extra-stock35q4129/result.json,
+macro-projection-extra-candidate35q4130/result.json, and
+macro-projection-begin-neighbor35q4132/result.json.
+All 1,916 live compiler sources match
+build.event-macro-call-projection35q4125.source.json
+(SHA-256 f4f2f0a62f40ff68d973ae268d733d2e6d542b22e0819570070ae5ee41ba4d79).
+Compiler SHA-256: 91d0333a75afe6d49b11528d83042674f3b84c50ce4bc9f35b886b07d973945f.
+Fixture-manifest SHA-256:
+10ad9924d0508c807d475e8e10241cf776bfb705483a77c86efff26bd1bcebe7.
+Refresh after macro field dispatch, literal delegation, source-provider/arena
+ownership, node classification or macro diagnostic changes. Rollback is this
+atomic compiler commit. Application, stdlib and unrelated WIP are unchanged.

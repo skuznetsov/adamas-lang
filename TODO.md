@@ -26265,3 +26265,28 @@ integration, fresh bootstrap, or LavinMQ parity.
   macro reflection in spawn (35q4075). Six stock-qualified no-prelude Call#args
   controls all fail the existing compiler (35q4091/35q4092). Keep this separate
   from accessor publication and retain strict macro iterable validation.
+
+### 2026-11-06 — Project macro Call AST fields from their source owner
+
+- [x] Implement Call args/name/receiver/named_args, NamedArgument name/value,
+  Splat/DoubleSplat class and exp, and definite no-parentheses member Call
+  classification. Retain the original arena, string pool and source provider
+  for every child; preserve empty args versus absent receiver/named_args Nop.
+- Twelve semantic/source-provider examples pass at the exact final compiler
+  source (35q4124). The original-first gate passes 16 native controls and five
+  strict rejections per compiler (35q4126); an additional nested Begin/args
+  control passes separately on stock and the same S1 (35q4129/35q4130). The
+  committed script includes all 17 native controls and five strict rejections.
+  The 21-case Begin neighbor also passes per compiler (35q4132).
+- [ ] Delegate operations on projected literal AST nodes through their literal
+  value owner. Stock-qualified `{{ call.args[0] + 1 }}` for consume(65) emits 66;
+  the current source-backed wrapper still rejects after producing an invalid
+  expansion (35q4129/35q4130, macro-projection-adjacent35q4127). Audit false/nil
+  truthiness and numeric/string families together; do not render and reparse
+  the child or silently accept an unknown operation.
+- [ ] Qualify Call block/block_arg/global?, generalized id, safe navigation and
+  nested Call callee shapes before widening projection. The parser can produce
+  a nested Call callee for block shorthand; current name/receiver projection
+  rejects an unsupported callee instead of fabricating metadata.
+- Return to unchanged LavinMQ with the separate source-rest/allocator work.
+  No new link/server, full prelude, fresh bootstrap or upstream parity claim.

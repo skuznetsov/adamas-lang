@@ -573,6 +573,30 @@ Hash output-root handling is a separate open route; the Begin contract does not
 certify every surrounding macro AST kind. No stdlib adaptation or relaxed runtime
 type check is part of this interpreter repair.
 
+## Source-owned macro Call projections
+
+Call#args projects positional AST children in source order as an ArrayLiteral,
+including the empty array. Call#name is a MacroId; Call#receiver is the exact
+receiver AST or Nop; Call#named_args is an ordered ArrayLiteral of NamedArgument
+values or Nop when absent. A definite zero-argument MemberAccess is a Call.
+Do not reinterpret every Identifier as a Call: a bare identifier can be a local.
+
+Each projected child retains the original ExprId, arena, string pool and
+source-provider arena. Equal indices or spans in another arena convey no source
+authority. NamedArgument exposes name and value; Splat and DoubleSplat retain
+their macro classes and expose the original operand through exp. These fields
+accept no arguments. Unsupported call callee shapes reject rather than invent
+a receiver or name; a non-call's args is never an admitted empty array.
+
+The macro_call_projection_repro.sh controls qualify construction, projection,
+source ownership, interpolation and strict field arity against stock Crystal.
+They do not certify every operation on a projected AST child. In particular,
+projected NumberLiteral arithmetic remains open: a source-backed MacroNodeValue
+does not yet delegate every literal operation to its value implementation.
+Call block/block_arg/global?, generalized id, safe navigation and complex
+callee projection remain separate open contracts. Preserve strict iterable
+validation and existing macro error propagation while extending this surface.
+
 ## Falsifiers and recovery
 
 Run each script with the exact candidate as its argument. The scripts first
@@ -610,6 +634,8 @@ and check semantic diagnostics and absence of an executable for rejections.
 - `regression_tests/macro_interpolation_expressions_repro.sh`
 - `regression_tests/macro_array_predicate_repro.sh`
 - `regression_tests/macro_source_declaration_repro.sh`
+- `regression_tests/macro_call_projection_repro.sh`
+- `spec/semantic/macro_call_args_projection_spec.cr`
 - `spec/parser/macro_def_parameter_cache_spec.cr`
 - `spec/parser/macro_keyword_type_declaration_spec.cr`
 - `spec/semantic/macro_node_source_provider_spec.cr`

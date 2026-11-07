@@ -866,6 +866,10 @@ module Adamas
         def class_name : String
           node = @arena[@node_id]
           return "ProcPointer" if node.is_a?(Frontend::UnaryNode) && node.operator == "->".to_slice
+          return "Call" if node.is_a?(Frontend::MemberAccessNode)
+          if splat = node.as?(Frontend::SplatNode)
+            return splat.double? ? "DoubleSplat" : "Splat"
+          end
           # Source AST literals keep Crystal's macro class even when a value
           # cannot be represented by the interpreter's numeric value storage.
           case Frontend.node_kind(node)
@@ -898,6 +902,62 @@ module Adamas
                 raise ArgumentError.new("StringInterpolation#expressions expects no arguments")
               end
               interpolation_expressions(node)
+            else
+              super
+            end
+          when "args"
+            if Frontend.node_kind(node).call? || Frontend.node_kind(node).member_access?
+              ensure_no_projection_args!("Call#args", args, named_args)
+              values = [] of MacroValue
+              if Frontend.node_kind(node).call?
+                node.unsafe_as(Frontend::CallNode).args.each do |expr_id|
+                  values << child_node_value(expr_id)
+                end
+              end
+              MacroArrayValue.new(values)
+            else
+              super
+            end
+          when "name"
+            if Frontend.node_kind(node).call? || Frontend.node_kind(node).member_access?
+              ensure_no_projection_args!("Call#name", args, named_args)
+              projected_name = call_name(node)
+              raise ArgumentError.new("unsupported Call#name callee shape") unless projected_name
+              MacroIdValue.new(projected_name)
+            else
+              super
+            end
+          when "receiver"
+            if Frontend.node_kind(node).call? || Frontend.node_kind(node).member_access?
+              ensure_no_projection_args!("Call#receiver", args, named_args)
+              call_receiver(node)
+            else
+              super
+            end
+          when "named_args"
+            if Frontend.node_kind(node).call? || Frontend.node_kind(node).member_access?
+              ensure_no_projection_args!("Call#named_args", args, named_args)
+              if Frontend.node_kind(node).call?
+                if named = node.unsafe_as(Frontend::CallNode).named_args
+                  values = [] of MacroValue
+                  named.each do |arg|
+                    name_value = MacroIdValue.new(intern_name(arg.name))
+                    values << MacroNamedArgumentValue.new(name_value, child_node_value(arg.value))
+                  end
+                  MacroArrayValue.new(values)
+                else
+                  MacroNopValue.new
+                end
+              else
+                MacroNopValue.new
+              end
+            else
+              super
+            end
+          when "exp"
+            if splat = node.as?(Frontend::SplatNode)
+              ensure_no_projection_args!("Splat#exp", args, named_args)
+              child_node_value(splat.expr)
             else
               super
             end
@@ -948,6 +1008,56 @@ module Adamas
             end
           else
             super
+          end
+        end
+
+        private def child_node_value(expr_id : Frontend::ExprId) : MacroNodeValue
+          MacroNodeValue.new(
+            expr_id, @arena, @string_pool, @node_source_provider, @node_source_provider_arena
+          )
+        end
+
+        private def ensure_no_projection_args!(method_name : String, args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : Nil
+          unless args.empty? && (named_args.nil? || named_args.not_nil!.empty?)
+            raise ArgumentError.new("#{method_name} expects no arguments")
+          end
+        end
+
+        private def call_name(node : Frontend::Node) : String?
+          case Frontend.node_kind(node)
+          when .member_access?
+            intern_name(node.unsafe_as(Frontend::MemberAccessNode).member)
+          when .call?
+            call = node.unsafe_as(Frontend::CallNode)
+            case callee = @arena[call.callee]
+            when Frontend::IdentifierNode, Frontend::ConstantNode
+              intern_name(callee.name)
+            when Frontend::MemberAccessNode
+              intern_name(callee.member)
+            else
+              nil
+            end
+          else
+            nil
+          end
+        end
+
+        private def call_receiver(node : Frontend::Node) : MacroValue
+          case Frontend.node_kind(node)
+          when .member_access?
+            child_node_value(node.unsafe_as(Frontend::MemberAccessNode).object)
+          when .call?
+            call = node.unsafe_as(Frontend::CallNode)
+            case callee = @arena[call.callee]
+            when Frontend::IdentifierNode, Frontend::ConstantNode
+              MacroNopValue.new
+            when Frontend::MemberAccessNode
+              child_node_value(callee.object)
+            else
+              raise ArgumentError.new("unsupported Call#receiver callee shape")
+            end
+          else
+            raise ArgumentError.new("unsupported Call#receiver shape")
           end
         end
 
@@ -1570,6 +1680,48 @@ module Adamas
             name[1..]
           else
             name
+          end
+        end
+      end
+
+      # AST wrapper for a call's named argument. Its value child is created by
+      # the owning Call projection, so arena and source-provider ownership are
+      # preserved even when equal ExprIds occur in different arenas.
+      class MacroNamedArgumentValue < MacroValue
+        getter name_value : MacroIdValue
+        getter value_node : MacroNodeValue
+
+        def initialize(@name_value : MacroIdValue, @value_node : MacroNodeValue)
+        end
+
+        def class_name : String
+          "NamedArgument"
+        end
+
+        def to_macro_output : String
+          "#{@name_value.to_macro_output}: #{@value_node.to_macro_output}"
+        end
+
+        def stringify : String
+          "#{@name_value.stringify}: #{@value_node.stringify}"
+        end
+
+        def call_method(name : String, args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : MacroValue
+          case name
+          when "name"
+            ensure_no_projection_args!("NamedArgument#name", args, named_args)
+            @name_value
+          when "value"
+            ensure_no_projection_args!("NamedArgument#value", args, named_args)
+            @value_node
+          else
+            super
+          end
+        end
+
+        private def ensure_no_projection_args!(method_name : String, args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : Nil
+          unless args.empty? && (named_args.nil? || named_args.not_nil!.empty?)
+            raise ArgumentError.new("#{method_name} expects no arguments")
           end
         end
       end
