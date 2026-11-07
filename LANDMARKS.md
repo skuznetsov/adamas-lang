@@ -27318,3 +27318,35 @@ callback exclusion. Residual structural falsifier: a same-shell target carrying
 conflicting source facts/binding must never authorize a different source on
 replay. No reachable producer was found; downstream exact source-binding guards
 remain required. This is an audit follow-up, not a measured runtime defect.
+
+
+## 2026-11-07 — Recursive discovery cannot replace an active body's replay inputs
+
+Exception#inspect_with_backtrace(IO):Nil starts from a concrete String::Builder
+argument but recursive/virtual discovery republishes the formal IO vector for
+the same physical body. IO#flush suspension then correctly rejects conflicting
+saved and pending replay inputs (35q5561). The producer-side repair retains the
+active exact Function/Def/Arena and copied sealed formals; ordinary matching
+formal discovery stays in family/caller discovery without becoming a second
+physical recipe. Replay equality is unchanged. Fixed typed positional shape,
+known ordinary kinds, source-fact/carrier identity and unchanged source/ABI are
+required; other shapes remain guarded. A direct recursive Nil-discard result
+adds no self edge while retaining real child dependencies.
+
+Scoped adversary verdict: ROBUST for this ordinary active-body corridor after
+adding the crossed source-fact guard. All 59 focused HIR controls pass (35q5633)
+and the five-test regression wrapper passes (35q5636). The self-edge unit test
+seeds its child dependency; it alone does not prove real unwind. Fresh exact
+S1 35q5634 separately passes the former Exception/IO#flush conflict in unchanged
+Crystal 1.22.1 prelude (35q5635), then fails the CallStack cache source-kind/
+pending-result contract. This is not full prelude, bootstrap or LavinMQ closure.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+active-body-owner-final35q5633/, active-body-owner-final-script35q5636/ and its
+qualification JSON, build.active-body-owner-final35q5634.{source,result}.json,
+prelude-active-body-owner-final35q5635/.
+S1 SHA-256: b020498094dfaa8435b5b5bbfe0bc1fc77ab58e4802a01feb54720efcec07637.
+Compiler source manifest SHA-256:
+c702d9d3c3f90db190ff4d9f98becfbd67fa0a6e3c2798563e81d9cbfb5144ba.
+Refresh after source/callshape, active-body ABI/lifetime or replay changes.
+Rollback is the atomic active-body ownership commit; unrelated WIP is excluded.

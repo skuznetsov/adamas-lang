@@ -27029,3 +27029,24 @@ integration, fresh bootstrap, or LavinMQ parity.
   weaken its equality guard.
 - Full prelude, fresh bootstrap and unchanged LavinMQ runtime/upstream parity
   remain open.
+
+
+### 2026-11-07 — Keep one active physical body recipe during recursive discovery
+
+- [x] Retain the active exact Function/Def/Arena and sealed formal ABI after
+  parameter binding. Keep formal-only discovery out of its original actual
+  replay recipe, while retaining family/caller discovery.
+- [x] Preserve strict replay equality and reject unknown or crossed source-kind
+  facts, changed Function/source/ABI, callback/named/rest/default and inherited
+  alias contexts. A direct recursive Nil result drops only its own self edge.
+- 59 focused HIR controls pass (35q5633); active_body_replay_owner_repro.sh
+  passes five controls (35q5636). Exact-source S1 35q5634 completes the previous
+  Exception/IO#flush replay conflict with unchanged Crystal 1.22.1 prelude
+  (35q5635). The self-edge unit test uses a seeded child; the prelude trace is
+  separate integration evidence.
+- [ ] Preserve the CallStack cache field's source-kind restriction through
+  reads/writes and suspend the bare decode_backtrace producer before pending
+  Void reaches a store/declared return. Keep class-object/wrong-type writes
+  rejected; do not drop Void or weaken annotations to advance prelude.
+- Full prelude, fresh bootstrap and unchanged LavinMQ runtime/upstream parity
+  remain open. No application/stdlib edits or restriction weakening.

@@ -1,14 +1,12 @@
 # Source Result Ownership — Frontier SDD
 
-Status: IN_PROGRESS, 2026-11-07. Exact-source S1 35q5351 passes the nine-case
-source-body demand packet, the strict Proc29 packet, all 13 genuine Atomic
-controls and six ordinary Atomic sibling counterfactuals (35q5371/5373/5388).
-The sibling packet checks both lazy and eager execution plus a genuine fence
-opcode. All 90 targeted HIR controls also pass (35q5389), including dropping
-permission when a same-call replacement changes only its result type.
-Stock-prelude/LavinMQ compilation passes StaticArray#to_slice replay, then
-refuses source ownership in the hash family (35q5342/5349/5380).
-Fresh bootstrap and unchanged LavinMQ execution/upstream parity remain open.
+Status: IN_PROGRESS, 2026-11-07. Exact-source S1 35q5634 passes the
+59-control active-body replay/source ownership gate (35q5633) and its five-test
+wrapper (35q5636). Unchanged prelude now passes the recursive Exception/IO#flush
+replay conflict, then rejects the separate CallStack cache source-kind/pending
+result defect (35q5635). Full prelude, fresh bootstrap and unchanged LavinMQ
+execution/upstream parity remain open. The existing Atomic and Proc gates retain
+their separately recorded qualification; they are not a full-suite claim here.
 The selected-default contract passes 37 main cases and ten block-slot cases
 on exact-source S1 35q2760 (35q2764); five companions remain explicitly open.
 
@@ -52,6 +50,31 @@ evidence of an empty call. Parenthesized and bare nilary syntax retain the same
 source contract. `nilary_source_retry_recipe_repro.sh` checks the actual retry
 receipt after both annotated child dependencies are refused; it also rejects
 stale Def/Arena ownership and keeps explicit-parentheses/strict-arity controls.
+
+## Active physical body ownership during recursive discovery
+
+An in-progress, exact ordinary source body retains its actual Function, Def,
+declaration arena, complete formal ABI and declared result after parameter
+binding. An ordinary discovery request for those same formals does not become
+a second materialization recipe: retain the original actual inputs for replay
+and keep the new caller in the family/discovery catalogue. This applies only
+to fixed, explicitly typed positional parameters with a declared non-Void
+result and known ordinary value kinds. Defaults, rest/named/block slots,
+callbacks, inherited aliases and conflicting source facts remain excluded.
+
+Every nonnil argument fact must agree with its stored carrier TypeRef. Missing
+fact slots require a complete all-false literal vector; missing facts cannot
+establish ordinary value kind by themselves. Source, Function, formal types,
+names, defaults, heap/block metadata and result must remain unchanged. Clear
+the live receipt on unwind or source replacement. Replay equality remains
+strict. A direct recursive Nil-discard result does not add a self dependency;
+real child dependencies remain owned by the body.
+
+The five active-body tests cover actual parsed/materialized definitions with
+controlled live-capture and mutation probes. Their self-edge test seeds a child
+dependency and does not prove actual unwind. Fresh stock-prelude trace 35q5635
+separately establishes advancement through the former Exception replay conflict.
+The next CallStack error and complete bootstrap/LavinMQ parity stay open.
 
 ## Exact primitive source ownership
 

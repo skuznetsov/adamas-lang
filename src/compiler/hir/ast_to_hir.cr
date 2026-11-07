@@ -2161,9 +2161,19 @@ module Adamas::HIR
       end
     end
 
+    # A live materialization owns one physical body and its sealed formal ABI.
+    private record ForceLowerActiveBody,
+      function : Function,
+      source_def : Adamas::Compiler::Frontend::DefNode,
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
+      param_types : Array(TypeRef),
+      param_names : Array(String),
+      return_type : TypeRef
+
     private class ForceLowerReplayCapture
       property binding : ForceLowerReplayCallsite?
       property source : ForceLowerExactSourceBinding?
+      property active_body : ForceLowerActiveBody?
       getter name : String
       getter parent : ForceLowerReplayCapture?
 
@@ -51821,6 +51831,8 @@ module Adamas::HIR
         "params=#{func.params.size},auto_assign=#{auto_assign_params.size}"
       )
 
+      retain_active_force_lower_body(func, node, def_arena)
+
       # Emit auto-assignments for @param style parameters
       auto_assign_params.each do |(ivar_name, param_id, offset)|
         self_id = emit_self(ctx)
@@ -52248,6 +52260,13 @@ module Adamas::HIR
         end
         raise error
       ensure
+        if partial = materializing_function
+          if capture = @force_lower_active_replay_captures[partial.name]?
+            if active = capture.active_body
+              capture.active_body = nil if active.function.same?(partial)
+            end
+          end
+        end
         @current_typeof_locals = old_typeof_locals
         @current_typeof_local_names = old_typeof_local_names
         @enum_value_types = old_enum_value_types
@@ -110515,6 +110534,112 @@ module Adamas::HIR
       incoming.copy_with(source_argument_facts: facts, source_binding: binding)
     end
 
+    private def ordinary_active_body_callsite?(callsite : CallsiteArgs) : Bool
+      return false if callsite.has_block || callsite.has_named_args ||
+                      callsite.selected_target || callsite.source_binding ||
+                      callsite.literals.try(&.any?) || callsite.enum_names.try(&.any?)
+      kinds_known = false
+      if literals = callsite.literals
+        return false unless literals.size == callsite.types.size
+        kinds_known = true
+      end
+      if facts = callsite.source_argument_facts
+        return false unless facts.size == callsite.types.size
+        # A non-nil fact is an exact source-type witness as well as a kind
+        # witness. Reject crossed source/ABI identities instead of coalescing
+        # on the carrier alone. Missing slots remain usable when the complete
+        # literal vector independently proves that every actual is an instance.
+        return false if facts.each_with_index.any? do |fact, index|
+          fact && fact.type_ref != callsite.types[index]
+        end
+        return false if facts.any? do |fact|
+          fact && (fact.type_literal || fact.rest_values || fact.value_facts)
+        end
+        kinds_known ||= facts.all? { |fact| !fact.nil? }
+      end
+      kinds_known
+    end
+
+    private def active_force_lower_source_current?(name : String, replay : ForceLowerReplayCallsite) : Bool
+      return false if replay.callback_abi || replay.callback_source ||
+                      raw_callback_abi_for(name) || raw_callback_source_binding_for(name)
+      if source = replay.exact_source_binding
+        return false if source.inherited_nilary_member_alias
+        return false unless source.source_def.same?(replay.source_def) &&
+                            source.source_arena.same?(replay.source_arena) &&
+                            source.source_registry_name == replay.source_registry_name
+      end
+      registry_name = replay.source_registry_name || name
+      return false unless @function_defs[registry_name]?.try(&.same?(replay.source_def)) == true &&
+                          @function_def_arenas[registry_name]?.try(&.same?(replay.source_arena)) == true
+      if registry_name != name && (@function_defs.has_key?(name) || @function_def_arenas.has_key?(name))
+        return false unless @function_defs[name]?.try(&.same?(replay.source_def)) == true &&
+                            @function_def_arenas[name]?.try(&.same?(replay.source_arena)) == true
+      end
+      true
+    end
+
+    private def retain_active_force_lower_body(
+      function : Function,
+      source_def : Adamas::Compiler::Frontend::DefNode,
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Nil
+      capture = @force_lower_active_replay_captures[function.name]?
+      return unless capture
+      replay = capture.binding
+      return unless replay && active_force_lower_source_current?(function.name, replay)
+      return unless replay.source_def.same?(source_def) && replay.source_arena.same?(source_arena)
+      return unless source_def.body && source_def.return_type && source_def.forall_type_params.empty?
+      return if function.return_type == TypeRef::VOID ||
+                raw_callback_abi_for(function.name) || raw_callback_source_binding_for(function.name)
+      return unless ordinary_active_body_callsite?(replay.callsite)
+      params = function_param_infos(source_def, source_arena)
+      return unless params.all? do |param|
+        declared_type_name = param.type_annotation
+        declared_type_name && declared_type_name != "_" && !param.default_value &&
+          !param.is_splat && !param.is_double_splat && !param.is_block && !named_only_separator?(param)
+      end
+      offset = function.params.first?.try(&.name) == "self" ? 1 : 0
+      return unless function.params.size == params.size + offset && replay.callsite.types.size == params.size
+      return if function.heap_block_param ||
+                function.params.any? { |param| param.type == TypeRef::VOID || param.is_block || param.default_literal }
+      capture.active_body = ForceLowerActiveBody.new(
+        function, source_def, source_arena, function.params.map(&.type), function.params.map(&.name), function.return_type,
+      )
+    end
+
+    private def current_active_force_lower_body(name : String) : ForceLowerActiveBody?
+      return unless function_state(name).in_progress?
+      capture = @force_lower_active_replay_captures[name]?
+      return unless capture && capture.name == name
+      replay = capture.binding
+      active = capture.active_body
+      return unless replay && active && active_force_lower_source_current?(name, replay)
+      return unless replay.source_def.same?(active.source_def) && replay.source_arena.same?(active.source_arena)
+      function = active.function
+      return unless @module.function_by_name(name).try(&.same?(function)) == true
+      return unless function.params.map(&.type) == active.param_types &&
+                    function.params.map(&.name) == active.param_names && function.return_type == active.return_type
+      return if function.heap_block_param || function.params.any? { |param| param.is_block || param.default_literal }
+      active
+    end
+
+    # An ordinary request for the sealed formals of an already active exact
+    # body is discovery evidence, not a second materialization recipe. Preserve
+    # the original caller's inputs for suspension/replay and still catalog the
+    # new caller below. Other specializations retain their independent inputs.
+    private def active_force_lower_body_owns_callsite?(name : String, callsite : CallsiteArgs) : Bool
+      return false unless ordinary_active_body_callsite?(callsite)
+      active = current_active_force_lower_body(name)
+      return false unless active
+      function = active.function
+      offset = function.params.first?.try(&.name) == "self" ? 1 : 0
+      return false unless callsite.types.size + offset == active.param_types.size
+      callsite.types.each_with_index.all? do |type, index|
+        type != TypeRef::VOID && type == active.param_types[index + offset]
+      end
+    end
+
     private def remember_callsite_arg_types(
       name : String,
       arg_types : Array(TypeRef),
@@ -110551,7 +110676,7 @@ module Adamas::HIR
       # Family discovery must not replace a physical body's exact inputs.
       # Keep a richer source binding when a later replay only knows the ABI
       # carrier; source-selected value kind is part of the exact body input.
-      if record_exact_target
+      if record_exact_target && !active_force_lower_body_owns_callsite?(name, callsite)
         if existing = @pending_arg_types[name]?
           @pending_arg_types[name] = merge_pending_callsite_evidence(existing, callsite)
         else
@@ -113169,6 +113294,7 @@ module Adamas::HIR
       prior = capture.binding
       capture.binding = nil
       capture.source = nil
+      capture.active_body = nil
       return unless source_arena
       source = ForceLowerExactSourceBinding.new(source_def, source_arena, registry_name)
       return unless force_lower_exact_source_matches?(capture.name, source)
@@ -116469,6 +116595,7 @@ module Adamas::HIR
                       unless source.source_def.same?(resolved_func_def) && source.source_arena.same?(source_body_arena)
                         replay_capture.binding = nil
                         replay_capture.source = nil
+                        replay_capture.active_body = nil
                       end
                     end
                   end
@@ -117778,6 +117905,16 @@ module Adamas::HIR
                     @force_lower_provisional_dependencies.has_key?(target)
 
       consumer = ctx.source_result_replay_consumer || ctx.function.name
+      if consumer == target && ctx.function.name == target
+        if active = current_active_force_lower_body(target)
+          if active.function.same?(ctx.function) && active.source_def.same?(binding.source_def) &&
+             active.source_arena.same?(binding.source_arena) && active.return_type == TypeRef::NIL
+            # A discarded annotated result adds no self dependency. The live
+            # body still owns every unsettled child dependency already found.
+            return
+          end
+        end
+      end
       dependencies = @force_lower_provisional_dependencies[consumer] ||= Set(String).new
       dependencies << target
       if env_has?("DEBUG_FORCE_LOWER_DEPTH")
