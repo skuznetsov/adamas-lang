@@ -1027,3 +1027,28 @@ reject crossed class/instance restrictions. Attack lexical shadowing with a
 root type and a same-named type inside the yielding method's owner. Refresh
 after source selection, lexical context, callback input/output binding, Tuple
 descriptors or result-proof changes. Rollback is the atomic witness commit.
+
+
+### Resolved type identities remain owned across callback and alias boundaries
+
+A resolved expression path is a canonical type identity. Lower its type literal
+without reopening lookup in the current callee namespace. A recorded block
+owner remains authoritative even when its class, method and namespace are all
+nil: that denotes a top-level lexical scope. It is not missing metadata.
+
+Normalize `.class` and `.metaclass` as structural suffixes by resolving their
+base in its declaration scope. Preserve an explicit root through alias storage
+and recursive compound restriction parsing. Replacing every expanded alias leaf
+with a root is insufficient: an unqualified base must first bind in the alias's
+own lexical scope. Class/instance restrictions and actual-result validation
+remain mandatory.
+
+Gate: rooted_block_result_namespace_repro.sh COMPILER compares 19 original
+Crystal/lazy/eager native programs, including rooted/lexical aliases and alias
+chains, nested lexical blocks, mixed union arms and crossed-kind rejection.
+rooted_block_lexical_identity_spec.cr exercises complete registration and actual
+callback lowering; source_block_result_pattern_spec.cr covers nested, nullable
+and metaclass spellings. Refresh after path resolution, alias normalization,
+block ownership or callback source-result changes. Rollback is the atomic
+resolved-identity commit. This does not certify arbitrary member-call result
+proofs, full prelude, bootstrap or LavinMQ runtime/upstream parity.

@@ -27139,3 +27139,24 @@ integration, fresh bootstrap, or LavinMQ parity.
 Original-task refresh on the same S1: nested macro begin passes with ABC
 (35q5797); initializer binding/replay passes 29 HIR controls and six native
 stock/lazy/eager controls (35q5798). Full Thread/prelude runtime is not certified.
+
+
+### 2026-11-07 — Retain resolved type identity through callbacks and metaclass aliases
+
+- [x] Lower selected expression paths as canonical identities, honor a complete
+  nil top-level block owner, and resolve metaclass bases in declaration scope
+  before aliases or compound restrictions consume them.
+- [x] Exact-source S1 35q5830 passes 57 stock Crystal 1.22.1/lazy/eager native
+  controls (35q5832), including strict semantic rejection. All 151 focused and
+  adjacent HIR controls pass (35q5831). Baseline S1 35q5784 incorrectly accepts
+  the lexical/root callback mismatch (35q5833; invalid binary not run).
+- [ ] Complete actual member-call result proof before callback forall binding;
+  header.to_slice remains outside the early literal/parameter/Tuple witness.
+  Preserve strict source-result, type admission and replay checks. Full prelude,
+  bootstrap and LavinMQ object/link/runtime/upstream parity remain open.
+
+Original-task refresh on this S1 also passes: nested macro begin outputs ABC
+(35q5836); initializer binding/replay passes 29 HIR and six native controls
+(35q5837). Full Thread/prelude runtime remains open. Unchanged LavinMQ again
+reaches the strict pending Hash(Void, Void) result in update_linear_scan
+(35q5838, inputs unchanged); the header.to_slice proof is still required.

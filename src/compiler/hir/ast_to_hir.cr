@@ -72561,6 +72561,14 @@ module Adamas::HIR
           split_union_type_name(name).map { |part| resolve_composite_type_argument_in_context(part) }.join(" | ")
         elsif named_tuple = resolve_named_tuple_type_name_in_context(name)
           named_tuple
+        elsif name.ends_with?(".class") || name.ends_with?(".metaclass")
+          # A metaclass suffix is structural syntax, just like nullable and
+          # pointer syntax. Bind its base in the declaration's lexical scope
+          # before an alias stores or a signature re-parses the result. An
+          # explicit root must survive that boundary.
+          suffix = name.ends_with?(".metaclass") ? ".metaclass" : ".class"
+          base = name.byte_slice(0, name.bytesize - suffix.bytesize).strip
+          "#{resolve_composite_type_argument_in_context(base)}#{suffix}"
         else
           resolved = if @signature_scan_mode
                        resolve_type_name_in_signature_context_impl(name)
@@ -100312,7 +100320,9 @@ module Adamas::HIR
         end
       end
       if binding && (type_name_exists?(full_path) || @type_aliases.has_key?(full_path) || @generic_templates.has_key?(full_path))
-        return lower_type_literal_from_name(ctx, full_path)
+        # The expression lookup already selected an identity. Re-entering it as
+        # a relative spelling can bind a root type to a shadowing lexical type.
+        return with_canonical_type_scope { lower_type_literal_from_name(ctx, full_path) }
       end
 
       # Program-defined constants (original Crystal: Program#define_crystal_constants).
@@ -155170,17 +155180,12 @@ module Adamas::HIR
         # to the inlined callee, while the block itself is lexically owned by the
         # caller. Using callee owner here breaks ivar resolution inside block procs
         # (e.g. @tokens resolved against wrong class, then degraded to offset=0).
-        lexical_owner_class = previous_owner.class_name
-        lexical_owner_method = previous_owner.method_name
-        if lexical_owner_class || lexical_owner_method
-          owner_class = lexical_owner_class
-          owner_method = lexical_owner_method
-          owner_is_class = previous_owner.is_class
-          owner_namespace = previous_owner.namespace_override
-        elsif owner_class.nil? && owner_method.nil?
-          owner_is_class = previous_owner.is_class
-          owner_namespace = previous_owner.namespace_override
-        end
+        # Nil class/method/namespace is a complete top-level lexical owner,
+        # not missing metadata. Never substitute the inlined callee for it.
+        owner_class = previous_owner.class_name
+        owner_method = previous_owner.method_name
+        owner_is_class = previous_owner.is_class
+        owner_namespace = previous_owner.namespace_override
       end
       @block_owner[block_node.object_id] = BlockOwner.new(
         owner_class, owner_method, owner_is_class, owner_source_yield_context, owner_namespace,

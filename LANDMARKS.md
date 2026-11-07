@@ -27486,3 +27486,42 @@ LavinMQ object/link/runtime/upstream parity remain open.
 Original-task refresh on the same S1: nested macro begin passes with ABC
 (35q5797); initializer binding/replay passes 29 HIR controls and six native
 stock/lazy/eager controls (35q5798). Full Thread/prelude runtime is not certified.
+
+
+## 2026-11-07 — Resolved callback paths and aliases retain one type identity
+
+Native falsifiers separated three losses of the same source identity: lower_path
+passed a selected root name back to relative lookup, lower_block_to_proc treated
+a complete nil top-level BlockOwner as absent, and normalization did not resolve
+the base of a `.class`/`.metaclass` structural suffix before alias storage. Fix
+those ownership boundaries; no callback-only type-literal resolver is needed.
+The blanket-root expanded-alias route is refuted (35q5823): it changed NamedTuple
+spelling and rebound a lexical metaclass alias to the root. Resolve the base in
+its declaration scope first, preserving an explicit root across re-parsing.
+
+Scoped adversary verdict: ROBUST for the qualified identity corridor. Exact
+source S1 35q5830 passes all 57 stock Crystal 1.22.1/lazy/eager native controls
+(35q5832); 151 focused/adjacent HIR controls pass (35q5831). Native controls
+include lexical/root aliases and chains, top-level and nested blocks, mixed
+instance/metaclass union arms, and semantic crossed-kind rejection. Baseline
+S1 35q5784 accepts the lexical/root mismatch (35q5833); that invalid binary was
+not run. No stdlib/application changes or weakened restrictions.
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+rooted-owner-canonical-native35q5832/ and its qualification JSON,
+rooted-owner-canonical-hir35q5831/, rooted-identity-before35q5833/,
+rooted-owner-canonical-native35q5829.fixtures.json, and
+build.rooted-owner-canonical35q5830.{source,result}.json.
+S1 SHA-256: eec0789f6fd6c5f861f9dc171c780e19420e95e5dc382f5c77df8c2fee9ccf80.
+Compiler source manifest SHA-256:
+ba3db1a7a628796a1febc8015953d8e592c502fba7cae8c96c8a0763c38f3d54.
+Live compiler sources match that qualified manifest byte-for-byte. Refresh after
+path resolution, alias normalization, block ownership or source-result changes.
+Rollback is this atomic identity commit; unrelated WIP remains excluded.
+LavinMQ member-call result proof, full prelude, fresh bootstrap and unchanged
+LavinMQ object/link/runtime/upstream parity remain open.
+
+Original-task refresh on this S1 also passes: nested macro begin outputs ABC
+(35q5836); initializer binding/replay passes 29 HIR and six native controls
+(35q5837). Full Thread/prelude runtime remains open. Unchanged LavinMQ again
+reaches the strict pending Hash(Void, Void) result in update_linear_scan
+(35q5838, inputs unchanged); the header.to_slice proof is still required.

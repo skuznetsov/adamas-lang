@@ -64,6 +64,8 @@ private def source_block_result_pattern_fixture
       class Owner
       end
 
+      alias RootPathClass = ::Path.class
+      alias LexicalPathClass = Path.class
       alias PermissionFields = NamedTuple(config: Int32, read: Int32, write: Int32)
       alias PermissionFieldsAgain = PermissionFields
       alias RecursiveFields = NamedTuple(next: RecursiveFields)
@@ -292,6 +294,83 @@ describe "source block result patterns" do
     accepts_class_literal_arm.should be_true
     rejects_instance_as_class_literal.should be_false
     rejects_class_literal_as_instance.should be_false
+  end
+
+  it "preserves rooted metaclass lookup through structural alias probing" do
+    converter = source_block_result_pattern_fixture
+
+    _, _, accepts_root_class = converter.__test_source_block_result_pattern(
+      "::Path.class", "::Path", "Scope::Owner", actual_type_literal: true,
+    )
+    _, _, rejects_shadow_class = converter.__test_source_block_result_pattern(
+      "::Path.class", "Scope::Path", "Scope::Owner", actual_type_literal: true,
+    )
+    _, _, rejects_shadow_instance = converter.__test_source_block_result_pattern(
+      "::Path.class", "Scope::Path", "Scope::Owner",
+    )
+    unqualified_shadow_restriction, _, accepts_unqualified_shadow = converter.__test_source_block_result_pattern(
+      "Path.class", "Scope::Path", "Scope::Owner", actual_type_literal: true,
+    )
+    unqualified_root_restriction, _, rejects_unqualified_root = converter.__test_source_block_result_pattern(
+      "Path.class", "::Path", "Scope::Owner", actual_type_literal: true,
+    )
+    unqualified_shadow_meta_restriction, _, accepts_unqualified_shadow_meta = converter.__test_source_block_result_pattern(
+      "Path.metaclass", "Scope::Path", "Scope::Owner", actual_type_literal: true,
+    )
+    _, _, rejects_unqualified_root_meta = converter.__test_source_block_result_pattern(
+      "Path.metaclass", "::Path", "Scope::Owner", actual_type_literal: true,
+    )
+
+    accepts_root_class.should be_true
+    rejects_shadow_class.should be_false
+    rejects_shadow_instance.should be_false
+    unqualified_shadow_restriction.should eq("Scope::Path.class")
+    unqualified_root_restriction.should eq("Scope::Path.class")
+    accepts_unqualified_shadow.should be_true
+    rejects_unqualified_root.should be_false
+    unqualified_shadow_meta_restriction.should eq("Scope::Path.metaclass")
+    accepts_unqualified_shadow_meta.should be_true
+    rejects_unqualified_root_meta.should be_false
+  end
+
+  it "preserves rooted metaclass lookup in nullable and nested restrictions" do
+    converter = source_block_result_pattern_fixture
+
+    _, _, accepts_nullable_root = converter.__test_source_block_result_pattern(
+      "::Path.class?", "::Path", "Scope::Owner", actual_type_literal: true,
+    )
+    _, _, accepts_nullable_nil = converter.__test_source_block_result_pattern(
+      "::Path.class?", "Nil", "Scope::Owner",
+    )
+    _, _, rejects_nullable_shadow = converter.__test_source_block_result_pattern(
+      "::Path.class?", "Scope::Path", "Scope::Owner", actual_type_literal: true,
+    )
+    _, _, accepts_nested_root = converter.__test_source_block_result_pattern(
+      "Tuple(::Path.class, Bool)", "Tuple(::Path.class, Bool)", "Scope::Owner",
+    )
+    _, _, rejects_nested_shadow = converter.__test_source_block_result_pattern(
+      "Tuple(::Path.class, Bool)", "Tuple(Scope::Path.class, Bool)", "Scope::Owner",
+    )
+
+    accepts_nullable_root.should be_true
+    accepts_nullable_nil.should be_true
+    rejects_nullable_shadow.should be_false
+    accepts_nested_root.should be_true
+    rejects_nested_shadow.should be_false
+  end
+
+  it "keeps rooted metaclass spelling anchored without structural recursion" do
+    converter = source_block_result_pattern_fixture
+
+    _, _, accepts_root_metaclass = converter.__test_source_block_result_pattern(
+      "::Path.metaclass", "::Path", "Scope::Owner", actual_type_literal: true,
+    )
+    _, _, rejects_shadow_metaclass = converter.__test_source_block_result_pattern(
+      "::Path.metaclass", "Scope::Path", "Scope::Owner", actual_type_literal: true,
+    )
+
+    accepts_root_metaclass.should be_true
+    rejects_shadow_metaclass.should be_false
   end
 
   it "lets an unbound top-level formal infer either value kind" do
@@ -555,5 +634,28 @@ describe "source block result patterns" do
     )
     concrete_type.should be_nil
     matches.should be_false
+  end
+end
+
+
+describe "canonical alias result identity" do
+  it "keeps rooted and lexical metaclass aliases distinct" do
+    converter = source_block_result_pattern_fixture
+    _, _, root_ok = converter.__test_source_block_result_pattern(
+      "Scope::RootPathClass", "::Path", "Scope::Owner", actual_type_literal: true,
+    )
+    _, _, root_wrong = converter.__test_source_block_result_pattern(
+      "Scope::RootPathClass", "Scope::Path", "Scope::Owner", actual_type_literal: true,
+    )
+    _, _, lexical_ok = converter.__test_source_block_result_pattern(
+      "Scope::LexicalPathClass", "Scope::Path", "Scope::Owner", actual_type_literal: true,
+    )
+    _, _, lexical_wrong = converter.__test_source_block_result_pattern(
+      "Scope::LexicalPathClass", "::Path", "Scope::Owner", actual_type_literal: true,
+    )
+    root_ok.should be_true
+    root_wrong.should be_false
+    lexical_ok.should be_true
+    lexical_wrong.should be_false
   end
 end
