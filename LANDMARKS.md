@@ -26317,3 +26317,51 @@ The permanent regression wrapper SHA-256 is
 Refresh after allocator entry, exact source/callshape binding, force ownership,
 callback ABI, suspension, or retry scheduling changes. Rollback is this atomic
 commit. No stdlib or application source was changed.
+
+## 2026-11-07 — FFI out is a source declaration during callback inference
+
+`out info` was created only by lower_out_arg. The earlier source local-type
+collector walked call arguments but ignored OutNode's declaration contract.
+Consequently a lib-struct local and its fields became Void while discovering
+nested yield inputs. This caused a native program to compile and exit normally
+with incorrect output (35q4584). The collector now resolves the registered lib
+external and consumes the same strict out-pointee checker as concrete lowering.
+This retains exact struct identity and pointer depth; it does not admit scalar,
+Void-pointer or variadic out formals. Direct named out uses declaration labels;
+preceding splats require a concrete Tuple width without unresolved slots.
+
+The native original-first ffi_out_yield_inference_repro.sh passes four output
+controls plus a wrong-yield-input rejection on both stock Crystal 1.22.1 and
+S1 (35q4595). The internal parsed-source HIR test distinguishes pre-lowering
+inference from late recovery: baseline fails (35q4596), candidate passes
+(35q4598). An independent clock-struct nested-yield reducer produces B on stock
+and the candidate, but only a newline before the repair (35q4583/35q4584/35q4587).
+Out-formal, lexical-scope and twenty callback replay controls pass (35q4589).
+The out-storage gate's missing String#to_unsafe under an empty prelude is
+unchanged on the baseline (35q4599), so the whole neighbor suite is not green.
+Scoped source adversary: ROBUST for the direct external out-inference helper;
+ordinary lowering still validates the entire call, and unresolved expansions
+remain unproven.
+
+OPEN: full-prelude hello still stops at decode_frame's pending result. A
+separate diagnostic build proves info is LibC::DlInfo and dladdr yields
+Pointer(UInt8), Pointer(UInt8), Pointer(Void); offset alone remains Void
+(35q4594). This is progress in the same consumer, not prelude closure. The
+collector also lacks recursion into nested named-value expressions. Full
+prelude/bootstrap/LavinMQ object/link/runtime and upstream test parity remain
+open; stdlib and application sources were not modified.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+build.ffi-out-yield-input35q4586.result.json,
+ffi-out-yield-native-gate35q4595/result.json,
+ffi-out-yield-hir-baseline35q4596/result.json,
+ffi-out-yield-hir-candidate35q4598/result.json,
+ffi-out-yield-neighbors35q4589/result.json,
+ffi-out-storage-baseline35q4599/result.json, and
+hello-ffi-out-callback-inputs35q4594/compile.log.
+All 1,916 compiler sources match build.ffi-out-yield-input35q4586.source.json,
+manifest SHA-256 eaefa0b2553ca00c97d00101561a74a5d121ad966544eb98427e5240764f2f79.
+S1 SHA-256: 4617dd486dbc9b3b30d2784c7aa478002e67ec70b122d7b72aae234c9a038e19.
+Refresh after external signature registration, out storage/formal checking,
+local-source inference, block input inference, or named/splat mapping changes.
+Rollback is this atomic commit.

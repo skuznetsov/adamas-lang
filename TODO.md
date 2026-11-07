@@ -26476,3 +26476,30 @@ integration, fresh bootstrap, or LavinMQ parity.
 - Retry unchanged LavinMQ with this independently qualified initializer change.
   Full prelude, fresh bootstrap, LavinMQ object/link/server and upstream test
   parity remain open. The separate rest-binding candidate is not in this change.
+
+### 2026-11-07 — Infer source FFI out declarations before callback lowering
+
+- [x] Treat a local `out value` as a source declaration during local/yield
+  inference. Resolve the selected registered lib external and reuse concrete
+  lowering's strict pointee checker; keep pointer depth and lib-struct identity.
+  Named labels use the external declaration's formal positions; only a concrete
+  positional Tuple proves a preceding splat's expanded width.
+- ffi_out_yield_inference_repro.sh passes four native output controls and one
+  strict rejection against stock Crystal 1.22.1 with an empty prelude (35q4595).
+  Parsed-source ffi_out_yield_input_spec.cr fails before the change (35q4596)
+  and passes after it (35q4598), before any method body is lowered. A separate
+  native reducer silently prints only a newline before the fix (35q4584) and
+  the expected B after it (35q4587), matching stock (35q4583).
+- Out-formal, out lexical-scope and all twenty callback replay controls pass on
+  the exact S1 (35q4589). The out-storage neighbor still fails on no-prelude
+  String#to_unsafe, identically before this change (35q4599); it is not green.
+- [ ] Full-prelude decode_frame remains pending (35q4588). A diagnostic build
+  proves LibC::DlInfo and all three dladdr yield inputs are now concrete, but
+  the derived offset is still Void (35q4594). Investigate source-local aliases
+  and reassigned method parameters; do not borrow an enclosing block result.
+- [ ] Audit nested calls inside named argument values in local-assignment
+  collection. Direct named out is covered; named-value subexpressions are not
+  recursively visited by that collector. Unknown/double splats still fail
+  closed. These are residual inference gaps, not admission exceptions.
+- Full prelude, fresh bootstrap, unchanged LavinMQ object/link/server execution
+  and upstream Crystal test parity remain open. No stdlib/application edits.

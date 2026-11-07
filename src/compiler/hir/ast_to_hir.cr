@@ -33622,6 +33622,9 @@ module Adamas::HIR
           end
         end
       when Adamas::Compiler::Frontend::CallNode
+        if inferred_out = infer_extern_out_local_type_for_call(expr_node, name, self_type_name)
+          output << inferred_out
+        end
         block_expr = expr_node.block
         if block_expr.nil? && !expr_node.args.empty?
           last_id = expr_node.args.last
@@ -33820,6 +33823,61 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::MacroExpressionNode
         collect_local_assignment_types(expr_node.expression, name, self_type_name, output, body, visited, binding_is_enclosing)
       end
+    end
+
+    # `out value` is a local declaration just like an assignment. Its source
+    # type is the selected external parameter's pointee, including lib structs
+    # and pointer depth. Yield/return inference runs before lower_out_arg has
+    # created the local, so it must consume that same external contract here.
+    private def infer_extern_out_local_type_for_call(
+      call : Adamas::Compiler::Frontend::CallNode,
+      name : String,
+      self_type_name : String?,
+    ) : TypeRef?
+      return nil if name.empty? || name == "_" || name.starts_with?('@')
+      callee = node_for_expr(call.callee)
+      return nil unless callee.is_a?(Adamas::Compiler::Frontend::MemberAccessNode)
+      lib_name = infer_lib_receiver_name(node_for_expr(callee.object))
+      return nil unless lib_name
+      method_name = safe_slice_to_string(callee.member) || ""
+      external = @module.get_extern_function(lib_name, method_name)
+      return nil unless external
+
+      parameter_index = 0
+      call.args.each do |arg|
+        arg_node = node_for_expr(arg)
+        if arg_node.is_a?(Adamas::Compiler::Frontend::OutNode)
+          if slice_eq?(arg_node.identifier, name)
+            return out_pointee_type_for_extern_arg(external, parameter_index, arg_node)
+          end
+        elsif arg_node.is_a?(Adamas::Compiler::Frontend::SplatNode)
+          # A preceding splat changes the formal position. Only a concrete
+          # tuple proves its width; an unresolved expansion cannot authorize a
+          # guess at the out variable's type.
+          return nil if arg_node.double?
+          tuple_type = infer_type_from_expr(arg_node.expr, self_type_name)
+          return nil unless tuple_type
+          tuple = @module.get_type_descriptor(tuple_type)
+          return nil unless tuple && tuple.kind == TypeKind::Tuple
+          return nil if tuple.type_params.any? { |slot| slot == TypeRef::VOID }
+          parameter_index += tuple.type_params.size
+          next
+        end
+        parameter_index += 1
+      end
+
+      if named = call.named_args
+        named.each do |arg|
+          out_node = node_for_expr(arg.value)
+          next unless out_node.is_a?(Adamas::Compiler::Frontend::OutNode)
+          next unless slice_eq?(out_node.identifier, name)
+          label = safe_slice_to_string(arg.name) || ""
+          index = external.parameter_names.index { |parameter| parameter == label }
+          return nil unless index
+          return out_pointee_type_for_extern_arg(external, index, out_node)
+        end
+      end
+      nil
     end
 
     private def local_assignment_block_shadows_binding?(
