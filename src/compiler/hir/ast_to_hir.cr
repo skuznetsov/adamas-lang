@@ -99458,6 +99458,10 @@ module Adamas::HIR
       left_id = lower_expr(ctx, node.left)
       left_enum_source_id = left_id
       right_id = lower_expr(ctx, node.right)
+      # Both explicit operands are checked before a bottom input suppresses
+      # operator selection, just like an ordinary call on an empty local.
+      return left_id if runtime_noreturn_value?(ctx, left_id)
+      return right_id if runtime_noreturn_value?(ctx, right_id)
 
       # Cast enum-typed operands to their base integer type.
       # Enum values from getters have a user-defined TypeRef (e.g., Color) that is
@@ -100054,35 +100058,9 @@ module Adamas::HIR
       capture_source = direct_capture_truthy_source(node.left, left_id)
 
       cond_id = lower_truthy_check(ctx, left_id, left_type)
-      static_left = static_truthy_value(ctx, cond_id)
-      static_left = static_truthy_value(ctx, left_id) if static_left.nil?
-      unless static_left.nil?
-        if op_str == "||"
-          if static_left
-            then_type = ctx.type_of(left_id)
-            return unwrap_non_nil_to_block(ctx, ctx.current_block, left_id, then_type)
-          else
-            rhs_value = nil.as(ValueId?)
-            with_scoped_condition_narrowing(ctx, falsy_targets, capture_source) do
-              rhs_value = lower_expr(ctx, node.right)
-            end
-            return rhs_value.not_nil!
-          end
-        else
-          if static_left
-            rhs_value = nil.as(ValueId?)
-            is_a_restores = apply_scoped_is_a_narrowing(ctx, is_a_rhs_targets)
-            with_scoped_condition_narrowing(ctx, truthy_targets, capture_source) do
-              rhs_value = lower_expr(ctx, node.right)
-            end
-            restore_scoped_is_a_narrowing(ctx, is_a_restores)
-            return rhs_value.not_nil!
-          else
-            return left_id
-          end
-        end
-      end
-
+      # Runtime constancy is not a semantic type filter. Crystal still visits
+      # both source operands: unrelated errors and RHS result types survive a
+      # constant Nil/Bool left value. Let CFG optimization fold the branch.
       pre_branch_locals = ctx.save_locals
       branch_cell_proofs = ctx.closure_cell_write_proofs_on(ctx.current_block)
 
@@ -100469,34 +100447,9 @@ module Adamas::HIR
       end
 
       rhs_block = ctx.create_block
-      static_left = static_truthy_value(ctx, left_cond)
-      static_left = static_truthy_value(ctx, left_id) if static_left.nil?
-      unless static_left.nil?
-        if op_str == "&&"
-          if static_left
-            ctx.terminate(Jump.new(rhs_block))
-            ctx.current_block = rhs_block
-            is_a_restores = apply_scoped_is_a_narrowing(ctx, is_a_rhs_targets)
-            with_scoped_condition_narrowing(ctx, truthy_targets, capture_source) do
-              lower_condition_branch(ctx, node.right, then_block, else_block, capture_sources)
-            end
-            restore_scoped_is_a_narrowing(ctx, is_a_restores)
-          else
-            ctx.terminate(Jump.new(else_block))
-          end
-        else
-          if static_left
-            ctx.terminate(Jump.new(then_block))
-          else
-            ctx.terminate(Jump.new(rhs_block))
-            ctx.current_block = rhs_block
-            with_scoped_condition_narrowing(ctx, falsy_targets, capture_source) do
-              lower_condition_branch(ctx, node.right, then_block, else_block)
-            end
-          end
-        end
-        return
-      end
+      # Visit the source RHS even when this runtime edge is constant. A
+      # source-local filter may make its receiver empty; it does not waive
+      # checking independent calls, arguments, or constants in that RHS.
       if op_str == "&&"
         ctx.terminate(Branch.new(left_cond, rhs_block, else_block))
         ctx.current_block = rhs_block
@@ -101066,6 +101019,20 @@ module Adamas::HIR
         end
 
         local_type = ctx.type_of(local_id)
+        if local_type == TypeRef::NIL && !ctx.type_literal?(local_id) &&
+           ctx.lookup_boxed_local_for_local(name, local_id).nil?
+          # TruthyFilter(Nil) has no inhabitants. Keep that source fact on the
+          # scoped local, not on the whole RHS: its independent expressions
+          # still need ordinary checking. Void would mean unresolved input.
+          bottom_type = @module.intern_type(TypeDescriptor.new(TypeKind::Class, "NoReturn"))
+          # Copy preserves the source value's runtime kind. A user-typed Nil
+          # literal denotes a class object in LoweringContext, not bottom.
+          bottom = Copy.new(ctx.next_id, bottom_type, local_id)
+          ctx.emit(bottom)
+          ctx.register_type(bottom.id, bottom_type)
+          ctx.register_local(name, bottom.id)
+          next
+        end
         next unless is_union_or_nilable_type?(local_type)
 
         unwrapped = lower_not_nil_intrinsic(ctx, local_id, local_type)
@@ -119740,6 +119707,15 @@ module Adamas::HIR
         full_method_name || "",
         "[CALL_TRACE] stage=after_args method=#{method_name} args=#{args.size} receiver=#{!!receiver_id} full=#{full_method_name || ""}",
       )
+      # A source-filtered empty receiver need not have terminated the block.
+      # Its explicit actuals have now been visited, but it cannot select a
+      # callee or contribute an ordinary result.
+      if receiver_id && runtime_noreturn_value?(ctx, receiver_id)
+        return receiver_id
+      end
+      if terminal_argument = args.find { |value| runtime_noreturn_value?(ctx, value) }
+        return terminal_argument
+      end
       # Positional arguments are evaluated left-to-right. If one selected call
       # is explicitly NoReturn, its value cannot participate in outer target
       # resolution and later arguments must not be evaluated.
@@ -144793,8 +144769,10 @@ module Adamas::HIR
 
       # Otherwise it's an instance method call - evaluate object first
       object_id = lower_expr(ctx, node.object)
-      # A receiver that ended its block (a NoReturn call) leaves nothing to call.
-      return object_id if control_flow_dead_block?(ctx, ctx.current_block)
+      # A terminal receiver or an empty source-local filter has no method to
+      # instantiate. Other source expressions are still checked by its parent.
+      return object_id if control_flow_dead_block?(ctx, ctx.current_block) ||
+                          runtime_noreturn_value?(ctx, object_id)
       refine_void_value_type_from_expr(ctx, object_id, node.object, @current_class)
       if ctx.type_of(object_id) == TypeRef::VOID || ctx.type_of(object_id) == TypeRef::POINTER
         repair_call_return_type_in_context(ctx, object_id)

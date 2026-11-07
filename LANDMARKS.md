@@ -26414,3 +26414,63 @@ Permanent native wrapper SHA-256:
 Refresh after source call/formal binding, inference scope, alias collection,
 prefix effect checking, callback input inference or arena ownership changes.
 Rollback is this atomic commit.
+
+## 2026-11-07 — Empty truthy filters do not erase source checking
+
+Path#basename's left-associated && chain exposed two distinct mistakes:
+exact Nil locals had no empty truthy filter, while a constant-left shortcut
+could skip the entire RHS source tree. Crystal's TruthyFilter(Nil) returns an
+empty type, but its If visitor still visits both source arms. Stock rejects
+an independent missing method/constant on that RHS and retains Int32 | Nil
+for x && 65. Raw nil and repeated Nil-returning calls have no local identity
+that would authorize the empty-variable filter. Whole-RHS dead-code pruning
+was therefore refuted (35q4645), not adopted.
+
+The exact unboxed Nil local now receives a scoped Copy with canonical
+NoReturn type. Its source is the original runtime Nil SSA value; a
+Literal(NoReturn, nil) would instead be marked as a class object by
+LoweringContext and is not a valid bottom value. The existing type-literal
+exclusion in runtime_noreturn_value? stays intact. Member/call/operator
+lowering propagates runtime bottom after visiting independent source actuals.
+Short-circuit lowering keeps runtime Branch edges while preserving source RHS
+checking and joins. Scope restoration retains real assignments and removes
+only the borrowed refinement. This does not authorize boxed/captured empty
+filters or synthesized NoReturn values.
+
+The permanent original-first source_short_circuit_empty_filter_repro.sh
+passes 28 controls on stock Crystal 1.22.1 and the exact clean S1 (35q4677):
+14 native output controls and 14 diagnostic-specific rejections. It covers
+omitted/explicit Nil and non-Nil defaults, nested &&, stable assignment
+identity, result unions, independent errors, raw/repeated Nil calls,
+Nil/NoReturn class objects, and constant Boolean &&/|| with skipped runtime
+side effects. Three neighboring suites pass (35q4660): nullable local joins,
+NoReturn arguments and closure-cell truthy proofs after calls. Source
+adversary verdict: ROBUST within the exact unboxed Nil filter boundary.
+
+OPEN: stock-prelude hello passes Path#basename but stops at a stale generated
+allocator witness (35q4659). The separate diagnostic 35q4672 proves the same
+File::NotFoundError.new$String Function still exists with a body and unchanged
+outer Call shape; only its witness revision 6 differs from current revision 7.
+The mutating pass is not yet identified by that probe. Full prelude, fresh
+bootstrap and unchanged LavinMQ object/link/runtime/upstream parity remain
+open. No stdlib/application code or argument restriction was changed.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+build.short-circuit-empty-copy35q4655.result.json,
+short-circuit-empty-copy-core35q4656/result.json,
+short-circuit-empty-copy-adversary35q4657/result.json,
+short-circuit-empty-filter-final35q4677/result.json with gate.log,
+short-circuit-empty-copy-neighbors35q4660/result.json,
+hello-short-circuit-empty-copy35q4659/result.json, and
+hello-allocator-receipt-diagnostic35q4672/result.json with compile.log.
+All 1,916 live compiler sources match
+build.short-circuit-empty-copy35q4655.source.json, manifest SHA-256
+b0deba7ffcd5660c454f82125ef4c15773088ae5f424a74b7a6c98030d898c97.
+S1 SHA-256: 17248081b7266255d84d9d0666ce05054f8223b2df3568f80d7dbde79493dfe5.
+Permanent runner SHA-256:
+613c9aef9fb85e29fdc882bbbe5cc8c79286e68227f126a52ed9391809366f01.
+Fixture manifest SHA-256:
+3cb3bcb78300c5a3df201fac037d998cea1aa63899dbbfada596fe3253a848e0.
+Refresh after local filtering, value-kind tracking, short-circuit CFG/joins,
+NoReturn propagation or scoped capture-proof changes. Rollback is this atomic
+commit; the diagnostic compiler is separate and is not part of this change.

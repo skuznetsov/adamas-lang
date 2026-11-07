@@ -26526,7 +26526,34 @@ integration, fresh bootstrap, or LavinMQ parity.
   their formal mapping is authenticated; guessed/mangled vectors remain
   insufficient. Prefix calls/operators and nested aliases require separate
   flow/effect evidence.
-- [ ] Close the stock-prelude Path#basename failure at Nil#bytesize. The
+- [x] Close the stock-prelude Path#basename failure at Nil#bytesize (see below). The
   decode_frame pending-result frontier is passed; full prelude, bootstrap,
   unchanged LavinMQ object/link/server and upstream test parity remain open.
   No stdlib or application source was changed.
+
+### 2026-11-07 — Preserve empty source-local filters and short-circuit checking
+
+- [x] Model truthy filtering of an exact Nil local as an empty NoReturn type
+  on a scoped Copy of its original runtime value. Do not encode it as a
+  user-typed Nil Literal, which denotes a class object in LoweringContext.
+  Keep boxed locals and type literals outside this proof.
+- [x] Visit both source operands of &&/|| even when the runtime left value is
+  constant. Preserve RHS checking and result types while the runtime CFG
+  retains short-circuiting. Bottom receiver/argument/operator propagation
+  happens after independent actuals are checked; it cannot hide their errors.
+- source_short_circuit_empty_filter_repro.sh passes all 28 original-first
+  native/diagnostic controls on stock Crystal 1.22.1 and the exact S1 (35q4677):
+  nested/default Nil chains, both value kinds, result unions, side effects,
+  unknown names, raw/repeated Nil calls, and constant Bool &&/||. The earlier
+  S1 fails the nested Nil chains and incorrectly accepts raw nil.bytesize
+  behind && (35q4642). Whole-RHS pruning was refuted by stock (35q4645).
+- Nullable-local, NoReturn-argument and closure-cell truthy-proof neighbors
+  pass on the same S1 (35q4660). Scoped source adversary: ROBUST for an exact
+  unboxed Nil local; boxed/captured empty filters need separate evidence.
+- [ ] Close the next full-prelude allocator witness failure. Path#basename is
+  passed (35q4659); a diagnostic probe proves the same completed
+  File::NotFoundError.new$String function has revision 7 but its layout-body
+  witness still records 6 (35q4672). Find the mutation owner and preserve the
+  stale-body guard; do not refresh every body change indiscriminately.
+- Full prelude, fresh bootstrap, unchanged LavinMQ object/link/server and
+  upstream Crystal test parity remain open. No stdlib/application changes.

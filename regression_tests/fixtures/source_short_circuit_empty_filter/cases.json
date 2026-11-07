@@ -1,0 +1,267 @@
+{
+  "suite": "source_short_circuit_empty_filter",
+  "case_count": 28,
+  "cases": [
+    {
+      "name": "basename_nested_default_nil",
+      "source": "basename_nested_default_nil.cr",
+      "ok": true,
+      "expected": "A\n",
+      "source_sha256": "c563d833023b3946197b952ddd3ab827d8c8c19d76f743299cca48cd82ef4b09",
+      "contract": "Omitted Nil default short-circuits the left-associated three-term chain; matches returns false."
+    },
+    {
+      "name": "basename_single_and_default_nil",
+      "source": "basename_single_and_default_nil.cr",
+      "ok": true,
+      "expected": "A\n",
+      "source_sha256": "269b71b2b9ee9900d1f3579107903bdde426e761595a660c88c6c1be7cc0a3d5",
+      "contract": "One && with omitted Nil returns false."
+    },
+    {
+      "name": "basename_nested_explicit_nil",
+      "source": "basename_nested_explicit_nil.cr",
+      "ok": true,
+      "expected": "A\n",
+      "source_sha256": "0ff0a26473dbc53c6bafebc4e3ddd6d1cdc28baee018cfe8a07f4d98aed7dc47",
+      "contract": "An explicitly supplied Nil short-circuits and returns false."
+    },
+    {
+      "name": "basename_nested_supplied_non_nil",
+      "source": "basename_nested_supplied_non_nil.cr",
+      "ok": true,
+      "expected": "B\n",
+      "source_sha256": "9580066e1f86f1f12abe2f89f8bf51538dd2b18edfd444d539282e715040d28e",
+      "contract": "A supplied Suffix has bytesize 1, so both comparisons run and matches returns true."
+    },
+    {
+      "name": "basename_nested_nil_formal",
+      "source": "basename_nested_nil_formal.cr",
+      "ok": true,
+      "expected": "A\n",
+      "source_sha256": "09be9a07c706e4d8f0d37c4c94b265df1a3a0dfd20912fa6e9ddd34c1d235693",
+      "contract": "A Nil-only formal is false and the nested condition returns false."
+    },
+    {
+      "name": "basename_effectful_stable_local_nil",
+      "source": "basename_effectful_stable_local_nil.cr",
+      "ok": true,
+      "expected": "XA\n",
+      "source_sha256": "9735d115a915a3c7c1bb2704d90f085828538b5114be7999dff944101ea45b71",
+      "contract": "The assignment captures one effectful left evaluation as stable local `seen`; Nil selects false=>A or true=>B after exactly one X marker."
+    },
+    {
+      "name": "basename_effectful_stable_local_non_nil",
+      "source": "basename_effectful_stable_local_non_nil.cr",
+      "ok": true,
+      "expected": "XB\n",
+      "source_sha256": "957d3dacbc1f6d3b0637012080e6524932c867bc85f2b8096f1bd6d42740e3df",
+      "contract": "The assignment captures one effectful left evaluation as stable local `seen`; non-Nil selects false=>A or true=>B after exactly one X marker."
+    },
+    {
+      "name": "filter_nil_local_and_missing_method",
+      "source": "filter_nil_local_and_missing_method.cr",
+      "ok": false,
+      "expected": "",
+      "source_sha256": "b0e273a0da7bb4fe23c45d878f6e2cbe0add206374c2952b1e141698d7ac645c",
+      "original_diagnostic": "undefined method 'missing_short_circuit_method' for top-level",
+      "original_diagnostic_regex": "undefined method 'missing_short_circuit_method' for top-level",
+      "candidate_diagnostic_regex": "undefined method.*missing_short_circuit_method",
+      "contract": "Stock resolves and rejects the missing call even though the Nil-typed local makes the runtime RHS unreachable."
+    },
+    {
+      "name": "filter_nil_local_nested_bytesize_plus_missing",
+      "source": "filter_nil_local_nested_bytesize_plus_missing.cr",
+      "ok": false,
+      "expected": "",
+      "source_sha256": "f495d364b7da639fe9fc3da34d93d33e12f47dae20b855aa746fac9b49f1682b",
+      "original_diagnostic": "undefined method 'missing_short_circuit_method' for top-level",
+      "original_diagnostic_regex": "undefined method 'missing_short_circuit_method' for top-level",
+      "candidate_diagnostic_regex": "undefined method.*missing_short_circuit_method",
+      "contract": "Stock resolves and rejects the missing call even though the Nil-typed local makes the runtime RHS unreachable."
+    },
+    {
+      "name": "filter_nested_nil_local_missing_method",
+      "source": "filter_nested_nil_local_missing_method.cr",
+      "ok": false,
+      "expected": "",
+      "source_sha256": "f7cf2a7f9de91bdb0e69ca13df324aefca02a872c7cb9d84e76825fc85feca9f",
+      "original_diagnostic": "undefined method 'missing_short_circuit_method' for top-level",
+      "original_diagnostic_regex": "undefined method 'missing_short_circuit_method' for top-level",
+      "candidate_diagnostic_regex": "undefined method.*missing_short_circuit_method",
+      "contract": "Stock resolves and rejects the missing call even though the Nil-typed local makes the runtime RHS unreachable."
+    },
+    {
+      "name": "filter_nil_local_unknown_constant_rejects",
+      "source": "filter_nil_local_unknown_constant_rejects.cr",
+      "ok": false,
+      "expected": "",
+      "source_sha256": "66bbb3f4a246d79489a140e4cf20f8174e94f35f395f2f3bccb7e9da7ebcb397",
+      "original_diagnostic": "undefined constant MISSING_SHORT_CIRCUIT_CONSTANT",
+      "original_diagnostic_regex": "undefined constant.*MISSING_SHORT_CIRCUIT_CONSTANT",
+      "candidate_diagnostic_regex": "undefined constant.*MISSING_SHORT_CIRCUIT_CONSTANT",
+      "contract": "Constant-name resolution should remain strict even if runtime truthiness would skip the RHS."
+    },
+    {
+      "name": "filter_nil_local_value_semantics",
+      "source": "filter_nil_local_value_semantics.cr",
+      "ok": false,
+      "expected": "",
+      "source_sha256": "3587eac281bf90cb7f7889df62888bd07e642d387eef9d5981081bb1a2c56bbf",
+      "original_diagnostic": "expected argument #1 to 'accepts_nil' to be Nil, not (Int32 | Nil)",
+      "original_diagnostic_regex": "expected argument #1 to 'accepts_nil' to be Nil, not \\(Int32 \\| Nil\\)",
+      "candidate_diagnostic_regex": "no overload matches accepts_nil.*(Nil.*Int32|Int32.*Nil)",
+      "contract": "Stock rejects because && retains the Int32 | Nil result; passing it to accepts_nil is invalid."
+    },
+    {
+      "name": "filter_raw_nil_rhs_rejects",
+      "source": "filter_raw_nil_rhs_rejects.cr",
+      "ok": false,
+      "expected": "",
+      "source_sha256": "71ec8052d011354b715b0a3e96c04c5940b70a809f0b1d3eee4c5bfb75bb5718",
+      "original_diagnostic": "undefined method 'bytesize' for Nil",
+      "original_diagnostic_regex": "undefined method.*bytesize.*Nil",
+      "candidate_diagnostic_regex": "undefined method.*bytesize.*Nil",
+      "contract": "Raw literal Nil#bytesize remains a semantic error; no general dead-RHS pruning."
+    },
+    {
+      "name": "filter_nil_function_receiver_rejects",
+      "source": "filter_nil_function_receiver_rejects.cr",
+      "ok": false,
+      "expected": "",
+      "source_sha256": "27c1a45cd7be86791b23f4d7011ec7943682240488d99e288aa0de8521e84f02",
+      "original_diagnostic": "undefined method 'bytesize' for Nil",
+      "original_diagnostic_regex": "undefined method.*bytesize.*Nil",
+      "candidate_diagnostic_regex": "undefined method.*bytesize.*Nil",
+      "contract": "A direct Nil-returning call does not establish a local-variable truthy filter; stock is expected to reject the receiver call."
+    },
+    {
+      "name": "filter_nullable_local_legal_nil",
+      "source": "filter_nullable_local_legal_nil.cr",
+      "ok": true,
+      "expected": "A\n",
+      "source_sha256": "e42c69e1772889d499abaff72d53fdef383931486e6b1cdfbed105095c96fd92",
+      "contract": "A Nil actual in a nullable local short-circuits a legal narrowed Suffix#bytesize access."
+    },
+    {
+      "name": "filter_nullable_local_legal_non_nil",
+      "source": "filter_nullable_local_legal_non_nil.cr",
+      "ok": true,
+      "expected": "B\n",
+      "source_sha256": "0ef303b00075da983bb6e896b875e8823515f6c2b471ebc7495c1c4132ce7364",
+      "contract": "A non-Nil nullable local enters the narrowed branch and invokes the valid bytesize method."
+    },
+    {
+      "name": "filter_nullable_union_missing_method_rejects",
+      "source": "filter_nullable_union_missing_method_rejects.cr",
+      "ok": false,
+      "expected": "",
+      "source_sha256": "97bfd80c04b67518e86851628a0a9e55ab863386e8b18ddc69e31fe01d3f362d",
+      "original_diagnostic": "undefined method 'missing_short_circuit_method' for top-level",
+      "original_diagnostic_regex": "undefined method.*missing_short_circuit_method",
+      "candidate_diagnostic_regex": "undefined method.*missing_short_circuit_method",
+      "contract": "The truthy set is nonempty for Suffix?, so a method missing from that reachable branch must still be rejected."
+    },
+    {
+      "name": "filter_effectful_stable_local_once",
+      "source": "filter_effectful_stable_local_once.cr",
+      "ok": true,
+      "expected": "XA\n",
+      "source_sha256": "f986cf593a9a940214fcd30e69e06c8b756706edd462c412fb273ab83eb60720",
+      "contract": "The effectful left operand must execute once even though its Nil result makes the narrowed RHS unreachable."
+    },
+    {
+      "name": "filter_nullable_value_bytesize_accepts_int32_or_nil",
+      "source": "filter_nullable_value_bytesize_accepts_int32_or_nil.cr",
+      "ok": true,
+      "expected": "B\n",
+      "source_sha256": "3996852b3a156d88589a000c88d0257ef44bf1c8c17826e03c3a3fac7260507a",
+      "contract": "The value result of x && x.bytesize includes Nil, which accepts_int_or_nil admits; the Nil call should return true."
+    },
+    {
+      "name": "nil_local_value_result_is_nil",
+      "source": "nil_local_value_result_is_nil.cr",
+      "ok": true,
+      "expected": "B\n",
+      "source_sha256": "4f0c2e224fe682ad7f7900c5f793c82caeff06d2efa83aa81ef165febd7d4cba",
+      "contract": "The Nil-only local short-circuit expression retains Nil as its value and is accepted by a Nil-only consumer."
+    },
+    {
+      "name": "nil_class_object_is_not_empty_value",
+      "source": "nil_class_object_is_not_empty_value.cr",
+      "ok": false,
+      "expected": "",
+      "source_sha256": "7eb11f7d6af978621f049cfb2cec3fbb616303a55acf2e00ca171cb3f9cc177f",
+      "original_diagnostic_regex": "undefined method.*bytesize.*Nil|undefined method.*Nil.*bytesize",
+      "candidate_diagnostic_regex": "undefined method.*bytesize.*Nil|undefined method.*Nil.*bytesize",
+      "contract": "The Nil type object is a class-object receiver; local-value truthy filtering must not treat it as an empty Nil runtime value."
+    },
+    {
+      "name": "noreturn_class_object_is_not_empty_value",
+      "source": "noreturn_class_object_is_not_empty_value.cr",
+      "ok": false,
+      "expected": "",
+      "source_sha256": "ed9f0e2298d6a5ce8297360a7b1903324117d64c1fe3b31521f46f7dcc845eff",
+      "original_diagnostic_regex": "undefined method.*bytesize.*NoReturn|undefined method.*NoReturn.*bytesize",
+      "candidate_diagnostic_regex": "undefined method.*bytesize.*NoReturn|undefined method.*NoReturn.*bytesize",
+      "contract": "The NoReturn type object is still checked as a type-object receiver; empty-path filtering must not hide its invalid method call."
+    },
+    {
+      "name": "false_and_missing_method_rejects",
+      "source": "false_and_missing_method_rejects.cr",
+      "ok": false,
+      "expected": "",
+      "source_sha256": "b76928593192d0b3c04f968b98c1c64753df52326a0afe9a7b7b716000dc3ebf",
+      "contract": "Runtime-constant Boolean operands do not hide an independent invalid RHS.",
+      "original_diagnostic_regex": "undefined method.*missing_boolean_rhs",
+      "candidate_diagnostic_regex": "undefined method.*missing_boolean_rhs"
+    },
+    {
+      "name": "true_or_missing_method_rejects",
+      "source": "true_or_missing_method_rejects.cr",
+      "ok": false,
+      "expected": "",
+      "source_sha256": "0f59f952a9aa64d7d9008fdd9e526bf827c9b500c1561bccb8d824bd8ad61bbe",
+      "contract": "Runtime-constant Boolean operands do not hide an independent invalid RHS.",
+      "original_diagnostic_regex": "undefined method.*missing_boolean_rhs",
+      "candidate_diagnostic_regex": "undefined method.*missing_boolean_rhs"
+    },
+    {
+      "name": "false_and_effect_is_skipped",
+      "source": "false_and_effect_is_skipped.cr",
+      "ok": true,
+      "expected": "A\n",
+      "source_sha256": "9549f7d9babc7b86bef98f18428e427bbc8caeb8bc55ff6710caaae330fe846c",
+      "contract": "Semantic RHS visitation must retain runtime short-circuiting and skip its side effect."
+    },
+    {
+      "name": "true_or_effect_is_skipped",
+      "source": "true_or_effect_is_skipped.cr",
+      "ok": true,
+      "expected": "A\n",
+      "source_sha256": "84d382a540907b8824e853ac820f3fa20abc1e54f57e4994eecde0a716657b27",
+      "contract": "Semantic RHS visitation must retain runtime short-circuiting and skip its side effect."
+    },
+    {
+      "name": "false_and_retains_rhs_result",
+      "source": "false_and_retains_rhs_result.cr",
+      "ok": false,
+      "expected": "",
+      "source_sha256": "19d3e6c6d498a3a456de96d86af9f12c4d35a7ac8703b183a8805af79552b518",
+      "contract": "An independent RHS contributes its result type even when the Boolean left operand is constant.",
+      "original_diagnostic_regex": "expected argument.*only_bool.*(Bool.*Int32|Int32.*Bool)",
+      "candidate_diagnostic_regex": "no overload matches only_bool.*(Bool.*Int32|Int32.*Bool)"
+    },
+    {
+      "name": "true_or_retains_rhs_result",
+      "source": "true_or_retains_rhs_result.cr",
+      "ok": false,
+      "expected": "",
+      "source_sha256": "e7e668254caa354345423fc3b4d326a6b5f7c0f091acebbccb285a3322b499b5",
+      "contract": "An independent RHS contributes its result type even when the Boolean left operand is constant.",
+      "original_diagnostic_regex": "expected argument.*only_bool.*(Bool.*Int32|Int32.*Bool)",
+      "candidate_diagnostic_regex": "no overload matches only_bool.*(Bool.*Int32|Int32.*Bool)"
+    }
+  ],
+  "oracle": "Each run checks stock Crystal before the candidate compiler."
+}
