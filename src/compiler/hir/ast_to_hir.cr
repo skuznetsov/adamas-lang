@@ -57301,6 +57301,111 @@ module Adamas::HIR
       !evaluated
     end
 
+    # A failed structured lookup must not fall through to a name-only instance
+    # call when every exact source declaration rejects the positional arity.
+    # This is intentionally only an arity proof: uncertain receiver families,
+    # macros, primitives, included methods, and generated accessors stay on the
+    # existing path rather than being rejected from an incomplete census.
+    private def source_instance_call_rejects_positional_arity?(
+      input : CallResolutionInput,
+      receiver_type : TypeRef,
+      method_name : String,
+    ) : Bool
+      return false if method_name == "new" || method_name == "initialize"
+      return false if input.has_block || input.has_splat || input.has_named
+
+      parts = parse_method_name_compact(input.func_name)
+      return false unless parts.separator == '#' && parts.method == method_name
+
+      arg_types = input.arg_types || return false
+      return false unless arg_types.size == input.arg_count
+      return false if arg_types.any? do |type_ref|
+        type_ref == TypeRef::VOID || is_union_type?(type_ref) ||
+          unresolved_generic_return_type?(type_ref) || noreturn_type?(type_ref)
+      end
+      return false if receiver_type == TypeRef::VOID || is_union_type?(receiver_type) ||
+                      unresolved_generic_return_type?(receiver_type) || noreturn_type?(receiver_type)
+
+      receiver_name = normalize_method_owner_name(get_type_name_from_ref(receiver_type))
+      return false if receiver_name.empty? || receiver_name.includes?('|')
+
+      owners = [receiver_name] of String
+      owners.concat(get_parent_chain(receiver_name))
+      owners.uniq!
+      input_owner = normalize_method_owner_name(parts.owner)
+      return false unless owners.any? do |owner|
+        input_owner == owner || strip_generic_args(input_owner) == strip_generic_args(owner)
+      end
+
+      # This check runs only when the structured resolver found no target. A
+      # class with source include targets can still have an incomplete flattened
+      # registry at this point, so do not use that registry as a closed census.
+      return false if owners.any? do |owner|
+        owner_base = strip_generic_args(owner)
+        source_has_direct_class_include_targets?(owner) ||
+          source_has_direct_class_include_targets?(owner_base) ||
+          source_included_instance_method_family?(owner, method_name)
+      end
+
+      # Macros are expanded through a separate source path and primitives can
+      # be bodyless or ABI-specialized. Do not infer their callability from
+      # ordinary Def parameter lists.
+      return false if @macro_defs.has_key?(method_name) || owners.any? do |owner|
+        owner_base = strip_generic_args(owner)
+        owner_macros = @class_included_modules[owner]? || @class_included_modules[owner_base]?
+        @macro_defs.has_key?("#{owner}::#{method_name}") ||
+          @macro_defs.has_key?("#{owner_base}::#{method_name}") ||
+          (owner_macros.try do |modules|
+            modules.any? do |module_name|
+              module_base = strip_generic_args(module_name)
+              @macro_defs.has_key?("#{module_name}::#{method_name}") ||
+                @macro_defs.has_key?("#{module_base}::#{method_name}")
+            end
+          end || false)
+      end
+
+      candidate_names = [] of String
+      owners.each do |owner|
+        family = "#{owner}##{method_name}"
+        candidate_names.concat(function_def_overloads(family))
+      end
+      candidate_names.uniq!
+      return false if candidate_names.empty?
+
+      saw_exact_source = false
+      candidate_names.each do |candidate_name|
+        candidate_parts = parse_method_name_compact(candidate_name)
+        candidate_owner = candidate_parts.owner
+        candidate_owner_base = strip_generic_args(candidate_owner)
+        return false unless candidate_parts.separator == '#' && candidate_parts.method == method_name
+        # A concrete generic application may be represented by its registered
+        # template owner. Any unrelated owner means the index census is not an
+        # exact family, so keep the legacy resolver's behavior.
+        return false unless owners.any? do |owner|
+          candidate_owner == owner || candidate_owner_base == strip_generic_args(owner)
+        end
+
+        definition = @function_defs[candidate_name]? || return false
+        arena = @function_def_arenas[candidate_name]? || return false
+        registered_arena = registered_arena_for_def(definition) || return false
+        return false unless registered_arena.same?(arena)
+        return false unless source_primitive_kind_for_exact_target(definition, arena).nil?
+        return false if @primitive_template_source_bindings.has_key?(candidate_name)
+        return false unless @module.primitive_for(candidate_name).nil?
+
+        owner_for_def = candidate_owner
+        return false if owner_directly_declares_instance_getter?(owner_for_def, method_name)
+
+        saw_exact_source = true
+        stats = function_param_stats(candidate_name, definition)
+        positional_count, required, has_splat, _has_double_splat, skip = effective_arity_stats_for_call(stats, false)
+        next if skip
+        return false if has_splat || (input.arg_count >= required && input.arg_count <= positional_count)
+      end
+
+      saw_exact_source
+    end
+
     private def canonical_named_arg_names(named_arg_names : Array(String)?) : Array(String)?
       return nil unless named_arg_names
 
@@ -123292,6 +123397,20 @@ module Adamas::HIR
             selected_target = SelectedCallTarget.new(included_target_name, found[0], found[1], found)
           end
         end
+      end
+      if selected_target.nil? && semantic_target.nil? && source_default_entry.nil? && receiver_id &&
+         !ctx.type_literal?(receiver_id) && !receiver_is_self_call &&
+         (call_input = m3e_input) &&
+         source_instance_call_rejects_positional_arity?(
+           call_input,
+           ctx.type_of(receiver_id),
+           method_name,
+         )
+        receiver_name = normalize_method_owner_name(get_type_name_from_ref(ctx.type_of(receiver_id)))
+        raise LoweringError.new(
+          "no overload matches '#{receiver_name}##{method_name}' with types #{arg_types.map { |type_ref| get_type_name_from_ref(type_ref) }.join(", ")}",
+          node,
+        )
       end
       if selected_target
         if has_block_call && receiver_id && !ctx.type_literal?(receiver_id)

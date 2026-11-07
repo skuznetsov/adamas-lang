@@ -27050,3 +27050,19 @@ integration, fresh bootstrap, or LavinMQ parity.
   rejected; do not drop Void or weaken annotations to advance prelude.
 - Full prelude, fresh bootstrap and unchanged LavinMQ runtime/upstream parity
   remain open. No application/stdlib edits or restriction weakening.
+
+
+### 2026-11-07 — Preserve proven instance-call positional arity rejection
+
+- [x] Stop a failed exact source lookup from becoming a name-only call when all
+  coherent ordinary declarations reject its positional count. Keep uncertain
+  families on the existing resolver path; no restriction checks are weakened.
+- [x] Baseline S1 35q5634 incorrectly compiles the two-argument call (35q5681;
+  invalid binary not run). Exact-source S1 35q5677 passes all six stock/lazy/eager
+  native acceptance/rejection controls (35q5678). The two new HIR controls and
+  ten adjacent source/provenance controls pass (35q5679).
+- [ ] Generalize failed-selection ownership only with discriminating tests for
+  includes, self/named/splat/block and other excluded call shapes. This narrow
+  guard does not certify general overload resolution.
+- Full prelude, bootstrap and unchanged LavinMQ runtime/upstream parity remain
+  open. No stdlib/application edits.

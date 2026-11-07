@@ -934,3 +934,24 @@ conflict in `Exception#inspect_with_backtrace`; full prelude, bootstrap and
 LavinMQ remain open. Refresh after owner canonicalization, callsite publication,
 source registry, callback receipts or replay changes. Rollback is this atomic
 publisher commit.
+
+
+### Retain a proven positional instance-call rejection
+
+When structured lookup selects no target, a name-only fallback must not erase
+an exact source family's rejection of the positional argument count. Reject
+only after a coherent Def/Arena census of the concrete receiver and its parent
+families proves that every ordinary declaration fails that count. A required
+named-only parameter also excludes a positional-only call.
+
+This is a guard for a proven rejection, not a replacement overload resolver.
+Unknown/union/NoReturn arguments, self calls, named/block/splat calls, includes,
+macros, primitives, generated accessors and incomplete source families decline
+the proof. Existing restriction checks and source/replay guards remain intact.
+
+Gate: instance_fixed_arity_repro.sh COMPILER compares an admitted one-argument
+call and rejection of an extra argument against Crystal, in lazy and eager
+modes. instance_fixed_arity_admission_spec.cr retains default/rest/named-only
+and self-redispatch controls; inherited and primitive-source suites protect
+adjacent provenance boundaries. Refresh after method indexing, source selection,
+callshape or registration changes. Rollback is the atomic arity-guard commit.

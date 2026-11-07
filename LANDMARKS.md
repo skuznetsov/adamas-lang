@@ -27350,3 +27350,29 @@ Compiler source manifest SHA-256:
 c702d9d3c3f90db190ff4d9f98becfbd67fa0a6e3c2798563e81d9cbfb5144ba.
 Refresh after source/callshape, active-body ABI/lifetime or replay changes.
 Rollback is the atomic active-body ownership commit; unrelated WIP is excluded.
+
+
+## 2026-11-07 — A failed positional source selection cannot become a bare call
+
+A UInt64 instance method family with zero/one-argument declarations incorrectly
+accepted two arguments: structured selection failed, then a name-only fallback
+recovered the family and lost its rejection. A coherent exact Def/Arena census
+now rejects only proven positional-count failures. Includes, macros, primitives,
+generated accessors and uncertain/compound call shapes decline this guard.
+This is guard-only coverage, not a complete resolver replacement.
+
+Scoped adversary verdict: ROBUST for the declared ordinary explicit-instance
+corridor. Baseline S1 35q5634 compiles the invalid fixture in 35q5681 (not run).
+Exact-source S1 35q5677 passes six stock/lazy/eager native controls (35q5678);
+12 HIR controls pass (35q5679), including defaults/rest/named-only/self cases
+and inherited/primitive source guards. Crystal 1.22.1 is the stock oracle.
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+instance-arity-before35q5681/, instance-arity-native35q5678/ and its qualification
+JSON, instance-arity-only-hir35q5679/, and
+build.instance-arity-only35q5677.{source,result}.json.
+S1 SHA-256: 89530674f097ffa4a9e4a45dabce77d046a927cad2f0dddb2124bccdd7fca256.
+Compiler source manifest SHA-256:
+d2b1e90c59bc219b9615df9d2215744271741357b2b37a03757531f334306991.
+Refresh after source registration, method indexing, receiver/callshape or
+selection changes. Rollback is the atomic guard commit. Full prelude,
+bootstrap and LavinMQ runtime/upstream parity remain open.
