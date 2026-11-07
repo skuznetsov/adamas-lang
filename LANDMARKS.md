@@ -26768,3 +26768,44 @@ and named enum-ledger cleanup after removal still need a recovery falsifier;
 this patch establishes normal completed-body ownership, not failed-generation
 recovery. Raw callback boxing at the same adaptation boundary remains a
 separately reproduced carrier bug, not covered by the enum closure.
+
+
+### 2026-11-07 — Top-level union results need the completed source-kind owner
+
+The exact top-level bare-call shortcut authenticated its source Def/Arena, but
+forced pending lowering only for Void. A declared Token.class | Nil result
+therefore reached its consumer before the selected Function had published its
+source return alternatives. The shared ABI carrier cannot distinguish a class
+object from a Token instance: the old S1 rejected the valid class Proc input and
+accepted the invalid instance Proc input. Merely attaching facts from the
+narrowed destination would preserve that incorrect inference.
+
+The shortcut now uses the existing force-demand guard for union carriers and
+pending inferred source results as well. The completed Function's exact
+Def/Arena certificate remains authoritative; no declaration/base-name guess,
+stdlib change or relaxed admission was introduced. The new regressions exercise
+the call result without narrowing so this owner obligation is measured apart
+from the independently open non-nil SSA transfer bug.
+
+Scoped verdict: ROBUST for the 21 original-first Proc controls (35q5026):
+7 native output controls and 14 diagnostic-specific source rejections. New
+before/after controls (35q5025) falsify the previous implementation in both
+kind directions. All compiler and native executions used run_safe.sh.
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause/:
+build.top-level-return-owner35q5024.{result,source}.json,
+top-level-return-owner-native35q5025.result.json,
+top-level-return-original-first35q5026/{result.json,gate.log}, and
+top-level-return-owner-shipped35q5028.json.
+Compiler source manifest SHA-256:
+d45914bcd1ae95ca8945ac11f788ca86aa70e5c3a5f266afd897461a043e29fb.
+S1 SHA-256: 9eb5f43bd22de8d5f30ef241092ae34a943a0891b92faf7ee252482993a4d516.
+Shipped source/fixture manifest SHA-256:
+6d7ba651590d04097895a25b971dc5147a285e78b06ee4b7ca8b411fe1ad4cdf.
+Refresh after source selection, result forcing, return certificates or Proc
+kind admission changes. Rollback is this atomic source/test/doc commit.
+
+This does not certify all source-result producers: other nilary emission paths,
+recursive/depth-refused mixed results, Nil.class truthiness and non-nil SSA
+transfer retain separate falsifiers/obligations. It does not close full prelude,
+bootstrap or unchanged LavinMQ startup/upstream test parity. User WIP excluded.
+Completed build/HIR caches were removed (35q5027, 518231880 bytes).

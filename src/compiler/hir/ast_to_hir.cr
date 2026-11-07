@@ -116520,7 +116520,13 @@ module Adamas::HIR
       end
       lower_function_if_needed(target_name)
       return_type = get_function_return_type(target_name, args.size, selected_def)
-      if return_type == TypeRef::VOID &&
+      # This shortcut consumes the same source result as the ordinary call
+      # corridor. A union carrier cannot encode mixed instance/class kinds;
+      # demand the authenticated target before publishing that result to SSA.
+      force_return_contract = return_type == TypeRef::VOID ||
+                              is_union_type?(return_type) ||
+                              selected_source_result_pending?(target_name, selected_def)
+      if force_return_contract &&
          force_pending_call_targets_for_return_type(target_name, context: "top_level_bare")
         refreshed = get_function_return_type(target_name)
         return_type = refreshed unless refreshed == TypeRef::VOID

@@ -26708,3 +26708,26 @@ integration, fresh bootstrap, or LavinMQ parity.
   synthetic-body regeneration. Existing removal paths may retain the named
   ledger until a successful new retain; current exception tests do not certify
   recovery under the same function name.
+
+
+### 2026-11-07 — Materialize top-level source result kinds before publishing SSA
+
+- [x] Bring the authenticated top-level bare-call shortcut into the existing
+  result-demand corridor for union results and pending inferred source results.
+  A non-Void ABI carrier alone cannot establish the result's instance/class kind.
+  Exact completed Def/Arena return facts remain the source authority; source
+  overload admission and numeric coercion checks are unchanged.
+- Original-first Proc input gate: all 21 controls pass on Crystal 1.22.1 and
+  exact S1 35q5024 (35q5026), with 7 native positives and 14 semantic negatives.
+  The new nullable class-result positive prints A\n; the opposite instance
+  restriction rejects. Exact pre-fix S1 reverses both results (35q5025).
+- [ ] Audit remaining nilary implicit-self, bare-identifier and static-member
+  result-demand conditions for the same source-kind obligation. Their existing
+  body certificate consumers do not by themselves prove timely publication.
+- [ ] Complete non-nil operation result facts independently: removing Nil must
+  transfer source alternatives/kinds to the new SSA ID, including UnionUnwrap.
+  Unknown producer kind must not become a destination-derived instance proof.
+- [ ] Fix Nil.class truthiness independently; current lower_truthy_check folds
+  its Nil carrier to false and can skip a source-invalid branch (35q5006).
+- Full prelude, fresh bootstrap and unchanged LavinMQ object/link/server and
+  upstream test parity remain open. No stdlib/application edits.
