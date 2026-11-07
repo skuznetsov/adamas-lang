@@ -6849,6 +6849,32 @@ module Adamas
         )
       end
 
+      private def atomic_primitive_operation_for_call(call : HIR::Call) : String?
+        authority = call.atomic_primitive_authority_for_current_shape || return nil
+        return nil unless authority.emitted_target == call.method_name
+        return nil if call.has_receiver? || call.has_block? || call.virtual
+
+        expected_args = case authority.operation
+                        when "atomicrmw", "cmpxchg" then 5
+                        when "load" then 3
+                        when "store" then 4
+                        when "fence" then 2
+                        else                          return nil
+                        end
+        return nil unless call.args.size == expected_args
+        call.args.each do |arg_id|
+          arg_type = @hir_value_types[arg_id]? || return nil
+          return nil if arg_type == HIR::TypeRef::VOID
+        end
+        case authority.operation
+        when "atomicrmw", "cmpxchg", "load"
+          return nil if call.type == HIR::TypeRef::VOID
+        when "store", "fence"
+          return nil unless call.type == HIR::TypeRef::VOID || call.type == HIR::TypeRef::NIL
+        end
+        authority.operation
+      end
+
       private def lower_call(call : HIR::Call) : ValueId
         builder = @builder.not_nil!
         debug_virtual = ENV.has_key?("DEBUG_VIRTUAL_CALLS")
@@ -6919,16 +6945,11 @@ module Adamas
           return builder.extern_call(call.method_name, args, convert_type(call.type))
         end
 
-        # Atomic::Ops primitives must be checked BEFORE exact function lookup — the
-        # function (e.g. "Atomic::Ops.atomicrmw$...") may already be in the MIR module
-        # with a stub body, so the exact lookup would return it before we get a chance
-        # to intercept and emit a real MIR AtomicRMW/AtomicLoad/AtomicStore/AtomicCAS.
-        # See lower_call Atomic::Ops block below for the full implementation.
-        if call.method_name.starts_with?("Atomic::Ops.") || call.method_name.starts_with?("Atomic$CCOps$D")
-          atomic_ops_skip_exact_lookup = true
-        else
-          atomic_ops_skip_exact_lookup = false
-        end
+        # A selected source @[Primitive] Def/Arena receipt is carried on this
+        # exact HIR Call. Family spelling alone never skips a real source body.
+        # See the atomic lowering block below for operation-specific MIR forms.
+        atomic_ops_operation = atomic_primitive_operation_for_call(call)
+        atomic_ops_skip_exact_lookup = !atomic_ops_operation.nil?
 
         # Receiverless calls to an already-materialized function are static ABI
         # calls. Lower them directly before virtual/receiver dispatch heuristics,
@@ -6959,19 +6980,7 @@ module Adamas
         # `Ops.atomicrmw(:add, pointerof(@value), val, :seq_cst, false)`. HIR-level
         # symbol→enum conversion turns the symbols into i32 LLVM enum values, which
         # we decode here to pick the right MIR op/ordering.
-        if call.method_name.starts_with?("Atomic::Ops.") || call.method_name.starts_with?("Atomic$CCOps$D")
-          # Extract the bare method name (atomicrmw, cmpxchg, load, store) from either
-          # Crystal format ("Atomic::Ops.atomicrmw") or V2-mangled form
-          # ("Atomic$CCOps$Datomicrmw" or "Atomic$CCOps$Datomicrmw$$Int32_...").
-          # The old split("$").first broke on mangled names, yielding "Atomic" instead.
-          ops_method = if m = call.method_name.match(/\AAtomic::Ops\.(\w+)/)
-                         m[1]
-                       elsif m = call.method_name.match(/Atomic\$CCOps\$D(\w+)/)
-                         m[1]
-                       else
-                         ""
-                       end
-
+        if ops_method = atomic_ops_operation
           case ops_method
           when "atomicrmw"
             # Ops.atomicrmw(op : LLVM::AtomicRMWBinOp, ptr : Pointer(T), val : T,

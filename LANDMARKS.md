@@ -27080,3 +27080,48 @@ Unchanged LavinMQ now passes StaticArray#to_slice and stops in Object#hash
 (35q5342). This is frontier advancement, not full prelude, object, runtime,
 fresh bootstrap or upstream parity closure. MIR Atomic permission remains a
 separate measured-red boundary until its exact call transport is qualified.
+
+
+## 2026-11-07 — MIR Atomic permission belongs to the exact selected source
+
+MIR used the Atomic::Ops name, arity and operand shape to intercept ordinary
+methods after HIR had selected their actual source bodies. Six ordinary
+counterfactuals therefore suppressed source effects or produced A instead of
+Crystal's B, including an ordinary overload beside an annotated declaration.
+Authenticate the selected Def/Arena annotation once, attach permission to the
+complete emitted HIR Call shape, and require it both when bypassing exact
+function lookup and when emitting atomic IR. Ordinary calls retain their body
+path. Mutations drop permission; same-ID replacement transfers it only for an
+identical shape, including the result type. This is a trusted compiler API,
+not an unforgeable external security token.
+
+Scoped verdict: ROBUST for this source-permission boundary. The shipping wrapper
+passes six original-first native counterfactuals in lazy/eager modes and checks
+a genuine fence seq_cst instruction in all three modes (35q5388). Thirteen
+genuine atomic runtime controls pass (35q5367/5368), as do Proc29 (35q5371),
+nine source-body controls (35q5373), and 90 targeted HIR checks (35q5389). The
+HIR adversary changes only the result type of a same-call replacement and
+requires permission to be dropped. All compiler/native executions use
+run_safe.sh. No stdlib/application or type restriction changes.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+build.atomic-source-authority35q5351.{result,source}.json,
+atomic-authority-shipping-wrapper35q5388/{result.json,gate.log,source.json},
+atomic-source-authority-shipping-hir35q5389/{result.json,spec.log,source.json},
+atomic-authority-genuine-dispatch35q5367/{result.json,gate.log},
+atomic-authority-genuine-cmpxchg35q5368/{result.json,gate.log},
+atomic-authority-proc-contract-guards35q5371/{result.json,gate.log}, and
+atomic-authority-source-body-guards35q5373/{result.json,gate.log}.
+S1 SHA-256: dae962e359c0e65830253a72afe5d7ac8ad6d71a4fe2861f76a8961a75ab02b3.
+Compiler source manifest SHA-256:
+f1e34c8bafdf6367ec2bf5e138df3592d876af9309757e1a8b8bbe36f2191be0.
+Refresh after exact annotation, Call replacement, permission or Atomic MIR
+consumer changes. Rollback is this atomic commit. Unrelated WIP is excluded.
+
+Residual boundaries: retyping a genuine primitive drops permission and needs
+exact source/result revalidation before reissue; two source-only repair-path
+hypotheses have no qualified behavioral failure. Prelude hello trace 35q5380
+selects nilary Object#hash, then rereads one-argument String#hash after receiver
+re-owning. The replay guard correctly rejects that lost source provenance.
+Full prelude, fresh bootstrap and unchanged LavinMQ object/link/server/upstream
+parity remain open; the Atomic gates cannot close those boundaries.

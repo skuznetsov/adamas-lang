@@ -751,11 +751,169 @@ module Adamas::HIR
     NO_RECEIVER = UInt32::MAX
     NO_BLOCK    = UInt32::MAX
 
-    property method_name : String
-    property args : Array(ValueId)
+    # Exact source primitive authority for Atomic::Ops MIR lowering. The AST
+    # lowerer constructs this only from the selected Def/Arena receipt; the
+    # emitted symbol binds the capability to this specific call target.
+    struct AtomicPrimitiveAuthority
+      getter operation : String
+      getter primitive_kind : String
+      getter annotation_name : String
+      getter emitted_target : String
+      getter source_def_id : UInt64
+      getter source_arena_id : UInt64
+      getter call_id : ValueId
+      getter argument_key : String
+      getter argument_count : Int32
+      getter receiver_value : ValueId
+      getter block_value : BlockId
+      getter virtual : Bool
+      getter result_type_id : TypeId
+
+      def initialize(
+        @operation : String,
+        @primitive_kind : String,
+        @annotation_name : String,
+        @emitted_target : String,
+        @source_def_id : UInt64,
+        @source_arena_id : UInt64,
+        @call_id : ValueId,
+        @argument_key : String,
+        @argument_count : Int32,
+        @receiver_value : ValueId,
+        @block_value : BlockId,
+        @virtual : Bool,
+        @result_type_id : TypeId,
+      )
+      end
+
+      def internally_consistent? : Bool
+        source_operation = case @annotation_name
+                           when "Atomic::Ops.atomicrmw"
+                             "atomicrmw" if @primitive_kind == "atomicrmw"
+                           when "Atomic::Ops.cmpxchg"
+                             "cmpxchg" if @primitive_kind == "cmpxchg"
+                           when "Atomic::Ops.load"
+                             "load" if @primitive_kind == "load_atomic"
+                           when "Atomic::Ops.store"
+                             "store" if @primitive_kind == "store_atomic"
+                           when "Atomic::Ops.fence"
+                             "fence" if @primitive_kind == "fence"
+                           end
+        return false unless source_operation == @operation
+        return false if @source_def_id == 0_u64 || @source_arena_id == 0_u64
+        expected_argument_count = case @operation
+                                  when "atomicrmw", "cmpxchg" then 5
+                                  when "load" then 3
+                                  when "store" then 4
+                                  when "fence" then 2
+                                  else                         return false
+                                  end
+        return false unless @argument_count == expected_argument_count
+        return false unless @receiver_value == Call::NO_RECEIVER && @block_value == Call::NO_BLOCK && !@virtual
+
+        target_operation = if @emitted_target.starts_with?("Atomic::Ops.")
+                             @emitted_target["Atomic::Ops.".size..]
+                           elsif @emitted_target.starts_with?("Atomic$CCOps$D")
+                             @emitted_target["Atomic$CCOps$D".size..]
+                           else
+                             return false
+                           end
+        target_operation = target_operation.byte_slice(0, target_operation.index('$') || target_operation.bytesize)
+        target_operation == @operation
+      end
+
+      def matches_call_shape?(
+        id : ValueId,
+        method_name : String,
+        args : Array(ValueId),
+        receiver_value : ValueId,
+        block_value : BlockId,
+        virtual : Bool,
+        result_type_id : TypeId,
+      ) : Bool
+        return false unless internally_consistent?
+        @call_id == id && @emitted_target == method_name &&
+          @argument_key == AtomicPrimitiveAuthority.argument_key(args) && @argument_count == args.size &&
+          @receiver_value == receiver_value && @block_value == block_value &&
+          @virtual == virtual && @result_type_id == result_type_id
+      end
+
+      def self.argument_key(args : Array(ValueId)) : String
+        args.map(&.to_s).join(",")
+      end
+    end
+
+    getter method_name : String
+    getter args : Array(ValueId)
     @receiver_value : ValueId = NO_RECEIVER
     @block_value : BlockId = NO_BLOCK
     getter virtual : Bool
+    getter atomic_primitive_authority : AtomicPrimitiveAuthority? = nil
+
+    def method_name=(method_name : String) : String
+      if method_name != @method_name
+        @atomic_primitive_authority = nil
+      end
+      @method_name = method_name
+    end
+
+    def args=(args : Array(ValueId)) : Array(ValueId)
+      @atomic_primitive_authority = nil
+      @args = args
+    end
+
+    def authorize_atomic_primitive!(authority : AtomicPrimitiveAuthority) : Nil
+      unless authority.emitted_target == @method_name
+        raise ArgumentError.new("atomic primitive authority target does not match call symbol")
+      end
+      unless authority.matches_call_shape?(
+               @id,
+               @method_name,
+               @args,
+               @receiver_value,
+               @block_value,
+               @virtual,
+               @type.id,
+             )
+        raise ArgumentError.new("atomic primitive authority does not match call shape or source receipt")
+      end
+      @atomic_primitive_authority = authority
+    end
+
+    def atomic_primitive_authority_for_current_shape : AtomicPrimitiveAuthority?
+      authority = @atomic_primitive_authority || return nil
+      return nil unless authority.matches_call_shape?(
+                          @id,
+                          @method_name,
+                          @args,
+                          @receiver_value,
+                          @block_value,
+                          @virtual,
+                          @type.id,
+                        )
+      authority
+    end
+
+    # HIR repair passes rebuild Call objects while retaining the instruction ID.
+    # Carry authority only when both identity and exact emitted target survive.
+    def preserve_atomic_primitive_authority_from(previous : Call) : Nil
+      authority = previous.atomic_primitive_authority_for_current_shape || return
+      return unless previous.id == @id && previous.method_name == @method_name
+      return unless authority.emitted_target == @method_name
+      return unless previous.type == @type && previous.args == @args
+      return unless previous.receiver_value == @receiver_value && previous.block_value == @block_value
+      return unless previous.virtual == @virtual
+      return unless authority.matches_call_shape?(
+                      @id,
+                      @method_name,
+                      @args,
+                      @receiver_value,
+                      @block_value,
+                      @virtual,
+                      @type.id,
+                    )
+      @atomic_primitive_authority = authority
+    end
 
 
     # DEBUG PROBE (remove before commit): report every attachment of a method
@@ -857,6 +1015,7 @@ module Adamas::HIR
     end
 
     def configure_without_receiver(method_name : String, args : Array(ValueId)) : Nil
+      @atomic_primitive_authority = nil
       @receiver_value = NO_RECEIVER
       @method_name = method_name
       @args = args
@@ -870,6 +1029,7 @@ module Adamas::HIR
       args : Array(ValueId),
       virtual : Bool,
     ) : Nil
+      @atomic_primitive_authority = nil
       @receiver_value = NO_RECEIVER
       @method_name = method_name
       @args = args
@@ -884,6 +1044,7 @@ module Adamas::HIR
       block : BlockId,
       virtual : Bool,
     ) : Nil
+      @atomic_primitive_authority = nil
       @receiver_value = NO_RECEIVER
       @method_name = method_name
       @args = args
@@ -898,6 +1059,7 @@ module Adamas::HIR
       args : Array(ValueId),
       virtual : Bool,
     ) : Nil
+      @atomic_primitive_authority = nil
       @receiver_value = receiver
       @method_name = method_name
       @args = args
@@ -913,6 +1075,7 @@ module Adamas::HIR
       block : BlockId,
       virtual : Bool,
     ) : Nil
+      @atomic_primitive_authority = nil
       @receiver_value = receiver
       @method_name = method_name
       @args = args
@@ -1866,6 +2029,9 @@ module Adamas::HIR
 
     def replace(index : Int32, instruction : Value) : Value
       previous = @instructions[index]
+      if previous.is_a?(Call) && instruction.is_a?(Call)
+        instruction.preserve_atomic_primitive_authority_from(previous)
+      end
       @instructions[index] = instruction # missing-revision-owner
       @body_emitted = true
       if previous.is_a?(Call) || instruction.is_a?(Call)

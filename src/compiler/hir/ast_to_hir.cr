@@ -10562,6 +10562,78 @@ module Adamas::HIR
       receipt[3]
     end
 
+    private def atomic_ops_operation_for_target_name(name : String) : String?
+      target = if name.starts_with?("Atomic::Ops.")
+                 name["Atomic::Ops.".size..]
+               elsif name.starts_with?("Atomic$CCOps$D")
+                 name["Atomic$CCOps$D".size..]
+               else
+                 return nil
+               end
+      method_name = target.byte_slice(0, target.index('$') || target.bytesize)
+      case method_name
+      when "atomicrmw", "cmpxchg", "load", "store", "fence"
+        method_name
+      else
+        nil
+      end
+    end
+
+    private def atomic_ops_operation_for_source_annotation(annotation_name : String, primitive_kind : String) : String?
+      case annotation_name
+      when "Atomic::Ops.atomicrmw"
+        "atomicrmw" if primitive_kind == "atomicrmw"
+      when "Atomic::Ops.cmpxchg"
+        "cmpxchg" if primitive_kind == "cmpxchg"
+      when "Atomic::Ops.load"
+        "load" if primitive_kind == "load_atomic"
+      when "Atomic::Ops.store"
+        "store" if primitive_kind == "store_atomic"
+      when "Atomic::Ops.fence"
+        "fence" if primitive_kind == "fence"
+      end
+    end
+
+    # Atomic MIR operations are authorized only by the exact selected source
+    # declaration's current Def/Arena annotation receipt. Name parsing binds
+    # that receipt to the emitted symbol; it never grants authority by itself.
+    private def exact_atomic_primitive_authority_for_call(
+      selected_name : String?,
+      definition : Adamas::Compiler::Frontend::DefNode?,
+      selected_arena : Adamas::Compiler::Frontend::ArenaLike?,
+      call : Call,
+    ) : Call::AtomicPrimitiveAuthority?
+      source_name = selected_name || return nil
+      source_def = definition || return nil
+      source_arena = selected_arena || registered_arena_for_def(source_def) || return nil
+      return nil if call.has_receiver? || call.has_block? || call.virtual
+
+      receipt = @source_primitive_annotations[source_def.object_id.to_u64]? || return nil
+      return nil unless receipt[0].same?(source_def) && receipt[1].same?(source_arena)
+      primitive_kind = receipt[3]
+      return nil unless @module.primitive_for(receipt[2]) == primitive_kind
+
+      operation = atomic_ops_operation_for_source_annotation(receipt[2], primitive_kind) || return nil
+      return nil unless atomic_ops_operation_for_target_name(source_name) == operation
+      return nil unless atomic_ops_operation_for_target_name(call.method_name) == operation
+
+      Call::AtomicPrimitiveAuthority.new(
+        operation,
+        primitive_kind,
+        receipt[2],
+        call.method_name,
+        source_def.object_id.to_u64,
+        source_arena.object_id.to_u64,
+        call.id,
+        Call::AtomicPrimitiveAuthority.argument_key(call.args),
+        call.args.size,
+        call.has_receiver? ? call.receiver_value : Call::NO_RECEIVER,
+        call.has_block? ? call.block_value : Call::NO_BLOCK,
+        call.virtual,
+        call.type.id,
+      )
+    end
+
     private def source_primitive_family_registered?(name : String, fallback_name : String? = nil) : Bool
       name_family = strip_type_suffix(name)
       fallback_family = fallback_name.try { |candidate| strip_type_suffix(candidate) }
@@ -88464,19 +88536,10 @@ module Adamas::HIR
     end
 
     private def backend_owned_atomic_ops_call?(name : String, call : Call, value_types : Hash(ValueId, TypeRef)) : Bool
-      owner = ""
-      method = ""
-      if name.starts_with?("Atomic::Ops.")
-        owner = "Atomic::Ops"
-        method = name["Atomic::Ops.".size..]
-      elsif name.starts_with?("Atomic$CCOps$D")
-        owner = "Atomic::Ops"
-        method = name["Atomic$CCOps$D".size..]
-      else
-        return false
-      end
-      return false if call.has_receiver?
-      method = method.byte_slice(0, method.index('$') || method.bytesize)
+      authority = call.atomic_primitive_authority_for_current_shape || return false
+      return false unless name == call.method_name && authority.emitted_target == call.method_name
+      return false if call.has_receiver? || call.has_block? || call.virtual
+      method = authority.operation
       # Keep this shape aligned with Crystal's Atomic::Ops primitive
       # declarations and the operands consumed by HIR-to-MIR lowering.
       required_args = case method
@@ -128594,6 +128657,14 @@ module Adamas::HIR
       # fallback for genuine positional calls.
       if has_named_args
         remember_named_call_shape(ctx.function.name, call.id, call_named_arg_names)
+      end
+      if authority = exact_atomic_primitive_authority_for_call(
+           selected_call_entry_name,
+           selected_call_entry_def,
+           selected_call_entry_arena,
+           call,
+         )
+        call.authorize_atomic_primitive!(authority)
       end
       ctx.emit(call)
       ctx.register_type(call.id, return_type)

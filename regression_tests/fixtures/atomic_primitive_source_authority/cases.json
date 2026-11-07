@@ -1,0 +1,8 @@
+[
+  {"name": "atomicrmw_ordinary_sibling", "source": "atomicrmw_ordinary_sibling.cr", "ok": true, "expected": "B\n"},
+  {"name": "cmpxchg_ordinary_sibling", "source": "cmpxchg_ordinary_sibling.cr", "ok": true, "expected": "B\n"},
+  {"name": "fence_ordinary_sibling", "source": "fence_ordinary_sibling.cr", "ok": true, "expected": "B\n"},
+  {"name": "load_ordinary_sibling", "source": "load_ordinary_sibling.cr", "ok": true, "expected": "B\n"},
+  {"name": "store_ordinary_sibling", "source": "store_ordinary_sibling.cr", "ok": true, "expected": "B\n"},
+  {"name": "annotated_family_ordinary_sibling", "source": "annotated_family_ordinary_sibling.cr", "ok": true, "expected": "B\n"}
+]

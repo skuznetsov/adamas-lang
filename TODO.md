@@ -26865,15 +26865,16 @@ integration, fresh bootstrap, or LavinMQ parity.
   stopped here inside Crystal::System.print_error$String_Tuple(UInt64)
   (35q5329); retaining the real nilary callshape passes this chain (35q5349).
   Its known ABI still cannot discharge body dependencies by itself.
-- [ ] Carry exact intrinsic permission from HIR to MIR. Two ordinary unannotated
-  Atomic::Ops.load/cmpxchg programs print B on stock (35q5327) and A on this S1
-  (35q5328). Genuine Atomic positives alone do not prove sibling isolation.
+- [x] Carry exact selected Def/Arena intrinsic permission from HIR to MIR.
+  The six ordinary source siblings now match Crystal in lazy/eager modes, and
+  a genuinely annotated fence still emits fence seq_cst (35q5388). Genuine
+  Atomic positives retain their separate 13-case runtime gate (35q5367/5368).
 - [ ] Audit receiver-repair primitive availability queries: family membership
   is not an exact source receipt. No behavioral failure has yet qualified this
   remaining consumer hypothesis.
 - Full prelude, fresh bootstrap, unchanged LavinMQ linking/runtime and upstream
   test parity remain open. The new SDD intrinsic boundary is design-sealed;
-  current MIR behavior is explicitly measured-red.
+  current MIR permission transport passes its scoped sibling/opcode gates.
 
 
 ### 2026-11-07 — Retain the actual nilary member callshape before body demand
@@ -26894,3 +26895,30 @@ integration, fresh bootstrap, or LavinMQ parity.
   permission or bypass the exact source guard.
 - No stdlib/application or type restriction changes. Full prelude, fresh
   bootstrap, unchanged LavinMQ object/link/server and upstream parity stay open.
+
+
+### 2026-11-07 — Transport exact Atomic source permission into MIR
+
+- [x] Bind Atomic permission to the exact selected annotated Def/Arena and the
+  emitted HIR Call shape. MIR name parsing and ABI shape no longer authorize
+  an ordinary method or skip its body. Mutations drop permission; identical
+  same-ID replacements may retain it.
+- The six-case runtime packet is original-first and passes in lazy/eager modes
+  on exact-source S1 35q5351 (35q5388). It includes an ordinary overload beside
+  an annotated one. The same gate checks real fence seq_cst IR, avoiding a
+  vacuous success from the primitive's empty source body.
+- Genuine Atomic gates pass 13 runtime controls (35q5367/5368); the strict
+  Proc29 gate and nine source-body controls also pass (35q5371/5373). All 90
+  targeted HIR controls pass (35q5389), including a same-call result-type
+  mutation that must drop permission.
+- [ ] Qualify any genuine Atomic call whose result repair rebuilds a Call with
+  a different result type. Such a rewrite intentionally drops permission;
+  reissuing it requires exact source/result revalidation. The source-only
+  audit found two potential repair paths but no behavioral failure.
+- [ ] Preserve selected lexical source through inherited nilary member re-owning.
+  Prelude trace 35q5380 selects Object#hash with zero parameters, then reads the
+  concrete String#hash physical alias with one parameter for suspension. The
+  exact replay guard correctly rejects that changed source. Fix the lost
+  selection before inference, not the guard or method arity.
+- Full prelude, fresh bootstrap and unchanged LavinMQ object/link/server/upstream
+  parity remain open. No stdlib/application or source restriction changes.

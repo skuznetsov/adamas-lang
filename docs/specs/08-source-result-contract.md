@@ -1,12 +1,13 @@
 # Source Result Ownership — Frontier SDD
 
-Status: IN_PROGRESS, 2026-11-07. Exact-source S1 35q5341 passes the nine-case
-source-body demand packet and 85 HIR controls, including the nilary replay
-falsifier and strict arity/Def/Arena controls (35q5344/5350/5362).
+Status: IN_PROGRESS, 2026-11-07. Exact-source S1 35q5351 passes the nine-case
+source-body demand packet, the strict Proc29 packet, all 13 genuine Atomic
+controls and six ordinary Atomic sibling counterfactuals (35q5371/5373/5388).
+The sibling packet checks both lazy and eager execution plus a genuine fence
+opcode. All 90 targeted HIR controls also pass (35q5389), including dropping
+permission when a same-call replacement changes only its result type.
 Stock-prelude/LavinMQ compilation passes StaticArray#to_slice replay, then
-refuses source ownership in the hash family (35q5342/5349).
-Ordinary Atomic::Ops siblings are incorrectly substituted in MIR
-(35q5327/5328): the intrinsic phase boundary below is measured-red.
+refuses source ownership in the hash family (35q5342/5349/5380).
 Fresh bootstrap and unchanged LavinMQ execution/upstream parity remain open.
 The selected-default contract passes 37 main cases and ten block-slot cases
 on exact-source S1 35q2760 (35q2764); five companions remain explicitly open.
@@ -63,10 +64,14 @@ The HIR primitive emitter must not transfer a source annotation through a
 same-name family fallback. Synthetic builtin registrations retain their
 separate path; they cannot authenticate a source annotation.
 
-The HIR-to-MIR Atomic boundary is design-sealed, not yet admitted: attach an
-explicit capability only after authenticating the selected source annotation.
+The HIR-to-MIR Atomic boundary carries an explicit capability only after
+authenticating the selected source Def/Arena annotation receipt.
 Bind it to the exact emitted target and primitive kind; transport it with the
-HIR Call. A target-changing rewrite drops it. MIR may emit atomic operations
+HIR Call, including its instruction ID, argument IDs, receiver, block, dispatch
+kind and result type. Target, argument, call-shape or result-type changes drop
+it; same-ID replacement preserves it only when the complete shape agrees.
+The constructor is a trusted compiler API, not an unforgeable plugin boundary.
+MIR may emit atomic operations
 only with this capability and matching operation/operand shape. Names, ABI
 shape, module identity and family registry membership cannot grant permission.
 An ordinary Atomic::Ops method must execute its source body. Absence of a
@@ -75,12 +80,15 @@ capability takes the ordinary call path, never a name-based intrinsic fallback.
 Falsifiers: the original-first source_kind_body_demand_repro.sh packet includes
 bodyful/empty ordinary primitive-family siblings and a genuine class-valued
 rejection. module_primitive_annotation_scope_spec.cr exercises nested annotation
-isolation. The separate native load/cmpxchg counterfactuals (35q5327/5328)
-return B in Crystal and A in current Adamas despite having no Primitive
-annotation. Require B in both, an annotated-family ordinary sibling, and the
-13 genuine Atomic controls before admitting MIR transport. Stop if a sibling
+isolation. `atomic_primitive_source_authority_repro.sh` completes the stock
+oracle first and checks six ordinary siblings in lazy/eager modes, including
+an ordinary overload beside a genuinely annotated one. It also requires an
+actual `fence seq_cst` instruction from the annotated fence. The 13 genuine
+Atomic controls retain their independent runtime checks. Stop if a sibling
 inherits permission or an honest intrinsic loses it; do not restore family
-authorization to recover a positive. Full prelude and bootstrap stay separate.
+authorization to recover a positive. A result-type repair must revalidate the
+exact source/result contract before reissuing permission; generic HIR replacement
+cannot do that. Full prelude and bootstrap stay separate.
 
 ## Stable arity keys during declaration replay
 
