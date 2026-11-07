@@ -1,0 +1,166 @@
+[
+  {
+    "name": "macro_body_begin_value",
+    "source": "macro_body_begin_value.cr",
+    "ok": true,
+    "expected_stdout": "macro_body_begin_value.expected"
+  },
+  {
+    "name": "empty_begin_value",
+    "source": "empty_begin_value.cr",
+    "ok": true,
+    "expected_stdout": "empty_begin_value.expected"
+  },
+  {
+    "name": "inactive_handler_branch",
+    "source": "inactive_handler_branch.cr",
+    "ok": true,
+    "expected_stdout": "inactive_handler_branch.expected"
+  },
+  {
+    "name": "direct_output_begin",
+    "source": "direct_output_begin.cr",
+    "ok": true,
+    "expected_stdout": "direct_output_begin.expected"
+  },
+  {
+    "name": "grouped_output_begin",
+    "source": "grouped_output_begin.cr",
+    "ok": true,
+    "expected_stdout": "grouped_output_begin.expected"
+  },
+  {
+    "name": "handler_in_macro_value",
+    "source": "handler_in_macro_value.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "can't execute ExceptionHandler in a macro"
+    ],
+    "candidate_diagnostic": [
+      "can't execute ExceptionHandler in a macro"
+    ]
+  },
+  {
+    "name": "handler_in_macro_statement",
+    "source": "handler_in_macro_statement.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "can't execute ExceptionHandler in a macro"
+    ],
+    "candidate_diagnostic": [
+      "can't execute ExceptionHandler in a macro"
+    ]
+  },
+  {
+    "name": "value_raise_first",
+    "source": "value_raise_first.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "begin first error marker"
+    ],
+    "candidate_diagnostic": [
+      "begin first error marker"
+    ]
+  },
+  {
+    "name": "top_value_raise_first",
+    "source": "top_value_raise_first.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "begin first error marker"
+    ],
+    "candidate_diagnostic": [
+      "begin first error marker"
+    ]
+  },
+  {
+    "name": "separate_directive_visibility",
+    "source": "separate_directive_visibility.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "undefined macro variable 'top_result'"
+    ],
+    "candidate_diagnostic": [
+      "undefined macro variable 'top_result'"
+    ]
+  },
+  {
+    "name": "top_level_begin_assignment",
+    "source": "top_level_begin_assignment.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "undefined macro variable 'top_result'"
+    ],
+    "candidate_diagnostic": [
+      "undefined macro variable 'top_result'"
+    ]
+  },
+  {
+    "name": "rescue_only_stops_first",
+    "source": "rescue_only_stops_first.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "can't execute ExceptionHandler in a macro"
+    ],
+    "candidate_diagnostic": [
+      "can't execute ExceptionHandler in a macro"
+    ],
+    "forbidden_diagnostic": [
+      "later sentinel"
+    ]
+  },
+  {
+    "name": "call_argument_begin",
+    "source": "call_argument_begin.cr",
+    "ok": true,
+    "expected_stdout": "call_argument_begin.expected"
+  },
+  {
+    "name": "assignment_rhs_begin",
+    "source": "assignment_rhs_begin.cr",
+    "ok": true,
+    "expected_stdout": "assignment_rhs_begin.expected"
+  },
+  {
+    "name": "array_predicate_if_begin_condition",
+    "source": "array_predicate_if_begin_condition.cr",
+    "ok": true,
+    "expected_stdout": "array_predicate_if_begin_condition.expected"
+  },
+  {
+    "name": "output_if_begin_condition",
+    "source": "output_if_begin_condition.cr",
+    "ok": true,
+    "expected_stdout": "output_if_begin_condition.expected"
+  },
+  {
+    "name": "output_grouped_if_begin_condition",
+    "source": "output_grouped_if_begin_condition.cr",
+    "ok": true,
+    "expected_stdout": "output_grouped_if_begin_condition.expected"
+  },
+  {
+    "name": "condition_truthiness",
+    "source": "condition_truthiness.cr",
+    "ok": true,
+    "expected_stdout": "condition_truthiness.expected"
+  },
+  {
+    "name": "if_without_else_is_nop",
+    "source": "if_without_else_is_nop.cr",
+    "ok": true,
+    "expected_stdout": "if_without_else_is_nop.expected"
+  },
+  {
+    "name": "empty_then_is_nop",
+    "source": "empty_then_is_nop.cr",
+    "ok": true,
+    "expected_stdout": "empty_then_is_nop.expected"
+  },
+  {
+    "name": "empty_elsif_is_nop",
+    "source": "empty_elsif_is_nop.cr",
+    "ok": true,
+    "expected_stdout": "empty_elsif_is_nop.expected"
+  }
+]

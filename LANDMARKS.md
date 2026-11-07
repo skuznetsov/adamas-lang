@@ -25773,3 +25773,45 @@ Compiler SHA-256: a521a8a0d3e8faf63c564107162201b330eaf8cbf13435ce2d93a9781d6db8
 Refresh after binding-map lookup/writes, initializer capture/replay, callback ABI,
 source ownership or layout invalidation changes. Rollback is this atomic commit.
 Application, stdlib and unrelated WIP are unchanged.
+
+
+## 2026-11-06 — Macro sequences preserve their final value and first failure
+
+Handler-free Begin nodes were opaque in the typed macro evaluator; routing a
+condition through the statement renderer also discarded its final value.
+Evaluate the sequence in source order in its shared variable context and return
+the last MacroValue, or Nop when empty. Direct/grouped Begin and If output use
+that value path. Absent/empty If and elsif branches also yield Nop; explicit nil
+remains NilLiteral. Propagate the first reached macro raise and reject reached
+ExceptionHandler forms like stock Crystal; inactive branches remain lazy.
+
+Stock-first macro_begin_error_propagation_repro.sh passes 14 native output and
+seven strict rejection cases per compiler on Crystal 1.22.1 and S1 35q3953
+(35q3954). The nested-condition ablation fails before the value routing
+(35q3936). Three adversarial empty-If kind controls produce stock A versus
+pre-fix B (35q3946/35q3948). Final Array predicates, CLI macro errors and six
+native stock/lazy/eager initializer-result controls pass on the same S1
+(35q3955). The earlier 44-case interpolation gate predates the final Nop delta
+(35q3943); it is not a final-source claim. Bounded Adversary verdict: ROBUST for
+handler-free Begin/If/Nop evaluation; the source review is correlated.
+
+The unchanged LavinMQ frontend probe now reports the reached compile-time raise
+in the fallback GC.prof_stats body (35q3956). Both gc.cr and gc/boehm.cr loaded;
+the latter supplies a replacement body. Investigate definition registration and
+selection rather than suppress the macro error. Full prelude, link/runtime,
+bootstrap and upstream test parity remain open. Array/Tuple/Hash output-root
+routes remain separate; a stock no-prelude Array probe requiring unsafe_build
+is not a qualified runtime-positive oracle (35q3934).
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+macro-begin-thread-final-gate35q3954/result.json,
+macro-begin-thread-final-neighbors35q3955/result.json, and
+lavinmq-macro-begin-thread35q3956/result.json.
+All 1,916 compiler sources match build.macro-begin-thread-final35q3953.source.json
+(SHA-256 ae1ccea4cc8b71a76de03d1f45c8a3b76a973436e5c744697129159de5de5640).
+Compiler SHA-256: 1e14df84eb686b3664f44bd6fcd5da50ad15e54ffaaa8d39b41740260fcf935f.
+Fixture-manifest SHA-256:
+4582fc2287d252b25e550877cad1a76920cb7492702c9fde6c311ac1e46cbea1.
+Refresh after macro value/statement routing, sequence/conditional evaluation or
+diagnostic propagation changes. Rollback is this atomic commit. Application,
+stdlib and unrelated WIP are unchanged.

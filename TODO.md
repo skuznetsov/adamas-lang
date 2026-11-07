@@ -26139,11 +26139,11 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Keep remaining macro API/reflection diagnostics separate from normal
   runtime constant initialization. Neither may use the other's evaluator as a
   semantic substitute. No full-prelude, bootstrap or LavinMQ parity claim.
-- [ ] Execute handler-free BeginNode sequences in macro value position, sharing
+- [x] Execute handler-free BeginNode sequences in macro value position, sharing
   variables and returning the last result. A stock-qualified nested assignment
   executes its side effect on Crystal but fails on S1 35q3866 (35q3879/35q3880).
   Stock rejects ensure/rescue ExceptionHandler execution; do not add handler
-  support as a substitute. This is the next bounded evaluator fix.
+  support as a substitute. Closed by the stock-first 35q3954 gate.
 
 
 ### 2026-11-06 — Separate initializer declaration and replay binding owners
@@ -26170,3 +26170,31 @@ integration, fresh bootstrap, or LavinMQ parity.
   Same arena, distinct Def identities were observed in ordinary lowering
   (35q3932); keep the exact binder guard. Return to unchanged LavinMQ after the
   nested macro Begin gate.
+
+
+### 2026-11-06 — Execute nested macro sequences without losing value kind
+
+- [x] Evaluate handler-free Begin bodies in source order in the shared macro
+  context, returning the final MacroValue or Nop for an empty body. Use the value
+  in conditions and direct/grouped output expressions, not rendered statement
+  text. Preserve lazy branches and propagate the first reached error.
+- [x] Preserve Nop for absent/empty If/elsif branches; an explicit nil retains
+  NilLiteral. Reject reached ExceptionHandler forms just as stock Crystal does.
+- macro_begin_error_propagation_repro.sh passes 14 native and seven strict
+  rejection cases per compiler on Crystal 1.22.1 and S1 35q3953 (35q3954). The
+  original nested-condition failure remains reproducible before the final value
+  routing (35q3936); all three empty-If kind controls give stock A versus prior
+  candidate B (35q3946/35q3948).
+- Final Array predicate, CLI-error and native initializer-result neighbors pass
+  on the same combined compiler (35q3955). The 44 interpolation/block controls
+  pass before the final Nop-only delta (35q3943), not a fresh final-source claim.
+- [ ] Audit remaining Array/Tuple/Hash output-root routes separately. The stock
+  no-prelude Array output probe fails on missing unsafe_build after expansion;
+  it is not a qualified runtime-positive oracle (35q3934).
+- Return to unchanged LavinMQ with strict selected-source and type guards. Full
+  prelude, object/link/server execution, fresh bootstrap and upstream parity
+  remain open.
+- The unchanged LavinMQ probe reaches the compile-time raise in the fallback
+  GC.prof_stats body even though gc/boehm.cr supplies its replacement (35q3956).
+  Both files loaded. Investigate definition registration/selection; preserve the
+  macro error instead of silently accepting the fallback.

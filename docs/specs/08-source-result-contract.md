@@ -507,14 +507,36 @@ even when its result is unused, rather than only syntactically recognized raise
 forms. Empty expansion text is valid; an Error diagnostic from
 the macro interpreter must propagate through HIR and reject compilation before
 an executable is emitted. Global unknown-method behavior and remaining macro
-reflection APIs are separate open contracts. Handler-free BeginNode sequences
-in value position remain an observed open evaluator gap (35q3879/35q3880);
-retaining a directive does not certify every node the interpreter can encounter.
+reflection APIs are separate open contracts. Retaining a directive does not
+certify every node the interpreter can encounter.
 
 The original-first macro_array_predicate_repro.sh gate checks seven runtime
 controls and three strict rejections; the interpolation/block and CLI expansion
 error gates guard shared bindings, lazy branches and rejection propagation.
 These checks do not establish complete prelude, bootstrap or LavinMQ parity.
+
+## Macro Begin and conditional values
+
+Execute a handler-free Begin sequence in the same mutable macro context, in
+source order, returning the final MacroValue. An empty sequence returns Nop,
+matching Crystal's Expressions representation. Preserve that value in call
+arguments, assignment RHS, conditions and direct/grouped output expressions;
+statement-text rendering cannot substitute for expression evaluation.
+
+A selected empty If/elsif body and a missing else also return Nop. Explicit
+nil remains NilLiteral. Test truthiness on the resulting value rather than on
+rendered source text. Preserve lazy untaken branches and stop at the first
+reached evaluation error. Stock rejects executing rescue/else/ensure
+ExceptionHandler nodes in macros; reject those forms when reached rather than
+silently discarding their body. Non-output HIR directives propagate the same
+interpreter error channel as value expressions.
+
+The stock-first macro_begin_error_propagation_repro.sh gate covers 14 native
+controls and seven strict rejections per compiler. These include Nop kind,
+condition truthiness, shared sequence effects and error identity. Array/Tuple/
+Hash output-root handling is a separate open route; the Begin contract does not
+certify every surrounding macro AST kind. No stdlib adaptation or relaxed runtime
+type check is part of this interpreter repair.
 
 ## Falsifiers and recovery
 

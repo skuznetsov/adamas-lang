@@ -93203,8 +93203,19 @@ module Adamas::HIR
       node = @arena[expr_id]
       case node
       when Adamas::Compiler::Frontend::BeginNode
-        if node.rescue_clauses.nil? && node.ensure_body.nil?
+        if node.rescue_clauses.nil? && node.else_body.nil? && node.ensure_body.nil?
           node.body.each { |stmt| run_macro_statement_effects(stmt, vars, owner_type, expander) }
+        else
+          # Let the macro evaluator issue the same unsupported-ExceptionHandler
+          # diagnostic as value-position evaluation. Silently skipping the
+          # whole body would make a reachable rescue/ensure directive appear to
+          # succeed, unlike stock Crystal's macro interpreter.
+          expander.expand_expression(expr_id, variables: vars, owner_type: owner_type)
+          if diagnostic = expander.diagnostics.find { |entry| entry.level == Adamas::Compiler::Semantic::DiagnosticLevel::Error }
+            source = source_for_arena(@arena) || ""
+            formatted = Adamas::Compiler::Semantic::DiagnosticFormatter.format(source, diagnostic)
+            raise LoweringError.new("invalid macro statement:\n#{formatted}", node)
+          end
         end
       when Adamas::Compiler::Frontend::IfNode
         taken = macro_statement_guard(node.condition, vars, owner_type, expander)

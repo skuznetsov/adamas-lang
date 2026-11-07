@@ -1098,6 +1098,12 @@ module Adamas
               return evaluate_index_to_macro_value(node, context)
             elsif node.is_a?(Frontend::CallNode)
               return evaluate_call_to_macro_value(node, context)
+            elsif Frontend.node_kind(node).raise?
+              # A synthesized RaiseNode is not executable in Crystal's macro
+              # interpreter. Source-level `raise` calls are handled by the
+              # dedicated call path below, as in Crystal's top-level macro
+              # builtin.
+              raise MacroEvaluationError.new("can't execute Raise in a macro")
             elsif node.is_a?(Frontend::YieldNode)
               text = macro_block_text(context)
               if ENV["DEBUG_MACRO_YIELD"]?
@@ -1121,7 +1127,24 @@ module Adamas
               if else_body = node.else_body
                 return evaluate_body_expressions(else_body, context)
               end
-              return macro_nil_value
+              # Crystal's AST represents a missing `else` as Nop (via
+              # Expressions.from(nil)); preserve that distinction from `nil`.
+              return MacroNopValue.new
+            elsif node.is_a?(Frontend::BeginNode)
+              # Stock Crystal reduces a handler-free `begin ... end` to an
+              # Expressions node. The macro interpreter visits each expression
+              # in order and leaves the last value as the result; an empty
+              # sequence keeps its initial Nop value. ExceptionHandler is not
+              # executable by the stock macro interpreter, so reject rescue,
+              # else, and ensure forms instead of silently evaluating/skipping
+              # their body.
+              ensure_macro_begin_supported!(node)
+
+              result = MacroNopValue.new.as(MacroValue)
+              node.body.each do |body_expr_id|
+                result = evaluate_to_macro_value(body_expr_id, context)
+              end
+              return result
             elsif node.is_a?(Frontend::AssignNode)
               if value = assign_macro_target(node.target, context) { evaluate_to_macro_value(node.value, context) }
                 return value
@@ -1151,6 +1174,25 @@ module Adamas
         private def macro_range_value(expr_id : ExprId) : MacroRangeValue
           provider = current_node_source_provider
           MacroRangeValue.new(expr_id, @arena, @string_pool, provider, provider.nil? ? nil : @arena)
+        end
+
+        private def ensure_macro_begin_supported!(node : Frontend::BeginNode) : Nil
+          return if node.rescue_clauses.nil? && node.else_body.nil? && node.ensure_body.nil?
+
+          raise MacroEvaluationError.new("can't execute ExceptionHandler in a macro")
+        end
+
+        private def macro_output_expression_uses_value_evaluator?(expr_id : ExprId) : Bool
+          node = node_for_expr?(expr_id)
+          return false unless node
+
+          if grouping = node.as?(Frontend::GroupingNode)
+            return macro_output_expression_uses_value_evaluator?(grouping.expression)
+          end
+
+          # A conditional expression and a sequence both return a MacroValue;
+          # rendering either as statement text would discard its final value.
+          node.is_a?(Frontend::BeginNode) || node.is_a?(Frontend::IfNode)
         end
 
         private def current_node_source_provider : Proc(ExprId, String?)?
@@ -1446,6 +1488,12 @@ module Adamas
               return MacroBoolValue.new(evaluate_flag_call_bool(node, context))
             elsif ascii_bytes_eq?(direct_name, "compare_versions")
               return evaluate_compare_versions_call(node, context)
+            elsif ascii_bytes_eq?(direct_name, "raise")
+              # Crystal treats top-level `raise` as a compile-time macro
+              # builtin. Propagate it immediately so a later Begin expression
+              # cannot mask the first error.
+              message = node.args.map { |arg| evaluate_to_macro_value(arg, context).to_id }.join(" ")
+              raise MacroEvaluationError.new(message)
             end
           end
           if ENV["DEBUG_MACRO_CALL"]?
@@ -2051,7 +2099,9 @@ module Adamas
         end
 
         private def evaluate_body_expressions(exprs : Array(ExprId), context : Context) : MacroValue
-          result = macro_nil_value
+          # Empty If/elsif branches are Nop nodes in Crystal's macro AST.
+          # Keep an empty branch distinct from an explicit `nil` expression.
+          result = MacroNopValue.new.as(MacroValue)
           exprs.each do |expr_id|
             result = evaluate_to_macro_value(expr_id, context)
           end
@@ -2245,6 +2295,8 @@ module Adamas
           elsif node.is_a?(Frontend::GroupingNode)
             evaluate_macro_statement(node.expression, context)
           elsif node.is_a?(Frontend::BeginNode)
+            ensure_macro_begin_supported!(node)
+
             node.body.each do |statement_id|
               evaluate_macro_statement(statement_id, context)
             end
@@ -2712,6 +2764,9 @@ module Adamas
               evaluate_macro_statement(node.expression, context)
               return ""
             end
+            if macro_output_expression_uses_value_evaluator?(node.expression)
+              return evaluate_to_macro_value(node.expression, context).to_macro_output
+            end
             rendered = evaluate_expression(node.expression, context)
             # A yielded AST is one source expression even when its body contains
             # several statements. Match Crystal's output MacroExpression boundary;
@@ -2731,6 +2786,8 @@ module Adamas
           # semantics (so assignments and side-effecting calls apply) and emit
           # nothing — a `{% %}` directive itself produces no output text.
           if node.is_a?(Frontend::BeginNode)
+            ensure_macro_begin_supported!(node)
+
             node.body.each do |stmt_id|
               evaluate_expression(stmt_id, context)
             end
@@ -3614,6 +3671,14 @@ module Adamas
 
           if node.is_a?(Frontend::MacroExpressionNode) || node.is_a?(Frontend::GroupingNode)
             return evaluate_condition(node.expression, context)
+          end
+
+          # A Begin in condition position is an expression: its final MacroValue
+          # determines truthiness. Sending it through evaluate_expression would
+          # execute it as a statement sequence and lose that value.
+          if node.is_a?(Frontend::BeginNode)
+            value = evaluate_to_macro_value(expr_id, context)
+            return {value.truthy?, context}
           end
 
           # Handle assignment in condition: {% if ann = expr %}
