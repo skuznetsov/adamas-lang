@@ -26916,3 +26916,49 @@ open rather than counting an incidental rejection as contract correctness.
 This evidence does not certify full prelude, bootstrap, or unchanged LavinMQ
 object/link/server/upstream parity. Last full LavinMQ HIR probe 35q5141 stops
 at pending MFile#msync source-result demand; no runtime success is claimed.
+
+
+## 2026-11-07 — Source rest slots remain authoritative across ABI remangling
+
+Rest calls previously reconstructed source overload identity from packed ABI
+carriers: a ** NamedTuple lost its discriminator/labels, bare calls omitted the
+source keyword binding, and provisional constructor generation treated ** as a
+positional slot. Bind actual source slots and defaults first, preserve the exact
+selected Def/Arena and validated named-only tail when remangling, and allocate
+a concrete empty NamedTuple(). Preserve keyword rest element source-kind facts
+in packed compatibility checks. Raw ** calls defer eager allocator generation
+to the real binder; ordinary positional splats keep their prepass.
+
+Scoped verdict: ROBUST for the rest/default/named-slot transitions covered by
+the original-first 21-case packet (35q5212): 18 exact-output native positives
+and 3 semantic negatives on Crystal 1.22.1 and S1 35q5211. The same source passes
+15 HIR controls for default/** shape, literal binding and packed splat identity
+(35q5216), and the strict Proc29 gate (35q5213: 10 native, 19 semantic negatives).
+Pre-fix S1 35q5179 prints PP instead of AP on the evaluation-order falsifier and
+rejects both the named-only discriminator and inherited constructor positives
+(35q5215). This separates source-slot repair from merely accepting a stale ABI
+shape. Opposite class/instance, numeric and named restrictions remain enforced.
+All compiler/native runs used run_safe.sh. No stdlib/application edits.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+build.rest-source-current35q5211.{result,source}.json,
+rest-source-current-original-first35q5212/{result.json,gate.log},
+rest-source-proc-guard35q5213/{result.json,gate.log},
+rest-source-current-baseline35q5215/result.json,
+rest-source-current-hir35q5216/{result.json,spec.log,source.json},
+rest-source-stock-prelude35q5217/{result.json,compile.log}, and
+rest-source-current-shipped35q5218.json.
+Compiler source manifest SHA-256:
+0203ddd057b748599da50b0a0d08ac5abf4194157e1c83e3f2f4c0e992e89c30.
+S1 SHA-256: 7c6c6de1384930f3205a8dbcdc4938d95b786aed79354b3bd2aab9316da38800.
+Shipped source/test manifest SHA-256:
+26d065c1ce726d3afa377e1f10444dc7f8accbef5d022d1dbc21ad3ebe4d8aea.
+Refresh after source named/rest binding, ABI discriminator mangling, source-kind
+compatibility, or eager constructor argument classification changes. Rollback
+is this atomic commit. Existing user WIP remains excluded.
+
+Full stock-prelude hello still stops at pending source result
+Exception#inspect_with_backtrace$IO in Crystal.exit (35q5217); the explicit :Nil
+result-discard contract is a separate owner obligation. This patch does not
+certify full prelude, fresh bootstrap or unchanged LavinMQ link/runtime/upstream
+parity. Do not turn a front-end frontier advance into a runtime success claim.

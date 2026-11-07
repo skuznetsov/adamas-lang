@@ -26797,3 +26797,29 @@ integration, fresh bootstrap, or LavinMQ parity.
 - No stdlib/application source or type restrictions changed. Full stock prelude,
   fresh bootstrap and unchanged LavinMQ object/link/server/upstream parity are
   still open; the scoped module gate does not close those obligations.
+
+
+### 2026-11-07 — Bind rest calls in source slots before ABI packing
+
+- [x] Route zero-argument/bare rest calls through the source binder. Preserve
+  the selected ** and named-only discriminator across ABI remangling and tie
+  the emitted target to the exact selected Def/Arena. A packed NamedTuple is
+  not an ordinary positional source argument.
+- [x] Materialize typed empty NamedTuple() and preserve remaining keyword
+  element facts while binding * and **. Packed-slot checks consume those source
+  kinds and keep numeric/ordinary/named restrictions strict.
+- [x] Defer eager allocator generation for raw ** calls until named labels and
+  defaults have been expanded; retain the ordinary positional * prepass. The
+  inherited constructor controls distinguish this from a general guard bypass.
+- All 21 original-first rest controls pass on Crystal 1.22.1 and exact S1
+  35q5211 (35q5212): 18 native positives, 3 semantic negatives. The exact source
+  also passes all 15 targeted HIR controls (35q5216) and the strict 29-case Proc
+  gate (35q5213: 10 native positives, 19 diagnostic-specific negatives).
+- Pre-fix core S1 35q5179 prints PP instead of AP on the side-effect/order
+  control and rejects the named-only/inherited-constructor positives (35q5215).
+  The stronger class-kind diagnostic is retained in the rejection fixture.
+- Stock-prelude hello now passes the RuntimeError default/** boundary, then
+  stops at pending Exception#inspect_with_backtrace$IO (35q5217), an explicit
+  :Nil discard result. Its pending source-result ownership remains open.
+- No stdlib/application or type restriction edits. Full prelude, bootstrap and
+  unchanged LavinMQ object/link/server/upstream parity are not established.

@@ -63084,6 +63084,7 @@ module Adamas::HIR
         source_argument_facts)
       STDERR.puts "[COMPAT] enter def=#{def_node.name} params=#{params.size} args=#{arg_types.size} ctx=#{context}" if trace
       return true if params.empty?
+      source_formals = source_argument_facts ? source_block_type_param_names(def_node, context) : nil
 
       if packed_source_slots
         # Named binding has already produced one slot per ordinary formal.
@@ -63112,7 +63113,14 @@ module Adamas::HIR
               end
             end
           else
-            return false unless param_compatible_with_arg?(param, actual, context, trace, index)
+            kind_match = if source_argument_facts && source_formals
+                           proven_class_argument_matches_param?(param, source_argument_facts[index]?, context, source_formals)
+                         end
+            if kind_match.nil?
+              return false unless param_compatible_with_arg?(param, actual, context, trace, index)
+            else
+              return false unless kind_match
+            end
           end
         end
         return true
@@ -63134,7 +63142,6 @@ module Adamas::HIR
       return false if arg_types.size < min_args
       return false if !has_splat && arg_types.size > max_args
 
-      source_formals = source_argument_facts ? source_block_type_param_names(def_node, context) : nil
       arg_idx = 0
       params.each do |param|
         next if param.is_block
@@ -97378,6 +97385,11 @@ module Adamas::HIR
             end
           end
           if class_method_base
+            if source_rest_keyword_slots_required?(class_method_base)
+              callee_id = @arena.add(node)
+              bare_call = Adamas::Compiler::Frontend::CallNode.new(node.span, callee_id, [] of ExprId)
+              return lower_call(ctx, bare_call)
+            end
             # This is a method call on self with no positional arguments.
             # Fill declared defaults like `name()`/`self.name` do; otherwise the
             # call targets the zero-arg mangle and defaulted params only get a
@@ -97524,6 +97536,11 @@ module Adamas::HIR
         end
       end
       if @function_defs.has_key?(name) || @function_types.has_key?(name) || has_function_base?(name)
+        if source_rest_keyword_slots_required?(name)
+          callee_id = @arena.add(node)
+          bare_call = Adamas::Compiler::Frontend::CallNode.new(node.span, callee_id, [] of ExprId)
+          return lower_call(ctx, bare_call)
+        end
         # A bare identifier resolving to a method is a zero-positional-arg call.
         # Fill the method's default arguments (same as the parenthesized `name()`
         # path via lower_call) so defaulted params receive their declared values
@@ -117244,6 +117261,55 @@ module Adamas::HIR
       set_function_def_arena(target, selected_arena)
     end
 
+    # ABI remangling can erase the source `**` marker when its packed carrier
+    # is empty or has no concrete NamedTuple layout. Restore that discriminator
+    # only from the already-selected declaration; never rediscover the source
+    # overload from the ABI carrier.
+    private def selected_double_splat_target_name(
+      target : String,
+      selected_name : String,
+      selected_def : Adamas::Compiler::Frontend::DefNode,
+    ) : String
+      selected_stats = function_param_stats(selected_name, selected_def)
+      return target unless selected_stats.has_double_splat
+
+      # A selected named-only declaration owns its formal-label discriminator.
+      # ABI remangling may retain only the packed carrier types, so the target
+      # key's named tail can be absent (or describe only the call-site shape).
+      # Reuse the registered source name's validated, length-prefixed tail.
+      source_named_tail : String? = nil
+      if selected_stats.has_named_only
+        source_parts = parse_method_name(selected_name)
+        if source_suffix = source_parts.suffix
+          if source_named_start = named_shape_suffix_start(source_suffix)
+            source_named_tail = source_suffix.byte_slice(source_named_start, source_suffix.bytesize - source_named_start)
+          end
+        end
+      end
+
+      parts = parse_method_name(target)
+      suffix = parts.suffix
+      source_named_suffix = source_named_tail || ""
+      return "#{target}$double_splat#{source_named_suffix}" unless suffix
+
+      named_start = named_shape_suffix_start(suffix.not_nil!)
+      head = named_start ? suffix.not_nil!.byte_slice(0, named_start.not_nil!) : suffix.not_nil!
+      target_named_tail = named_start ? suffix.not_nil!.byte_slice(named_start.not_nil!) : ""
+      named_tail = source_named_tail || target_named_tail
+
+      # A source label may itself contain the spelling `_double_splat`; only
+      # inspect the ABI prefix before the length-prefixed named-label tail.
+      super_suffix = head.ends_with?("_super")
+      flagless_head = super_suffix ? head.byte_slice(0, head.bytesize - "_super".bytesize) : head
+      if flagless_head.ends_with?("_double_splat")
+        return "#{parts.base}$#{head}#{named_tail}"
+      end
+
+      specialized_head = "#{flagless_head}_double_splat"
+      specialized_head = "#{specialized_head}_super" if super_suffix
+      "#{parts.base}$#{specialized_head}#{named_tail}"
+    end
+
     private def lower_call(
       ctx : LoweringContext,
       node : Adamas::Compiler::Frontend::CallNode,
@@ -119401,6 +119467,9 @@ module Adamas::HIR
                   infer_arg_types_for_call(call_args, @current_class)
                 end
                 call_has_splat = call_args.any? { |arg_expr| call_arena[arg_expr].is_a?(Adamas::Compiler::Frontend::SplatNode) }
+                call_has_double_splat = call_args.any? do |arg_expr|
+                  (arg_node = call_arena[arg_expr]).is_a?(Adamas::Compiler::Frontend::SplatNode) && arg_node.double?
+                end
                 call_has_named_args = node.named_args.try(&.empty?) == false
                 if call_has_splat
                   expanded_types = [] of TypeRef
@@ -119457,8 +119526,9 @@ module Adamas::HIR
                 # before the overload shape is known. Generating allocator overloads
                 # from the raw source-order arg list can materialize a stale `.new`
                 # wrapper (e.g. treating a required named `scope:` arg as the third
-                # positional init param).
-                unless call_has_named_args
+                # positional init param). A ** carrier is likewise not a positional
+                # slot; defer allocator generation until its labels have been expanded.
+                unless call_has_named_args || call_has_double_splat
                   alloc_block = has_block_call ? allocator_call_block_contract(class_name_str, call_arg_types, false, block_expr, block_pass_expr) : nil
                   constructor_source_facts = unless call_has_splat || has_block_call
                                               source_class_arguments_before_lowering(ctx, call_args, call_arena)
@@ -123164,6 +123234,14 @@ module Adamas::HIR
         end
       end
       primary_mangled_name = mangled_method_name
+      if (selected_def = selected_call_entry_def) &&
+         (selected_name = selected_call_entry_name) &&
+         function_param_stats(selected_name, selected_def).has_double_splat
+        mangled_method_name = selected_double_splat_target_name(
+          mangled_method_name, selected_name, selected_def,
+        )
+        primary_mangled_name = mangled_method_name
+      end
       if receiver_id &&
          method_name == "do_compaction" &&
          args.empty? &&
@@ -124290,7 +124368,17 @@ module Adamas::HIR
       # exact call-site symbol; late materialization must not rediscover a
       # different included or inherited body from the serialized name alone.
       if selected_def = selected_call_entry_def
-        if (default_source = source_default_entry) && !has_block_call && !has_splat
+        if (selected_name = selected_call_entry_name) &&
+           function_param_stats(selected_name, selected_def).has_double_splat
+          selected_arena = selected_call_entry_arena || registered_arena_for_def(selected_def)
+          unless selected_arena
+            raise LoweringError.new("double-splat call lost its selected source arena: #{selected_name}", node)
+          end
+          bind_exact_source_call_target(
+            mangled_method_name, selected_name, selected_def, selected_arena, node,
+            "double-splat call",
+          )
+        elsif (default_source = source_default_entry) && !has_block_call && !has_splat
           unless default_source[1].same?(selected_def)
             raise LoweringError.new("defaulted call changed its selected source definition", node)
           end
@@ -132213,7 +132301,30 @@ module Adamas::HIR
           named_only = true
           next
         end
-        return nil if param.is_double_splat
+        if param.is_double_splat
+          restriction = param.type_annotation
+          if restriction && restriction.lstrip.starts_with?("**")
+            entries = named_types.map do |label, value|
+              "#{label}: #{proc_source_type_name(value[1].not_nil!)}"
+            end
+            aggregate_type = type_ref_for_name("NamedTuple(#{entries.join(", ")})")
+            types << aggregate_type
+            rest_facts = named_types.values.map { |value| value[1].not_nil! }
+            projected_facts << SourceCallArgument.new(aggregate_type, false, rest_facts)
+            infos << DefParamInfo.new(param.name, param.external_name, restriction.lstrip.lchop("**").strip, nil, false, false, false)
+          else
+            # Crystal requires at least one captured keyword for an element
+            # restriction. An empty rest must not erase that restriction.
+            return nil if restriction && named_types.empty?
+            named_types.each_value do |type_ref, source_fact|
+              types << type_ref
+              projected_facts << source_fact
+              infos << DefParamInfo.new(param.name, param.external_name, restriction, nil, false, false, false)
+            end
+          end
+          named_types.clear
+          next
+        end
 
         if param.is_splat
           # Crystal rejects an element-restricted rest parameter when the raw
@@ -134234,10 +134345,10 @@ module Adamas::HIR
 
     private def allocate_named_tuple(ctx : LoweringContext, values : Array(ValueId), keys : Array(String)? = nil) : ValueId
       named_tuple_type = ctx.get_type("NamedTuple")
-      # A double-splat NamedTuple built from call-site named args must carry its
-      # concrete key/value layout; the bare generic NamedTuple has size 0, so the
-      # payload stores would overflow the allocation.
-      if keys && !keys.empty? && keys.size == values.size
+      # Explicit call-site keys prove a concrete layout, including the empty
+      # NamedTuple(). The bare generic NamedTuple carries no layout evidence;
+      # non-empty payload stores would also overflow its zero-sized allocation.
+      if keys && keys.size == values.size
         entry_names = [] of String
         keys.each_with_index do |key, idx|
           value_name = get_type_name_from_ref(ctx.type_of(values[idx]))
@@ -134782,6 +134893,17 @@ module Adamas::HIR
     # A positional call still has named-only source slots after a rest formal.
     # Bind the selected source slots before defaults and Tuple packing can
     # reinterpret a rest element as a keyword value or a Tuple ABI pointer.
+    private def source_rest_keyword_slots_required?(func_name : String) : Bool
+      function_def_overload_keys(func_name).any? do |key|
+        if definition = @function_defs[key]?
+          stats = function_param_stats(key, definition)
+          stats.has_double_splat || (stats.positional_has_splat && stats.has_named_only)
+        else
+          false
+        end
+      end
+    end
+
     private def lower_positional_rest_keyword_args(
       ctx : LoweringContext,
       positional_args : Array(ExprId),
@@ -134795,15 +134917,7 @@ module Adamas::HIR
       source_callback_result : SourceCallArgument? = nil,
     ) : Tuple(Array(ValueId), Tuple(String, Adamas::Compiler::Frontend::DefNode), Bool) | TerminatedCallArguments | Nil
       func_name = full_method_name || method_name
-      needs_source_slots = function_def_overload_keys(func_name).any? do |key|
-        if definition = @function_defs[key]?
-          stats = function_param_stats(key, definition)
-          stats.positional_has_splat && stats.has_named_only && !stats.has_double_splat
-        else
-          false
-        end
-      end
-      return nil unless needs_source_slots
+      return nil unless source_rest_keyword_slots_required?(func_name)
 
       initial_entry = lookup_function_def_for_call(func_name, positional_args.size, has_block_call)
       lower_source_named_args(ctx, positional_args,
@@ -134830,10 +134944,7 @@ module Adamas::HIR
       # Source argument types must select the declaration before its named
       # values and defaults are rearranged into ABI slots. The rest-only path
       # already establishes this contract; ordinary named calls need it too.
-      if initial_entry
-        initial_params = function_param_infos(initial_entry[0], initial_entry[1])
-        return nil if initial_params.any?(&.is_double_splat)
-      else
+      unless initial_entry
         # A failed shape lookup in a known family is a rejection, not licence
         # to fall back to an unbound call symbol. The source lookup below
         # checks the actual labels and types before constructing ABI slots.
@@ -134942,7 +135053,7 @@ module Adamas::HIR
         end
       end
       unless selected
-        actual_names = source_types.map { |type| get_type_name_from_ref(type) }.join(", ")
+        actual_names = source_argument_facts.map { |argument| proc_source_type_name(argument.not_nil!) }.join(", ")
         raise LoweringError.new("no overload matches #{strip_type_suffix(func_name)} for argument types (#{actual_names}) and named arguments #{names.join(", ")}")
       end
 
@@ -135030,6 +135141,18 @@ module Adamas::HIR
             named_only = true
             next
           end
+          if param.is_double_splat
+            rest_labels = named_values.keys
+            rest_values = rest_labels.map { |label| named_values.delete(label).not_nil! }
+            rest_facts = rest_values.map { |value| source_call_argument(ctx, value, preserve_value_facts: true) }
+            tuple_id = allocate_named_tuple(ctx, rest_values, rest_labels)
+            result << tuple_id
+            supplied_types << SourceCallArgument.new(enum_tracked_type(ctx, tuple_id), false, rest_facts)
+            if local_name = param.name
+              ctx.all_locals[local_name] = tuple_id
+            end
+            next
+          end
           if param.is_splat
             rest_values = positional_values[positional_index, positional_values.size - positional_index]
             source_rest_values = rest_values.map { |value| source_call_argument(ctx, value) }
@@ -135089,7 +135212,12 @@ module Adamas::HIR
         end
 
         bound_types = result.map { |value| enum_tracked_type(ctx, value) }
-        unless params_compatible_with_args?(selected[1], bound_types, context, params, packed_source_slots: true)
+        bound_facts = result.map_with_index do |value, index|
+          rest_facts = supplied_types[index]?.try(&.rest_values)
+          source_call_argument(ctx, value, rest_facts, preserve_value_facts: true).as(SourceCallArgument?)
+        end
+        unless params_compatible_with_args?(selected[1], bound_types, context, params, packed_source_slots: true,
+                 source_argument_facts: bound_facts)
           actual_names = bound_types.map { |type| get_type_name_from_ref(type) }.join(", ")
           raise LoweringError.new("no overload matches #{strip_type_suffix(func_name)} for bound argument types (#{actual_names})")
         end
@@ -148221,10 +148349,32 @@ module Adamas::HIR
       enum_name = resolve_enum_name(class_name_str) || resolve_enum_name(lookup_class_name)
 
       source_default_entry_out = [] of Tuple(String, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike)
-      args, _, _ = apply_default_args(
-        ctx, [] of ValueId, member_name, full_method_name, false, false, nil,
-        source_default_entry_out,
-      )
+      args = if member_name != "new" && source_rest_keyword_slots_required?(full_method_name)
+               # The receiver has already been evaluated. Bind the empty source
+               # keyword set here, before defaults or ABI slots, without replaying
+               # its expression or selecting a different overload from packed args.
+               source_bindings = [] of SourceCallBinding
+               bound = lower_source_named_args(
+                 ctx, [] of ExprId, [] of Adamas::Compiler::Frontend::NamedArgument,
+                 full_method_name, nil, false, nil, @arena,
+                 source_binding_out: source_bindings, allow_empty_named: true,
+               )
+               return bound.value if bound.is_a?(TerminatedCallArguments)
+               unless bound
+                 raise LoweringError.new("source argument binding unavailable for #{full_method_name}")
+               end
+               selected_name, selected_def = bound[1]
+               binding = source_bindings.first? || raise LoweringError.new("missing source argument binding for #{selected_name}")
+               full_method_name = selected_name
+               source_default_entry_out << {selected_name, selected_def, binding.declaration_arena}
+               bound[0]
+             else
+               default_args, _, _ = apply_default_args(
+                 ctx, [] of ValueId, member_name, full_method_name, false, false, nil,
+                 source_default_entry_out,
+               )
+               default_args
+             end
       if terminal_default = args.find { |value| runtime_noreturn_value?(ctx, value) }
         return terminal_default
       end
@@ -152695,6 +152845,7 @@ module Adamas::HIR
       supplied = [] of SourceCallArgument?
       positional_index = 0
       named_only = false
+      remaining_named_values = named_values.dup
       params.each do |param|
         next if param.is_block
         if named_only_separator?(param)
@@ -152702,7 +152853,12 @@ module Adamas::HIR
           next
         end
         if param.is_double_splat
-          supplied << SourceCallArgument.new(type_ref_for_name("NamedTuple()"), false, [] of SourceCallArgument)
+          rest_facts = remaining_named_values.values.map { |value| source_call_argument(ctx, value, preserve_value_facts: true) }
+          entries = remaining_named_values.keys.map_with_index do |label, index|
+            "#{label}: #{proc_source_type_name(rest_facts[index])}"
+          end
+          supplied << SourceCallArgument.new(type_ref_for_name("NamedTuple(#{entries.join(", ")})"), false, rest_facts)
+          remaining_named_values.clear
         elsif param.is_splat
           rest = positional_values[positional_index, positional_values.size - positional_index]
           rest_facts = rest.map { |value| source_call_argument(ctx, value, preserve_value_facts: true) }
@@ -152713,7 +152869,7 @@ module Adamas::HIR
         elsif !named_only && positional_index < positional_values.size
           supplied << source_call_argument(ctx, positional_values[positional_index], preserve_value_facts: true)
           positional_index += 1
-        elsif (label = named_parameter_label(param)) && (value = named_values[label]?)
+        elsif (label = named_parameter_label(param)) && (value = remaining_named_values.delete(label))
           supplied << source_call_argument(ctx, value, preserve_value_facts: true)
         else
           supplied << nil

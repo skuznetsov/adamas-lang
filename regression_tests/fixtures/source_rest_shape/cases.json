@@ -1,0 +1,215 @@
+{
+  "schema": "adamas_source_rest_binding_regression_v1",
+  "scope": "runtime * and ** source binding, including rest declaration selection, block shape, inherited constructor forwarding, and strict parameter/value-kind rejection",
+  "counts": {
+    "positive": 18,
+    "negative": 3,
+    "total": 21
+  },
+  "cases": [
+    {
+      "name": "empty_keyword_first_top_level",
+      "source": "empty_keyword_first_top_level.cr",
+      "source_sha256": "ea26366c378bbaf8da9e196d3feb994215d486f6542a2e6c01e5fda7e233d555",
+      "ok": true,
+      "expected_stdout": "AP\n",
+      "origin_source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/double-splat-source-collision35q3749/empty_keyword_first_top_level.cr",
+      "qualification": "stock_original_previously_passed_q4691"
+    },
+    {
+      "name": "empty_keyword_first_class_method",
+      "source": "empty_keyword_first_class_method.cr",
+      "source_sha256": "a0382003cb88538b8336f58970b1a06026c73ad27f998e9b0a29ba0356d91c51",
+      "ok": true,
+      "expected_stdout": "AP\n",
+      "origin_source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/double-splat-source-collision35q3749/empty_keyword_first_class_method.cr",
+      "qualification": "stock_original_previously_passed_q4691"
+    },
+    {
+      "name": "empty_positional_first_top_level",
+      "source": "empty_positional_first_top_level.cr",
+      "source_sha256": "5a46fbc6aca3711ca27a99238d73db48c76595bd4977694b6fda3c029e3152eb",
+      "ok": true,
+      "expected_stdout": "PA\n",
+      "origin_source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/double-splat-source-collision35q3749/empty_positional_first_top_level.cr",
+      "qualification": "stock_original_previously_passed_q4691"
+    },
+    {
+      "name": "empty_positional_first_class_method",
+      "source": "empty_positional_first_class_method.cr",
+      "source_sha256": "1e906670d2bd431a185af3463a7d4b722bc6f5e93b90c0d8d93ecf8b63c2bd5d",
+      "ok": true,
+      "expected_stdout": "PA\n",
+      "origin_source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/double-splat-source-collision35q3749/empty_positional_first_class_method.cr",
+      "qualification": "stock_original_previously_passed_q4691"
+    },
+    {
+      "name": "nonempty_keyword_first_top_level",
+      "source": "nonempty_keyword_first_top_level.cr",
+      "source_sha256": "1d959ec3ec4e9d214bb39279e7d47716fc7d5211e37adb4e5c4d2c7503294944",
+      "ok": true,
+      "expected_stdout": "AP\n",
+      "origin_source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/double-splat-source-collision35q3749/nonempty_keyword_first_top_level.cr",
+      "qualification": "stock_original_previously_passed_q4691"
+    },
+    {
+      "name": "nonempty_keyword_first_class_method",
+      "source": "nonempty_keyword_first_class_method.cr",
+      "source_sha256": "74b18cfd575f12eac9d54bac8069c227524563f5a3e3d0dc7998fbeb4ee3b46b",
+      "ok": true,
+      "expected_stdout": "AP\n",
+      "origin_source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/double-splat-source-collision35q3749/nonempty_keyword_first_class_method.cr",
+      "qualification": "stock_original_previously_passed_q4691"
+    },
+    {
+      "name": "nonempty_positional_first_top_level",
+      "source": "nonempty_positional_first_top_level.cr",
+      "source_sha256": "458100e52ac64e243b58c38f8bdb7d1a809471bc1c64ede77d49088b42b3547e",
+      "ok": true,
+      "expected_stdout": "PA\n",
+      "origin_source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/double-splat-source-collision35q3749/nonempty_positional_first_top_level.cr",
+      "qualification": "stock_original_previously_passed_q4691"
+    },
+    {
+      "name": "nonempty_positional_first_class_method",
+      "source": "nonempty_positional_first_class_method.cr",
+      "source_sha256": "7647393d5cf0d5b51b324e9f2f85c89824f26e9f3f771a19de9c5d9c697ac29c",
+      "ok": true,
+      "expected_stdout": "PA\n",
+      "origin_source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/double-splat-source-collision35q3749/nonempty_positional_first_class_method.cr",
+      "qualification": "stock_original_previously_passed_q4691"
+    },
+    {
+      "name": "empty_keyword_first_with_block",
+      "source": "empty_keyword_first_with_block.cr",
+      "source_sha256": "7a43c46de7b70ed544bca28c24c3f08b6765d68bd285d7aee28be2ea90d11b56",
+      "ok": true,
+      "expected_stdout": "BABP\n",
+      "origin_source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/double-splat-source-block-qualified35q3763/empty_keyword_first_with_block.cr",
+      "qualification": "stock_original_previously_passed_q4691"
+    },
+    {
+      "name": "empty_positional_first_with_block",
+      "source": "empty_positional_first_with_block.cr",
+      "source_sha256": "e03a3a36b14553cdbade2c89700a5304ad534ef53a6c1976d9218d26f54c3d7e",
+      "ok": true,
+      "expected_stdout": "BPBA\n",
+      "origin_source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/double-splat-source-block-qualified35q3763/empty_positional_first_with_block.cr",
+      "qualification": "stock_original_previously_passed_q4691"
+    },
+    {
+      "name": "nonempty_keyword_first_with_block",
+      "source": "nonempty_keyword_first_with_block.cr",
+      "source_sha256": "6d39ee7be92b6f1acd0a59303a15ca7dbef03ec714b4b5cbd31544bf1ad49ce5",
+      "ok": true,
+      "expected_stdout": "BABP\n",
+      "origin_source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/double-splat-source-block-qualified35q3763/nonempty_keyword_first_with_block.cr",
+      "qualification": "stock_original_previously_passed_q4691"
+    },
+    {
+      "name": "nonempty_positional_first_with_block",
+      "source": "nonempty_positional_first_with_block.cr",
+      "source_sha256": "0659cdc2a5e0552bfdceb3eb94b91ef68a9b71ab9067c2a2ab5adc37b4391f58",
+      "ok": true,
+      "expected_stdout": "BPBA\n",
+      "origin_source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/double-splat-source-block-qualified35q3763/nonempty_positional_first_with_block.cr",
+      "qualification": "stock_original_previously_passed_q4691"
+    },
+    {
+      "name": "named_only_labels_keep_selected_rest_target",
+      "source": "named_only_labels_keep_selected_rest_target.cr",
+      "source_sha256": "7a6a6869d15ae112b90cc64f9f5b0dbfeb1331eb88f49c0ec42c2898da5b3ec7",
+      "ok": true,
+      "expected_stdout": "AP\nAP\n",
+      "origin_source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/double-splat-source-block-qualified35q3763/named_only_labels_keep_selected_rest_target.cr",
+      "qualification": "stock_original_previously_passed_q4691"
+    },
+    {
+      "name": "inherited_union_depth0_code66",
+      "source": "inherited_union_depth0_code66.cr",
+      "source_sha256": "60c1d9e14f612cc5e7dc2e1e8d08b28f3dcaa6d1c8c44d25bf78d50ff4cd650a",
+      "ok": true,
+      "expected_stdout": "B\n",
+      "origin_source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/inherited-error-factory-public35q3745/inherited_union_depth0_code66.cr",
+      "qualification": "stock_original_previously_passed_q4691"
+    },
+    {
+      "name": "inherited_union_depth0_code67",
+      "source": "inherited_union_depth0_code67.cr",
+      "source_sha256": "4e968b0613d2708c75f7f82c4736fc5f827042e4f416b71f41248815808be94c",
+      "ok": true,
+      "expected_stdout": "C\n",
+      "origin_source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/inherited-error-factory-public35q3745/inherited_union_depth0_code67.cr",
+      "qualification": "stock_original_previously_passed_q4691"
+    },
+    {
+      "name": "inherited_union_depth5_code66",
+      "source": "inherited_union_depth5_code66.cr",
+      "source_sha256": "958f0f7daa708ff2f25f7886818e68c3fcf3dc92291e3e41f9f55456a72ae568",
+      "ok": true,
+      "expected_stdout": "B\n",
+      "origin_source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/inherited-error-factory-public35q3745/inherited_union_depth5_code66.cr",
+      "qualification": "stock_original_previously_passed_q4691"
+    },
+    {
+      "name": "inherited_union_depth5_code67",
+      "source": "inherited_union_depth5_code67.cr",
+      "source_sha256": "6659ec3d0fbc20b374392202933dd99e3c307db6ffc90ff03f2874bf9552aeb0",
+      "ok": true,
+      "expected_stdout": "C\n",
+      "origin_source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/inherited-error-factory-public35q3745/inherited_union_depth5_code67.cr",
+      "qualification": "stock_original_previously_passed_q4691"
+    },
+    {
+      "name": "required_rest_constructor_forward",
+      "source": "required_rest_constructor_forward.cr",
+      "source_sha256": "13b15ef03b4874240b34c46eb61df82f8be5d2b86687e14877d2c625f2e3ea4f",
+      "ok": true,
+      "expected_stdout": "AB\n",
+      "origin_source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/required-rest-constructor-forward35q4742.cr",
+      "qualification": "stock_original_q4743"
+    },
+    {
+      "name": "ordinary_restriction_reject",
+      "source": "ordinary_restriction_reject.cr",
+      "source_sha256": "1d1bb56bc64061f171791ec0e7e6088424b45895b0c0ab1cf44cde271c80f3e2",
+      "ok": false,
+      "origin_source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/rest-source-negative-controls35q4009/ordinary_restriction_reject.cr",
+      "original_diagnostic_fragments": [
+        "expected argument #1 to 'RestGuard.call' to be Int32, not Bool"
+      ],
+      "candidate_diagnostic_fragments": [
+        "no overload matches RestGuard.call for argument types (Bool, Int32) and named arguments tag"
+      ],
+      "qualification": "stock_original_q4010; prior_candidate_q4020"
+    },
+    {
+      "name": "named_restriction_reject",
+      "source": "named_restriction_reject.cr",
+      "source_sha256": "161321e2c231f029a29367858781dba5b7a6c6e98567437cac2eeaf7296d3126",
+      "ok": false,
+      "origin_source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/rest-source-negative-controls35q4009/named_restriction_reject.cr",
+      "original_diagnostic_fragments": [
+        "no overload matches 'RestGuard.call', tag: Bool, extra: Int32"
+      ],
+      "candidate_diagnostic_fragments": [
+        "no overload matches RestGuard.call for argument types (Int32, Bool) and named arguments extra, tag"
+      ],
+      "qualification": "stock_original_q4010; prior_candidate_q4020"
+    },
+    {
+      "name": "instance_kind_reject",
+      "source": "instance_kind_reject.cr",
+      "source_sha256": "06cfaf5b6f169383d3d78b8a27a055254ac8813941619fa774d7d12d5b235a48",
+      "ok": false,
+      "origin_source": "/opt/mldata_ssd/adamas_codex_oct29_rootcause/rest-source-negative-controls35q4009/instance_kind_reject.cr",
+      "original_diagnostic_fragments": [
+        "expected argument #1 to 'RestGuard.call' to be Int32, not Int32.class"
+      ],
+      "candidate_diagnostic_fragments": [
+        "no overload matches RestGuard.call for argument types (Int32.class, Int32) and named arguments tag"
+      ],
+      "qualification": "stock_original_q4010; prior_candidate_q4020"
+    }
+  ]
+}
