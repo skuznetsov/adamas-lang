@@ -1,0 +1,114 @@
+[
+  {
+    "name": "reopened_annotated",
+    "source": "reopened_annotated.cr",
+    "ok": true,
+    "expected_stdout": "reopened_annotated.expected"
+  },
+  {
+    "name": "same_body_annotated",
+    "source": "same_body_annotated.cr",
+    "ok": true,
+    "expected_stdout": "same_body_annotated.expected"
+  },
+  {
+    "name": "reopened_plain",
+    "source": "reopened_plain.cr",
+    "ok": true,
+    "expected_stdout": "reopened_plain.expected"
+  },
+  {
+    "name": "class_reopened",
+    "source": "class_reopened.cr",
+    "ok": true,
+    "expected_stdout": "class_reopened.expected"
+  },
+  {
+    "name": "class_plain",
+    "source": "class_plain.cr",
+    "ok": true,
+    "expected_stdout": "class_plain.expected"
+  },
+  {
+    "name": "instance_plain",
+    "source": "instance_plain.cr",
+    "ok": true,
+    "expected_stdout": "instance_plain.expected"
+  },
+  {
+    "name": "restriction_siblings",
+    "source": "restriction_siblings.cr",
+    "ok": true,
+    "expected_stdout": "restriction_siblings.expected"
+  },
+  {
+    "name": "arity_siblings",
+    "source": "arity_siblings.cr",
+    "ok": true,
+    "expected_stdout": "arity_siblings.expected"
+  },
+  {
+    "name": "partial_restriction_siblings",
+    "source": "partial_restriction_siblings.cr",
+    "ok": true,
+    "expected_stdout": "partial_restriction_siblings.expected"
+  },
+  {
+    "name": "latest_bool_type",
+    "source": "latest_bool_type.cr",
+    "ok": true,
+    "expected_stdout": "latest_bool_type.expected"
+  },
+  {
+    "name": "latest_bool_reject",
+    "source": "latest_bool_reject.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "must be Int32, not Bool"
+    ],
+    "candidate_diagnostic": [
+      "must be Int32, not Bool"
+    ]
+  },
+  {
+    "name": "latest_macro_reject",
+    "source": "latest_macro_reject.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "latest body error"
+    ],
+    "candidate_diagnostic": [
+      "latest body error"
+    ]
+  },
+  {
+    "name": "block_siblings",
+    "source": "block_siblings.cr",
+    "ok": true,
+    "expected_stdout": "block_siblings.expected"
+  },
+  {
+    "name": "empty_keyword_first_with_block",
+    "source": "empty_keyword_first_with_block.cr",
+    "ok": true,
+    "expected_stdout": "empty_keyword_first_with_block.expected"
+  },
+  {
+    "name": "empty_positional_first_with_block",
+    "source": "empty_positional_first_with_block.cr",
+    "ok": true,
+    "expected_stdout": "empty_positional_first_with_block.expected"
+  },
+  {
+    "name": "nonempty_keyword_first_with_block",
+    "source": "nonempty_keyword_first_with_block.cr",
+    "ok": true,
+    "expected_stdout": "nonempty_keyword_first_with_block.expected"
+  },
+  {
+    "name": "nonempty_positional_first_with_block",
+    "source": "nonempty_positional_first_with_block.cr",
+    "ok": true,
+    "expected_stdout": "nonempty_positional_first_with_block.expected"
+  }
+]

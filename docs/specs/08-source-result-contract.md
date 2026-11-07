@@ -38,6 +38,26 @@ same definition, arena, call shape, and source arguments. A completed generic
 family restriction may settle through its validated concrete result facts;
 an unresolved method formal cannot use that route.
 
+## Stable arity keys during declaration replay
+
+An occupied declaration slot must not invent a new `$arityN` key for the same
+source signature. Preserve the existing deterministic arity, partial restriction,
+rest, named-label and block discriminators when registering or replaying that
+signature. In particular, replay cannot move a replacement zero-argument method
+away from the bare key still used to select its original body.
+
+The original-first source_method_declaration_key_repro.sh gate covers 15 native
+controls and two strict rejections per compiler. The focused HIR tests check
+occupied-key replay, distinct source shapes, exact Def/Arena publication and
+return facts. Existing generic-owner hash controls retain the separate
+zero-argument and typed-protocol checks with the stable source key.
+
+Source-ordered publication of conditional or macro-generated module class
+methods remains a separate obligation. So do predecessor dispatch, defaulted
+overload priority and module-class return validation. ABI mangling must also
+retain a selected `**` source shape through later call specialization; equal
+NamedTuple carriers do not establish equal source overloads.
+
 ## Admission and rejection
 
 The candidate covers explicit and implicit returns in ordinary, class, and
@@ -547,6 +567,7 @@ and check semantic diagnostics and absence of an executable for rejections.
 - `regression_tests/declared_return_contract_repro.sh`
 - `regression_tests/source_return_kind_repro.sh`
 - `regression_tests/source_method_void_result_repro.sh`
+- `regression_tests/source_method_declaration_key_repro.sh`
 - `regression_tests/source_array_helper_result_repro.sh`
 - `regression_tests/source_inline_callback_result_repro.sh`
 - `regression_tests/enum_value_source_result_repro.sh`

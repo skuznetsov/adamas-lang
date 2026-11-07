@@ -19,6 +19,7 @@ require "../predefined_source_types"
 require "../mir/mir"
 require "../../runtime"
 require "../semantic/macro_expander"
+require "../semantic/diagnostic_formatter"
 require "../semantic/symbol_table"
 require "./source_block_result_pattern"
 
@@ -53982,18 +53983,9 @@ module Adamas::HIR
         full_name = "#{base_name}$arity#{param_count}"
       end
 
-      # For TOP-LEVEL bare functions (no '#' or '.' in base_name), suppress
-      # $arity0 renaming: the prescan collision guard is a false positive caused
-      # by prescan pre-populating @function_defs before lower_def runs. Zero-arg
-      # top-level functions have no overload ambiguity and adding $arity0 causes
-      # a call/def name mismatch that breaks RTA traversal.
-      # For INSTANCE and CLASS methods (base_name contains '#' or '.'), the guard
-      # still fires for zero-arg overloads to preserve the prescan collision
-      # handling that s2b relies on.
-      is_method = base_name.includes?('#') || base_name.includes?('.')
-      if @function_defs.has_key?(full_name) && (full_name == base_name || has_untyped) && (param_count > 0 || is_method)
-        full_name = "#{base_name}$arity#{param_count}"
-      end
+      # Replaying the same signature must not invent an arity key because
+      # its original key is occupied. Source arity and partial restrictions
+      # already have deterministic discriminators above.
 
       # Named-only labels distinguish source overloads with the same ABI.
       if has_named_only
@@ -54674,7 +54666,7 @@ module Adamas::HIR
 
       # Fallback: check if Object has this method (inherited method)
       # This handles cases like hash() where variant types don't have a 0-arg version
-      # but Object#hash$arity0 exists
+      # but Object#hash exists
       object_base = "Object##{method_name}"
       if has_function_base?(object_base)
         if resolved = resolve_untyped_overload(object_base, arg_types.size, has_block_call, call_has_named_args, arg_types)

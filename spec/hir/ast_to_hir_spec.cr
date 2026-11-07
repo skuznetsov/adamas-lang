@@ -5932,11 +5932,11 @@ describe Adamas::HIR::AstToHir do
         end
       CRYSTAL
 
-      func = converter.module.functions.find { |f| f.name == "Adamas::MIR.probe$arity0" }
+      func = converter.module.functions.find { |f| f.name == "Adamas::MIR.probe" }
       func.should_not be_nil
 
       text = hir_text(func.not_nil!)
-      text.should contain("call ::Set(String).new()")
+      text.should contain("call ::Set(::String).new()")
       text.should_not contain("__adamas_string_includes_string")
 
       new_call = func.not_nil!.blocks[0].instructions.find do |inst|
@@ -5970,11 +5970,11 @@ describe Adamas::HIR::AstToHir do
         end
       CRYSTAL
 
-      func = converter.module.functions.find { |f| f.name == "Adamas::MIR::HIRToMIRLowering#prepare$arity0" }
+      func = converter.module.functions.find { |f| f.name == "Adamas::MIR::HIRToMIRLowering#prepare" }
       func.should_not be_nil
 
       text = hir_text(func.not_nil!)
-      text.should contain("call ::Set(String).new()")
+      text.should contain("call ::Set(::String).new()")
       text.should_not contain("__adamas_string_includes_string")
     end
 
@@ -6010,7 +6010,7 @@ describe Adamas::HIR::AstToHir do
         end
       CRYSTAL
 
-      func = converter.module.functions.find { |f| f.name == "Adamas::MIR::HIRToMIRLowering#prepare$arity0" }
+      func = converter.module.functions.find { |f| f.name == "Adamas::MIR::HIRToMIRLowering#prepare" }
       func.should_not be_nil
 
       new_call = func.not_nil!.blocks[0].instructions.find do |inst|
@@ -14029,7 +14029,7 @@ describe Adamas::HIR::AstToHir do
         end
       end
 
-      zero_arg_wrapper = converter.module.functions.find(&.name.==("Object#hash$arity0")).not_nil!
+      zero_arg_wrapper = converter.module.functions.find(&.name.==("Object#hash")).not_nil!
       protocol_call = zero_arg_wrapper.blocks.flat_map(&.instructions).compact_map do |instruction|
         instruction.as?(Adamas::HIR::Call)
       end.find(&.method_name.ends_with?("#hash$Crystal::Hasher")).not_nil!
@@ -20026,7 +20026,7 @@ describe Adamas::HIR::AstToHir do
         Time.instant()
       CRYSTAL
 
-      converter.module.function_by_name("Time.instant$arity0").should_not be_nil
+      converter.module.function_by_name("Time.instant").should_not be_nil
 
       main = converter.module.function_by_name("__adamas_main")
       main.should_not be_nil
@@ -20050,7 +20050,7 @@ describe Adamas::HIR::AstToHir do
         Time::Location.utc()
       CRYSTAL
 
-      converter.module.function_by_name("Time::Location.utc$arity0").should_not be_nil
+      converter.module.function_by_name("Time::Location.utc").should_not be_nil
 
       main = converter.module.function_by_name("__adamas_main")
       main.should_not be_nil

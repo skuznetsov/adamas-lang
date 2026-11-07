@@ -26198,3 +26198,44 @@ integration, fresh bootstrap, or LavinMQ parity.
   GC.prof_stats body even though gc/boehm.cr supplies its replacement (35q3956).
   Both files loaded. Investigate definition registration/selection; preserve the
   macro error instead of silently accepting the fallback.
+
+
+### 2026-11-06 — Keep source arity keys stable across registration
+
+- [x] Remove the registry-occupancy arity rename from declaration key generation.
+  Replaying an existing zero-argument method must reuse its source key; partially
+  typed, rest, named-only and block signatures keep their existing discriminators.
+  This closes ordinary redefinition selecting the old GC.prof_stats fallback.
+- [x] Import DiagnosticFormatter at its HIR consumer. Direct HIR specs otherwise
+  fail to compile after the macro-error propagation repair (35q3979/35q3990).
+- source_method_declaration_key_repro.sh passes 15 native controls and two strict
+  rejections per compiler on Crystal 1.22.1 and exact S1 35q3998 (35q4002).
+  Three new source-key HIR examples and six neighboring generic-owner/hash/Time
+  examples pass together at the final source state (35q4001). Only exact key expectations change in those
+  neighbors, plus two stale absolute String renderings reproduced before this
+  fix (35q3991); their receiver, call argument and result checks remain intact.
+- Both root neighbors pass on S1 35q3984: 21 Begin cases per compiler, and the
+  initializer gate's 21 HIR checks plus six native stock/lazy/eager controls
+  (35q3995). A subsequent comment-only cleanup names bare Object#hash correctly.
+- Fresh stock-prelude hello still hits the exact-source guard, now at
+  Event#wake_at? (35q3997); stock compiles and prints A (35q3996). This remains
+  the duplicate-accessor source-ownership family; keep its guard strict.
+- The four original redefinition probes fail on S1 35q3953 and pass after the
+  arity repair (35q3959/35q3965). Unchanged LavinMQ now passes the false fallback
+  and stops at pending Socket::BindError.from_os_error$String_Errno_NamedTuple
+  in TCPServer#system_bind (35q3994). Compiler, app, shards and stock stdlib inputs
+  remain stable. This is frontend evidence, not link/server or upstream parity.
+- [ ] Publish conditional and macro-generated module class methods in source
+  order, including stable expansion origins and coherent Def/Arena/return facts.
+  Qualified conditional and repeated-macro replacements still print B instead
+  of stock A (35q3967/35q3968).
+- [ ] Repair previous_def dispatch for instance/class/module replacements,
+  defaulted typed-sibling priority, module-class return-annotation validation and
+  macro-generated arity siblings. Stock-qualified controls in
+  declaration-key-extra-guards35q3971/cases-qualified.json and results 35q3973/35q3974
+  distinguish each. Every failure is independently present on the old S1
+  (35q3975); the return-annotation replacement condition improves with stable keys.
+- [ ] Carry the exact selected source rest shape through specialization and
+  final call emission. Eight same-carrier no-block **/positional controls still
+  print PP instead of AP/PA; the inherited factory and named-label cases also
+  remain open (renewed baseline 35q3977). Keep pending-result and type guards.

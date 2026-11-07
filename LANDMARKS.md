@@ -25815,3 +25815,64 @@ Fixture-manifest SHA-256:
 Refresh after macro value/statement routing, sequence/conditional evaluation or
 diagnostic propagation changes. Rollback is this atomic commit. Application,
 stdlib and unrelated WIP are unchanged.
+
+
+## 2026-11-06 — Declaration replay preserves its source arity key
+
+The declaration-key generator consulted registry occupancy and renamed an
+already registered method to a fresh $arityN key. An ordinary zero-argument
+replacement therefore left the original key pointing at its old body. This
+selected GC.prof_stats's fallback raise despite loading the Boehm replacement.
+Remove that occupancy-dependent rename while retaining deterministic source
+arity, partial restrictions, rest, named-label and block discrimination. Import
+DiagnosticFormatter at the HIR consumer so direct HIR specs can compile the
+previous macro-error propagation path.
+
+The original four redefinition controls fail on S1 35q3953 and pass after the
+repair (35q3959/35q3965). Final source_method_declaration_key_repro.sh passes
+15 native controls and two strict rejections per compiler on Crystal 1.22.1 and
+S1 35q3998 (35q4002). Nine HIR examples pass together at the final source state
+(35q4001), including exact Def/Arena publication and zero-argument versus typed
+hash protocol guards. Six exact source-key expectations change; two additional
+absolute-String rendering expectations were already stale on the require-only
+baseline (35q3991). The receiver, argument and result assertions remain strict.
+Before the final comment-only cleanup, both requested root neighbors pass on
+S1 35q3984: 21 Begin cases per compiler and 21 initializer HIR checks plus six
+native stock/lazy/eager controls (35q3995). Bounded Adversary verdict: ROBUST for
+stable arity keys and the measured hash/overload controls; source review is
+correlated. The final cleanup only corrects an Object#hash comment.
+
+Unchanged LavinMQ passes the false fallback on S1 35q3984 and stops at pending
+Socket::BindError.from_os_error$String_Errno_NamedTuple in TCPServer#system_bind
+(35q3994). Its compiler/application/shard/stock-stdlib input manifest is stable.
+Final S1 35q3998 still rejects stock-prelude hello at the exact-source guard for
+Event#wake_at? (35q3997); original Crystal compiles it and prints A (35q3996).
+Keep the guard while locating the duplicate accessor source producer. Full
+prelude, link/server execution, fresh bootstrap and upstream parity remain open.
+
+Conditional and macro-generated module class methods still need source-ordered
+publication with stable expansion origins and coherent metadata (35q3967/35q3968).
+The qualified extra controls expose previous_def dispatch, default-overload
+priority, module-class return validation and macro arity siblings
+(declaration-key-extra-guards35q3971/cases-qualified.json; 35q3973/35q3974).
+Every failing extra case also fails on the old compiler (35q3975); retain these
+as separate root causes. Renewed rest-shape baseline 35q3977 still has eight
+no-block **/positional carrier collisions, four inherited failures and one
+named-label failure; four block controls now pass. Preserve selected source
+shape through remangling and final emission without relaxing pending results.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+source-method-key-final-gate35q4002/result.json,
+source-method-key-final-units35q4001/result.json,
+source-method-key-root-neighbors35q3995/result.json,
+lavinmq-stable-method-key-final35q3994/result.json, and
+prelude-stable-key-final35q3997/result.json.
+All 1,916 compiler files match build.stable-method-key-final35q3998.source.json
+(SHA-256 c4a23f21d6c5da14474fc32e04db1a8805c2539b3e36cf610c935f9194ecf5da).
+Final compiler SHA-256:
+bef8376940e6a7435e549b0c03b83e4392b6dc88a4ace3c8d8e861d6e32c403e.
+Fixture-manifest SHA-256:
+b24f2c07b6fbbfa87cd7649b95b72262266306b3e7f8b578d700345d63d19b5c.
+Refresh after declaration key generation, source publication order, Def/Arena
+ownership, overload selection or call-shape transport changes. Rollback is this
+atomic compiler commit. Application, stdlib and unrelated WIP are unchanged.
