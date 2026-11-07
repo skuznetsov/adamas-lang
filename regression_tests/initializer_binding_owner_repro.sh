@@ -26,6 +26,7 @@ fi
   spec/hir/materialized_initializer_source_spec.cr \
   spec/hir/initializer_layout_replay_spec.cr \
   spec/hir/pending_queue_layout_invalidation_spec.cr \
+  spec/hir/generated_allocator_initializer_receipt_spec.cr \
   "${flags[@]}" --single-module --no-debug) > "$WORK/spec.log" 2>&1 || {
   cat "$WORK/spec.log" >&2
   exit 1

@@ -26944,3 +26944,21 @@ integration, fresh bootstrap, or LavinMQ parity.
   stale Function identity remains a separate compiler defect. Full prelude,
   fresh bootstrap and unchanged LavinMQ object/link/server/upstream parity stay
   open. No stdlib/application or source restriction changes.
+
+
+### 2026-11-07 — Renew generated initializer receipts after exact body replay
+
+- [x] Reissue the wrapper receipt only after authenticated initializer replay
+  replaces its exact retired Function. Preserve source/Def/Arena, completed
+  parameter/block ABI, live Call shape and generated body witness.
+- [x] Keep same-name/same-ABI untracked replacements invalid. Refuse renewal
+  across a NoReturn category change; renewal cannot rebuild wrapper CFG.
+- initializer_binding_owner_repro.sh passes 29 HIR controls and six original-first
+  native runs on exact S1 35q5446 (35q5462). The prior six-control baseline
+  fails only natural stale Function identity (35q5447); call/body/source guards
+  remain strict. Carrier guards also pass 30 HIR and nine native runs (35q5463).
+- [ ] Whole-wrapper regeneration for a NoReturn category change remains a
+  separate capability; the two new tests isolate internal guard behavior and
+  do not prove source reachability.
+- Full prelude, fresh bootstrap and unchanged LavinMQ object/link/server/upstream
+  parity remain open. No stdlib/application or type restriction changes.

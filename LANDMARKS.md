@@ -27165,3 +27165,36 @@ injects the owner as a Proc input (baseline 35q5422, packet 35q5423). Authentica
 initializer replay receipt renewal is separately in progress. Full prelude,
 fresh bootstrap and unchanged LavinMQ object/link/server/upstream parity are
 not established. No stdlib/application or source restriction changes.
+
+
+## 2026-11-07 — Exact replay renews a generated initializer Function receipt
+
+The natural captured-block initializer replay retired its original Function,
+but the generated allocator still held that generation's receipt. The strict
+source/ABI check correctly rejected it (35q5418). Renewal now follows the tracked
+replay transition, requiring the exact prior target, selected source Def/Arena,
+unchanged parameter/block ABI, current wrapper body witness and live Call shape.
+All replacements validate before installation. Same-name/same-ABI identity is
+insufficient; in-place call mutations and untracked Functions remain invalid.
+Renewal refuses a NoReturn category change because it does not rebuild CFG.
+
+Scoped adversary verdict: ROBUST for authenticated normal-result renewal and
+fail-closed category guards. The baseline six-control test fails only stale
+Function identity (35q5447); the shipping gate passes 29 HIR controls and six
+stock/lazy/eager native runs (35q5462). Both synthetic NoReturn transitions
+check every other renewal prerequisite before refusal; source reachability is
+unproven. The same S1 passes 30 carrier HIR controls and nine native runs
+(35q5463). All executions use run_safe.sh and unchanged Crystal 1.22.1 stdlib.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+initializer-receipt-baseline35q5447/, initializer-receipt-candidate35q5448/,
+build.generated-initializer-replay-receipt35q5446.{result,source}.json,
+initializer-receipt-shipping35q5462/, initializer-receipt-carrier-guards35q5463/,
+and initializer-receipt-owned35q5464.json.
+S1 SHA-256: 5982487e60b1d0366666c680b2ad7708e8d901f6728518b514d15a10f7d2fe32.
+Compiler source manifest SHA-256:
+24603e59e112ee66eeb33256594c48083e42c72cd0d07f8c4a7dc141c4e5c06d.
+Refresh after replay identity, source/ABI, wrapper lifetime, call repair or
+result-category changes. Rollback is the atomic receipt-renewal commit;
+unrelated WIP is excluded. Whole-wrapper NoReturn regeneration, full prelude,
+fresh bootstrap and unchanged LavinMQ runtime/upstream parity remain open.

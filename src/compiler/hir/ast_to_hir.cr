@@ -1505,6 +1505,13 @@ module Adamas::HIR
         @initializer_call : GeneratedAllocatorInitializerCall? = nil,
       )
       end
+
+      def replace_initializer_call(expected : GeneratedAllocatorInitializerCall, replacement : GeneratedAllocatorInitializerCall) : Nil
+        unless @initializer_call == expected
+          raise LoweringError.new("generated allocator initializer receipt changed during replay: #{@target_name}")
+        end
+        @initializer_call = replacement
+      end
     end
 
     # HIR-local source receiver fact. The concrete signature is resolved once
@@ -61088,6 +61095,25 @@ module Adamas::HIR
       contract = recipe.try(&.initializer_call)
       return false unless recipe && contract && contract.id == call.id
 
+      unless generated_allocator_initializer_call_matches?(wrapper, call, contract, require_settled_result: require_settled_result)
+        raise LoweringError.new("generated allocator initializer lost its selected source or ABI: #{contract.target_name} in #{wrapper.name}")
+      end
+      true
+    end
+
+    private def generated_allocator_initializer_call_shape_matches?(call : Call, contract : GeneratedAllocatorInitializerCall) : Bool
+      call.id == contract.id && call.method_name == contract.target_name && call.has_receiver? &&
+        call.receiver_value == contract.receiver && call.args == contract.args &&
+        !call.virtual && !call.has_block?
+    end
+
+    private def generated_allocator_initializer_call_matches?(
+      wrapper : Function,
+      call : Call,
+      contract : GeneratedAllocatorInitializerCall,
+      *,
+      require_settled_result : Bool = false,
+    ) : Bool
       selected = contract.source
       source_arena = selected.source_arena
       target = @module.function_by_name(contract.target_name)
@@ -61100,9 +61126,8 @@ module Adamas::HIR
               arena_fits_def?(source_arena, selected.def_node) &&
               target && target.same?(contract.target) &&
               @module.has_function_with_body?(contract.target_name) &&
-              call.method_name == contract.target_name && call.has_receiver? &&
-              call.receiver_value == contract.receiver && call.args == contract.args &&
-              !call.virtual && !call.has_block? && target.params.size == call.args.size + 1 &&
+              generated_allocator_initializer_call_shape_matches?(call, contract) &&
+              target.params.size == call.args.size + 1 &&
               target.params.map(&.type) == contract.param_types &&
               (!require_settled_result || call.type == target.return_type)
       if valid && target
@@ -61119,10 +61144,72 @@ module Adamas::HIR
           end
         end
       end
-      unless valid
-        raise LoweringError.new("generated allocator initializer lost its selected source or ABI: #{contract.target_name} in #{wrapper.name}")
+      !!valid
+    end
+
+    # A body replay retires one Function and publishes another. Reissue only
+    # receipts that named that exact retired generation, after the replay has
+    # proved source, parameter and callback identity. Name/signature equality
+    # alone cannot renew a wrapper's authority to call a replacement body.
+    private def refresh_generated_initializer_call_receipts(
+      prior : MaterializedInitializerSource,
+      current : MaterializedInitializerSource,
+    ) : Nil
+      return if prior.function.same?(current.function)
+      updates = [] of Tuple(GeneratedAllocatorLayoutRecipe, GeneratedAllocatorInitializerCall, GeneratedAllocatorInitializerCall)
+      @generated_allocator_layout_recipes.each_value do |recipe|
+        contract = recipe.initializer_call
+        next unless contract && contract.target.same?(prior.function)
+        # Invalidated wrappers regenerate their call and receipt together. An
+        # in-progress regeneration has not published its new witness yet.
+        next unless @module.function_by_name(recipe.target_name)
+        next if function_state(recipe.target_name).in_progress? &&
+                !@generated_allocator_layout_bodies.has_key?(recipe.target_name)
+        wrapper = materialized_generated_allocator(recipe.target_name)
+        # Locate the call without admitting a different instruction with the
+        # same local id. ValueIds are owned by the witnessed wrapper lifetime.
+        initializer_call : Call? = nil
+        if wrapper
+          wrapper.blocks.each do |block|
+            block.instructions.each do |instruction|
+              if instruction.id == contract.id
+                initializer_call = instruction.as?(Call)
+              end
+            end
+          end
+        end
+        selected = contract.source
+        source_arena = selected.source_arena
+        valid = prior.return_result_invalidated && !current.return_result_invalidated &&
+                # The wrapper's return ABI and terminator encode this category.
+                # A category change needs whole-wrapper regeneration, not a
+                # new receipt for its otherwise unchanged initializer Call.
+                noreturn_type?(prior.return_type) == noreturn_type?(current.return_type) &&
+                initializer_source_recipe_matches?(prior, current) &&
+                initializer_source_definition_current?(prior) &&
+                materialized_initializer_source_current?(current) &&
+                initializer_source_return_update_admitted?(prior, current, prior) &&
+                selected.def_node.same?(prior.source_def) && source_arena &&
+                arena_map_key(source_arena) == arena_map_key(prior.source_arena) &&
+                contract.param_types == prior.parameter_types &&
+                prior.function.params.map(&.type) == prior.parameter_types &&
+                prior.function.params.map(&.is_block) == prior.block_parameters &&
+                prior.function.heap_block_param == prior.heap_block_param &&
+                wrapper && initializer_call &&
+                generated_allocator_initializer_call_shape_matches?(initializer_call, contract) &&
+                initializer_call.type == prior.return_type
+        unless valid && wrapper && initializer_call
+          raise LoweringError.new("generated allocator initializer cannot renew its replay receipt: #{contract.target_name} in #{recipe.target_name}")
+        end
+        replacement = GeneratedAllocatorInitializerCall.new(initializer_call, current.function, selected)
+        unless generated_allocator_initializer_call_matches?(wrapper, initializer_call, replacement)
+          raise LoweringError.new("generated allocator initializer replay changed its source or ABI: #{contract.target_name} in #{recipe.target_name}")
+        end
+        updates << {recipe, contract, replacement}
       end
-      true
+      updates.each do |recipe, previous, replacement|
+        recipe.replace_initializer_call(previous, replacement)
+      end
     end
 
     private def repair_receiver_bound_call_targets : Nil
@@ -129479,6 +129566,7 @@ module Adamas::HIR
                  function.return_type == refreshed_source.return_type
             raise LoweringError.new("initializer replay ABI changed for #{name}", source.source_def)
           end
+          refresh_generated_initializer_call_receipts(source, refreshed_source)
         end
       ensure
         @active_initializer_replay_source = old_replay_source

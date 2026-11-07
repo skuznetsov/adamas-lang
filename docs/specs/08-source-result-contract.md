@@ -811,3 +811,24 @@ Gate: generated_allocator_initializer_binding_repro.sh COMPILER (24 stock-first
 native/strict-negative controls), plus generated_allocator_initializer_binding_spec.cr
 and generated_allocator_source_proof_repair_spec.cr (nine HIR controls).
 Refresh when source selection, ABI slots or either repair pass changes.
+
+
+### Authenticated initializer replay receipt renewal
+
+A successful initializer replay may retire the captured Function and publish a
+new one. Renew a generated allocator's receipt only across that tracked replay:
+require the exact retired target, current generated wrapper witness, unchanged
+source recipe and Def/Arena, parameter/block ABI, receiver/argument IDs and live
+Call shape. Validate every replacement before installing any receipt. An
+untracked same-name Function with the same ABI remains invalid.
+
+Renewal does not rebuild wrapper control flow. A change into or out of NoReturn
+must fail closed and needs whole-wrapper regeneration before admission. The
+internal NoReturn guards test this boundary without claiming source reachability.
+
+Gate: initializer_binding_owner_repro.sh COMPILER includes 29 HIR controls and
+six stock/lazy/eager native runs. The natural captured-block replay must renew
+its exact Function receipt; call, body-witness and untracked-generation mutations
+must remain rejected. Refresh after initializer replay, source publication,
+wrapper invalidation, call repair or result-category changes. Rollback is the
+atomic receipt-renewal commit.
