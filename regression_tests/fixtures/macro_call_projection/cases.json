@@ -1,0 +1,189 @@
+[
+  {
+    "name": "ordinary_arguments",
+    "source": "ordinary_arguments.cr",
+    "ok": true,
+    "expected_stdout": "ordinary_arguments.stdout"
+  },
+  {
+    "name": "empty_arguments",
+    "source": "empty_arguments.cr",
+    "ok": true,
+    "expected_stdout": "empty_arguments.stdout"
+  },
+  {
+    "name": "named_args_excluded",
+    "source": "named_args_excluded.cr",
+    "ok": true,
+    "expected_stdout": "named_args_excluded.stdout"
+  },
+  {
+    "name": "forwarded_call",
+    "source": "forwarded_call.cr",
+    "ok": true,
+    "expected_stdout": "forwarded_call.stdout"
+  },
+  {
+    "name": "no_parens_member",
+    "source": "no_parens_member.cr",
+    "ok": true,
+    "expected_stdout": "no_parens_member.stdout"
+  },
+  {
+    "name": "call_without_receiver",
+    "source": "call_without_receiver.cr",
+    "ok": true,
+    "expected_stdout": "call_without_receiver.stdout"
+  },
+  {
+    "name": "name_projection",
+    "source": "name_projection.cr",
+    "ok": true,
+    "expected_stdout": "name_projection.stdout"
+  },
+  {
+    "name": "receiver_projection",
+    "source": "receiver_projection.cr",
+    "ok": true,
+    "expected_stdout": "receiver_projection.stdout"
+  },
+  {
+    "name": "absent_receiver_nop",
+    "source": "absent_receiver_nop.cr",
+    "ok": true,
+    "expected_stdout": "absent_receiver_nop.stdout"
+  },
+  {
+    "name": "absent_named_nop",
+    "source": "absent_named_nop.cr",
+    "ok": true,
+    "expected_stdout": "absent_named_nop.stdout"
+  },
+  {
+    "name": "named_argument_projections",
+    "source": "named_argument_projections.cr",
+    "ok": true,
+    "expected_stdout": "named_argument_projections.stdout"
+  },
+  {
+    "name": "splat_projection",
+    "source": "splat_projection.cr",
+    "ok": true,
+    "expected_stdout": "splat_projection.stdout"
+  },
+  {
+    "name": "double_splat_projection",
+    "source": "double_splat_projection.cr",
+    "ok": true,
+    "expected_stdout": "double_splat_projection.stdout"
+  },
+  {
+    "name": "member_call_class",
+    "source": "member_call_class.cr",
+    "ok": true,
+    "expected_stdout": "member_call_class.stdout"
+  },
+  {
+    "name": "member_name_projection",
+    "source": "member_name_projection.cr",
+    "ok": true,
+    "expected_stdout": "member_name_projection.stdout"
+  },
+  {
+    "name": "member_named_nop",
+    "source": "member_named_nop.cr",
+    "ok": true,
+    "expected_stdout": "member_named_nop.stdout"
+  },
+  {
+    "name": "call_args_arity",
+    "source": "call_args_arity.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "wrong number of arguments for macro 'Call#args' (given 1, expected 0)"
+    ],
+    "candidate_diagnostic": [
+      "Call#args expects no arguments"
+    ],
+    "forbidden_diagnostic": [
+      "SIGSEGV",
+      "EXC_BAD_ACCESS",
+      "undefined call:",
+      "generated allocator outer call"
+    ]
+  },
+  {
+    "name": "call_name_arity",
+    "source": "call_name_arity.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "wrong number of arguments for macro 'Call#name' (given 1, expected 0)"
+    ],
+    "candidate_diagnostic": [
+      "Call#name expects no arguments"
+    ],
+    "forbidden_diagnostic": [
+      "SIGSEGV",
+      "EXC_BAD_ACCESS",
+      "undefined call:",
+      "generated allocator outer call"
+    ]
+  },
+  {
+    "name": "call_receiver_arity",
+    "source": "call_receiver_arity.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "wrong number of arguments for macro 'Call#receiver' (given 1, expected 0)"
+    ],
+    "candidate_diagnostic": [
+      "Call#receiver expects no arguments"
+    ],
+    "forbidden_diagnostic": [
+      "SIGSEGV",
+      "EXC_BAD_ACCESS",
+      "undefined call:",
+      "generated allocator outer call"
+    ]
+  },
+  {
+    "name": "call_named_args_arity",
+    "source": "call_named_args_arity.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "wrong number of arguments for macro 'Call#named_args' (given 1, expected 0)"
+    ],
+    "candidate_diagnostic": [
+      "Call#named_args expects no arguments"
+    ],
+    "forbidden_diagnostic": [
+      "SIGSEGV",
+      "EXC_BAD_ACCESS",
+      "undefined call:",
+      "generated allocator outer call"
+    ]
+  },
+  {
+    "name": "non_call_iterable",
+    "source": "non_call_iterable.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "undefined macro method 'NumberLiteral#args'"
+    ],
+    "candidate_diagnostic": [
+      "For loop requires an array, hash, tuple, named tuple, or range"
+    ],
+    "forbidden_diagnostic": [
+      "SIGSEGV",
+      "EXC_BAD_ACCESS",
+      "undefined call:",
+      "generated allocator outer call"
+    ]
+  },
+  {
+    "name": "macro_begin_args",
+    "source": "macro_begin_args.cr",
+    "expected_stdout": "macro_begin_args.stdout",
+    "ok": true
+  }
+]
