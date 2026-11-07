@@ -1,0 +1,105 @@
+[
+  {
+    "name": "typed_same_line",
+    "source": "typed_same_line.cr",
+    "ok": true,
+    "expected_stdout": "typed_same_line.stdout"
+  },
+  {
+    "name": "typed_multiline",
+    "source": "typed_multiline.cr",
+    "ok": true,
+    "expected_stdout": "typed_multiline.stdout"
+  },
+  {
+    "name": "typed_do_end",
+    "source": "typed_do_end.cr",
+    "ok": true,
+    "expected_stdout": "typed_do_end.stdout"
+  },
+  {
+    "name": "multiple_parameters",
+    "source": "multiple_parameters.cr",
+    "ok": true,
+    "expected_stdout": "multiple_parameters.stdout"
+  },
+  {
+    "name": "typeof_parameter",
+    "source": "typeof_parameter.cr",
+    "ok": true,
+    "expected_stdout": "typeof_parameter.stdout"
+  },
+  {
+    "name": "comment_after_comma",
+    "source": "comment_after_comma.cr",
+    "ok": true,
+    "expected_stdout": "comment_after_comma.stdout"
+  },
+  {
+    "name": "zero_parameters",
+    "source": "zero_parameters.cr",
+    "ok": true,
+    "expected_stdout": "zero_parameters.stdout"
+  },
+  {
+    "name": "without_trailing_comma",
+    "source": "without_trailing_comma.cr",
+    "ok": true,
+    "expected_stdout": "without_trailing_comma.stdout"
+  },
+  {
+    "name": "empty_leading_comma",
+    "source": "empty_leading_comma.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "Error: expecting token 'IDENT'"
+    ],
+    "candidate_diagnostic": [
+      "compilation failed due to parser errors"
+    ]
+  },
+  {
+    "name": "doubled_trailing_comma",
+    "source": "doubled_trailing_comma.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "Error: expecting token 'IDENT'"
+    ],
+    "candidate_diagnostic": [
+      "compilation failed due to parser errors"
+    ]
+  },
+  {
+    "name": "doubled_middle_comma",
+    "source": "doubled_middle_comma.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "Error: expecting token 'IDENT'"
+    ],
+    "candidate_diagnostic": [
+      "compilation failed due to parser errors"
+    ]
+  },
+  {
+    "name": "missing_closing_paren",
+    "source": "missing_closing_paren.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "Error: expecting token 'IDENT'"
+    ],
+    "candidate_diagnostic": [
+      "compilation failed due to parser errors"
+    ]
+  },
+  {
+    "name": "missing_proc_body",
+    "source": "missing_proc_body.cr",
+    "ok": false,
+    "original_diagnostic": [
+      "Error: unexpected token: EOF"
+    ],
+    "candidate_diagnostic": [
+      "compilation failed due to parser errors"
+    ]
+  }
+]

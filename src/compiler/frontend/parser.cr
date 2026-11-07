@@ -6290,6 +6290,9 @@ module Adamas
                 if current_token.kind == Token::Kind::Comma
                   advance
                   skip_statement_end
+                  # A trailing comma completes the list; another parameter is
+                  # required only when the next token is not its closing ')'.
+                  break if current_token.kind == Token::Kind::RParen
                 elsif current_token.kind == Token::Kind::RParen
                   break
                 else

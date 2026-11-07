@@ -26310,3 +26310,17 @@ integration, fresh bootstrap, or LavinMQ parity.
 - [ ] Complete prelude, unchanged LavinMQ link/server execution, fresh bootstrap
   and upstream Crystal test parity. Keep projected literal operations and the
   source-rest/allocator work separate from this predicate repair.
+
+### 2026-11-06 — Terminate Proc parameter lists after a trailing comma
+
+- [x] In parse_proc_literal, recognize the list's closing parenthesis after a
+  comma instead of requiring another identifier. Preserve the existing element
+  grammar and rejection of doubled/leading commas and missing delimiters/body.
+- Stock Crystal 1.22.1 and the exact final S1 each pass eight native controls and
+  five strict parser rejections (35q4167); six valid trailing-comma variants fail
+  before the repair (35q4162/35q4163). Existing Proc parser specs pass all 17
+  examples on the final source (35q4170).
+- Unchanged LavinMQ now renders typeof(uri) correctly, then exposes the valid
+  trailing comma in spawn's generated Proc (35q4157). Return to that exact
+  application input after this parser repair; link/server and test parity are
+  still open. No application, shards or stdlib changes.

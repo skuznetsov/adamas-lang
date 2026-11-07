@@ -26013,3 +26013,39 @@ Fixture-manifest SHA-256:
 Refresh after macro field dispatch, literal delegation, source-provider/arena
 ownership, node classification or macro diagnostic changes. Rollback is this
 atomic compiler commit. Application, stdlib and unrelated WIP are unchanged.
+
+## 2026-11-06 — Proc parameter termination preserves strict element syntax
+
+After the macro IsA value repair, unchanged LavinMQ's spawn expansion contains
+valid typeof(uri), but the generated ->(__arg0 : typeof(uri),) fails with an
+unexpected RParen (35q4157). The Proc parser consumed a separator and then
+unconditionally demanded another parameter. Stock Crystal's parse_fun_literal
+instead checks the closing parenthesis before the next parameter; its
+parse_fun_literal_param consumes the optional comma.
+
+The repair recognizes the existing list terminator after a comma. It does not
+skip an invalid element, synthesize a parameter or change parameter typing.
+The original-first proc_trailing_comma_repro.sh gate passes eight native output
+controls and five strict syntax rejections per compiler (35q4167): same-line,
+multiline, comments, do/end, multiple parameters, typeof annotations and the two
+non-trailing controls; leading/doubled commas, missing ')' and absent body must
+still fail with compiler parser diagnostics and no executable. Six positives
+fail before the change (35q4162/35q4163). All 17 existing Proc parser examples
+pass on the final compiler source (35q4170). Bounded Adversary verdict: ROBUST
+for this separator/terminator contract. Complete Crystal grammar, full prelude,
+LavinMQ runtime/parity and fresh bootstrap are not certified by these checks.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+proc-trailing-comma-stock35q4162/result.json,
+proc-trailing-comma-before35q4163/result.json,
+proc-trailing-comma-final-gate35q4167/result.json, and
+proc-trailing-comma-parser-neighbor35q4170/result.json.
+Exact final S1 source manifest: build.proc-trailing-comma35q4165.source.json,
+SHA-256 07cbb7f3b9f2f8508bd22ec56b60fbb040d81dbfa383c122e032c90f30c60e91.
+All 1,916 live compiler sources match it. Compiler SHA-256:
+7e001795860d3dde1b2e4adfd4e1d37490fbbe157311e52fa8ea0876fef716dc.
+Fixture-manifest SHA-256:
+0b395d84d7de24cb8a5e731039c6640e78a60252baae8c6e711f1eef46132763.
+Refresh after Proc parameter parsing, trivia/token consumption, type annotation
+parsing or macro reparse changes. Rollback is this atomic compiler commit.
+Application, stock stdlib, shards and unrelated WIP remain unchanged.
