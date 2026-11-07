@@ -49,7 +49,11 @@ module Adamas::HIR
   private record ForceLowerExactSourceBinding,
     source_def : Adamas::Compiler::Frontend::DefNode,
     source_arena : Adamas::Compiler::Frontend::ArenaLike,
-    source_registry_name : String? = nil
+    source_registry_name : String? = nil,
+    inherited_nilary_member_alias : Bool = false,
+    physical_name : String? = nil,
+    physical_def : Adamas::Compiler::Frontend::DefNode? = nil,
+    physical_arena : Adamas::Compiler::Frontend::ArenaLike? = nil
 
   # A suspended generation can retract its return-cache writes. A completed
   # nested generation establishes a new rollback baseline for its keys, even
@@ -2127,7 +2131,8 @@ module Adamas::HIR
       entry_namespace_override : String?,
       source_registry_name : String? = nil,
       callback_abi : RawCallbackAbi? = nil,
-      callback_source : RawCallbackSourceBinding? = nil
+      callback_source : RawCallbackSourceBinding? = nil,
+      exact_source_binding : ForceLowerExactSourceBinding? = nil
 
     # A body/layout demand retains its original source callsite too. Unlike a
     # result query, completing such a producer does not require a value result.
@@ -70457,9 +70462,20 @@ module Adamas::HIR
       call_arg_count : Int32? = nil,
       selected_def : Adamas::Compiler::Frontend::DefNode? = nil,
       callsite_forall_bindings : Hash(String, String)? = nil,
+      selected_source_binding : ForceLowerExactSourceBinding? = nil,
     ) : TypeRef
       return TypeRef::VOID unless v2_string_readable?(name)
       validate_current_primitive_template_source_binding!(name)
+      return_source_def = selected_source_binding.try(&.source_def)
+      source_declaration_owner = if source = selected_source_binding
+                                   unless force_lower_exact_source_matches?(name, source)
+                                     raise LoweringError.new("member return inference source changed: #{name}", source.source_def)
+                                   end
+                                   source_name = source.source_registry_name ||
+                                                 raise LoweringError.new("member return inference lost its lexical source registry: #{name}", source.source_def)
+                                   return_declaration_owner_for(source_name, strip_type_suffix(source_name)) ||
+                                     raise LoweringError.new("member return inference has no lexical source owner: #{source_name}", source.source_def)
+                                 end
       if allocator = materialized_generated_allocator(name)
         return allocator.return_type
       end
@@ -70531,7 +70547,7 @@ module Adamas::HIR
         # Array#[]?(Range) => Array(T)?). A structured call resolver may provide
         # the selected def; otherwise only base/provisional entries are eligible
         # for source re-inference.
-        return_def = selected_def
+        return_def = return_source_def || selected_def
         if return_def.nil? &&
            (name == base_name ||
            existing_type == TypeRef::POINTER ||
@@ -70547,6 +70563,7 @@ module Adamas::HIR
               call_arg_count,
               def_node,
               callsite_forall_bindings: callsite_forall_bindings,
+              source_declaration_owner: source_declaration_owner,
             )
               if resolved != TypeRef::VOID && resolved != existing_type
                 set_function_type_entry(name, resolved)
@@ -70555,7 +70572,7 @@ module Adamas::HIR
               end
             end
           elsif (!existing_type.primitive? || has_block_return_override) && !defer_specialized_body_inference
-            owner_name = function_context_from_name(base_name)
+            owner_name = source_declaration_owner || function_context_from_name(base_name)
             if inferred = infer_return_type_from_body_without_callsite(def_node, owner_name)
               if inferred != TypeRef::VOID && inferred != existing_type
                 set_function_type_entry(name, inferred)
@@ -70571,7 +70588,7 @@ module Adamas::HIR
         # body is materialized. Never infer that body through a family/arity
         # fallback before resolving the exact source contract. Call instances
         # without a registered Def still require the resolver's selected Def.
-        if def_node = selected_def || return_def_candidate_for(name, call_arg_count)
+        if def_node = return_source_def || selected_def || return_def_candidate_for(name, call_arg_count)
           if def_node.return_type
             if resolved = resolve_return_type_from_def(
               name,
@@ -70580,6 +70597,7 @@ module Adamas::HIR
               call_arg_count,
               def_node,
               callsite_forall_bindings: callsite_forall_bindings,
+              source_declaration_owner: source_declaration_owner,
             )
               if resolved != TypeRef::VOID
                 set_function_type_entry(name, resolved)
@@ -70608,9 +70626,9 @@ module Adamas::HIR
         end
         # Try AST-walk inference first (non-recursive, no stack depth risk).
         if existing_type == TypeRef::VOID
-          if def_node = lookup_function_def_for_return(name, base_name, call_arg_count)
+          if def_node = return_source_def || lookup_function_def_for_return(name, base_name, call_arg_count)
             unless defer_specialized_body_inference
-              owner_name = function_context_from_name(base_name)
+              owner_name = source_declaration_owner || function_context_from_name(base_name)
               if inferred = infer_return_type_from_body_without_callsite(def_node, owner_name)
                 if inferred != TypeRef::VOID
                   set_function_type_entry(name, inferred)
@@ -70625,7 +70643,7 @@ module Adamas::HIR
         # Fall back to force_lower only when AST-walk couldn't determine the type.
         if existing_type == TypeRef::VOID
           if @infer_body_context.nil? && !function_state(name).in_progress? && !@module.has_function?(name)
-            if lookup_function_def_for_return(name, base_name, call_arg_count)
+            if return_source_def || lookup_function_def_for_return(name, base_name, call_arg_count)
               unless force_lower_function_for_return_type(name)
                 lower_function_if_needed(name)
               end
@@ -70685,7 +70703,7 @@ module Adamas::HIR
           return wk_rt
         end
         # Try AST-walk inference and explicit return type annotations first (non-recursive).
-        if def_node = selected_def || lookup_function_def_for_return(name, base_name, call_arg_count)
+        if def_node = return_source_def || selected_def || lookup_function_def_for_return(name, base_name, call_arg_count)
           if def_node.return_type
             if resolved = resolve_return_type_from_def(
               name,
@@ -70694,12 +70712,13 @@ module Adamas::HIR
               call_arg_count,
               def_node,
               callsite_forall_bindings: callsite_forall_bindings,
+              source_declaration_owner: source_declaration_owner,
             )
               return resolved unless resolved == TypeRef::VOID
             end
           end
           unless defer_specialized_body_inference
-            owner_name = function_context_from_name(base_name)
+            owner_name = source_declaration_owner || function_context_from_name(base_name)
             if inferred = infer_return_type_from_body_without_callsite(def_node, owner_name)
               if inferred != TypeRef::VOID
                 set_function_type_entry(name, inferred)
@@ -70712,7 +70731,7 @@ module Adamas::HIR
 
         # Fall back to force_lower only when AST-walk couldn't determine the type.
         if @infer_body_context.nil? && !function_state(name).in_progress?
-          if lookup_function_def_for_return(name, base_name, call_arg_count)
+          if return_source_def || lookup_function_def_for_return(name, base_name, call_arg_count)
             unless force_lower_function_for_return_type(name)
               lower_function_if_needed(name)
             end
@@ -70741,17 +70760,17 @@ module Adamas::HIR
             unionish = base_type_name.includes?('|')
           end
           if unionish
-            def_node = lookup_function_def_for_return(name, base_name, call_arg_count)
+            def_node = return_source_def || lookup_function_def_for_return(name, base_name, call_arg_count)
             if def_node
               if rt = def_node.return_type
                 # Respect explicit return annotations; do not override them with body inference.
                 return base_type if rt.size > 0
               end
-              owner_name = nil.as(String?)
+              owner_name = source_declaration_owner
               if idx = base_name.rindex('#')
-                owner_name = base_name[0, idx]
+                owner_name ||= base_name[0, idx]
               elsif idx = base_name.rindex('.')
-                owner_name = base_name[0, idx]
+                owner_name ||= base_name[0, idx]
               end
               if inferred = infer_return_type_from_body_without_callsite(def_node, owner_name)
                 if inferred != TypeRef::VOID
@@ -70798,17 +70817,17 @@ module Adamas::HIR
           unionish = type_name.includes?('|')
         end
         if unionish
-          def_node = lookup_function_def_for_return(name, base_name, call_arg_count)
+          def_node = return_source_def || lookup_function_def_for_return(name, base_name, call_arg_count)
           if def_node
             if rt = def_node.return_type
               # Respect explicit return annotations; do not override them with body inference.
               return type if rt.size > 0
             end
-            owner_name = nil.as(String?)
+            owner_name = source_declaration_owner
             if idx = base_name.rindex('#')
-              owner_name = base_name[0, idx]
+              owner_name ||= base_name[0, idx]
             elsif idx = base_name.rindex('.')
-              owner_name = base_name[0, idx]
+              owner_name ||= base_name[0, idx]
             end
             unless defer_specialized_body_inference
               if inferred = infer_return_type_from_body_without_callsite(def_node, owner_name)
@@ -70832,17 +70851,17 @@ module Adamas::HIR
           end
         end
         if unresolved_generic_return_type?(type)
-          def_node = lookup_function_def_for_return(name, base_name, call_arg_count)
+          def_node = return_source_def || lookup_function_def_for_return(name, base_name, call_arg_count)
           if def_node
             if rt = def_node.return_type
               # Respect explicit return annotations; do not override them with body inference.
               return type if rt.size > 0
             end
-            owner_name = nil.as(String?)
+            owner_name = source_declaration_owner
             if idx = base_name.rindex('#')
-              owner_name = base_name[0, idx]
+              owner_name ||= base_name[0, idx]
             elsif idx = base_name.rindex('.')
-              owner_name = base_name[0, idx]
+              owner_name ||= base_name[0, idx]
             end
             unless defer_specialized_body_inference
               if inferred = infer_return_type_from_body_without_callsite(def_node, owner_name)
@@ -70883,12 +70902,12 @@ module Adamas::HIR
           if func = @module.function_by_name(name)
             return func.return_type unless func.return_type == TypeRef::VOID
           end
-          if def_node = lookup_function_def_for_return(name, base_name, call_arg_count)
-            owner_name = nil.as(String?)
+          if def_node = return_source_def || lookup_function_def_for_return(name, base_name, call_arg_count)
+            owner_name = source_declaration_owner
             if idx = name.rindex('#')
-              owner_name = name[0, idx]
+              owner_name ||= name[0, idx]
             elsif idx = name.rindex('.')
-              owner_name = name[0, idx]
+              owner_name ||= name[0, idx]
             end
             if inferred = infer_return_type_from_body_without_callsite(def_node, owner_name)
               if inferred != TypeRef::VOID
@@ -77924,6 +77943,7 @@ module Adamas::HIR
       selected_def : Adamas::Compiler::Frontend::DefNode? = nil,
       declaration_context_established : Bool = false,
       callsite_forall_bindings : Hash(String, String)? = nil,
+      source_declaration_owner : String? = nil,
     ) : TypeRef?
       normalized_mangled = normalize_compiler_collection_method_name(mangled_method_name)
       normalized_base = normalize_compiler_collection_method_name(base_method_name)
@@ -77936,7 +77956,7 @@ module Adamas::HIR
         # namespace, and exact specialization map. In particular, do not let
         # a caller's same-named alias or generic binding color this annotation.
         declaration_arena = registered_arena_for_def(func_def) || resolve_arena_for_def(func_def, @arena)
-        declaration_owner = return_declaration_owner_for(normalized_mangled, normalized_base)
+        declaration_owner = source_declaration_owner || return_declaration_owner_for(normalized_mangled, normalized_base)
         declaration_type_param_map = function_type_param_map_for_name(normalized_mangled) || EMPTY_DEFERRED_TYPE_PARAM_SNAPSHOT
         if callsite_bindings = callsite_forall_bindings
           declaration_type_param_map = declaration_type_param_map.merge(callsite_bindings)
@@ -77955,6 +77975,7 @@ module Adamas::HIR
                   func_def,
                   true,
                   callsite_forall_bindings,
+                  source_declaration_owner,
                 )
               end
             end
@@ -112694,7 +112715,8 @@ module Adamas::HIR
       retained_dependencies = false
       if replay && function_state(name).completed? && @module.has_function_with_body?(name)
         if dependencies = @force_lower_provisional_dependencies[name]?
-          source = ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name)
+          source = replay.exact_source_binding ||
+                   ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name)
           if !dependencies.empty? && force_lower_exact_source_matches?(name, source)
             dependencies.each { |dependency| refused << dependency unless refused.includes?(dependency) }
             exact_source = source
@@ -112932,8 +112954,10 @@ module Adamas::HIR
       return nil unless @force_lower_provisional_dependencies[name]?.try(&.includes?(pending.consumer))
       return nil if @module.has_function_with_body?(name) || function_state(name).in_progress? ||
                     @module.has_function_with_body?(pending.consumer) || function_state(pending.consumer).in_progress?
-      source = ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name)
-      child_source = ForceLowerExactSourceBinding.new(child_replay.source_def, child_replay.source_arena, child_replay.source_registry_name)
+      source = replay.exact_source_binding ||
+               ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name)
+      child_source = child_replay.exact_source_binding ||
+                     ForceLowerExactSourceBinding.new(child_replay.source_def, child_replay.source_arena, child_replay.source_registry_name)
       return nil unless force_lower_replay_callsite_current?(name, replay) &&
                         force_lower_replay_callsite_current?(pending.consumer, child_replay)
       if env_has?("DEBUG_FORCE_LOWER_DEPTH")
@@ -112977,9 +113001,13 @@ module Adamas::HIR
                            force_lower_replay_callsite_current?(consumer, replay)
       producer_replay = pending.producer_replay
       if producer_replay
+        replay_source = producer_replay.exact_source_binding ||
+                        ForceLowerExactSourceBinding.new(producer_replay.source_def, producer_replay.source_arena,
+                          producer_replay.source_registry_name)
         raise pending unless producer_replay.source_def.same?(pending.producer_source.source_def) &&
                              producer_replay.source_arena.same?(pending.producer_source.source_arena) &&
                              producer_replay.source_registry_name == pending.producer_source.source_registry_name &&
+                             same_force_lower_exact_source_binding?(replay_source, pending.producer_source) &&
                              force_lower_replay_callsite_current?(producer, producer_replay)
       end
       unless settled_force_lower_producer?(pending)
@@ -113062,7 +113090,8 @@ module Adamas::HIR
       existing_callsite = @pending_arg_types[name]?
       return false if existing_callsite && existing_callsite != replay.callsite
       return false unless force_lower_replay_callsite_current?(name, replay)
-      source = ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name)
+      source = replay.exact_source_binding ||
+               ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name)
       with_force_lower_exact_source(name, source) do
         @pending_arg_types[name] = replay.callsite
         begin
@@ -113105,13 +113134,24 @@ module Adamas::HIR
           prior.entry_type_param_map.dup, prior.entry_namespace_override, registry_name,
           copy_initializer_callback_abi(raw_callback_abi_for(capture.name)),
           copy_initializer_callback_source(raw_callback_source_binding_for(capture.name)),
+          prior.exact_source_binding.try do |exact|
+            if exact.source_def.same?(source_def) && exact.source_arena.same?(source_arena) &&
+               exact.source_registry_name == registry_name &&
+               force_lower_exact_source_matches?(capture.name, exact)
+              exact
+            end
+          end,
         )
       end
     end
 
     private def force_lower_replay_callsite_current?(name : String, replay : ForceLowerReplayCallsite) : Bool
-      force_lower_exact_source_matches?(name,
-        ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name)) &&
+      source = replay.exact_source_binding ||
+               ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name)
+      source.source_def.same?(replay.source_def) &&
+        source.source_arena.same?(replay.source_arena) &&
+        source.source_registry_name == replay.source_registry_name &&
+        force_lower_exact_source_matches?(name, source) &&
         initializer_callback_abi_matches?(replay.callback_abi, raw_callback_abi_for(name)) &&
         initializer_callback_source_matches?(replay.callback_source, raw_callback_source_binding_for(name))
     end
@@ -113120,7 +113160,7 @@ module Adamas::HIR
       return false unless force_lower_exact_source_matches?(name, source)
       prior = @force_lower_replay_source_bindings[name]?
       if prior
-        return false unless prior.source_def.same?(source.source_def) && prior.source_arena.same?(source.source_arena)
+        return false unless same_force_lower_exact_source_binding?(prior, source)
       end
       @force_lower_replay_source_bindings[name] = source
       begin
@@ -113141,11 +113181,158 @@ module Adamas::HIR
       registered_name = source.source_registry_name || name
       return false unless @function_defs[registered_name]?.try(&.same?(source.source_def)) == true &&
                           @function_def_arenas[registered_name]?.try(&.same?(source.source_arena)) == true
+      return inherited_nilary_member_source_binding_current?(name, source) if source.inherited_nilary_member_alias
       if registered_name != name && (@function_defs.has_key?(name) || @function_def_arenas.has_key?(name))
         return false unless @function_defs[name]?.try(&.same?(source.source_def)) == true &&
                             @function_def_arenas[name]?.try(&.same?(source.source_arena)) == true
       end
       true
+    end
+
+    private def same_force_lower_exact_source_binding?(
+      left : ForceLowerExactSourceBinding,
+      right : ForceLowerExactSourceBinding,
+    ) : Bool
+      left_has_physical_def = !left.physical_def.nil?
+      left_has_physical_arena = !left.physical_arena.nil?
+      right_has_physical_def = !right.physical_def.nil?
+      right_has_physical_arena = !right.physical_arena.nil?
+      return false unless left_has_physical_def == left_has_physical_arena &&
+                          right_has_physical_def == right_has_physical_arena
+      same_physical_def = if left_physical_def = left.physical_def
+                            if right_physical_def = right.physical_def
+                              left_physical_def.same?(right_physical_def)
+                            else
+                              false
+                            end
+                          else
+                            right.physical_def.nil?
+                          end
+      same_physical_arena = if left_physical_arena = left.physical_arena
+                              if right_physical_arena = right.physical_arena
+                                left_physical_arena.same?(right_physical_arena)
+                              else
+                                false
+                              end
+                            else
+                              right.physical_arena.nil?
+                            end
+      left.source_def.same?(right.source_def) &&
+        left.source_arena.same?(right.source_arena) &&
+        left.source_registry_name == right.source_registry_name &&
+        left.inherited_nilary_member_alias == right.inherited_nilary_member_alias &&
+        left.physical_name == right.physical_name &&
+        same_physical_def && same_physical_arena
+    end
+
+    private def inherited_nilary_member_source_binding_current?(
+      name : String,
+      source : ForceLowerExactSourceBinding,
+    ) : Bool
+      return false unless source.physical_name == name
+      source_name = source.source_registry_name || return false
+      return false if @primitive_template_source_bindings.has_key?(name) ||
+                      @primitive_template_source_bindings.has_key?(source_name)
+      source_parts = parse_method_name_uncached(source_name)
+      physical_parts = parse_method_name_uncached(name)
+      return false unless source_parts.separator == '#' && physical_parts.separator == '#' &&
+                          source_parts.method == physical_parts.method &&
+                          source_parts.owner != physical_parts.owner &&
+                          get_ancestor_chain(physical_parts.owner).includes?(source_parts.owner) &&
+                          !source.source_def.is_abstract &&
+                          !registered_abstract_class_name?(physical_parts.owner) &&
+                          !class_has_subclasses?(physical_parts.owner) &&
+                          !@module_defs.has_key?(physical_parts.owner) &&
+                          !module_like_type_name?(physical_parts.owner) &&
+                          !module_includers_match?(physical_parts.owner)
+
+      source_stats = function_param_stats(source_name, source.source_def)
+      return false unless source_stats.param_count == 0 && source_stats.required == 0 &&
+                          !source_stats.has_block && !source_stats.has_splat && !source_stats.has_double_splat
+
+      selected = lookup_function_def_for_call(source_name, 0, false, [] of TypeRef)
+      return false unless selected && selected[0] == source_name && selected[1].same?(source.source_def)
+      return false unless @function_def_arenas[source_name]?.try(&.same?(source.source_arena)) == true
+
+      physical_def = @function_defs[name]?
+      physical_arena = @function_def_arenas[name]?
+      if physical_def.try(&.same?(source.source_def))
+        return physical_arena.try(&.same?(source.source_arena)) == true
+      end
+      if source.physical_def.nil?
+        return false unless source.physical_arena.nil? && physical_def.nil? && physical_arena.nil?
+        return true
+      end
+      return false unless physical_def.try(&.same?(source.physical_def.not_nil!)) &&
+                          physical_arena.try(&.same?(source.physical_arena.not_nil!)) == true
+
+      shadow_stats = function_param_stats(name, source.physical_def.not_nil!)
+      return false unless def_params_untyped?(source.physical_def.not_nil!) && shadow_stats.required > 0 &&
+                          !shadow_stats.has_splat && !shadow_stats.has_double_splat
+      !@module.has_function_with_body?(name) && !function_state(name).in_progress? &&
+        !function_state(name).completed?
+    end
+
+    private def inherited_nilary_member_source_binding_for_target(
+      target_name : String,
+      source_name : String,
+      source_def : Adamas::Compiler::Frontend::DefNode,
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
+      arg_count : Int32,
+      has_block : Bool,
+      has_named_args : Bool,
+    ) : ForceLowerExactSourceBinding?
+      return nil unless arg_count == 0 && !has_block && !has_named_args &&
+                        @function_defs[source_name]?.try(&.same?(source_def)) == true &&
+                        @function_def_arenas[source_name]?.try(&.same?(source_arena)) == true
+      # Primitive-template member receipts carry their own concrete receiver
+      # and ABI authority. Re-owning one through an inherited lexical source
+      # would replace that contract with the template symbol's context.
+      return nil if @primitive_template_source_bindings.has_key?(target_name) ||
+                    @primitive_template_source_bindings.has_key?(source_name)
+      source_parts = parse_method_name_uncached(source_name)
+      target_parts = parse_method_name_uncached(target_name)
+      return nil unless source_parts.separator == '#' && target_parts.separator == '#' &&
+                        source_parts.method == target_parts.method && target_parts.suffix.nil? &&
+                        !source_def.is_abstract &&
+                        !registered_abstract_class_name?(target_parts.owner) &&
+                        !class_has_subclasses?(target_parts.owner) &&
+                        !@module_defs.has_key?(target_parts.owner) &&
+                        !module_like_type_name?(target_parts.owner) &&
+                        !module_includers_match?(target_parts.owner)
+      source_stats = function_param_stats(source_name, source_def)
+      return nil unless source_stats.param_count == 0 && source_stats.required == 0 &&
+                        !source_stats.has_block && !source_stats.has_splat && !source_stats.has_double_splat
+
+      return nil if source_name == target_name
+      return nil unless source_parts.owner != target_parts.owner &&
+                        get_ancestor_chain(target_parts.owner).includes?(source_parts.owner)
+
+      selected = lookup_function_def_for_call(source_name, 0, false, [] of TypeRef)
+      return nil unless selected && selected[0] == source_name && selected[1].same?(source_def)
+
+      physical_def = @function_defs[target_name]?
+      physical_arena = @function_def_arenas[target_name]?
+      if physical_def.nil? && physical_arena.nil?
+        return nil if @module.has_function_with_body?(target_name) ||
+                      function_state(target_name).in_progress? || function_state(target_name).completed?
+        return ForceLowerExactSourceBinding.new(
+          source_def, source_arena, source_name, true, target_name,
+        )
+      end
+      return nil unless physical_def && physical_arena
+      return ForceLowerExactSourceBinding.new(
+        source_def, source_arena, source_name, true, target_name, physical_def, physical_arena,
+      ) if physical_def.same?(source_def) && physical_arena.same?(source_arena)
+
+      shadow_stats = function_param_stats(target_name, physical_def)
+      return nil unless def_params_untyped?(physical_def) && shadow_stats.required > 0 &&
+                        !shadow_stats.has_splat && !shadow_stats.has_double_splat &&
+                        !@module.has_function_with_body?(target_name) &&
+                        !function_state(target_name).in_progress? && !function_state(target_name).completed?
+      ForceLowerExactSourceBinding.new(
+        source_def, source_arena, source_name, true, target_name, physical_def, physical_arena,
+      )
     end
 
     private def settled_force_lower_result?(name : String) : Bool
@@ -113163,6 +113350,7 @@ module Adamas::HIR
       selected_call_arena : Adamas::Compiler::Frontend::ArenaLike?,
       refused_mark : Int32,
       selected_registry_name : String? = nil,
+      selected_source_binding : ForceLowerExactSourceBinding? = nil,
     ) : Nil
       # A depth-refused result is pending in ordinary method bodies too.
       # Suspend its exact consumer before narrowing or a declared-return check
@@ -113175,8 +113363,12 @@ module Adamas::HIR
       return unless @force_lower_depth_refused[refused_mark...].includes?(name) &&
                     @force_lower_provisional_dependencies[consumer]?.try(&.includes?(name)) &&
                     force_lower_replay_recipe_available?(consumer)
-      source = force_lower_exact_source_binding(name, selected_def, selected_call_def, selected_call_arena, selected_registry_name)
+      source = selected_source_binding ||
+               force_lower_exact_source_binding(name, selected_def, selected_call_def, selected_call_arena, selected_registry_name)
       return unless source
+      return unless source.source_def.same?(selected_def.not_nil!) &&
+                    (selected_registry_name.nil? || source.source_registry_name == selected_registry_name) &&
+                    force_lower_exact_source_matches?(name, source)
 
       if env_has?("DEBUG_FORCE_LOWER_DEPTH")
         STDERR.puts "[FORCE_LOWER_SUSPENDED] consumer=#{consumer} context=#{ctx.function.name} producer=#{name}"
@@ -113617,6 +113809,11 @@ module Adamas::HIR
                arena.try(&.same?(replay_source.source_arena))
           raise LoweringError.new("exact source-result replay binding changed for #{name}", replay_source.source_def)
         end
+        if replay_source.inherited_nilary_member_alias
+          source_name = replay_source.source_registry_name ||
+                        raise LoweringError.new("inherited member replay lost its lexical source registry: #{name}", replay_source.source_def)
+          target_name = source_name
+        end
       end
       if demand = included_forall_body_demand
         # This exact selected include-origin is already verified by the active
@@ -113849,6 +114046,35 @@ module Adamas::HIR
         target_name = bare_inherited_exact_name
         lookup_branch = "inherited_bare_exact"
       end
+      if replay_source = exact_replay_source
+        if replay_source.inherited_nilary_member_alias
+          source_name = replay_source.source_registry_name ||
+                        raise LoweringError.new("inherited member replay lost its lexical source registry: #{name}", replay_source.source_def)
+          unless bare_inherited_exact_name == source_name &&
+                 bare_inherited_exact_def.try(&.same?(replay_source.source_def))
+            raise LoweringError.new("inherited member replay no longer selects its lexical nilary source: #{name}", replay_source.source_def)
+          end
+          if shadow_def = replay_source.physical_def
+            unless shadow_def.same?(replay_source.source_def)
+              shadow_arena = replay_source.physical_arena ||
+                             raise LoweringError.new("inherited member replay lost its physical shadow arena: #{name}", shadow_def)
+              if @function_defs[name]?.try(&.same?(shadow_def)) &&
+                 @function_def_arenas[name]?.try(&.same?(shadow_arena))
+                redirected_source_name = source_name
+                redirected_source_def = replay_source.source_def
+                redirected_source_arena = replay_source.source_arena
+                redirected_shadow_def = shadow_def
+                redirected_shadow_arena = shadow_arena
+              end
+            end
+          end
+          func_def = replay_source.source_def
+          arena = replay_source.source_arena
+          target_name = source_name
+          selected_replay_registry_name = source_name
+          lookup_branch = "inherited_member_exact_source_receipt"
+        end
+      end
       lookup_callsite = if bare_inherited_exact_name
                           explicit_lookup_callsite
                         else
@@ -113900,6 +114126,7 @@ module Adamas::HIR
           redirected_source_arena = selected_source_arena
           redirected_shadow_def = physical_shadow
           redirected_shadow_arena = physical_shadow_arena
+          selected_replay_registry_name = bare_inherited_exact_name
           func_def = m4c3_bie
           arena = selected_source_arena
           target_name = bare_inherited_exact_name
@@ -116057,9 +116284,10 @@ module Adamas::HIR
       # A raw callback already has a durable selected source and ABI. Retain
       # both with its callshape so a nested pending result can unwind through
       # this consumer without selecting a source or inventing a callback type.
-      if replay_capture && force_lower_exact_source_matches?(name,
-           ForceLowerExactSourceBinding.new(resolved_func_def, arena, selected_replay_registry_name))
-        replay_capture.source = ForceLowerExactSourceBinding.new(resolved_func_def, arena, selected_replay_registry_name)
+      capture_source = exact_replay_source ||
+                       ForceLowerExactSourceBinding.new(resolved_func_def, arena, selected_replay_registry_name)
+      if replay_capture && force_lower_exact_source_matches?(name, capture_source)
+        replay_capture.source = capture_source
         if callsite_args
           replay_capture.binding = ForceLowerReplayCallsite.new(
             resolved_func_def,
@@ -116070,6 +116298,7 @@ module Adamas::HIR
             selected_replay_registry_name,
             copy_initializer_callback_abi(raw_callback_abi_for(name)),
             copy_initializer_callback_source(callback_source_binding),
+            capture_source,
           )
         end
       end
@@ -145724,6 +145953,9 @@ module Adamas::HIR
       # Use member_access_name_text (has span-based fallback safe in s2b when safe_slice_to_string
       # fails due to Mach VM read guards on sub-4GB heap addresses)
       member_name = member_access_name_text(node)
+      selected_member_registry_name = nil.as(String?)
+      selected_member_def = nil.as(Adamas::Compiler::Frontend::DefNode?)
+      selected_member_arena = nil.as(Adamas::Compiler::Frontend::ArenaLike?)
       # s2b RTTI loss: use node_kind() for all obj_node dispatch (is_a? crashes in s2b)
       obj_kind = Adamas::Compiler::Frontend.node_kind(obj_node)
       self_probe_node = obj_node
@@ -147362,6 +147594,9 @@ module Adamas::HIR
       unless admitted_member_self_dispatch_root || source_default_entry
         if entry = lookup_function_def_for_call(base_method_name, args.size, false, arg_types)
           actual_name = entry[0]
+          selected_member_registry_name = entry[0]
+          selected_member_def = entry[1]
+          selected_member_arena = @function_def_arenas[entry[0]]?
           if receiver_proc_owner
             selected_proc_member_target = selected_proc_member_source_target(entry[0], entry[1], node)
           end
@@ -147454,6 +147689,26 @@ module Adamas::HIR
         end
       end
 
+      # Preserve the exact inherited nilary selection before the physical
+      # receiver name is asked for a return type. The physical key can be an
+      # unrelated cold required-argument overload; its body is not the source
+      # declaration selected by this member expression.
+      member_exact_source = if source_name = selected_member_registry_name
+                              if source_def = selected_member_def
+                                if source_arena = selected_member_arena
+                                  inherited_nilary_member_source_binding_for_target(
+                                    actual_name,
+                                    source_name,
+                                    source_def,
+                                    source_arena,
+                                    args.size,
+                                    false,
+                                    defaulted_has_named_args,
+                                  )
+                                end
+                              end
+                            end
+
       included_noarg_source_result = nil.as(Tuple(TypeRef?)?)
       if receiver_type.id > 0 && !receiver_is_module_type
         concrete_owner = receiver_proc_owner || normalize_method_owner_name(get_type_name_from_ref(receiver_type))
@@ -147474,7 +147729,24 @@ module Adamas::HIR
       return_type = if included_noarg_source_result
                       included_noarg_source_result.not_nil![0] || TypeRef::VOID
                     else
-                      get_function_return_type(actual_name, 0)
+                      if source = member_exact_source
+                        inferred_return_type = TypeRef::VOID
+                        source_bound = with_force_lower_exact_source(actual_name, source) do
+                          inferred_return_type = get_function_return_type(
+                            actual_name,
+                            0,
+                            source.source_def,
+                            selected_source_binding: source,
+                          )
+                          true
+                        end
+                        unless source_bound
+                          raise LoweringError.new("inherited nilary member source changed before return inference: #{actual_name}", source.source_def)
+                        end
+                        inferred_return_type
+                      else
+                        get_function_return_type(actual_name, 0)
+                      end
                     end
       forced_return_type = !included_noarg_source_result.nil?
       if !forced_return_type && return_type == TypeRef::VOID && actual_name != base_method_name
@@ -147850,15 +148122,40 @@ module Adamas::HIR
       if debug_env_filter_match?("DEBUG_CALL_TRACE", member_name, actual_name, primary_name)
         STDERR.puts "[CALL_TRACE] stage=before_lower_function method=#{member_name} actual=#{actual_name} primary=#{primary_name} return=#{return_type.id}"
       end
-      lower_function_if_needed(primary_name)
-      if actual_name != primary_name
-        lower_function_if_needed(actual_name)
+      if member_exact_source && primary_name == actual_name
+        source_bound = with_force_lower_exact_source(actual_name, member_exact_source.not_nil!) do
+          lower_function_if_needed(primary_name)
+          true
+        end
+        unless source_bound
+          raise LoweringError.new("inherited nilary member source changed before body lowering: #{actual_name}", member_exact_source.not_nil!.source_def)
+        end
+      else
+        lower_function_if_needed(primary_name)
+        if actual_name != primary_name
+          if member_exact_source
+            source_bound = with_force_lower_exact_source(actual_name, member_exact_source.not_nil!) do
+              lower_function_if_needed(actual_name)
+              true
+            end
+            unless source_bound
+              raise LoweringError.new("inherited nilary member source changed before body lowering: #{actual_name}", member_exact_source.not_nil!.source_def)
+            end
+          else
+            lower_function_if_needed(actual_name)
+          end
+        end
       end
 
       # An exact nilary member is an ordinary call, including inside an
       # inline block. Use the existing yield-free force guard and record any
       # refused result on the consumer before it can be embedded in a value.
-      member_return_def = @function_defs[actual_name]?
+      if member_exact_source && !force_lower_exact_source_matches?(actual_name, member_exact_source.not_nil!)
+        raise LoweringError.new("inherited nilary member source changed before result inference: #{actual_name}",
+          member_exact_source.not_nil!.source_def)
+      end
+      member_return_def = member_exact_source.try(&.source_def) || @function_defs[actual_name]?
+      member_return_arena = member_exact_source.try(&.source_arena) || @function_def_arenas[actual_name]?
       refused_before_member_force = @force_lower_depth_refused.size
       unresolved_included_result = included_noarg_source_result && included_noarg_source_result[0].nil?
       # A registered or declared ABI does not publish body-owned source facts.
@@ -147893,7 +148190,8 @@ module Adamas::HIR
       end
       suspend_depth_refused_source_result(
         ctx, actual_name, return_type, member_return_def, member_return_def,
-        @function_def_arenas[actual_name]?, refused_before_member_force,
+        member_return_arena, refused_before_member_force,
+        member_exact_source.try(&.source_registry_name), member_exact_source,
       )
 
       if return_type == TypeRef::VOID

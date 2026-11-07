@@ -26924,6 +26924,34 @@ integration, fresh bootstrap, or LavinMQ parity.
   parity remain open. No stdlib/application or source restriction changes.
 
 
+### 2026-11-07 — Retain inherited nilary member source through replay
+
+- [x] Preserve the selected lexical Def/Arena and separate physical witness
+  before member result inference; carry both through suspension and replay.
+  Source return annotations retain their declaration owner. Cold required-arg
+  shadows cannot replace the selected nilary method or overwrite typed siblings.
+- [x] Keep stale-source, crossed/missing witness, abstract/module/polymorphic,
+  named/block/arity and primitive-template guards strict. The focused gate passes
+  49 HIR controls (35q5549), six original-first native runs and three incompatible
+  argument rejections (35q5531) on exact-source S1 35q5528.
+- Fresh prelude baseline 35q5524 fails String#hash source identity; candidate
+  35q5537 passes that point and stops at AtExitHandlers.run. Native positive
+  controls pass both versions and are not the integration discriminator.
+- [ ] Repair canonical generic nilary callshape publication before first return
+  inference. A private candidate passes AtExitHandlers.run (35q5546), then stops
+  at Exception#inspect_with_backtrace result replay; it is not in this commit.
+- [ ] Repair the existing explicit defaulted self.new selection failure:
+  defaulted_call_target_source_binding_spec.cr constructor_bare fails on both
+  baseline (35q5534) and candidate (35q5532), after updating its stale helper
+  name privately. It must select the explicit method rather than synthesize an
+  incompatible initialize allocator. The full suite is not green.
+- [ ] Validate abstract override return contracts: a UInt32 child method under
+  an abstract Int32 contract is accepted by released S1 (35q5530), while Crystal
+  rejects it (35q5529). Keep this separate from inherited source continuity.
+- Full prelude, fresh bootstrap and unchanged LavinMQ object/link/server/upstream
+  parity remain open. No application/stdlib or source restriction changes.
+
+
 ### 2026-11-07 — Preserve the completed initializer's raw/heap callback carrier
 
 - [x] Share the selected initializer's untyped block fallback with body lowering.

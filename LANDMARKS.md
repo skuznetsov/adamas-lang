@@ -27244,3 +27244,41 @@ settlement changes. Rollback is this atomic commit; unrelated WIP is excluded.
 Full prelude, fresh bootstrap and unchanged LavinMQ runtime/test parity remain
 open. A private inherited-source combination advances prelude from Pointer#clear
 to AtExitHandlers.run (35q5486); it does not widen this scoped result claim.
+
+
+## 2026-11-07 — An inherited member's selected source survives physical re-owning
+
+Fresh released S1 35q5482 fails unchanged prelude hello with "exact source-result
+replay selected a different source for String#hash" (35q5524). The selected
+Object nilary wrapper was later replaced by the concrete physical symbol's cold
+required-argument overload. Preserve the original Def/Arena and declaration
+owner before inference, together with an independently checked physical shadow
+witness. Replay, relay and materialization retain this same receipt. Typed
+sibling overloads remain bound to their own source. Stale or incomplete witness
+pairs and unsupported receiver/call shapes still fail closed.
+
+Scoped adversary verdict: ROBUST for the exact inherited nilary corridor.
+49 HIR controls pass (35q5549), including actual post-drain source publication,
+cross-arena/stale witnesses, primitive-template isolation and receiver/callshape
+exclusions. Six original-first native runs and three incompatible-argument
+rejections pass (35q5531). These native positives also pass the baseline and are
+controls, not a behavioral discriminator. Exact candidate S1 35q5528 passes the
+String#hash point and next fails AtExitHandlers.run (35q5537). All executions use
+run_safe.sh with the unchanged Crystal 1.22.1 stdlib.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+prelude-shipping-source35q5524/, inherited-member-final-hir35q5549/,
+build.inherited-member-source-shipping35q5528.{result,source}.json,
+inherited-member-native35q5531/ and its qualification JSON,
+prelude-inherited-source-shipping35q5537/, inherited-member-live-source35q5552.json.
+S1 SHA-256: 6238fde72ffb0504f739ef5de49a35302bfd533ca628abcd13192f33b1bf8ee1.
+Compiler source manifest SHA-256:
+3e53b2984db1d9d4d530c5e587a15715370eb08e4b9039864cdf447a7971e6eb.
+Refresh after source selection, registry aliases, declaration context or replay
+changes. Rollback is the atomic source-continuity commit; unrelated WIP is excluded.
+
+The larger defaulted-source suite still has its old constructor_bare ABI error
+on baseline and candidate (35q5534/35q5532); its removed helper name was adjusted
+only in the private probes. A separate old abstract override return validation
+gap is measured by 35q5529/35q5530. Neither is hidden by this scoped gate.
+Full prelude, fresh bootstrap and LavinMQ runtime/upstream parity remain open.

@@ -860,3 +860,30 @@ recursive cycles, virtual calls and the actual incomplete-intrinsic emitter.
 Refresh after result publication, CFG/producers, source ownership or extern
 signature emission changes. Rollback is the atomic Void result commit.
 Full prelude, bootstrap and LavinMQ runtime/upstream parity remain separate.
+
+### Inherited nilary member source continuity
+
+An inherited nilary member selection retains its lexical Def/Arena before
+return inference can materialize the concrete receiver's physical symbol.
+The physical symbol may initially name an unrelated, cold required-argument
+overload. That registry entry cannot replace the selected declaration during
+result inference, suspension or replay. Keep its witness separately and permit
+re-owning only while that exact untyped shadow is cold. Preserve typed sibling
+overloads and validate both optional physical witness fields as one pair.
+
+Carry the same source receipt through replay capture, relay, body generation
+and resumed result publication. Resolve source return annotations in their
+declaration owner while retaining the concrete receiver's specialization map.
+Changed lexical Def/Arena or physical witness invalidates the receipt. Module,
+abstract or polymorphic receivers, abstract sources, block/named/required-arg
+shapes and primitive-template receipts do not enter this corridor.
+
+Gate: inherited_member_source_contract_spec.cr plus inherited bare-owner,
+primitive-template, pending-result, retry-queue, Void and initializer-receipt
+guards. inherited_nilary_member_source_repro.sh supplies original-first native
+controls and incompatible-argument rejections; those positive native controls
+also pass the baseline. The integration discriminator is the unchanged prelude:
+baseline rejects a changed String#hash replay source; the qualified candidate
+passes it and next stops at AtExitHandlers.run. This does not certify full
+prelude, bootstrap or LavinMQ. Refresh after source selection, registry aliases,
+declaration ownership or replay changes. Rollback is the atomic compiler commit.
