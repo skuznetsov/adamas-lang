@@ -11,6 +11,7 @@ trap 'rm -rf "$WORK"' EXIT
 # check strict refusal separately from native source-result regressions.
 SPEC_ARGS=(spec --no-color
   "$ROOT_DIR/spec/hir/force_lower_dependency_queue_spec.cr"
+  "$ROOT_DIR/spec/hir/force_lower_active_edge_graph_spec.cr"
   "$ROOT_DIR/spec/hir/initializer_body_pending_replay_spec.cr"
   "$ROOT_DIR/spec/hir/initializer_sequential_replay_spec.cr"
   --single-module -D debug_hooks --error-trace)

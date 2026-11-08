@@ -113578,7 +113578,7 @@ module Adamas::HIR
            @force_lower_retry_work.size > retry_work_mark
           # The stack drains children first. Put this continuation below the
           # requests discovered while generating its body.
-          @force_lower_retry_work.insert(retry_work_mark, request)
+          enqueue_force_lower_retry_work(request, retry_work_mark)
         elsif run_force_lower_retry_driver(request)
           made_progress = true
         end
@@ -113597,7 +113597,7 @@ module Adamas::HIR
     private def run_force_lower_retry_driver(request : ForceLowerWorkRequest) : Bool
       name = request.name
       if @force_lower_retry_driver_active
-        @force_lower_retry_work << request
+        enqueue_force_lower_retry_work(request)
         return false
       end
 
@@ -113605,7 +113605,7 @@ module Adamas::HIR
       # those obligations before rebuilding its caller, without nesting retry
       # drivers on the native stack.
       @force_lower_retry_driver_active = true
-      @force_lower_retry_work << request
+      enqueue_force_lower_retry_work(request)
       progress = false
       begin
         until @force_lower_retry_work.empty?
@@ -113639,6 +113639,130 @@ module Adamas::HIR
       end
       progress && force_lower_retry_source_current?(request) &&
         settled_force_lower_demand?(name, force_lower_retry_requires_result?(request))
+    end
+
+    # Nested replay may discover the same source-bound continuation before the
+    # driver regains control. Keep one copy only when every retained witness
+    # agrees; otherwise both obligations remain visible to the driver.
+    private def enqueue_force_lower_retry_work(request : ForceLowerWorkRequest, index : Int32? = nil) : Bool
+      return false if has_equivalent_queued_force_lower_work?(request)
+
+      if index
+        @force_lower_retry_work.insert(index, request)
+      else
+        @force_lower_retry_work << request
+      end
+      true
+    end
+
+    private def same_force_lower_work_request?(left : ForceLowerWorkRequest, right : ForceLowerWorkRequest) : Bool
+      if left.is_a?(ForceLowerRetryRequest)
+        return false unless right.is_a?(ForceLowerRetryRequest)
+        left.name == right.name && left.refused == right.refused &&
+          left.bypass_inline_yield == right.bypass_inline_yield &&
+          left.requires_result == right.requires_result &&
+          same_optional_force_lower_exact_source_binding?(left.exact_source, right.exact_source) &&
+          same_force_lower_replay_callsite?(left.replay_callsite, right.replay_callsite)
+      elsif left.is_a?(ForceLowerSuspendedRequest)
+        return false unless right.is_a?(ForceLowerSuspendedRequest)
+        left.bypass_inline_yield == right.bypass_inline_yield &&
+          same_force_lower_replay_callsite?(left.replay_callsite, right.replay_callsite) &&
+          same_force_lower_exact_result_pending?(left.pending, right.pending)
+      else
+        false
+      end
+    end
+
+    private def same_optional_force_lower_exact_source_binding?(
+      left : ForceLowerExactSourceBinding?,
+      right : ForceLowerExactSourceBinding?,
+    ) : Bool
+      return right.nil? unless left
+      return false unless right
+      same_force_lower_exact_source_binding?(left, right)
+    end
+
+    private def same_force_lower_callsite?(left : CallsiteArgs, right : CallsiteArgs) : Bool
+      left.types == right.types && left.literals == right.literals &&
+        left.enum_names == right.enum_names && left.has_block == right.has_block &&
+        left.has_named_args == right.has_named_args && left.named_arg_names == right.named_arg_names &&
+        left.selected_target == right.selected_target &&
+        left.source_argument_facts == right.source_argument_facts &&
+        same_force_lower_source_call_binding?(left.source_binding, right.source_binding)
+    end
+
+    private def same_force_lower_source_call_binding?(left : SourceCallBinding?, right : SourceCallBinding?) : Bool
+      return right.nil? unless left
+      return false unless right
+      source_call_bindings_same?(left, right) && left.block_result == right.block_result
+    end
+
+    private def same_force_lower_replay_callsite?(
+      left : ForceLowerReplayCallsite?,
+      right : ForceLowerReplayCallsite?,
+    ) : Bool
+      return right.nil? unless left
+      return false unless right
+      left.source_def.same?(right.source_def) && left.source_arena.same?(right.source_arena) &&
+        same_force_lower_callsite?(left.callsite, right.callsite) &&
+        left.entry_type_param_map == right.entry_type_param_map &&
+        left.entry_namespace_override == right.entry_namespace_override &&
+        left.source_registry_name == right.source_registry_name &&
+        initializer_callback_abi_matches?(left.callback_abi, right.callback_abi) &&
+        same_force_lower_callback_source?(left.callback_source, right.callback_source) &&
+        same_optional_force_lower_exact_source_binding?(left.exact_source_binding, right.exact_source_binding)
+    end
+
+    private def same_force_lower_callback_source?(
+      left : RawCallbackSourceBinding?,
+      right : RawCallbackSourceBinding?,
+    ) : Bool
+      return right.nil? unless left
+      return false unless right
+      left.source_def.same?(right.source_def) && left.source_arena.same?(right.source_arena) &&
+        same_force_lower_callsite?(left.callsite, right.callsite)
+    end
+
+    private def same_force_lower_active_body?(left : ForceLowerActiveBody?, right : ForceLowerActiveBody?) : Bool
+      return right.nil? unless left
+      return false unless right
+      left.function.same?(right.function) && left.source_def.same?(right.source_def) &&
+        left.source_arena.same?(right.source_arena) && left.param_types == right.param_types &&
+        left.param_names == right.param_names && left.return_type == right.return_type
+    end
+
+    private def same_force_lower_replay_capture?(
+      left : ForceLowerReplayCapture?,
+      right : ForceLowerReplayCapture?,
+    ) : Bool
+      while left && right
+        return false unless left.name == right.name &&
+                            same_force_lower_replay_callsite?(left.binding, right.binding) &&
+                            same_optional_force_lower_exact_source_binding?(left.source, right.source) &&
+                            same_force_lower_active_body?(left.active_body, right.active_body)
+        left = left.parent
+        right = right.parent
+      end
+      left.nil? && right.nil?
+    end
+
+    private def same_force_lower_exact_result_pending?(left : ExactResultPending, right : ExactResultPending) : Bool
+      pending_left = left.as(ExactResultPending?)
+      pending_right = right.as(ExactResultPending?)
+      while pending_left && pending_right
+        return false unless pending_left.consumer == pending_right.consumer &&
+                            pending_left.producer == pending_right.producer &&
+                            same_force_lower_exact_source_binding?(pending_left.producer_source, pending_right.producer_source) &&
+                            same_force_lower_replay_callsite?(pending_left.producer_replay, pending_right.producer_replay) &&
+                            pending_left.producer_requires_result == pending_right.producer_requires_result &&
+                            pending_left.producer_bypass_inline_yield == pending_right.producer_bypass_inline_yield &&
+                            pending_left.consumer_requires_result == pending_right.consumer_requires_result &&
+                            pending_left.consumer_bypass_inline_yield == pending_right.consumer_bypass_inline_yield &&
+                            same_force_lower_replay_capture?(pending_left.consumer_capture, pending_right.consumer_capture)
+        pending_left = pending_left.producer_pending
+        pending_right = pending_right.producer_pending
+      end
+      pending_left.nil? && pending_right.nil?
     end
 
     private def force_lower_retry_requires_result?(request : ForceLowerWorkRequest) : Bool
@@ -113734,7 +113858,7 @@ module Adamas::HIR
       end
       if @force_lower_retry_work.size > work_mark
         # New child requests are on top of this continuation in the worklist.
-        @force_lower_retry_work.insert(work_mark, request)
+        enqueue_force_lower_retry_work(request, work_mark)
         return false
       end
       if provisional
@@ -113823,8 +113947,14 @@ module Adamas::HIR
       consumer = pending.consumer
       producer = pending.producer
       edge = {consumer, producer}
+      request = ForceLowerSuspendedRequest.new(pending, replay, bypass_inline_yield)
+      # The driver still owns an equivalent queued continuation. Hand this
+      # recursive discovery back to that request instead of treating the same
+      # consumer/producer pair as an unresolvable active cycle.
+      return false if @force_lower_retry_driver_active && has_equivalent_queued_force_lower_work?(request)
+
       raise pending if consumer == producer || @force_lower_result_suspensions.includes?(edge) ||
-                       @force_lower_result_suspensions.any? { |active| active[0] == producer }
+                       force_lower_result_suspension_would_cycle?(consumer, producer)
 
       while @force_lower_depth_refused.size > refused_mark
         @force_lower_depth_refused.pop
@@ -113833,9 +113963,36 @@ module Adamas::HIR
       @force_lower_provisional_dependencies.delete(consumer)
       @force_lower_result_suspensions << edge
       already_driving = @force_lower_retry_driver_active
-      progress = run_force_lower_retry_driver(ForceLowerSuspendedRequest.new(pending, replay, bypass_inline_yield))
+      progress = run_force_lower_retry_driver(request)
       raise pending unless already_driving || settled_force_lower_demand?(consumer, pending.consumer_requires_result)
       progress
+    end
+
+    private def has_equivalent_queued_force_lower_work?(request : ForceLowerWorkRequest) : Bool
+      return false unless force_lower_retry_source_current?(request)
+      @force_lower_retry_work.any? do |queued|
+        force_lower_retry_source_current?(queued) && same_force_lower_work_request?(queued, request)
+      end
+    end
+
+    # Suspension edges point from the consumer being replayed to the producer
+    # whose exact result it needs. Adding consumer -> producer closes a cycle
+    # only when producer can already reach consumer. An outgoing edge from the
+    # producer alone is ordinary dependency depth, not evidence of a cycle.
+    private def force_lower_result_suspension_would_cycle?(consumer : String, producer : String) : Bool
+      return true if consumer == producer
+      visited = Set(String).new
+      pending = [producer]
+      until pending.empty?
+        current = pending.pop
+        next if visited.includes?(current)
+        visited << current
+        return true if current == consumer
+        @force_lower_result_suspensions.each do |(from, to)|
+          pending << to if from == current && !visited.includes?(to)
+        end
+      end
+      false
     end
 
     private def resume_suspended_exact_result(request : ForceLowerSuspendedRequest) : Bool
@@ -113882,7 +114039,7 @@ module Adamas::HIR
         if @force_lower_retry_work.size > work_mark
           # A producer can enqueue its own dependencies. Keep the exact
           # consumer behind them instead of testing an unfinished body.
-          @force_lower_retry_work.insert(work_mark, request)
+          enqueue_force_lower_retry_work(request, work_mark)
           return false
         end
         raise pending unless producer_settled
@@ -113893,7 +114050,7 @@ module Adamas::HIR
         replay_force_lower_callsite(consumer, request.replay_callsite, bypass_inline_yield,
           requires_result: pending.consumer_requires_result)
         if @force_lower_retry_work.size > work_mark
-          @force_lower_retry_work.insert(work_mark, request)
+          enqueue_force_lower_retry_work(request, work_mark)
           return false
         end
       end

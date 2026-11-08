@@ -27684,3 +27684,47 @@ proof that generic arguments were lost. Stock-prelude hello separately stops
 at pending Exception::CallStack.format_backtrace_frame (35q5988). Full prelude
 runtime, fresh bootstrap and LavinMQ object/link/runtime/upstream parity remain
 open. These are distinct inputs and distinct frontier return pointers.
+
+
+## 2026-11-07 — Exact-result retries retain acyclic source-owned work
+
+The unchanged LavinMQ Hash frontier exposed two scheduler errors: a duplicate
+current request rediscovered during active replay was treated as a conflicting
+edge, and any outgoing producer edge was mistaken for a dependency cycle.
+Replace that heuristic with graph reachability and coalesce only fully equal,
+current requests. Keep exact source, callsite facts, namespace/substitutions,
+callback ABI/source, nested captures and body/result/bypass rights; preserve
+conflicting repeated-edge refusal and drain-time currentness checks.
+
+Scoped adversary verdict: ROBUST for current-recipe queue retention and
+acyclic graph admission. The graph still keys edges by physical names; a
+mid-driver source rebind could conservatively reject a valid path. No unsafe
+settlement was identified, and that rebind case remains unmeasured.
+
+Scoped falsifiers pass: nested C -> A -> B and diamonds are admitted; actual
+two/three-node cycles, changed Def/Arena and unequal request rights are refused.
+The expanded dependency gate passes 17 checks (35q6054). Exact S1 35q6040 also
+passes 173 adjacent HIR controls (35q6044), 51 original Crystal 1.22.1/lazy/eager
+native controls (35q6045), macro begin ABC (35q6048), and initializer replay
+29 HIR plus six native controls (35q6049). Live compiler bytes match its manifest.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+build.hash-retry-worklist35q6040.{source,result}.json,
+hash-retry-full-hir35q6044/, hash-retry-native35q6045/ and qualification JSON,
+hash-retry-macro35q6048/, hash-retry-initializer35q6049/,
+hash-retry-rights35q6054/ and qualification JSON,
+lavinmq-hash-retry35q6041/, lavinmq-char-reader35q6043/.
+S1 SHA-256: 64ac2238079ffbfb52e1ff31370298fdae4dd83ace024e21cecdb29a31dd423f.
+Compiler manifest SHA-256:
+f227238b19c74704a9ccbb655098fad0563aafbe145bb79ca190cea85b9f3a8a.
+Refresh after retry scheduling, graph or source/callback recipe changes.
+Rollback is this atomic commit; unrelated WIP is excluded.
+
+Actual LavinMQ now settles entries_capacity, replays entries_full? and upsert,
+then stops at Char::Reader#byte_at in decode_char_at (35q6041/43). Observation
+35q6050 distinguishes different callback entry maps (Bool versus Char) and a
+later parent capture without a binding. This is an open ownership diagnosis,
+not permission to weaken queue equality. Stock-prelude hello separately retains
+the CallStack callback-result frontier. Dead-tail static validation and required
+self-call arity remain distinct open defects. Full prelude runtime, fresh
+bootstrap and LavinMQ object/link/runtime/upstream parity remain unverified.

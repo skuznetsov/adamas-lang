@@ -27238,3 +27238,31 @@ reaches the strict pending Hash(Void, Void) result in update_linear_scan
 - [ ] Complete virtual result-family source-kind joins, fresh bootstrap, and
   LavinMQ object/link/runtime/upstream parity. The virtual native fixture only
   guards ordinary dispatch behavior. No stdlib or application changes.
+
+
+### 2026-11-07 — Preserve exact-result retry work across acyclic dependencies
+
+- [x] Check suspension cycles by producer-to-consumer reachability. An outgoing
+  producer edge alone is not a cycle. Keep direct-self and conflicting repeated
+  edge refusal; coalesce a queued continuation only when every current source,
+  callsite, callback, capture and demand requirement agrees.
+- [x] S1 35q6040 passes 173 focused/adjacent HIR controls (35q6044), 51 Crystal
+  1.22.1/lazy/eager native controls (35q6045), nested macro begin ABC (35q6048),
+  and initializer replay 29 HIR plus six native controls (35q6049). The expanded
+  dependency gate passes 17 checks, including two/three-node cycles, diamonds,
+  stale receipts, callback identity and body/result/bypass rights (35q6054).
+- [ ] Continue unchanged LavinMQ at Char::Reader#byte_at in decode_char_at
+  (35q6041/43). The prior Hash entries_capacity, entries_full? and upsert demands
+  now settle and replay. CharReader observation 35q6050 retains different nested
+  callback entry maps and later an unbound parent capture; localize their owner
+  before changing replay. Full prelude, bootstrap and native/upstream parity
+  remain open. No stdlib/application changes or weakened source/type guards.
+- [ ] Separate static validation from runtime NoReturn flow. Crystal checks a
+  dead source tail and uses its inferred type; an actually NoReturn-valued
+  receiver/argument still short-circuits call selection (35q6018/23/51). The
+  broad dead-block early return skips ordinary String argument validation. Keep
+  the existing required-self-argument admission defect separately visible.
+- [ ] Audit physical-name edge lifetime across mid-driver source rebinding. The
+  queue validates full current recipes, but the graph stores name pairs. A stale
+  edge could cause a conservative false cycle; this is an unmeasured risk, not
+  evidence of false settlement.

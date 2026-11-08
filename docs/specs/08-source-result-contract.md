@@ -1136,3 +1136,28 @@ an inherited source template using only its declaration owner's arity census:
 a concrete child may supply the valid overload. Both valid child calls and
 invalid actual-parent calls are mandatory falsifiers for that repair. Known-open
 fixtures remain visible and are not counted as a passing capability.
+
+
+### Exact-result retry identity and dependency graph
+
+Suspension edges run from an exact consumer to its producer. Admit an acyclic
+chain even when the producer has its own outgoing dependency. Reject an edge
+when the producer already reaches the consumer, including direct recursion.
+A repeated active edge is legal only while the driver still owns an equivalent
+current queued continuation; a name pair alone grants no replay permission.
+
+Queue coalescing requires equality of retained Def/Arena identities, complete
+callsite and source-argument facts, source binding including block result, entry
+namespace/type map, callback ABI/source, nested pending/capture/active-body
+chain, result requirements and bypass flags. Do not merge body-only and result
+demands, stale receipts, or different callback contexts. Revalidate source
+currentness both before coalescing and while draining.
+
+Gate: initializer_body_demand_replay_repro.sh runs parsed-source graph controls
+alongside initializer replay. It checks nested chains, shared producers, actual
+cycles, changed Def/Arena receipts, callback identity and retained demand rights.
+Adjacent HIR and original-first native result gates guard caller rebuilding.
+Refresh after queue scheduling, suspension edges, source/callback recipes or
+request fields change. Rollback is the atomic retry-graph commit. Graph
+admission does not certify arbitrary recursive compilation, full prelude, fresh
+bootstrap, or LavinMQ native/runtime/upstream parity.
