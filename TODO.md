@@ -27185,3 +27185,29 @@ reaches the strict pending Hash(Void, Void) result in update_linear_scan
 - [ ] Audit raw same-revision mutation of generated allocator bodies. Their
   existing generation receipt checks exact Function/revision/layout; the new
   raw-replacement tests cover source bodies, not this separate bypass.
+
+
+### 2026-11-07 — Bind property-setter source kind before result replay
+
+- [x] Transport exact selected Def/Arena and actual argument source kind before
+  a return probe can force a setter. Publish replay shape first, record refused
+  dependencies, suspend unresolved source results and consume completed body
+  facts. Preserve strict source-scope rejection and type admission.
+- [x] S1 35q5962 passes 45 original Crystal 1.22.1/lazy/eager native controls
+  (35q5981), 166 focused/adjacent HIR controls (35q5979) and two rooted virtual
+  setter guards (35q5984). Baseline 35q5915 prints AA for both class/instance
+  overload orders; expected AB/BA (35q5936/37). Macro begin and initializer replay
+  refreshes pass ABC, 29 HIR and six native controls (35q5965/67).
+- [ ] Repair bare self-call result transport. Unchanged LavinMQ passes the
+  former Char::Reader initializer and rejects the next_char result kind
+  (35q5969, inputs unchanged). Full prelude, bootstrap and LavinMQ native/runtime/
+  upstream parity remain open. No stdlib/application edits or weakened checks.
+- [ ] Audit source-less eager body materialization: pre-lowering a class-only
+  parameter without call facts publishes an instance result (35q5968). The
+  production CLI gate registers first and lowers on demand; this is not closed.
+- [ ] Repair canonical getter result ownership: the existing module-setter HIR
+  suite fails with LinkHolder::Linkable before setter dispatch, equally on base
+  and candidate (35q5982/83). A rooted guard passes (35q5984) but does not fix it.
+- [ ] Repair generated allocator outer-call demand ownership for overloaded
+  initialize; preserve known_open/initializer_overload.cr and strict slot guard
+  (35q5942). Virtual setter source-kind replay remains a separate obligation.

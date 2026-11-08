@@ -1,16 +1,46 @@
 # Source Result Ownership — Frontier SDD
 
-Status: IN_PROGRESS, 2026-11-07. Exact-source S1 35q5915 passes 39
-stock Crystal 1.22.1/lazy/eager native member-result controls (35q5918) and
-160 focused/adjacent HIR examples (35q5930). The original nested macro begin
-and initializer replay gates also pass (35q5919/20). Unchanged LavinMQ advances
-through its Hash callback result, then stops at a pending Char::Reader
-initializer result (35q5921). Property-setter result/dependency transport is
-next. Full prelude, fresh bootstrap and LavinMQ execution/upstream parity remain
-open; older gate certificates retain only their recorded scope and source state.
+Status: IN_PROGRESS, 2026-11-07. Exact-source S1 35q5962 passes 45
+stock Crystal 1.22.1/lazy/eager native property-setter controls (35q5981),
+166 focused/adjacent HIR examples (35q5979), and two rooted module-dispatch
+HIR guards (35q5984). The nested macro begin and initializer replay refreshes
+also pass (35q5965/67). Unchanged LavinMQ passes the former pending initializer
+and stops at Char::Reader#next_char result kind (35q5969). Bare self-call result
+transport is next. Full prelude, fresh bootstrap and LavinMQ execution/upstream
+parity remain open; older certificates retain their recorded source scope.
 
 This is a bounded repair to source result transport in HIR. It does not
 replace the semantic architecture transition in specification 07.
+
+## Property-setter source calls
+
+A nonvirtual source setter is an ordinary one-argument call. Select its exact
+Def/Arena using actual argument source facts, retain class/instance kind beside
+the ABI carrier, and publish that binding before the first return probe can
+force the body. Mangling encodes the selection; it does not choose the source.
+The exact-source scope must admit that same binding. Depth refusal records the
+child dependency and suspends the consumer with the same replay recipe.
+A settled source body owns both its return ABI and actual result facts; neither
+the RHS type nor a registered return hint supplies those facts. The old
+bodiless ivar-parameter fallback remains limited to targets without a source
+binding. Terminal source results retain their non-returning control flow.
+
+DoD: deferred_setter_source_result_repro.sh passes the stock oracle, candidate
+lazy and ADAMAS_EAGER_MONO modes, including both orders of class/instance inputs
+and returned parameters, deep result chains and strict semantic negatives.
+property_setter_source_result_spec authenticates selected Def/Arena and result
+kind after the CLI registration-before-demand lifecycle; a conflicting prior
+exact-source receipt must reject. property_setter_virtual_guard_spec checks
+module target/virtual-call preservation with explicitly rooted fixture types.
+This direct-call contract does not establish virtual source-kind replay.
+
+The former eager HIR setup materialized bodies without actual argument facts
+before any call. Its class-parameter result became an instance fact (35q5968).
+That separate source-less materialization limitation is not certified by the
+CLI/lazy result gate. The unchanged module-setter suite also fails before
+setter dispatch on both baseline and candidate: LinkHolder::Linkable is an
+incorrect getter result owner (35q5982/83). Preserve both obligations. The
+rooted guard isolates setter dispatch and does not close the owner defect.
 
 ## Completed members before callback forall binding
 

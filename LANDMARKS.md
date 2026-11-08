@@ -27576,3 +27576,54 @@ Char::Reader#initialize in String#calc_excess_left (35q5921, input manifest
 03f2a947f1ba26d45166f9d69e051ee21ad15162443a9ae4a44d9b023e58779f).
 Property-setter result/dependency transport is next; full Thread/prelude runtime,
 fresh bootstrap and LavinMQ object/link/runtime/upstream parity remain open.
+
+
+## 2026-11-07 — A source setter owns its result before replay
+
+The property-assignment helper previously resolved only carrier argument types,
+probed a return before publishing its call shape and emitted a Call without
+completed source result facts. This lost Int32.class versus Int32 and left
+Char::Reader#initialize with a pending setter dependency. Select the exact
+Def/Arena with actual argument facts first; bind that source and source-kind
+specialization, publish the call recipe, then probe/force under the exact-source
+scope. Check scope admission, record refusal/dependency and suspend the consumer
+when necessary. Consume the settled body's ABI and actual facts. Keep the old
+bodiless-ivar fallback outside an authenticated source binding.
+
+Scoped adversary verdict: ROBUST for qualified fixed-arity nonvirtual source
+setters. S1 35q5962 passes all 45 stock Crystal 1.22.1/lazy/eager native controls
+(35q5981), including deep chains, setter body versus RHS, actual returned
+class-valued parameters in both call orders, bottom flow and strict negatives.
+Baseline S1 35q5915 prints AA instead of AB/BA (35q5936/37). All 166 focused/
+adjacent HIR checks pass (35q5979), including Def/Arena result identity and a
+conflicting prior source-scope refusal. Two rooted module-dispatch guards pass
+(35q5984). Original macro/replay gates pass ABC, 29 HIR and six native controls
+(35q5965/67). This is not complete virtual setter source-kind qualification.
+
+A failed additional HIR harness pre-lowered bodies without call-selected facts,
+unlike CLI registration-before-demand. Its class-only parameter publishes an
+instance fact (35q5968); retain that eager-materialization limitation. The old
+module-setter suite fails before dispatch on baseline and candidate because a
+getter result resolves to LinkHolder::Linkable (35q5982/83). Rooted type spelling
+isolates the passing setter guard; it is not a compiler fix for that defect.
+The preserved overloaded-initialize source still has an independent generated
+allocator outer-slot failure (35q5942); no guard was relaxed.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+build.setter-exact-replay35q5962.{source,result}.json,
+deferred-setter-complete35q5981/ and qualification JSON,
+deferred-setter-fixtures35q5981.{before,after}.json,
+setter-exact-hir-cli35q5979/, setter-virtual-rooted-guard35q5984/,
+setter-kind-before35q5936/ and 35q5937/, setter-nested-macro35q5965/,
+setter-initializer-replay35q5967/, setter-exact-lavinmq35q5969/.
+S1 SHA-256: deebe96b139b4d2dc914aed1fa662eb55bfbe3a8eadc66fd605fe256a11a179f.
+Compiler manifest SHA-256:
+e24c53a9d1ef8462187b9bed49bf23ef63b7c888e73e33f25675d92987513403.
+Live compiler sources match this qualified build manifest. Refresh after setter
+selection, source kind, result demand/replay or accessor dispatch changes.
+Rollback is this atomic commit; unrelated WIP stays excluded.
+
+Unchanged LavinMQ advances through the former Char::Reader#initialize blocker
+and rejects next_char result kind (35q5969; inputs unchanged). Bare self-call
+result transport, full prelude, fresh bootstrap and LavinMQ object/link/runtime/
+upstream parity remain open.

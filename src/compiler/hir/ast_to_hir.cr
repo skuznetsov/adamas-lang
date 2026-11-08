@@ -150151,22 +150151,100 @@ module Adamas::HIR
     ) : ValueId
       setter_name = "#{field_name}="
       arg_types = [ctx.type_of(value_id)]
+      source_argument_facts = call_resolution_source_argument_facts(ctx, [value_id], arg_types, false, false)
       method_name = resolve_method_call(ctx, object_id, setter_name, arg_types, false)
-      return_type = get_function_return_type(method_name)
       call_virtual = instance_call_virtual?(ctx, object_id, method_name)
       unless call_virtual || @module.has_function?(method_name)
         if accessor = ensure_accessor_method(ctx, object_id, setter_name)
-          return_type = accessor[0]
           method_name = accessor[1]
         end
       end
-      remember_callsite_arg_types(method_name, arg_types)
-      lower_function_if_needed(method_name)
+      requested_family = strip_type_suffix(method_name)
+      selected = unless call_virtual
+                   resolve_call_target(CallResolutionInput.new(
+                     func_name: requested_family, arg_count: 1, arg_types: arg_types,
+                     has_block: false, has_splat: false, has_named: false, named_names: nil,
+                     source_argument_facts: source_argument_facts,
+                   ))
+                 end
+      if selected && strip_type_suffix(selected.symbol_name) != requested_family
+        raise LoweringError.new("property setter changed its resolved source family: #{requested_family}")
+      end
+      source_binding : SourceCallBinding? = nil
+      selected_def = selected.try(&.def_node)
+      selected_arena = selected.try(&.source_arena)
+      selected_name = selected.try(&.symbol_name)
+      if selected && selected_def && selected_arena
+        # A setter is an ordinary one-argument source call. The ABI TypeRef
+        # alone cannot distinguish a type object from its instances. Bind its
+        # exact selected source and actual kind before return probing or replay.
+        source_names = source_argument_facts.try do |facts|
+          facts.map do |fact|
+            proc_source_type_name(fact.type_ref, true) if fact && fact.type_literal
+          end
+        end
+        if arg_types.all? { |type| type != TypeRef::VOID }
+          method_name = mangle_function_name(
+            requested_family, arg_types, source_restriction_names: source_names,
+          )
+        else
+          method_name = selected.symbol_name
+        end
+        bind_exact_source_call_target(
+          method_name, selected.symbol_name, selected_def, selected_arena,
+          binding_context: "property setter",
+        )
+        if facts = source_argument_facts
+          if facts.all? { |fact| !fact.nil? }
+            source_binding = source_positional_call_binding(
+              selected.symbol_name, selected_def, selected_arena, facts.compact,
+            )
+          end
+        end
+      elsif !call_virtual &&
+            (@function_defs.has_key?(requested_family) || !function_def_overloads(requested_family).empty?) &&
+            source_argument_facts.try { |facts| facts.all? { |fact| fact && fact.type_ref != TypeRef::VOID } }
+        actual_names = source_argument_facts.not_nil!.map { |fact| proc_source_type_name(fact.not_nil!) }
+        raise LoweringError.new("no overload matches '#{requested_family}' with types #{actual_names.join(", ")}")
+      end
+      remember_callsite_arg_types(method_name, arg_types,
+        source_argument_facts: source_argument_facts, source_binding: source_binding)
+      source = unless call_virtual
+                 force_lower_exact_source_binding(method_name, selected_def, selected_def,
+                   selected_arena, selected_name)
+               end
+      refused_mark = @force_lower_depth_refused.size
+      return_type = TypeRef::VOID
+      if source && callee_is_yield_free?(method_name)
+        # Return probing can itself force the body. Its exact source and the
+        # refusal watermark must already be active before that first probe.
+        source_bound = with_force_lower_exact_source(method_name, source) do
+          return_type = get_function_return_type(method_name, 1, selected_def,
+            selected_source_binding: source)
+          lower_function_if_needed(method_name)
+          force_lower_function_for_return_type(method_name, bypass_inline_yield: true,
+            pending_call_target_context: "property_setter_result") unless settled_force_lower_result?(method_name)
+          true
+        end
+        unless source_bound
+          raise LoweringError.new("property setter source changed before result inference: #{method_name}", selected_def)
+        end
+        record_force_lower_result_dependency(ctx, method_name, selected_def, refused_mark,
+          selected_def, selected_arena, selected_name)
+        suspend_depth_refused_source_result(ctx, method_name, return_type, selected_def,
+          selected_def, selected_arena, refused_mark, selected_name, source)
+        if settled_force_lower_result?(method_name)
+          return_type = @module.function_by_name(method_name).not_nil!.return_type
+        end
+      else
+        return_type = get_function_return_type(method_name)
+        lower_function_if_needed(method_name)
+      end
       # An unannotated setter (`def x=(@x : M); end`) has no registered return
       # type until its specialization is lowered, and that lowering may be
       # deferred. Its implicit `@x = x` body returns the argument, so the
       # assignment expression has the argument type, not Void.
-      if return_type == TypeRef::VOID
+      if return_type == TypeRef::VOID && source.nil?
         return_type = get_function_return_type(method_name)
         if return_type == TypeRef::VOID && bodiless_ivar_param_setter?(method_name, arg_types)
           return_type = arg_types[0]
@@ -150186,6 +150264,12 @@ module Adamas::HIR
         method_name, [value_id], call_virtual)
       ctx.emit(call)
       ctx.register_type(call.id, return_type)
+      unless call_virtual
+        register_materialized_source_return_value_facts(ctx, call.id, method_name)
+        if selected_call_noreturn?(method_name, selected_def)
+          @control_flow_dead_blocks.add({ctx.function.id, ctx.current_block})
+        end
+      end
       call.id
     end
 
