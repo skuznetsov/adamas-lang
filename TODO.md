@@ -27160,3 +27160,28 @@ Original-task refresh on this S1 also passes: nested macro begin outputs ABC
 (35q5837). Full Thread/prelude runtime remains open. Unchanged LavinMQ again
 reaches the strict pending Hash(Void, Void) result in update_linear_scan
 (35q5838, inputs unchanged); the header.to_slice proof is still required.
+
+
+### 2026-11-07 — Authenticate actual member results before callback forall binding
+
+- [x] Recover an ordinary nilary member's actual result only from its exact,
+  settled source body. Retain Def/Arena, body revision/seal and per-slot object
+  identities; recursively revalidate direct Call leaves instead of trusting an
+  old caller summary. A return annotation remains an upper bound.
+- [x] Carry the generation-owned allocator target through bare static `.new`
+  emission. Recheck current generated-body/layout ownership and ABI before it
+  authenticates an instance result; names alone grant no permission.
+- [x] Exact-source S1 35q5915 passes 39 Crystal 1.22.1/lazy/eager native controls
+  (35q5918) and 160 focused/adjacent HIR examples (35q5930). Stale source-body,
+  raw instruction replacement, transitive callee, allocator revision and layout
+  invalidation controls reject stale proofs. Baseline 35q5830 rejects the
+  builtin-string positive (35q5931). Nested macro begin and initializer replay
+  refreshes pass ABC, 29 HIR and six native controls (35q5919/35q5920).
+- [ ] Finish property-setter exact result/dependency transport. Unchanged
+  LavinMQ passes the former Hash result blocker and stops at pending
+  Char::Reader#initialize in String#calc_excess_left (35q5921, inputs unchanged).
+  Setter argument kind must reach selection and replay together. Full prelude,
+  fresh bootstrap and LavinMQ object/link/runtime/upstream parity remain open.
+- [ ] Audit raw same-revision mutation of generated allocator bodies. Their
+  existing generation receipt checks exact Function/revision/layout; the new
+  raw-replacement tests cover source bodies, not this separate bypass.

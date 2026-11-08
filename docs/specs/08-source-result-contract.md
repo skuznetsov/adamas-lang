@@ -1,17 +1,41 @@
 # Source Result Ownership — Frontier SDD
 
-Status: IN_PROGRESS, 2026-11-07. Exact-source S1 35q5634 passes the
-59-control active-body replay/source ownership gate (35q5633) and its five-test
-wrapper (35q5636). Unchanged prelude now passes the recursive Exception/IO#flush
-replay conflict, then rejects the separate CallStack cache source-kind/pending
-result defect (35q5635). Full prelude, fresh bootstrap and unchanged LavinMQ
-execution/upstream parity remain open. The existing Atomic and Proc gates retain
-their separately recorded qualification; they are not a full-suite claim here.
-The selected-default contract passes 37 main cases and ten block-slot cases
-on exact-source S1 35q2760 (35q2764); five companions remain explicitly open.
+Status: IN_PROGRESS, 2026-11-07. Exact-source S1 35q5915 passes 39
+stock Crystal 1.22.1/lazy/eager native member-result controls (35q5918) and
+160 focused/adjacent HIR examples (35q5930). The original nested macro begin
+and initializer replay gates also pass (35q5919/20). Unchanged LavinMQ advances
+through its Hash callback result, then stops at a pending Char::Reader
+initializer result (35q5921). Property-setter result/dependency transport is
+next. Full prelude, fresh bootstrap and LavinMQ execution/upstream parity remain
+open; older gate certificates retain only their recorded scope and source state.
 
 This is a bounded repair to source result transport in HIR. It does not
 replace the semantic architecture transition in specification 07.
+
+## Completed members before callback forall binding
+
+Early binding may inspect an ordinary nilary member only after exact direct
+selection and completed source lowering. Its result receipt retains Def/Arena,
+body revision/seal, shallow block/instruction/terminator identities and copied
+per-leaf source facts. Fresh reachable-return traversal authenticates ordinary
+Call leaves recursively; cached caller facts only reconstruct the publication
+and cannot establish a fresh callee result. Source annotations are upper bounds.
+Unknown, bottom, broad dispatch, module/union receivers and unsettled source
+bodies do not obtain a concrete result from an ABI carrier.
+
+A generated allocator has a separate generation-owned Function/revision/layout
+witness. Both normal and bare static call emission must retain its exact target.
+The fresh consumer rechecks that witness and the emitted Call ABI before using
+an ordinary instance result. A source `.new` with the same name cannot borrow
+this authority. Tracked body revision and layout invalidation reject it; raw
+same-revision generated-body array mutation is a separate open audit obligation.
+The source receipt's explicit raw-replacement tests do not certify that bypass.
+
+DoD: callback_member_source_result_repro.sh passes its stock-first positive and
+semantic rejection cases in lazy/eager modes; inline_forall_tuple_source_binding
+and adjacent ownership suites reject stale source/callee and generated-layout
+proofs. Refresh after any relevant selection, body mutation, allocator or replay
+change. This bounded contract does not certify full prelude or LavinMQ runtime.
 
 ## Owners and phase boundaries
 

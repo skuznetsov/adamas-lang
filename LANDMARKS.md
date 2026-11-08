@@ -27525,3 +27525,54 @@ Original-task refresh on this S1 also passes: nested macro begin outputs ABC
 (35q5837). Full Thread/prelude runtime remains open. Unchanged LavinMQ again
 reaches the strict pending Hash(Void, Void) result in update_linear_scan
 (35q5838, inputs unchanged); the header.to_slice proof is still required.
+
+
+## 2026-11-07 — Completed member results have a fresh source-body proof
+
+A callback returning `{header.to_slice, header}` could not bind output-only
+forall variables before its dependent empty Hash was lowered. Extend the early
+structured witness only to exact ordinary nilary members with a settled actual
+source body. An immutable receipt binds Def/Arena, revision, body seal, shallow
+body-slot identities and copied source facts. Rewalk reachable returns; a Call
+leaf reauthenticates its current exact callee or generated allocator instead
+of treating its old cached caller facts as evidence. Broad annotations retain
+their ABI but do not erase the actual result. Nil/Void discard and bottom remain
+separate contracts. Builtin owners require canonical registry identity too.
+
+The first strict native candidate rejected Piece.new and annotated Child.new:
+bare static member emission selected a real generated allocator but dropped
+its generation-owned call witness. Transport that witness to the emitted Call,
+require the selected target to agree, and let the existing generated-body/layout
+and ABI validator authenticate it. No spelling-based source authority was added.
+
+Scoped adversary verdict: ROBUST for the qualified nilary member corridor.
+S1 35q5915 passes all 39 stock Crystal 1.22.1/lazy/eager controls (35q5918),
+including side effects, annotated subtype results, builtin owners and semantic
+instance/class mismatches. All 160 focused/adjacent HIR examples pass (35q5930):
+tracked/untracked source-body replacement, identical-text replacement, changed
+ordinary callee, tracked allocator revision and layout invalidation. Baseline
+35q5830 rejects the builtin-string positive (35q5931; no invalid binary run).
+Generated allocator same-revision raw-array mutation remains an explicit audit
+obligation; its existing generation witness has revision/layout scope. This is
+not a universal HIR mutation serializer or a performance qualification.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+build.callback-member-bare-allocator35q5915.{source,result}.json,
+callback-member-bare-native35q5918/ and qualification/fixture JSON,
+member-result-bare-fixtures35q5918.json, callback-member-fresh-hir35q5930/,
+member-result-before35q5931/, member-bare-nested-macro35q5919/,
+member-bare-initializer-replay35q5920/, member-bare-lavinmq35q5921/.
+S1 SHA-256: a96cb979c491b5411050e16a210d0d69893aae36460a6921a5fa5177e091217b.
+Compiler source manifest SHA-256:
+7c5cbdd03ecd17887559305faf4be2fc8754f1b17195ad89953be624ebae3efe.
+Live compiler sources match this build manifest byte-for-byte. The 160-test
+packet extends only specs in snapshot 35q5922. Refresh after source-result,
+member selection, body mutation, allocator generation or replay changes.
+Rollback is this atomic commit; unrelated WIP stays excluded.
+
+Original-task refresh passes ABC, 29 HIR and six native controls (35q5919/20).
+Unchanged LavinMQ advances through the former Hash result and now rejects pending
+Char::Reader#initialize in String#calc_excess_left (35q5921, input manifest
+03f2a947f1ba26d45166f9d69e051ee21ad15162443a9ae4a44d9b023e58779f).
+Property-setter result/dependency transport is next; full Thread/prelude runtime,
+fresh bootstrap and LavinMQ object/link/runtime/upstream parity remain open.

@@ -2126,6 +2126,88 @@ module Adamas::HIR
     end
   end
 
+  # A stronger source-result receipt for consumers that prebind generic
+  # callback results before ordinary call lowering. The older Function source
+  # result fields remain useful to validation and call emission, but this
+  # receipt additionally binds the result to the current body revision, a
+  # rendered body seal, and shallow exact object identities for each body
+  # slot. It retains per-value source facts for a fresh walk of reachable
+  # Return values without copying any callee graph.
+  class SourceReturnResultReceipt
+    getter definition_id : UInt64
+    getter arena_key : UInt64
+    getter body_revision : UInt64
+    getter body_seal : String
+    getter discard_type : TypeRef?
+
+    # Keep only per-body object identities for the mutable public HIR arrays.
+    # This is not a copied HIR graph: it is a shallow identity snapshot for one
+    # Function, so replacing an instruction with an identical debug rendering
+    # still invalidates the receipt.
+    @scope_refs : Array(Scope)
+    @block_refs : Array(Block)
+    @instruction_refs : Array(Array(Value))
+    @terminator_refs : Array(Terminator)
+
+    @result_facts : Array({TypeRef, Bool})
+    @value_facts : Hash(ValueId, Array({TypeRef, Bool}))
+
+    def initialize(
+      @definition_id : UInt64,
+      @arena_key : UInt64,
+      @body_revision : UInt64,
+      @body_seal : String,
+      scope_refs : Array(Scope),
+      block_refs : Array(Block),
+      result_facts : Array({TypeRef, Bool}),
+      value_facts : Hash(ValueId, Array({TypeRef, Bool})),
+      @discard_type : TypeRef?,
+    )
+      @scope_refs = scope_refs.dup
+      @block_refs = block_refs.dup
+      @instruction_refs = block_refs.map { |block| block.instructions.dup }
+      @terminator_refs = block_refs.map(&.terminator)
+      @result_facts = result_facts.dup
+      @value_facts = {} of ValueId => Array({TypeRef, Bool})
+      value_facts.each do |id, facts|
+        @value_facts[id] = facts.dup
+      end
+    end
+
+    def result_facts : Array({TypeRef, Bool})
+      @result_facts.dup
+    end
+
+    def result_facts_match?(facts : Array({TypeRef, Bool})) : Bool
+      @result_facts == facts
+    end
+
+    def value_facts_for(id : ValueId) : Array({TypeRef, Bool})?
+      @value_facts[id]?.try(&.dup)
+    end
+
+    def body_objects_match?(scopes : Array(Scope), blocks : Array(Block)) : Bool
+      return false unless scopes.size == @scope_refs.size && blocks.size == @block_refs.size
+
+      scopes.each_with_index do |scope, index|
+        return false unless scope.same?(@scope_refs[index])
+      end
+
+      blocks.each_with_index do |block, index|
+        return false unless block.same?(@block_refs[index])
+        instructions = block.instructions
+        expected_instructions = @instruction_refs[index]
+        return false unless instructions.size == expected_instructions.size
+        instructions.each_with_index do |instruction, instruction_index|
+          return false unless instruction.same?(expected_instructions[instruction_index])
+        end
+        return false unless block.terminator.same?(@terminator_refs[index])
+      end
+
+      true
+    end
+  end
+
   # ═══════════════════════════════════════════════════════════════════════════
   # FUNCTION
   # ═══════════════════════════════════════════════════════════════════════════
@@ -2172,6 +2254,9 @@ module Adamas::HIR
     property source_return_arena_key : UInt64? = nil
     # Resolved source discard annotation, published with the same Def/Arena.
     property source_return_discard_type : TypeRef? = nil
+    # Fresh body-bound result proof for narrow consumers that need actual
+    # source results before they can finish lowering their caller.
+    property source_return_result_receipt : SourceReturnResultReceipt? = nil
     @revision_ledger : FunctionRevisionLedger
 
     def initialize(

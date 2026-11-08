@@ -77092,6 +77092,7 @@ module Adamas::HIR
     # descriptors retain ABI children, but those children alone do not prove
     # whether a slot came from a class literal or an instance value.
     private def inline_block_return_source_argument(
+      ctx : LoweringContext,
       block : Adamas::Compiler::Frontend::BlockNode,
       block_arena : Adamas::Compiler::Frontend::ArenaLike,
       func_def : Adamas::Compiler::Frontend::DefNode,
@@ -77154,13 +77155,13 @@ module Adamas::HIR
                 name = safe_slice_to_string(target.name) || return nil
                 return nil if name.empty?
                 value = inline_block_source_argument_for_expr(
-                  assignment.value, source_locals, lexical_owner.class_name,
+                  ctx, assignment.value, source_locals, lexical_owner.class_name,
                 ) || return nil
                 source_locals[name] = value
                 index += 1
               end
 
-              inline_block_source_argument_for_expr(tail, source_locals, lexical_owner.class_name)
+              inline_block_source_argument_for_expr(ctx, tail, source_locals, lexical_owner.class_name)
             end
           end
         end
@@ -77170,6 +77171,7 @@ module Adamas::HIR
     end
 
     private def inline_block_source_argument_for_expr(
+      ctx : LoweringContext,
       expr : ExprId,
       source_locals : Hash(String, SourceCallArgument),
       self_type_name : String?,
@@ -77201,12 +77203,17 @@ module Adamas::HIR
         end
         nil
       when Adamas::Compiler::Frontend::GroupingNode
-        inline_block_source_argument_for_expr(node.expression, source_locals, self_type_name)
+        inline_block_source_argument_for_expr(ctx, node.expression, source_locals, self_type_name)
+      when Adamas::Compiler::Frontend::MemberAccessNode
+        receiver = inline_block_source_argument_for_expr(
+          ctx, node.object, source_locals, self_type_name,
+        ) || return nil
+        inline_block_completed_member_source_argument(ctx, receiver, node)
       when Adamas::Compiler::Frontend::TupleLiteralNode
         node = node.as(Adamas::Compiler::Frontend::TupleLiteralNode)
         values = node.elements.map do |element|
           inline_block_source_argument_for_expr(
-            element, source_locals, self_type_name,
+            ctx, element, source_locals, self_type_name,
           ) || return nil
         end
         return nil if values.empty?
@@ -77233,6 +77240,81 @@ module Adamas::HIR
       else
         nil
       end
+    end
+
+    # Query the result of an ordinary selected nilary body, without emitting
+    # or executing the callback expression. The callback's restriction owns
+    # receiver typing; the exact completed callee owns result facts. Neither
+    # a return annotation nor a sibling target's cached ABI is a certificate.
+    private def inline_block_completed_member_source_argument(
+      ctx : LoweringContext,
+      receiver : SourceCallArgument,
+      node : Adamas::Compiler::Frontend::MemberAccessNode,
+    ) : SourceCallArgument?
+      receiver_facts = source_call_argument_value_facts(receiver) || return nil
+      return nil unless receiver_facts.size == 1 && receiver_facts[0] == {receiver.type_ref, false}
+      owner = canonical_method_owner_name(get_type_name_from_ref(receiver.type_ref))
+      if descriptor = @module.get_type_descriptor(receiver.type_ref)
+        return nil if descriptor.kind == TypeKind::Union || descriptor.kind == TypeKind::Module ||
+                      descriptor.kind == TypeKind::Tuple || descriptor.kind == TypeKind::Proc
+      else
+        # Built-in identities have no user descriptor. Their registered source
+        # class still has to own the exact ordinary method selected below.
+        return nil unless builtin_type_ref_for(owner) == receiver.type_ref && class_like_namespace?(owner)
+      end
+      return nil if owner.empty? || owner == "Void" || owner == "Unknown" ||
+                    registered_abstract_class_name?(owner) || class_has_subclasses?(owner) ||
+                    @module_defs.has_key?(owner) || module_like_type_name?(owner) ||
+                    module_includers_match?(owner)
+      member = member_access_name_text(node)
+      return nil if member.empty?
+      entry = lookup_function_def_for_call("#{owner}##{member}", 0, false, [] of TypeRef) || return nil
+      target, definition = entry
+      parts = parse_method_name_uncached(target)
+      # This corridor does not own inherited/module projections or primitive
+      # template rebasing. Their ordinary lowering must supply its own receipt.
+      return nil unless parts.separator == '#' && parts.method == member && parts.suffix.nil? &&
+                        canonical_method_owner_name(parts.owner) == owner
+      return nil if definition.is_abstract || definition.body.nil? ||
+                    !forall_type_param_names(definition).empty?
+      stats = function_param_stats(target, definition)
+      return nil unless stats.param_count == 0 && stats.required == 0 && !stats.has_block &&
+                        !stats.has_splat && !stats.has_double_splat
+      declaration_arena = @function_def_arenas[target]? || return nil
+      source = force_lower_exact_source_binding(target, definition, definition, declaration_arena, target) || return nil
+      return nil unless callee_is_yield_free?(target)
+      return nil if @primitive_template_source_bindings.has_key?(target) ||
+                    @raw_callback_source_bindings.has_key?(target)
+      empty_callsite = CallsiteArgs.new([] of TypeRef, nil, nil)
+      if existing = @pending_arg_types[target]?
+        return nil unless same_callsite_args_shell?(existing, empty_callsite)
+      end
+      refused_mark = @force_lower_depth_refused.size
+      bound = with_force_lower_exact_source(target, source) do
+        remember_callsite_arg_types(target, [] of TypeRef)
+        force_lower_function_for_return_type(target, bypass_inline_yield: true,
+          pending_call_target_context: "callback_member_result") unless settled_force_lower_result?(target)
+        true
+      end
+      return nil unless bound
+      record_force_lower_result_dependency(ctx, target, definition, refused_mark,
+        definition, declaration_arena, target)
+      suspend_depth_refused_source_result(ctx, target, TypeRef::VOID, definition,
+        definition, declaration_arena, refused_mark, target, source)
+      return nil unless force_lower_exact_source_matches?(target, source) && settled_force_lower_result?(target)
+      function = @module.function_by_name(target) || return nil
+      return nil unless function.source_return_definition_id == definition.object_id.to_u64 &&
+                        function.source_return_arena_key == arena_map_key(declaration_arena)
+      facts = fresh_source_return_result_facts(target, function, definition, declaration_arena) || return nil
+      # A singleton actual result can name a Tuple leaf independently of an
+      # annotated ABI upper bound. Mixed/bottom results and nested Tuple values
+      # need their own structured receipt and remain deferred.
+      return nil unless facts.size == 1
+      type, literal = facts[0]
+      return nil if type == TypeRef::VOID || noreturn_type?(type) || unresolved_generic_return_type?(type)
+      result_descriptor = @module.get_type_descriptor(type)
+      return nil if result_descriptor && result_descriptor.kind == TypeKind::Tuple
+      SourceCallArgument.new(type, literal)
     end
 
     # A callback input restriction is exact source information for the
@@ -81612,6 +81694,331 @@ module Adamas::HIR
       function.source_return_definition_id = definition.object_id.to_u64
       function.source_return_arena_key = arena_map_key(declaration_arena)
       function.source_return_discard_type = discard_result_type
+      function.source_return_result_receipt = SourceReturnResultReceipt.new(
+        definition.object_id.to_u64,
+        arena_map_key(declaration_arena),
+        function.body_revision,
+        source_return_function_body_seal(function),
+        function.scopes,
+        function.blocks,
+        function.source_return_value_facts.not_nil!,
+        source_return_receipt_value_facts(ctx),
+        discard_result_type,
+      )
+    end
+
+    # The legacy source-result fields above are consumed by several established
+    # validations. Early callback prebinding needs a stronger proof: the exact
+    # current declaration generation, a completed settled target, both the
+    # revision ledger and a rendered body seal plus exact body-slot identities,
+    # and a fresh walk of every reachable return value. The debug rendering
+    # omits some immutable fields, so exact slot identity also rejects a
+    # same-text replacement. Hidden mutable semantic fields are appended below.
+    # The per-value facts are only leaf evidence; Call leaves are always
+    # re-authenticated below.
+    private def source_return_function_body_seal(function : Function) : String
+      String.build do |io|
+        function.to_s(io)
+        function.blocks.each do |block|
+          block.instructions.each do |value|
+            io << "source-result-value %" << value.id << " type=" << value.type.id
+            if alias_id = value.must_alias_with
+              io << " must-alias=%" << alias_id
+            else
+              io << " must-alias=none"
+            end
+            case value
+            when FieldGet
+              field_get = value
+              io << " field-offset=" << field_get.field_offset
+            when FieldSet
+              field_set = value
+              io << " field-offset=" << field_set.field_offset
+            when ClassVarSet
+              class_var_set = value
+              io << " class-var-set-type=" << class_var_set.type.id
+            when Parameter
+              parameter = value
+              io << " default=" << parameter.default_literal.inspect
+            when ExternCall
+              external_call = value
+              io << " declared-return="
+              if declared_return_type = external_call.declared_return_type
+                io << declared_return_type.id
+              else
+                io << "none"
+              end
+              io << " noreturn=" << external_call.noreturn
+              io << " fixed-types="
+              if fixed_types = external_call.variadic_fixed_types
+                fixed_types.each do |type|
+                  io << type.id << ','
+                end
+              else
+                io << "none"
+              end
+            when Call
+              call = value
+              if authority = call.atomic_primitive_authority_for_current_shape
+                io << " atomic-authority=" << authority.operation.inspect << ','
+                io << authority.primitive_kind.inspect << ',' << authority.annotation_name.inspect << ','
+                io << authority.emitted_target.inspect << ',' << authority.source_def_id << ','
+                io << authority.source_arena_id << ',' << authority.call_id << ','
+                io << authority.argument_key.inspect << ',' << authority.argument_count << ','
+                io << authority.receiver_value << ',' << authority.block_value << ','
+                io << authority.virtual << ',' << authority.result_type_id
+              else
+                io << " atomic-authority=none"
+              end
+            when MakeClosure
+              closure = value
+              closure.captures.each do |capture|
+                io << " capture=" << capture.value_id << ',' << capture.name.inspect << ','
+                io << capture.by_reference << ',' << capture.env_slot_type.id << ','
+                io << capture.payload_type.id << ',' << capture.boxed
+              end
+            when Phi
+              phi = value
+              io << " incoming="
+              phi.incoming.each do |(incoming_block, incoming_value)|
+                io << incoming_block << ':' << incoming_value << ','
+              end
+            end
+            io << "\n"
+          end
+        end
+      end
+    end
+
+    private def source_return_receipt_value_ids(ctx : LoweringContext) : Array(ValueId)
+      pending = [] of ValueId
+      reachable_blocks(ctx.function).each do |block|
+        if ret = block.terminator.as?(Return)
+          pending << ret.value.not_nil! if ret.value
+        end
+      end
+      seen = Set(ValueId).new
+      until pending.empty?
+        value_id = pending.pop
+        next unless seen.add?(value_id)
+        producer = ctx.value_for(value_id)
+        case producer
+        when Phi
+          phi = producer
+          pending.concat(phi.incoming_values)
+        when Copy
+          copy = producer
+          pending << copy.source
+        when UnionWrap
+          wrapped = producer
+          pending << wrapped.value
+        end
+      end
+      seen.to_a
+    end
+
+    private def source_return_receipt_value_facts(
+      ctx : LoweringContext,
+    ) : Hash(ValueId, Array({TypeRef, Bool}))
+      facts_by_value = {} of ValueId => Array({TypeRef, Bool})
+      source_return_receipt_value_ids(ctx).each do |value_id|
+        producer = ctx.value_for(value_id)
+        # A Call's old summary is retained only to verify that the receipt
+        # still reconstructs the result facts published for this body. The
+        # fresh proof below never treats these cached Call facts as evidence.
+        if producer.is_a?(Call)
+          facts_by_value[value_id] = source_block_result_value_facts(ctx, value_id)
+        elsif facts = ctx.source_value_facts(value_id)
+          facts_by_value[value_id] = facts.dup
+        elsif producer.is_a?(Literal)
+          facts_by_value[value_id] = source_block_result_value_facts(ctx, value_id)
+        end
+      end
+      facts_by_value
+    end
+
+    private def fresh_source_return_result_facts(
+      name : String,
+      function : Function,
+      definition : Adamas::Compiler::Frontend::DefNode,
+      declaration_arena : Adamas::Compiler::Frontend::ArenaLike,
+      active_functions : Set(String) = Set(String).new,
+    ) : Array({TypeRef, Bool})?
+      fresh_source_return_result_proof(
+        name, function, definition, declaration_arena, active_functions,
+      ).try(&.[0])
+    end
+
+    private def fresh_source_return_result_proof(
+      name : String,
+      function : Function,
+      definition : Adamas::Compiler::Frontend::DefNode,
+      declaration_arena : Adamas::Compiler::Frontend::ArenaLike,
+      active_functions : Set(String),
+    ) : Tuple(Array({TypeRef, Bool}), Array({TypeRef, Bool}))?
+      return nil if name.empty? || active_functions.includes?(name)
+      return nil unless function_state(name).completed? && settled_force_lower_result?(name)
+      return nil unless @module.has_function_with_body?(name) &&
+                        @module.function_by_name(name).try(&.same?(function))
+      return nil unless @function_defs[name]?.try(&.same?(definition)) &&
+                        @function_def_arenas[name]?.try(&.same?(declaration_arena)) &&
+                        arena_fits_def?(declaration_arena, definition)
+
+      receipt = function.source_return_result_receipt || return nil
+      return nil unless receipt.definition_id == definition.object_id.to_u64 &&
+                        receipt.arena_key == arena_map_key(declaration_arena) &&
+                        receipt.body_revision == function.body_revision &&
+                        receipt.body_seal == source_return_function_body_seal(function) &&
+                        receipt.body_objects_match?(function.scopes, function.blocks) &&
+                        function.source_return_definition_id == definition.object_id.to_u64 &&
+                        function.source_return_arena_key == arena_map_key(declaration_arena) &&
+                        function.source_return_discard_type == receipt.discard_type
+      published_facts = function.source_return_value_facts || return nil
+      return nil unless receipt.result_facts_match?(published_facts)
+
+      # Source :Nil/:Void is a language-level discard contract. It owns the
+      # caller-visible result independently of the discarded body's last HIR
+      # value, while the exact function body and dependencies above remain
+      # mandatory for admission.
+      proof = if receipt.discard_type == TypeRef::NIL
+                { [{TypeRef::NIL, false}] of {TypeRef, Bool}, published_facts.dup }
+              elsif receipt.discard_type == TypeRef::VOID
+                { [] of {TypeRef, Bool}, published_facts.dup }
+              else
+                next_active = active_functions.dup
+                next_active.add(name)
+                fresh_source_return_body_proof(function, receipt, next_active) || return nil
+              end
+      facts = normalize_source_return_result_facts(proof[0])
+      published_body_facts = normalize_source_return_result_facts(proof[1])
+      return nil unless published_body_facts == published_facts &&
+                        receipt.result_facts_match?(published_body_facts)
+      # The freshly authenticated Call leaves may refine their old caller-side
+      # carrier summaries. Every non-Call leaf must still reconstruct the
+      # exact previously published facts above.
+      {facts, published_body_facts}
+    end
+
+    private def fresh_source_return_body_proof(
+      function : Function,
+      receipt : SourceReturnResultReceipt,
+      active_functions : Set(String),
+    ) : Tuple(Array({TypeRef, Bool}), Array({TypeRef, Bool}))?
+      values = {} of ValueId => Value
+      function.blocks.each do |block|
+        block.instructions.each do |instruction|
+          values[instruction.id] = instruction
+        end
+      end
+
+      facts = [] of {TypeRef, Bool}
+      saw_return = false
+      published_facts = [] of {TypeRef, Bool}
+      reachable_blocks(function).each do |block|
+        ret = block.terminator.as?(Return) || next
+        saw_return = true
+        if value_id = ret.value
+          leaf_proof = fresh_source_return_value_proof(
+            function,
+            receipt,
+            values,
+            value_id,
+            active_functions,
+            Set(ValueId).new,
+          ) || return nil
+          facts.concat(leaf_proof[0])
+          published_facts.concat(leaf_proof[1])
+        else
+          facts << {TypeRef::NIL, false}
+          published_facts << {TypeRef::NIL, false}
+        end
+      end
+      return nil unless saw_return
+      {facts.uniq, published_facts.uniq}
+    end
+
+    private def fresh_source_return_value_proof(
+      function : Function,
+      receipt : SourceReturnResultReceipt,
+      values : Hash(ValueId, Value),
+      value_id : ValueId,
+      active_functions : Set(String),
+      active_values : Set(ValueId),
+    ) : Tuple(Array({TypeRef, Bool}), Array({TypeRef, Bool}))?
+      return nil if active_values.includes?(value_id)
+      next_values = active_values.dup
+      next_values.add(value_id)
+      if producer = values[value_id]?
+        case producer
+        when Phi
+          phi = producer
+          return nil if phi.incoming_values.empty?
+          facts = [] of {TypeRef, Bool}
+          published_facts = [] of {TypeRef, Bool}
+          phi.incoming_values.each do |incoming|
+            incoming_proof = fresh_source_return_value_proof(
+              function, receipt, values, incoming, active_functions, next_values,
+            ) || return nil
+            facts.concat(incoming_proof[0])
+            published_facts.concat(incoming_proof[1])
+          end
+          return {facts.uniq, published_facts.uniq}
+        when Copy
+          copy = producer
+          return fresh_source_return_value_proof(
+            function, receipt, values, copy.source, active_functions, next_values,
+          )
+        when UnionWrap
+          wrapped = producer
+          return fresh_source_return_value_proof(
+            function, receipt, values, wrapped.value, active_functions, next_values,
+          )
+        when Call
+          call = producer
+          return nil if call.virtual || call.has_block?
+          if allocator_name = @generated_allocator_calls[{function, call.id}]?
+            begin
+              validate_generated_allocator_call_contract!(function, call, allocator_name)
+            rescue ex : LoweringError
+              return nil
+            end
+            return nil if call.type == TypeRef::VOID || noreturn_type?(call.type)
+            computed = [{call.type, false}] of {TypeRef, Bool}
+            published = receipt.value_facts_for(value_id) || return nil
+            return {computed, published}
+          end
+
+          target_name = call.method_name
+          target_definition = @function_defs[target_name]? || return nil
+          target_arena = @function_def_arenas[target_name]? || return nil
+          target_function = @module.function_by_name(target_name) || return nil
+          return nil if call.type != target_function.return_type && !noreturn_type?(target_function.return_type)
+          computed = fresh_source_return_result_proof(
+            target_name,
+            target_function,
+            target_definition,
+            target_arena,
+            active_functions,
+          ) || return nil
+          return nil if computed[0].empty? || computed[0].any? { |(type, _)| type == TypeRef::VOID || noreturn_type?(type) }
+          published = receipt.value_facts_for(value_id) || return nil
+          return {computed[0], published}
+        end
+      end
+
+      # Non-call leaves use the source facts captured by the exact lowering
+      # context. There is deliberately no TypeRef/type-literal fallback here.
+      leaf_facts = receipt.value_facts_for(value_id) || return nil
+      return nil if leaf_facts.empty? || leaf_facts.any? do |(type, _)|
+        type == TypeRef::VOID || noreturn_type?(type) || unresolved_generic_return_type?(type)
+      end
+      {leaf_facts, leaf_facts}
+    end
+
+    private def normalize_source_return_result_facts(
+      facts : Array({TypeRef, Bool}),
+    ) : Array({TypeRef, Bool})
+      facts.uniq.sort_by { |(type, literal)| {type.id, literal ? 1 : 0} }
     end
 
     # A completed source body owns the result kind only while its exact Def and
@@ -143570,6 +143977,7 @@ module Adamas::HIR
           inline_param_map.merge!(contract.type_bindings)
           declaration_owner = return_declaration_owner_for(inline_key, base_inline_name)
           source_block_result = inline_block_return_source_argument(
+            ctx,
             block,
             block_arena,
             func_def,
@@ -150086,6 +150494,15 @@ module Adamas::HIR
 
       args = coerce_args_to_param_types(ctx, args, actual_name)
       call = Call.without_receiver(ctx.next_id, return_type, actual_name, args)
+      if allocator_target = generated_allocator_target
+        unless actual_name == allocator_target
+          raise LoweringError.new("bare static new lost its selected generated allocator: #{allocator_target}")
+        end
+        # Carry the generation-owned target through this nilary member path,
+        # just as lower_call does. The completed-result consumer revalidates
+        # its current allocator body, layout revision, and call ABI.
+        @generated_allocator_calls[{ctx.function, call.id}] = allocator_target
+      end
       ctx.emit(call)
       ctx.register_type(call.id, return_type)
       result_id = if exact_source_discard_result_type == TypeRef::VOID &&
