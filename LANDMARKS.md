@@ -27627,3 +27627,60 @@ Unchanged LavinMQ advances through the former Char::Reader#initialize blocker
 and rejects next_char result kind (35q5969; inputs unchanged). Bare self-call
 result transport, full prelude, fresh bootstrap and LavinMQ object/link/runtime/
 upstream parity remain open.
+
+
+## 2026-11-07 — Bare self calls share one result owner
+
+The old Identifier-only instance-call branch duplicated default handling,
+virtual dispatch, force-lowering and result-fact propagation. It could force a
+body before publishing the actual empty callshape and did not use ordinary
+exact-source suspension for an annotated pending result. After local, constant,
+macro and intrinsic precedence resolves a bare self method, delegate its empty
+call to lower_call. Retain the active method's class/instance flag instead of
+re-deriving it from a physical function name.
+
+The synthetic callee is a fresh ExprId in the same arena with the original
+Identifier payload/span. It is not the original occurrence ID. The synthetic
+CallNode has no semantic-call-target receipt; the normal structured resolver
+still owns exact Def/Arena selection. Completed direct result facts retain
+current source/body validation. True virtual results still need a family join.
+
+Scoped adversary verdict: ROBUST for direct bare-self result transport. All
+51 stock Crystal 1.22.1/lazy/eager native controls pass (35q6003): field readers
+and writers, deep demand, class-valued results, defaults, local shadowing,
+class/instance names, Enum and Proc/Char precedence, inherited arity variants
+and strict class-as-instance rejection. All 168 focused/adjacent HIR checks pass
+(35q6006). Original-task refresh passes ABC, 29 HIR and six native controls
+(35q6007/08). Live compiler sources match the qualified S1 build byte-for-byte.
+
+Do not promote this to arity closure. Missing required self arguments are
+already accepted on the base (35q5987). Blanket self-call arity refusal was
+falsified by valid child-defined overloads (35q5994); eager reference-template
+deferral alone was also falsified (35q5999). Those candidates were discarded.
+The eventual repair must materialize inherited bodies with the correct concrete
+receiver and reject actual invalid parent calls. Visible known_open/ sources
+are outside the passing gate. Existing source/type/arity guards are unchanged.
+
+Evidence under /opt/mldata_ssd/adamas_codex_oct29_rootcause:
+build.bare-self-ordinary-call35q5974.{source,result}.json,
+bare-self-result-native35q6003/ and qualification JSON,
+bare-self-result-fixtures35q6003.{before,after}.json,
+bare-self-result-hir35q6006/, bare-self-macro35q6007/,
+bare-self-initializer35q6008/, bare-self-lavinmq35q5980/,
+prelude-hello-oracle35q5988/, self-arity-adversary35q5994.results.json,
+self-arity-owned-demand35q5999.results.json.
+S1 SHA-256: aa9082a09138acf64e21737af098c9ad16459c66a0aad8fc00ee9f609575fc31.
+Compiler manifest SHA-256:
+84ac67dffb2d31acebb5323790069c92dc11d2efad11c65dc44f396d451367ac.
+Native fixture manifest SHA-256:
+19b34a992add1e8b1e9a3251a87a3d06166c9c99abec3357c7d90fc8b537499b.
+Refresh after identifier/call resolution, active method context, defaults,
+source-result materialization or replay changes. Rollback is this atomic commit;
+unrelated WIP is excluded.
+
+Unchanged LavinMQ passes the former Char::Reader next_char result-kind failure
+and now stops at pending Hash(Void, Void)#entries_full? (35q5980). This is not
+proof that generic arguments were lost. Stock-prelude hello separately stops
+at pending Exception::CallStack.format_backtrace_frame (35q5988). Full prelude
+runtime, fresh bootstrap and LavinMQ object/link/runtime/upstream parity remain
+open. These are distinct inputs and distinct frontier return pointers.

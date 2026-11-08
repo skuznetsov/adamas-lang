@@ -1106,3 +1106,33 @@ and metaclass spellings. Refresh after path resolution, alias normalization,
 block ownership or callback source-result changes. Rollback is the atomic
 resolved-identity commit. This does not certify arbitrary member-call result
 proofs, full prelude, bootstrap or LavinMQ runtime/upstream parity.
+
+
+### Bare self identifiers consume the ordinary call contract
+
+Once local/constant/macro/intrinsic precedence has resolved a bare instance
+method, represent its observed empty callshape through lower_call. The selected
+Def/Arena, defaults, source kind, dependency suspension and completed direct
+result proof have one owner there. Do not force a second Identifier-only body
+before publishing its source inputs. The active enclosing method owns the
+class/instance distinction; physical symbol spelling is only a fallback outside
+an active method.
+
+A synthetic callee may have a fresh same-arena ExprId and preserve the original
+Identifier payload/span. This grants no original CallNode semantic receipt:
+structured source selection remains mandatory. Exact completed result facts
+apply only to nonvirtual calls; a virtual family needs its own join proof.
+
+Gate: bare_self_source_result_repro.sh COMPILER compares original Crystal, lazy
+and eager native output for bare/parenthesized/member readers, deep result
+demand, class values, defaults, namespaces, local shadowing, intrinsic precedence
+and inherited dispatch. Reject class-as-instance inputs. Adjacent HIR suites
+retain exact source/current-body guards. Refresh after identifier resolution,
+method context, call selection or replay changes; rollback is the atomic route
+commit.
+
+Required-argument self-call admission is a distinct open contract. Do not reject
+an inherited source template using only its declaration owner's arity census:
+a concrete child may supply the valid overload. Both valid child calls and
+invalid actual-parent calls are mandatory falsifiers for that repair. Known-open
+fixtures remain visible and are not counted as a passing capability.

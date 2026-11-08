@@ -98598,112 +98598,12 @@ module Adamas::HIR
             end
           end
           if class_method_base
-            if source_rest_keyword_slots_required?(class_method_base)
-              callee_id = @arena.add(node)
-              bare_call = Adamas::Compiler::Frontend::CallNode.new(node.span, callee_id, [] of ExprId)
-              return lower_call(ctx, bare_call)
-            end
-            # This is a method call on self with no positional arguments.
-            # Fill declared defaults like `name()`/`self.name` do; otherwise the
-            # call targets the zero-arg mangle and defaulted params only get a
-            # value from backend padding (lost when default_literal is absent).
-            self_id = emit_self(ctx)
-            bare_self_default_entries = [] of Tuple(String, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike)
-            bare_self_args, _, _ = apply_default_args(
-              ctx, [] of ValueId, name, class_method_base, false, false, self_id,
-              bare_self_default_entries,
-            )
-            if terminal_default = bare_self_args.find { |value| runtime_noreturn_value?(ctx, value) }
-              return terminal_default
-            end
-            bare_self_arg_types = bare_self_args.map { |arg_id| ctx.type_of(arg_id) }
-            bare_self_source_entry = bare_self_default_entries.first?
-            bare_self_target_name = bare_self_source_entry.try(&.[0]) || class_method_base
-            full_name = mangle_function_name(bare_self_target_name, bare_self_arg_types)
-            return_type = @function_types[full_name]? || TypeRef::VOID
-            lower_function_if_needed(full_name)
-            # Unknown AST inference is not a Void result contract. Materialize
-            # the exact pending target before its value enters caller lowering;
-            # tuple extraction likewise needs the completed concrete layout.
-            tuple_return = get_type_name_from_ref(return_type).starts_with?("Tuple(")
-            source_def = bare_self_source_entry.try(&.[1]) || @function_defs[full_name]?
-            if return_type == TypeRef::VOID || tuple_return ||
-               !abstract_numeric_return_constraint_for_function(full_name).nil? ||
-               selected_source_result_pending?(full_name, source_def)
-              refused_before_call_force = @force_lower_depth_refused.size
-              # A bare implicit-self call has the same exact yield-free demand
-              # as `name()`. Keep the inline recursion guards owned by the force
-              # path, rather than publishing its provisional Void result here.
-              in_inline_yield_now = @inline_yield_function_depth > 0 ||
-                                    @inline_yield_block_body_depth > 0 ||
-                                    @inline_yield_proc_depth > 0 ||
-                                    !@inline_yield_name_stack.empty?
-              if !full_name.empty? && !@module.has_function_with_body?(full_name)
-                force_lower_function_for_return_type(
-                  full_name,
-                  bypass_inline_yield: in_inline_yield_now,
-                  pending_call_target_slot: 1,
-                  pending_call_target_context: "bare_self",
-                )
-              end
-              record_force_lower_result_dependency(ctx, full_name, source_def, refused_before_call_force)
-              return_type = get_function_return_type(full_name, bare_self_args.size, source_def)
-              if return_type == TypeRef::VOID && full_name != class_method_base
-                return_type = get_function_return_type(class_method_base)
-              end
-            end
-            call_virtual = false
-            if !@current_method_is_class && !@class_info[current_class]?.try(&.is_struct)
-              module_abstract_self_target = false
-              if included_modules = @class_included_modules[current_class]?
-                included_modules.each do |module_name|
-                  if abstract_def?("#{module_name}##{name}")
-                    module_abstract_self_target = true
-                    break
-                  end
-                end
-              end
-              # A bare `name` self call must dispatch like `name()`/`self.name`:
-              # inherited base bodies are lowered once with the base self type,
-              # so a subclass override is only reachable through vdispatch.
-              # Only descendants that define `name` themselves (directly or via an
-              # included module) can change the target; skipping the rest keeps
-              # the virtual replay off the hot getter-call path.
-              abstract_self_target = module_abstract_self_target ||
-                                     declared_abstract_def?(full_name) ||
-                                     declared_abstract_def?(class_method_base)
-              call_virtual = abstract_self_target ||
-                             (class_has_subclasses?(current_class) &&
-                               descendant_defines_instance_method?(current_class, name))
-              if call_virtual
-                # Share the explicit-receiver replay: broad roots (Object,
-                # Reference) must stay filtered by lazy RTA liveness. A concrete
-                # base target already fixes the return type; inferring the
-                # union over every descendant (all `to_s` bodies for Object)
-                # is only needed for abstract or still-untyped targets.
-                arg_types = bare_self_arg_types
-                ensure_virtual_call_targets_lowered(ctx, self_id, name, arg_types, false, false, false, false)
-                if abstract_self_target || return_type == TypeRef::VOID
-                  inferred_virtual_return = infer_virtual_return_type_from_class_targets(
-                    current_class, name, arg_types, false, false
-                  )
-                  if inferred_virtual_return != TypeRef::VOID
-                    return_type = inferred_virtual_return
-                    set_function_type_entry(full_name, inferred_virtual_return)
-                  end
-                end
-              end
-            end
-            call = Call.with_receiver_virtual(ctx.next_id, return_type, self_id, full_name, bare_self_args, call_virtual)
-            ctx.emit(call)
-            ctx.register_type(call.id, return_type)
-            if !call_virtual && register_materialized_source_return_value_facts(ctx, call.id, full_name)
-              # Exact completed body facts own this direct call's value kind.
-            elsif function_returns_type_literal?(full_name, class_method_base)
-              ctx.mark_type_literal(call.id)
-            end
-            track_enum_return_value(call.id, full_name, return_type)
-            return call.id
+            # A resolved bare self identifier has the same observed empty
+            # callshape as name(). Selection, defaults, virtual dispatch and
+            # exact source-result replay belong to the ordinary call path.
+            callee_id = @arena.add(node)
+            bare_call = Adamas::Compiler::Frontend::CallNode.new(node.span, callee_id, [] of ExprId)
+            return lower_call(ctx, bare_call)
           end
         end
 
@@ -119230,7 +119130,7 @@ module Adamas::HIR
           return zero.id
         end
         current_is_class = @current_method_is_class
-        if !current_is_class
+        unless current_is_class || @current_method
           current_is_class = class_method?(strip_type_suffix(ctx.function.name))
         end
         if !current_is_class

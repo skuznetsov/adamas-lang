@@ -27211,3 +27211,30 @@ reaches the strict pending Hash(Void, Void) result in update_linear_scan
 - [ ] Repair generated allocator outer-call demand ownership for overloaded
   initialize; preserve known_open/initializer_overload.cr and strict slot guard
   (35q5942). Virtual setter source-kind replay remains a separate obligation.
+
+
+### 2026-11-07 — Route bare self results through the ordinary call contract
+
+- [x] Remove the duplicate bare instance-call lowering path. Publish its empty
+  callshape, selected source and replay dependency through lower_call, including
+  defaults, virtual dispatch and completed nonvirtual value-kind facts. The
+  enclosing active method owns class-versus-instance context.
+- [x] S1 35q5974 passes all 51 Crystal 1.22.1/lazy/eager native controls
+  (35q6003), 168 focused/adjacent HIR checks (35q6006), nested macro begin ABC
+  (35q6007), and initializer replay 29 HIR plus six native controls (35q6008).
+  Exact compiler sources and fixture bytes are sealed by the receipts below.
+- [ ] Repair required-argument self-call admission together with concrete
+  inherited body ownership. This predates the result-transport change: base
+  S1 35q5962 also accepts missing arguments (35q5987). Removing the self-call
+  exemption rejects valid ChildShape calls (35q5994); deferring reference class
+  sweeps alone still rejects them (35q5999). Keep known_open/ witnesses and
+  require both child positives and actual-parent negatives. No guard was
+  weakened or those failed candidates adopted.
+- [ ] Resume LavinMQ at pending Hash(Void, Void)#entries_full? in upsert
+  (35q5980). The former Char::Reader next_char result-kind failure is passed.
+  The name alone does not establish lost generic bindings. Separately, stock
+  prelude hello rejects pending Exception::CallStack.format_backtrace_frame
+  (35q5988). Diagnose exact producer settlement and replay ownership.
+- [ ] Complete virtual result-family source-kind joins, fresh bootstrap, and
+  LavinMQ object/link/runtime/upstream parity. The virtual native fixture only
+  guards ordinary dispatch behavior. No stdlib or application changes.
