@@ -113501,7 +113501,11 @@ module Adamas::HIR
       # Prevent deep chaining: A needs ret type of B, B needs C, C needs D...
       # Use a tighter limit in bypass/yield-free-only mode to cap stack usage.
       max_force_depth = (bypass_inline_yield || in_yield_free_only || owned_callback) ? 2 : 4
-      if @force_lower_return_type_depth >= max_force_depth
+      # The cap bounds recursive body lowering. An exact `abstract def` target
+      # never lowers a source body (at most an accessor), so it cannot recurse.
+      # Refusing it would record a producer that no replay can ever settle and
+      # strand every consumer suspended on it (`read slice` in IO#read_fully?).
+      if @force_lower_return_type_depth >= max_force_depth && !exact_abstract_force_target?(name)
         STDERR.puts "[FORCE_LOWER_DEPTH_LIMIT] depth=#{@force_lower_return_type_depth} name=#{name}" if env_has?("DEBUG_FORCE_LOWER_DEPTH")
         @force_lower_depth_refused << name
         return false
@@ -113912,6 +113916,21 @@ module Adamas::HIR
       end
     end
 
+    # Replaying a suspended consumer can record a provisional dependency on a
+    # producer whose own obligation is already queued: a completed body that
+    # an earlier force left provisional (`find_entry_with_index` reading
+    # `find_entry_with_index_linear_scan$Signal`). Forcing a function that has
+    # a body is a no-op, so only that queued work can settle the dependency.
+    # The consumer waits behind it instead of failing the edge.
+    private def force_lower_consumer_waits_for_queued_dependency?(consumer : String) : Bool
+      dependencies = @force_lower_provisional_dependencies[consumer]?
+      return false unless dependencies
+      dependencies.any? do |producer|
+        producer != consumer && !settled_force_lower_result?(producer) &&
+          force_lower_retry_has_queued_producer?(producer, false)
+      end
+    end
+
     private def force_lower_retry_waits_for_queued_producer?(request : ForceLowerWorkRequest) : Bool
       # Stale or weaker queued work cannot satisfy another request's demand.
       # Let the existing handler reject it instead of creating a false cycle.
@@ -113924,6 +113943,7 @@ module Adamas::HIR
             force_lower_retry_has_queued_producer?(producer, true)
         end
       when ForceLowerSuspendedRequest
+        return true if force_lower_consumer_waits_for_queued_dependency?(request.pending.consumer)
         pending = request.pending.as(ExactResultPending?)
         while pending
           producer = pending.producer
@@ -114060,7 +114080,7 @@ module Adamas::HIR
       # The driver still owns an equivalent queued continuation. Hand this
       # recursive discovery back to that request instead of treating the same
       # consumer/producer pair as an unresolvable active cycle.
-      return false if @force_lower_retry_driver_active && has_equivalent_queued_force_lower_work?(request)
+      return false if @force_lower_retry_driver_active && has_queued_force_lower_edge_continuation?(consumer, producer)
 
       raise pending if consumer == producer || @force_lower_result_suspensions.includes?(edge) ||
                        force_lower_result_suspension_would_cycle?(consumer, producer)
@@ -114075,6 +114095,26 @@ module Adamas::HIR
       progress = run_force_lower_retry_driver(request)
       raise pending unless already_driving || settled_force_lower_demand?(consumer, pending.consumer_requires_result)
       progress
+    end
+
+    private def exact_abstract_force_target?(name : String) : Bool
+      !!@function_defs[name]?.try(&.is_abstract)
+    end
+
+    # The driver removes a request from the queue before resuming it, so a
+    # queued source-current request for the same consumer/producer edge
+    # proves that this discovery is not that request's own replay. It comes
+    # from an ordinary caller that continued after the consumer suspended:
+    # one source call can reach the consumer force through two lowering
+    # paths (`if stack = pop?` infers the binding, then lowers the call),
+    # with different native parents or registry witnesses for the same
+    # Def/Arena. The queued request already owns the edge and rebuilds the
+    # consumer by name; this discovery is not an unresolvable cycle.
+    private def has_queued_force_lower_edge_continuation?(consumer : String, producer : String) : Bool
+      @force_lower_retry_work.any? do |queued|
+        queued.is_a?(ForceLowerSuspendedRequest) && queued.pending.consumer == consumer &&
+          queued.pending.producer == producer && force_lower_retry_source_current?(queued)
+      end
     end
 
     private def has_equivalent_queued_force_lower_work?(request : ForceLowerWorkRequest) : Bool
@@ -114156,9 +114196,30 @@ module Adamas::HIR
 
       unless settled_force_lower_demand?(consumer, pending.consumer_requires_result)
         work_mark = @force_lower_retry_work.size
-        replay_force_lower_callsite(consumer, request.replay_callsite, bypass_inline_yield,
-          requires_result: pending.consumer_requires_result)
-        if @force_lower_retry_work.size > work_mark
+        dependencies = @force_lower_provisional_dependencies[consumer]?
+        if dependencies && !dependencies.empty? && function_state(consumer).completed? &&
+           @module.has_function_with_body?(consumer)
+          # The driver was already active when this consumer suspended, so its
+          # caller continued and may have rebuilt the consumer through ordinary
+          # lowering, leaving a provisional body. Forcing a function that has a
+          # body is a no-op, so a plain replay cannot rebuild it. Discharge it
+          # through the provisional retry: it forces the refused callees,
+          # removes the body only once every dependency settled, and replays
+          # this same exact recipe.
+          source = replay.exact_source_binding ||
+                   ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name)
+          retry_request = ForceLowerRetryRequest.new(consumer, dependencies.to_a, bypass_inline_yield,
+            replay, source, pending.consumer_requires_result)
+          with_force_lower_exact_source(consumer, source) do
+            retry_force_lower_depth_request(retry_request)
+          end
+        else
+          replay_force_lower_callsite(consumer, replay, bypass_inline_yield,
+            requires_result: pending.consumer_requires_result)
+        end
+        if @force_lower_retry_work.size > work_mark ||
+           (!settled_force_lower_demand?(consumer, pending.consumer_requires_result) &&
+           force_lower_consumer_waits_for_queued_dependency?(consumer))
           enqueue_force_lower_retry_work(request, work_mark)
           return false
         end
@@ -114474,7 +114535,8 @@ module Adamas::HIR
       # A known ABI type does not settle the source value kind. An annotated
       # producer refused at the depth cap needs the same exact-source replay
       # before a consumer narrows it or admits it to a restriction.
-      return unless @force_lower_depth_refused[refused_mark...].includes?(name) &&
+      return unless (@force_lower_depth_refused[refused_mark...].includes?(name) ||
+                    suspended_source_result_producer?(name, consumer)) &&
                     @force_lower_provisional_dependencies[consumer]?.try(&.includes?(name)) &&
                     force_lower_replay_recipe_available?(consumer)
       source = selected_source_binding ||
@@ -114488,6 +114550,22 @@ module Adamas::HIR
         STDERR.puts "[FORCE_LOWER_SUSPENDED] consumer=#{consumer} context=#{ctx.function.name} producer=#{name}"
       end
       raise ExactResultPending.new(consumer, name, source)
+    end
+
+    # A producer that suspended on its own unsettled dependency is just as
+    # pending as one refused at the depth cap: its force rebuilt no body, so
+    # the result a caller reads is Void. When the retry driver is already
+    # active the producer's force hands its suspension back to the queued
+    # request and returns, so the refusal list never names it (`String#[]`
+    # reading `char_at { raise }` while `char_at` waits on `byte_at?`).
+    # Exclude self-recursion and producers still lowering on the stack; their
+    # provisional dependencies belong to the live body, not to a suspension.
+    private def suspended_source_result_producer?(name : String, consumer : String) : Bool
+      return false if name == consumer
+      return false if @module.has_function_with_body?(name)
+      state = function_state(name)
+      return false if state.in_progress? || state.completed?
+      !!@force_lower_provisional_dependencies[name]?.try { |dependencies| !dependencies.empty? }
     end
 
     private def force_lower_replay_recipe_available?(name : String) : Bool
