@@ -118853,7 +118853,8 @@ module Adamas::HIR
 
       return_type = function.not_nil!.return_type
       if return_type == TypeRef::VOID
-        return authenticated_void_source_result?(name, Set(String).new)
+        return authenticated_void_source_result?(name, Set(String).new) ||
+               authenticated_bottom_source_result?(name, function)
       end
 
       type_name = get_type_name_from_ref(return_type)
@@ -118876,6 +118877,22 @@ module Adamas::HIR
         end
       end
       true
+    end
+
+    # The Void ABI slot also carries a completed bottom body
+    # (`def self.exit(status); LibC.exit(status); end`). It has no Return to
+    # authenticate, but every exit ends in a proven noreturn effect: the same
+    # certificate callers use to type the call NoReturn. That result is
+    # settled. Keep the Void proof's fail-closed guards: no unsettled
+    # dependency, and a body published from the current source definition.
+    private def authenticated_bottom_source_result?(name : String, function : Function) : Bool
+      return false if @force_lower_provisional_dependencies.has_key?(name)
+      definition = @function_defs[name]?
+      declaration_arena = @function_def_arenas[name]?
+      return false unless definition && declaration_arena
+      return false unless function.source_return_definition_id == definition.object_id.to_u64 &&
+                          function.source_return_arena_key == arena_map_key(declaration_arena)
+      materialized_function_noreturn?(name, Set(String).new)
     end
 
     # Void is also a legitimate completed ABI result. Prove it from the
