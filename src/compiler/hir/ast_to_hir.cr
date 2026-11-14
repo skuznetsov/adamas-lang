@@ -114952,6 +114952,15 @@ module Adamas::HIR
     ) : ForceLowerExactSourceBinding?
       return nil unless source_def = selected_def
       return nil if selected_call_def && !selected_call_def.same?(source_def)
+      # An abstract declaration has no body to materialize. A call on a
+      # module-typed receiver (`event_loop.write(self, slice)` with
+      # `event_loop : Crystal::EventLoop::FileDescriptor`) selects the
+      # module's `abstract def` but emits under a concrete includer symbol
+      # (`Crystal::EventLoop::Polling#write$...`). Binding the abstract Def as
+      # that symbol's exact source makes lowering park the includer symbol in
+      # progress forever, so virtual fanout never materializes the includer's
+      # own override.
+      return nil if source_def.is_abstract
       registered_name = selected_registry_name || name
       registered_def = @function_defs[registered_name]?
       return nil unless registered_def.try(&.same?(source_def))
