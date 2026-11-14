@@ -119266,6 +119266,25 @@ module Adamas::HIR
         raise LoweringError.new("#{binding_context} target body has no complete source binding: #{target}", node)
       end
 
+      # Padding defaults gives explicit-argument and nilary calls on a numeric
+      # primitive one physical symbol (`7_u32.to_s(16)` and `v.to_s` both emit
+      # `UInt32#to_s$Int32_Int32_Bool`). When the selected source is the
+      # inherited Int/Float template body, record the same primitive-template
+      # receipt the nilary selection records, before the body exists, so either
+      # call order reaches one source authority instead of an unbound body.
+      target_parts = parse_method_name(target)
+      selected_parts = parse_method_name(selected_name)
+      if target_parts.is_instance && selected_parts.is_instance &&
+         target_parts.method == selected_parts.method &&
+         (template_owner = primitive_template_owner(target_parts.owner)) &&
+         selected_parts.owner == template_owner &&
+         (!@module.has_function_with_body?(target) || @primitive_template_source_bindings.has_key?(target))
+        bind_primitive_template_source_target!(
+          target, selected_name, selected_def, selected_arena, template_owner, target_parts.owner, node,
+        )
+        return
+      end
+
       set_function_def_entry(target, selected_def, false)
       set_function_def_arena(target, selected_arena)
     end
