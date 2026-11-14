@@ -8335,6 +8335,9 @@ module Adamas::HIR
     # Retained AST entries can precede their source position. Only actual
     # declaration visits and qualified-path creation establish module kind.
     @published_source_module_names : Set(String)
+    # Aliases declared ahead of source order (pre_register_context_free_alias)
+    # until their ordinary declaration visit confirms them.
+    @provisional_source_aliases : Set(String)
     # Module AST definitions (name -> list of {node, arena}) for mixin expansion.
     # Many stdlib "modules" provide instance methods meant to be included into classes/structs.
     @module_defs : Hash(String, Array({Adamas::Compiler::Frontend::ModuleNode, Adamas::Compiler::Frontend::ArenaLike}))
@@ -9254,6 +9257,7 @@ module Adamas::HIR
       @method_inheritance_cache_module_version = 0
       @type_param_map = Hash(String, String).new(initial_capacity: 4096)
       @published_source_module_names = Set(String).new
+      @provisional_source_aliases = Set(String).new
       @macro_defs = {} of String => Array({Adamas::Compiler::Frontend::MacroDefNode, Adamas::Compiler::Frontend::ArenaLike})
       @class_accessor_entries = {} of String => ClassAccessorEntry
       @module_defs = {} of String => Array({Adamas::Compiler::Frontend::ModuleNode, Adamas::Compiler::Frontend::ArenaLike})
@@ -14194,7 +14198,8 @@ module Adamas::HIR
     private def source_declaration_type_name_exists?(name : String) : Bool
       predefined_source_namespace?(name) || name == "Void" || name == "NoReturn" ||
         @class_info.has_key?(name) ||
-        @generic_templates.has_key?(name) || @type_aliases.has_key?(name) ||
+        @generic_templates.has_key?(name) ||
+        (@type_aliases.has_key?(name) && !@provisional_source_aliases.includes?(name)) ||
         !!@enum_info.try(&.has_key?(name)) || @published_source_module_names.includes?(name) ||
         @module.is_lib?(name) ||
         @active_class_declaration_frames.any? { |frame| frame.owner_name == name }
@@ -15959,6 +15964,10 @@ module Adamas::HIR
       full_alias_name = qualified_source_declaration_name(owner_name, alias_name, publish_namespaces: false)
       return if @type_aliases.has_key?(full_alias_name)
       register_source_type_alias(full_alias_name, target)
+      # The early entry serves type lookup only. A declaration path such as
+      # `enum Name::Level` placed before `alias Name = Int32` still creates
+      # module Name in Crystal, and the alias then collides with it.
+      @provisional_source_aliases << full_alias_name
     end
 
     private def lookup_macro_entry(
@@ -17740,6 +17749,8 @@ module Adamas::HIR
     end
 
     private def register_source_type_alias(alias_name : String, target_name : String) : Nil
+      # Every declaration visit confirms an early entry at its source position.
+      @provisional_source_aliases.delete(alias_name)
       validate_implicit_module_declaration_kind(alias_name, "alias")
       register_type_alias(alias_name, target_name)
     end
