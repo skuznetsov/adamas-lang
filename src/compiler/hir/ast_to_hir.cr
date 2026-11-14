@@ -19933,10 +19933,14 @@ module Adamas::HIR
     private def resolve_typeof_string_expr(expr : String) : String
       resolved = resolve_typeof_string_expr_textual(expr)
       return resolved unless resolved == "Pointer(Void)"
-      # The textual resolver cannot follow a call with a block, such as the
-      # stdlib element-type idiom `typeof(zip(*others) { |e| break e }.not_nil!)`.
-      # Parse it and infer it as an expression-position typeof would.
-      return resolved unless expr.includes?('{') || expr.includes?(" do")
+      # The textual resolver is a fast path, not an authority. It cannot follow
+      # a call with a block (the stdlib element-type idiom
+      # `typeof(zip(*others) { |e| break e }.not_nil!)`), and it reads method
+      # results only from @function_types: a cache of results already
+      # published by lowering. A failed speculative generation rolls its
+      # writes back, so `typeof(deque.buffer.value)` in Deque.half_slices saw
+      # no `Deque(Int32)#buffer` entry and fell to the unknown sentinel.
+      # Parse the text and infer it as an expression-position typeof would.
       parsed = @typeof_text_exprs.fetch(expr) do
         entry = parse_macro_literal_program(expr).try do |(arena, roots)|
           roots.size == 1 ? {arena, roots.first} : nil
