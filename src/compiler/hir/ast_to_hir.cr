@@ -119235,6 +119235,9 @@ module Adamas::HIR
 
       receiver_id : ValueId? = nil
       receiver_type : TypeRef = TypeRef::VOID
+      # A metaclass-union receiver (every arm a type object) keeps its runtime
+      # value for per-arm class-method dispatch after the static name is formed.
+      type_literal_union_receiver_id : ValueId? = nil
       # V2 bootstrap: initialize to "" to avoid null cross-block phi value.
       # Without this, V2's alloca-based phi scheme carries null on branches
       # where method_name hasn't been assigned yet, crashing downstream
@@ -121629,6 +121632,9 @@ module Adamas::HIR
                     STDERR.puts "[TYPEDESC_FALLBACK] type_name=#{type_name} method=#{method_name} literal=#{receiver_is_type_literal} module=#{receiver_is_module}"
                   end
                   if receiver_is_type_literal
+                    if type_desc && type_desc.kind == TypeKind::Union
+                      type_literal_union_receiver_id = receiver_id
+                    end
                     type_literal_receiver_owner = type_name
                     full_method_name = resolve_class_method_with_inheritance(type_name, method_name) || "#{type_name}.#{method_name}"
                     static_class_name = method_owner(full_method_name)
@@ -122141,6 +122147,13 @@ module Adamas::HIR
              )
             return dispatched
           end
+        end
+      end
+      if (metaclass_union_receiver = type_literal_union_receiver_id) &&
+         !has_block_call && !has_splat && !has_named_args &&
+         source_named_entry.nil? && args.size == call_args.size
+        if dispatched = try_emit_type_literal_union_dispatch(ctx, metaclass_union_receiver, method_name, args, node)
+          return dispatched
         end
       end
       abi_guard_explicit_arg_count = args.size
@@ -131643,6 +131656,150 @@ module Adamas::HIR
       ctx.current_block = merge
       phi = Phi.new(ctx.next_id, return_type, incoming)
       ctx.emit(phi); ctx.register_type(phi.id, return_type)
+      phi.id
+    end
+
+    # A receiver whose every union arm is a type object is a metaclass union
+    # (`k = cond ? A : B`; `format : LE | BE` in Int.from_io). A call on it runs
+    # the class-side method of the arm held at runtime. Spelling the union as
+    # one owner (`A | B.make`) names no method, so each arm selects and closes
+    # its own class-method body and the arm results join.
+    private def try_emit_type_literal_union_dispatch(
+      ctx : LoweringContext,
+      receiver_id : ValueId,
+      method_name : String,
+      args : Array(ValueId),
+      node : Adamas::Compiler::Frontend::Node,
+    ) : ValueId?
+      # Allocation through a metaclass union needs per-arm allocators.
+      return nil if method_name == "new"
+      receiver_type = ctx.type_of(receiver_id)
+      return nil unless is_union_type?(receiver_type)
+      return nil unless ensure_union_descriptor_for_type_ref(receiver_type)
+      descriptor = union_descriptor_from_sidecar(receiver_type)
+      return nil unless descriptor && descriptor.variants.size > 1
+      # An all-reference carrier is a bare object pointer whose type id comes
+      # from the object header; a class object has no header, so that carrier
+      # cannot say which arm it holds (the metaclass carrier gap).
+      return nil if union_all_reference_types?(descriptor)
+
+      arg_types = args.map { |arg| ctx.type_of(arg) }
+      return nil if arg_types.includes?(TypeRef::VOID)
+      source_facts = args.map { |arg| source_call_argument(ctx, arg).as(SourceCallArgument?) }
+      arms = descriptor.variants.map do |variant|
+        member = mir_to_hir_type_ref(variant.type_ref)
+        return nil if variant.type_id < 0
+        owner = get_type_name_from_ref(member)
+        return nil if owner.empty? || owner == "Nil"
+        requested = resolve_class_method_with_inheritance(owner, method_name)
+        return nil unless requested
+        input = CallResolutionInput.new(
+          requested, args.size, arg_types, false, false, false, nil,
+          raw_positional_count: args.size, source_argument_facts: source_facts,
+        )
+        selected = resolve_call_target(input)
+        return nil unless selected && !selected.def_node.is_abstract
+        source_name = selected.symbol_name
+        return nil unless source_name.includes?('.') && !source_name.includes?('#')
+        stats = function_param_stats(source_name, selected.def_node)
+        return nil unless stats.positional_count == args.size &&
+                          !stats.has_block && !stats.has_splat &&
+                          !stats.has_double_splat && !stats.has_named_only
+        arena = selected.source_arena
+        return nil unless arena
+        source_base = strip_type_suffix(source_name)
+        physical_name = source_name
+        if def_has_untyped_regular_param?(selected.def_node) ||
+           prefer_callsite_specialization(source_base, source_name, arg_types, false)
+          physical_name = virtual_target_mangled_name(source_base, arg_types, false, source_facts)
+        end
+        target = specialize_method_owner_name(physical_name, owner)
+        {target, source_name, selected.def_node, arena, variant.type_id}
+      end
+      tags = arms.map { |arm| arm[4] }
+      return nil if tags.uniq.size != arms.size
+
+      # Arguments keep their source kind: a class object passed to an
+      # untyped formal must stay a type value inside the arm body.
+      call_literals = virtual_target_callsite_literals(source_facts, arg_types.size)
+      result_members = [] of TypeRef
+      functions = arms.map do |(target, source_name, definition, arena, _)|
+        if target != source_name
+          bind_exact_source_call_target(target, source_name, definition, arena, node, "metaclass union arm")
+        end
+        remember_callsite_arg_types(target, arg_types, call_literals, source_argument_facts: source_facts)
+        lower_required_virtual_target_function(target, exact_demand: true)
+        force_required_union_arm_body(target)
+        function = @module.function_by_name(target)
+        unless function && function_state(target).completed? && @module.has_function_with_body?(target)
+          raise LoweringError.new("metaclass union arm has no complete body: #{target}", node)
+        end
+        params = function.params
+        unless params.size == args.size &&
+               arg_types.each_with_index.all? { |arg_type, i| receiver_param_coercion_compatible?(arg_type, params[i].type) }
+          raise LoweringError.new("metaclass union arm has an incompatible parameter ABI: #{target}", node)
+        end
+        result = function.return_type
+        return nil if result == TypeRef::VOID
+        if is_union_type?(result)
+          ensure_union_descriptor_for_type_ref(result)
+          result_union = union_descriptor_from_sidecar(result)
+          unless result_union && !result_union.variants.empty?
+            raise LoweringError.new("metaclass union arm has no result union descriptor: #{target}", node)
+          end
+          result_union.variants.each { |variant| result_members << mir_to_hir_type_ref(variant.type_ref) }
+        elsif !noreturn_type?(result)
+          result_members << result
+        end
+        function
+      end
+      # Every arm diverges: the call is NoReturn like its arms.
+      return nil if result_members.empty?
+
+      result_type = complete_union_type(result_members.map { |member| generic_param_type_name_from_ref(member) }, result_members)
+      unless result_members.all? { |member| member == result_type || strict_union_member_variant_id(result_type, member) >= 0 }
+        raise LoweringError.new("cannot join the metaclass union arm results for '#{method_name}'", node)
+      end
+
+      locals = ctx.save_locals
+      cell_proofs = ctx.closure_cell_write_proofs_on(ctx.current_block)
+      merge = ctx.create_block
+      incoming = [] of {BlockId, ValueId}
+      arms.each_with_index do |arm, index|
+        next_block : BlockId? = nil
+        if index < arms.size - 1
+          test = UnionIs.new(ctx.next_id, receiver_id, arm[4], receiver_type)
+          ctx.emit(test)
+          ctx.register_type(test.id, TypeRef::BOOL)
+          arm_block = ctx.create_block
+          next_block = ctx.create_block
+          ctx.terminate(Branch.new(test.id, arm_block, next_block))
+          ctx.current_block = arm_block
+          ctx.restore_locals(locals)
+        end
+        target = functions[index]
+        branch_args = coerce_args_to_param_types(ctx, args, target.name)
+        call = Call.without_receiver(ctx.next_id, target.return_type, target.name, branch_args)
+        ctx.emit(call)
+        ctx.register_type(call.id, target.return_type)
+        if noreturn_type?(target.return_type)
+          ctx.terminate(Unreachable.new)
+        else
+          result = coerce_value_to_type(ctx, call.id, result_type)
+          incoming << {ctx.current_block, result}
+          ctx.terminate(Jump.new(merge))
+        end
+        if following = next_block
+          ctx.current_block = following
+          ctx.restore_locals(locals)
+        end
+      end
+      ctx.current_block = merge
+      ctx.restore_locals(locals)
+      ctx.carry_closure_cell_write_proofs(cell_proofs)
+      phi = Phi.new(ctx.next_id, result_type, incoming)
+      ctx.emit(phi)
+      ctx.register_type(phi.id, result_type)
       phi.id
     end
 
