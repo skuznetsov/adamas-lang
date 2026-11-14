@@ -103405,6 +103405,23 @@ module Adamas::HIR
         end
       end
 
+      # An enum lowers through its integer carrier but is a nominal Enum
+      # struct: none of its ancestors is a scalar builtin or a container, so
+      # no enum value is an instance of one. Enums have no ClassInfo, so the
+      # class/struct proof below cannot see them. Class, struct and module
+      # targets keep the conservative path (Object, Value and Comparable are
+      # real Enum ancestors).
+      if !is_union_type?(value_type) && enum_name_for_type_ref(value_type)
+        if check_type.primitive? &&
+           (numeric_primitive?(check_type) || check_type == TypeRef::BOOL || check_type == TypeRef::SYMBOL)
+          return false
+        end
+        case check_desc.try(&.kind)
+        when TypeKind::Tuple, TypeKind::NamedTuple, TypeKind::Array, TypeKind::Hash, TypeKind::Proc, TypeKind::Pointer
+          return false
+        end
+      end
+
       # A registered source class/struct cannot overlap a concrete scalar
       # builtin unless it is one of that builtin's predefined ancestors.
       # Requiring the source ClassInfo keeps descriptor-only placeholders
