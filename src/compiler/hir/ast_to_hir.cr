@@ -102462,6 +102462,12 @@ module Adamas::HIR
       target_type_literal : Bool?,
     ) : Nil
       source_facts = ctx.source_value_facts(source_id) || source_block_result_value_facts(ctx, source_id)
+      # A union-carrier fact (for example an untracked call result) stands for
+      # each of its members. Filter those members against the target; keeping
+      # the whole carrier as one undecided alternative would let the narrowed
+      # value claim the alternatives this check excluded. An unexpandable
+      # descriptor keeps the unrefined facts.
+      source_facts = expand_case_type_set_source_facts(source_facts) || source_facts
       narrowed_facts = source_facts.compact_map do |(source_type, source_literal)|
         next if !target_type_literal.nil? && source_literal != target_type_literal
         relation = statically_is_a_type?(source_type, target_type)
