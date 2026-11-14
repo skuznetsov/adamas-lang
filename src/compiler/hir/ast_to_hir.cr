@@ -114115,8 +114115,18 @@ module Adamas::HIR
       progress
     end
 
+    # Judge the Def that lowering will actually select, in the same order as
+    # lower_function_if_needed_impl: a raw callback source, then the active
+    # exact replay source, then the registry entry. A call on a module-typed
+    # receiver (`event_loop.read(self, slice)` with `event_loop :
+    # Crystal::EventLoop::FileDescriptor`) emits under a concrete includer
+    # symbol that has no registry entry, while its exact source is the module's
+    # `abstract def`.
     private def exact_abstract_force_target?(name : String) : Bool
-      !!@function_defs[name]?.try(&.is_abstract)
+      source_def = raw_callback_source_binding_for(name).try(&.source_def) ||
+                   @force_lower_replay_source_bindings[name]?.try(&.source_def) ||
+                   @function_defs[name]?
+      !!source_def.try(&.is_abstract)
     end
 
     # The driver removes a request from the queue before resuming it, so a
