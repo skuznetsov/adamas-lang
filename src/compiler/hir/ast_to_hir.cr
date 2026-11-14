@@ -114562,10 +114562,30 @@ module Adamas::HIR
     # provisional dependencies belong to the live body, not to a suspension.
     private def suspended_source_result_producer?(name : String, consumer : String) : Bool
       return false if name == consumer
-      return false if @module.has_function_with_body?(name)
       state = function_state(name)
-      return false if state.in_progress? || state.completed?
+      return false if state.in_progress?
+      if @module.has_function_with_body?(name) || state.completed?
+        return queued_provisional_source_result_producer?(name)
+      end
       !!@force_lower_provisional_dependencies[name]?.try { |dependencies| !dependencies.empty? }
+    end
+
+    # When the driver is already active, a suspended producer's force hands
+    # its continuation to the queue and returns without a body. Its caller
+    # continues and can force it again through another path that has no
+    # replay recipe (the first force consumed the pending callsite), which
+    # completes a provisional body around the depth-refused callee's
+    # name-shaped guess (`unsafe_byte_slice_string` reading `String.new` at
+    # the bypass cap, then `lchop?` checking `String?` against `Pointer`).
+    # The queued continuation still owns that producer's real body, so the
+    # provisional result is as pending as a missing one: the consumer must
+    # suspend behind the queue instead of consuming the guess.
+    private def queued_provisional_source_result_producer?(name : String) : Bool
+      return false unless @force_lower_retry_driver_active
+      return false if settled_force_lower_result?(name)
+      dependencies = @force_lower_provisional_dependencies[name]?
+      return false unless dependencies && !dependencies.empty?
+      force_lower_retry_has_queued_producer?(name, false)
     end
 
     private def force_lower_replay_recipe_available?(name : String) : Bool
