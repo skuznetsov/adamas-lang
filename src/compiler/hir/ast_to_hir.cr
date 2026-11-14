@@ -155421,11 +155421,13 @@ module Adamas::HIR
         when Copy
           pending << producer.source
         else
-          if is_union_type?(actual)
-            unknown_leaf = true
-          else
-            facts << {actual, ctx.type_literal?(current)}
-          end
+          # A union-typed leaf without registered facts is an instance of
+          # its carrier, exactly as source_block_result_value_facts reports
+          # it. Fabricating both kinds here widened the narrowed set past
+          # the source (Nil survived and `T.class` appeared), which made
+          # `x.try { |i| f(i) }` reject `f(i : Int)` for a `Nil | Int32`
+          # virtual/raw-callback result.
+          facts << {actual, ctx.type_literal?(current)}
         end
       end
       {facts.uniq, unknown_leaf}

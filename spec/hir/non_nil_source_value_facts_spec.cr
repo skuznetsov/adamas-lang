@@ -169,16 +169,19 @@ describe "non-nil narrowing source facts" do
   [false, true].each do |to_branch|
     ["NonNilFactsA | Nil", "NonNilFactsA | NonNilFactsB | Nil"].each do |carrier|
       ["call_leaf", "phi_with_unknown_leaf"].each do |shape|
-        it "preserves both original kinds for #{shape} (carrier=#{carrier}, branch=#{to_branch})" do
+        # An unregistered union leaf is an instance of its carrier, as in
+        # source_block_result_value_facts. Narrowing must only remove Nil from
+        # that set; it must not add `Nil` back or invent `T.class` arms.
+        it "narrows an unregistered union leaf as carrier instances for #{shape} (carrier=#{carrier}, branch=#{to_branch})" do
           result = non_nil_source_facts_converter.__test_non_nil_unknown_source_facts(
             carrier, shape, to_branch,
           )
           result[:changed].should be_true
           result[:producer].should eq(carrier.includes?("NonNilFactsB") ? "Adamas::HIR::Copy" : "Adamas::HIR::UnionUnwrap")
-          result[:facts].should eq([
-            {result[:source_name], false},
-            {result[:source_name], true},
-          ])
+          expected = [{"NonNilFactsA", false}]
+          expected << {"NonNilFactsA", true} if shape == "phi_with_unknown_leaf"
+          expected << {"NonNilFactsB", false} if carrier.includes?("NonNilFactsB")
+          result[:facts].should eq(expected.sort_by { |(name, literal)| {name, literal ? 1 : 0} })
           result[:source_facts].should be_nil
           result[:literal].should be_false
         end
