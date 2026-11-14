@@ -62875,6 +62875,29 @@ module Adamas::HIR
                 STDERR.puts "[REPAIR] branch=#{repair_branch} old=#{method_name_text} new=#{corrected_name} base=#{base_name} rbase=#{resolved_base} recv=#{receiver_name} recvkind=#{receiver_desc.try(&.kind)} argc=#{arg_types.size} args=#{rp_args} hasblk=#{has_block_call} virt=#{inst.virtual} func=#{func.name}"
               end
             end
+            # The identity guard above runs before block-shape re-keying and the
+            # return-type refresh. A repair that lands back on the identical call
+            # changes nothing; replacing it anyway bumps the body revision on
+            # every final-missing pass, so that fixed point never settles.
+            if corrected_name == method_name_text && return_type == inst.type
+              record_receiver_repair_target(
+                targets_to_lower,
+                fallback_requests,
+                fallback_seen,
+                corrected_name,
+                resolved_base,
+                receiver_name,
+                arg_types,
+                has_block_call,
+                receiver_repair_target_has_splat?(method_name_text),
+                inst.virtual,
+                func.name,
+                inst.id,
+                !named_call_shape.nil?,
+                named_call_shape.try(&.names),
+              )
+              next
+            end
             replacement_call = if block_id = inst.block
                                  Call.with_receiver_block(
                                    inst.id,
