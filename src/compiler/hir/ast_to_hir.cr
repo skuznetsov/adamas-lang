@@ -3248,7 +3248,7 @@ module Adamas::HIR
     # Body-walk return inference is a pure function of the definition, its
     # specialization context and the registered return-type state; memoize it
     # per state revision (see infer_return_type_from_body_without_callsite).
-    @body_return_memo : Hash({UInt64, UInt64, String?, UInt64, UInt64, UInt64, UInt64}, TypeRef?) = {} of {UInt64, UInt64, String?, UInt64, UInt64, UInt64, UInt64} => TypeRef?
+    @body_return_memo : Hash({UInt64, UInt64, String?, String?, UInt64, UInt64, UInt64, UInt64}, TypeRef?) = {} of {UInt64, UInt64, String?, String?, UInt64, UInt64, UInt64, UInt64} => TypeRef?
     # Lowest callsite frame whose provisional (cycle-cut) result the innermost
     # body walk consumed; below the walk's starting depth it is not final.
     @body_return_min_dependency : Int32 = Int32::MAX
@@ -3412,6 +3412,10 @@ module Adamas::HIR
     # Pre-computed parent chains: owner → [parent1, parent2, ..., Object]
     # Eliminates repeated @class_info hash lookups during parent walks.
     @parent_chains : Hash(String, Array(String)) = {} of String => Array(String)
+    # "receiver\tselected source" → whether that receiver re-resolves a self
+    # dispatch of the selected inherited body. See
+    # inherited_body_self_dispatch_differs_for_receiver?.
+    @inherited_self_dispatch_differs : Hash(String, Bool) = {} of String => Bool
 
     # Functions that contain yield (candidates for inline)
     @yield_functions : Set(String)
@@ -4008,7 +4012,9 @@ module Adamas::HIR
     # Object-level convenience wrappers such as `inspect : String` and `===`
     # redispatch through `self`. Preserve the concrete runtime reference owner
     # only for that structural wrapper shape; ordinary inherited Object bodies
-    # keep their existing ancestor-owned lowering.
+    # keep their existing ancestor-owned lowering. A body inherited from any
+    # other reference ancestor keeps the receiver owner exactly when one of
+    # its self dispatches resolves differently for that receiver.
     private def preserve_requested_runtime_reference_wrapper_owner?(
       requested_name : String,
       resolved_name : String,
@@ -4020,11 +4026,194 @@ module Adamas::HIR
 
       requested_owner = requested_parts.owner
       return false if requested_owner.empty?
-      return false unless resolved_parts.owner == "Object"
+      unless resolved_parts.owner == "Object"
+        return inherited_body_self_dispatch_differs_for_receiver?(
+          requested_owner, resolved_parts.owner, resolved_name, resolved_def,
+        )
+      end
       return false unless class_inherits_from?(requested_owner, "Reference")
       return false unless object_wrapper_source_redispatches_through_self?(resolved_name, resolved_def)
 
       @class_info.has_key?(requested_owner)
+    end
+
+    # The receiver owner of a per-receiver instance of an inherited source
+    # body, or nil when the requested symbol shares the declaring owner's body.
+    private def receiver_self_owner_for_inherited_source(
+      name : String,
+      source : ForceLowerExactSourceBinding,
+    ) : String?
+      source_name = source.source_registry_name || return nil
+      return nil unless preserve_requested_runtime_reference_wrapper_owner?(name, source_name, source.source_def)
+      owner = parse_method_name(name).owner
+      owner.empty? ? nil : owner
+    end
+
+    # Bodies examined per receiver/source query before the walk gives up and
+    # keeps the shared ancestor body.
+    INHERITED_SELF_DISPATCH_WALK_LIMIT = 32
+
+    # Crystal instantiates an inherited instance method once per receiver
+    # type. The ancestor-owned body that V2 shares across receivers is exact
+    # only while every self dispatch inside it resolves the same way for the
+    # receiver. When the receiver's own chain redeclares a self-called method
+    # below the defining ancestor (`IO#tell` calls `pos`, which
+    # `IO::FileDescriptor` takes from `IO::Buffered`), the shared body types
+    # that dispatch by the ancestor's declaration (`IO#pos`). The walk also
+    # follows self calls that still reach shared ancestor bodies, since those
+    # run on the same receiver.
+    private def inherited_body_self_dispatch_differs_for_receiver?(
+      receiver_owner : String,
+      source_owner : String,
+      resolved_name : String,
+      resolved_def : Adamas::Compiler::Frontend::DefNode,
+    ) : Bool
+      return false if source_owner.empty?
+      receiver_info = @class_info[receiver_owner]?
+      return false unless receiver_info && !receiver_info.is_struct
+      return false unless class_inherits_from?(receiver_owner, "Reference")
+      source_base = strip_generic_args(source_owner)
+      return false if strip_generic_args(receiver_owner) == source_base
+      # Only a class ancestor of the receiver qualifies. Module and unrelated
+      # sources keep their existing materialization policies.
+      stop_owner = get_parent_chain(receiver_owner).find do |parent|
+        strip_generic_args(parent) == source_base
+      end
+      return false unless stop_owner
+
+      cache_key = "#{receiver_owner}\t#{resolved_name}"
+      cached = @inherited_self_dispatch_differs[cache_key]?
+      return cached unless cached.nil?
+      # A query re-entered while the walk runs sees the shared-body answer.
+      @inherited_self_dispatch_differs[cache_key] = false
+      result = inherited_self_dispatch_walk_differs?(receiver_owner, stop_owner, resolved_name, resolved_def)
+      @inherited_self_dispatch_differs[cache_key] = result
+      result
+    end
+
+    private def inherited_self_dispatch_walk_differs?(
+      receiver_owner : String,
+      stop_owner : String,
+      resolved_name : String,
+      resolved_def : Adamas::Compiler::Frontend::DefNode,
+    ) : Bool
+      receiver_base = strip_generic_args(receiver_owner)
+      visited = Set(String).new
+      pending = [{resolved_name, resolved_def}]
+      locals = Set(String).new
+      calls = [] of Tuple(String, Int32)
+      while entry = pending.shift?
+        name, def_node = entry
+        next unless visited.add?(name)
+        return false if visited.size > INHERITED_SELF_DISPATCH_WALK_LIMIT
+        body = def_node.body
+        next unless body
+
+        arena = @function_def_arenas[name]? ||
+                @function_def_arenas[strip_type_suffix(name)]? ||
+                resolve_arena_for_def(def_node, @arena)
+        locals.clear
+        calls.clear
+        if params = def_node.params
+          params.each do |param|
+            if (param_name = param.name) && (text = safe_slice_to_string(param_name))
+              locals << text
+            end
+          end
+        end
+        body.each { |expr_id| collect_inherited_body_local_names(expr_id, arena, locals) }
+        body.each { |expr_id| collect_inherited_body_self_calls(expr_id, arena, locals, calls) }
+
+        calls.each do |call|
+          method_name, arity = call
+          if receiver_family_declares_method_below?(receiver_owner, receiver_base, method_name, arity, stop_owner)
+            return true
+          end
+          next unless shared_base = resolve_method_with_inheritance(stop_owner, method_name)
+          function_def_overloads(shared_base).each do |overload|
+            if overload_def = @function_defs[overload]?
+              pending << {overload, overload_def}
+            end
+          end
+        end
+      end
+      false
+    end
+
+    # Names bound inside a body (assignment targets and block parameters) are
+    # locals, so a bare identifier with that name is not a self call. Treating
+    # every such name as local errs toward the shared body.
+    private def collect_inherited_body_local_names(
+      expr_id : Adamas::Compiler::Frontend::ExprId,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+      locals : Set(String),
+    ) : Nil
+      return if expr_id.index < 0 || expr_id.index >= arena.size
+
+      node = arena[expr_id]
+      case node
+      when Adamas::Compiler::Frontend::AssignNode
+        target = arena[node.target]
+        if target.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
+          locals << identifier_name_text(target, arena)
+        end
+      when Adamas::Compiler::Frontend::MultipleAssignNode
+        node.targets.each do |target_id|
+          next if target_id.index < 0 || target_id.index >= arena.size
+          target = arena[target_id]
+          if target.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
+            locals << identifier_name_text(target, arena)
+          end
+        end
+      when Adamas::Compiler::Frontend::BlockNode
+        if params = node.params
+          params.each do |param|
+            if (param_name = param.name) && (text = safe_slice_to_string(param_name))
+              locals << text
+            end
+          end
+        end
+      end
+
+      Adamas::Compiler::Frontend::NodeDispatch.get_child_exprs(arena, expr_id).each do |child_id|
+        collect_inherited_body_local_names(child_id, arena, locals)
+      end
+    end
+
+    # Receiverless and `self.` calls, with their positional arity.
+    private def collect_inherited_body_self_calls(
+      expr_id : Adamas::Compiler::Frontend::ExprId,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+      locals : Set(String),
+      calls : Array(Tuple(String, Int32)),
+    ) : Nil
+      return if expr_id.index < 0 || expr_id.index >= arena.size
+
+      node = arena[expr_id]
+      case node
+      when Adamas::Compiler::Frontend::CallNode
+        callee = arena[node.callee]
+        case callee
+        when Adamas::Compiler::Frontend::IdentifierNode
+          callee_name = identifier_name_text(callee, arena)
+          calls << {callee_name, node.args.size} unless locals.includes?(callee_name)
+        when Adamas::Compiler::Frontend::MemberAccessNode
+          if arena[callee.object].is_a?(Adamas::Compiler::Frontend::SelfNode)
+            calls << {member_access_name_text(callee), node.args.size}
+          end
+        end
+      when Adamas::Compiler::Frontend::IdentifierNode
+        identifier = identifier_name_text(node, arena)
+        calls << {identifier, 0} unless locals.includes?(identifier)
+      when Adamas::Compiler::Frontend::MemberAccessNode
+        if arena[node.object].is_a?(Adamas::Compiler::Frontend::SelfNode)
+          calls << {member_access_name_text(node), 0}
+        end
+      end
+
+      Adamas::Compiler::Frontend::NodeDispatch.get_child_exprs(arena, expr_id).each do |child_id|
+        collect_inherited_body_self_calls(child_id, arena, locals, calls)
+      end
     end
 
     # A concrete value receiver has no runtime type-id dispatch. If an exact
@@ -30354,9 +30543,25 @@ module Adamas::HIR
       @infer_env_epoch_seq
     end
 
+    # `lexical_namespace` names the declaring owner when `self_type_name` is a
+    # receiver that inherits the body (see receiver_self_owner_for_inherited_source).
     private def infer_return_type_from_body_without_callsite(
       node : Adamas::Compiler::Frontend::DefNode,
       self_type_name : String? = nil,
+      lexical_namespace : String? = nil,
+    ) : TypeRef?
+      if lexical_namespace
+        return with_namespace_override(lexical_namespace) do
+          infer_return_type_from_body_without_callsite_memoized(node, self_type_name, lexical_namespace)
+        end
+      end
+      infer_return_type_from_body_without_callsite_memoized(node, self_type_name, nil)
+    end
+
+    private def infer_return_type_from_body_without_callsite_memoized(
+      node : Adamas::Compiler::Frontend::DefNode,
+      self_type_name : String?,
+      lexical_namespace : String?,
     ) : TypeRef?
       # Deferred inference short-circuits to nil and must not poison the memo.
       return infer_return_type_from_body_without_callsite_uncached(node, self_type_name) if @defer_body_return_inference
@@ -30364,6 +30569,7 @@ module Adamas::HIR
         node.object_id.to_u64,
         @arena.object_id.to_u64,
         self_type_name,
+        lexical_namespace,
         type_param_map_content_id,
         @function_lowering_state_revision,
         @function_type_revision,
@@ -30381,9 +30587,9 @@ module Adamas::HIR
         # A walk that consumed a cycle-cut result of an outer active callsite
         # frame is provisional; so is one that changed the state it is keyed on.
         if @body_return_min_dependency >= floor &&
-           memo_key[4] == @function_lowering_state_revision &&
-           memo_key[5] == @function_type_revision &&
-           memo_key[6] == @function_base_return_type_revision
+           memo_key[5] == @function_lowering_state_revision &&
+           memo_key[6] == @function_type_revision &&
+           memo_key[7] == @function_base_return_type_revision
           @body_return_memo[memo_key] = result
         end
       ensure
@@ -70802,6 +71008,13 @@ module Adamas::HIR
                                    return_declaration_owner_for(source_name, strip_type_suffix(source_name)) ||
                                      raise LoweringError.new("member return inference has no lexical source owner: #{source_name}", source.source_def)
                                  end
+      # A per-receiver instance of an inherited body resolves names in the
+      # declaring owner but dispatches `self` calls on the receiver, exactly as
+      # its parent-fallback lowering does.
+      receiver_self_owner = if (source = selected_source_binding) && source_declaration_owner
+                              receiver_self_owner_for_inherited_source(name, source)
+                            end
+      body_infer_namespace = receiver_self_owner ? source_declaration_owner : nil
       if allocator = materialized_generated_allocator(name)
         return allocator.return_type
       end
@@ -70899,7 +71112,7 @@ module Adamas::HIR
             end
           elsif (!existing_type.primitive? || has_block_return_override) && !defer_specialized_body_inference
             owner_name = source_declaration_owner || function_context_from_name(base_name)
-            if inferred = infer_return_type_from_body_without_callsite(def_node, owner_name)
+            if inferred = infer_return_type_from_body_without_callsite(def_node, receiver_self_owner || owner_name, body_infer_namespace)
               if inferred != TypeRef::VOID && inferred != existing_type
                 set_function_type_entry(name, inferred)
                 set_function_base_return_type(base_name, inferred) if name == base_name
@@ -70955,7 +71168,7 @@ module Adamas::HIR
           if def_node = return_source_def || lookup_function_def_for_return(name, base_name, call_arg_count)
             unless defer_specialized_body_inference
               owner_name = source_declaration_owner || function_context_from_name(base_name)
-              if inferred = infer_return_type_from_body_without_callsite(def_node, owner_name)
+              if inferred = infer_return_type_from_body_without_callsite(def_node, receiver_self_owner || owner_name, body_infer_namespace)
                 if inferred != TypeRef::VOID
                   set_function_type_entry(name, inferred)
                   set_function_base_return_type(base_name, inferred) if name == base_name
@@ -71045,7 +71258,7 @@ module Adamas::HIR
           end
           unless defer_specialized_body_inference
             owner_name = source_declaration_owner || function_context_from_name(base_name)
-            if inferred = infer_return_type_from_body_without_callsite(def_node, owner_name)
+            if inferred = infer_return_type_from_body_without_callsite(def_node, receiver_self_owner || owner_name, body_infer_namespace)
               if inferred != TypeRef::VOID
                 set_function_type_entry(name, inferred)
                 set_function_base_return_type(base_name, inferred) if name == base_name
@@ -71098,7 +71311,7 @@ module Adamas::HIR
               elsif idx = base_name.rindex('.')
                 owner_name ||= base_name[0, idx]
               end
-              if inferred = infer_return_type_from_body_without_callsite(def_node, owner_name)
+              if inferred = infer_return_type_from_body_without_callsite(def_node, receiver_self_owner || owner_name, body_infer_namespace)
                 if inferred != TypeRef::VOID
                   inferred_desc = @module.get_type_descriptor(inferred)
                   if inferred_desc.nil? || inferred_desc.kind != TypeKind::Union
@@ -71156,7 +71369,7 @@ module Adamas::HIR
               owner_name ||= base_name[0, idx]
             end
             unless defer_specialized_body_inference
-              if inferred = infer_return_type_from_body_without_callsite(def_node, owner_name)
+              if inferred = infer_return_type_from_body_without_callsite(def_node, receiver_self_owner || owner_name, body_infer_namespace)
                 if inferred != TypeRef::VOID
                   inferred_desc = @module.get_type_descriptor(inferred)
                   if inferred_desc.nil? || inferred_desc.kind != TypeKind::Union
@@ -71190,7 +71403,7 @@ module Adamas::HIR
               owner_name ||= base_name[0, idx]
             end
             unless defer_specialized_body_inference
-              if inferred = infer_return_type_from_body_without_callsite(def_node, owner_name)
+              if inferred = infer_return_type_from_body_without_callsite(def_node, receiver_self_owner || owner_name, body_infer_namespace)
                 if inferred != TypeRef::VOID
                   set_function_type_entry(name, inferred)
                   set_function_base_return_type(base_name, inferred) if name == base_name
@@ -71235,7 +71448,7 @@ module Adamas::HIR
             elsif idx = name.rindex('.')
               owner_name ||= name[0, idx]
             end
-            if inferred = infer_return_type_from_body_without_callsite(def_node, owner_name)
+            if inferred = infer_return_type_from_body_without_callsite(def_node, receiver_self_owner || owner_name, body_infer_namespace)
               if inferred != TypeRef::VOID
                 set_function_base_return_type(name, inferred) unless name.includes?('$')
                 set_function_type_entry(name, inferred)
