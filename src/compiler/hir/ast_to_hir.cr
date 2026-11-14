@@ -47535,6 +47535,7 @@ module Adamas::HIR
       selected_init_target : SelectedCallTarget? = nil,
       source_argument_facts : Array(SourceCallArgument?)? = nil,
       source_result_consumer : String? = nil,
+      explicit_new_target : Tuple(String, Adamas::Compiler::Frontend::DefNode)? = nil,
     )
       allocator_stats_index, allocator_stats_start = begin_lower_method_allocator_stats
       begin
@@ -47602,7 +47603,7 @@ module Adamas::HIR
       # allocator body already emitted under its source target.
       if !selected_initializer && (source_arg_types = call_arg_types)
         source_name = allocator_new_name_for(class_name)
-        if selected_new = lookup_function_def_for_call(
+        if selected_new = explicit_new_target || lookup_function_def_for_call(
              source_name, source_arg_types.size, call_has_block, source_arg_types,
              false, call_has_named_args, call_named_arg_names,
              source_argument_facts: allocator_source_argument_facts,
@@ -121379,6 +121380,7 @@ module Adamas::HIR
                 receiver_id = nil
               end
             end
+            explicit_new_autocast_target : Tuple(String, Adamas::Compiler::Frontend::DefNode)? = nil
             if full_method_name
               call_has_splat = call_args.any? { |arg_expr| call_arena[arg_expr].is_a?(Adamas::Compiler::Frontend::SplatNode) }
               call_has_named_args = node.named_args.try(&.empty?) == false
@@ -121424,6 +121426,10 @@ module Adamas::HIR
                      has_block_call: has_block_call,
                    )
                   selected_class_method_entry = {numeric_entry[0], numeric_entry[1]}
+                  # The allocator only sees the raw argument types, so it cannot
+                  # repeat a literal autocast. Hand it the explicit `.new` that
+                  # the source values select (`StaticArray(UInt8, 16).new(0)`).
+                  explicit_new_autocast_target = selected_class_method_entry if method_name == "new"
                 end
               end
               if selected_class_method_entry
@@ -121539,7 +121545,8 @@ module Adamas::HIR
                     selected_initializer: !!selected_constructor_target,
                     selected_init_target: selected_constructor_target,
                     source_argument_facts: constructor_source_facts,
-                    source_result_consumer: ctx.source_result_replay_consumer || ctx.function.name)
+                    source_result_consumer: ctx.source_result_replay_consumer || ctx.function.name,
+                    explicit_new_target: explicit_new_autocast_target)
                 end
               end
             end
