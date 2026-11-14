@@ -83569,8 +83569,11 @@ module Adamas::HIR
     # `self.new(size, *, read_only = false, &)` leaves the block unrestricted,
     # but its body fills `Pointer.malloc(size) { |i| yield i }`, so T is the
     # block output as well. A bare `Slice` inside `Slice(T)` names the generic.
-    private def infer_generic_new_type_arg_from_block(
+    # Other class methods follow the same rule: `Pointer.malloc(size) { |i| v }`
+    # binds T through `self.malloc(size : Int, & : Int32 -> T)`.
+    private def infer_generic_class_method_type_arg_from_block(
       class_name : String,
+      method_name : String,
       args : Array(Adamas::Compiler::Frontend::ExprId)?,
       block : Adamas::Compiler::Frontend::ExprId,
     ) : String?
@@ -83587,7 +83590,7 @@ module Adamas::HIR
         body.each do |expr_id|
           member = unwrap_visibility_member_in_arena(template.arena[expr_id], template.arena)
           next unless member.is_a?(Adamas::Compiler::Frontend::DefNode)
-          next unless def_method_name_from_node(member, template.arena) == "new"
+          next unless def_method_name_from_node(member, template.arena) == method_name
           receiver = member.receiver
           next unless receiver && class_method_receiver_text?(safe_slice_to_string(receiver) || "")
           params = function_param_infos(member, template.arena)
@@ -83601,7 +83604,7 @@ module Adamas::HIR
           if restriction = block_param.type_annotation
             next unless extract_proc_return_type_name(restriction).try(&.strip) == formal
             input_names = proc_input_type_names(restriction) || [] of String
-          elsif class_name == "Slice"
+          elsif class_name == "Slice" && method_name == "new"
             input_names = ["Int32"]
           else
             next
@@ -83630,7 +83633,7 @@ module Adamas::HIR
     ) : String?
       # Array keeps its dedicated value-producer inference below.
       if block && class_name != "Array"
-        if inferred = infer_generic_new_type_arg_from_block(class_name, args, block)
+        if inferred = infer_generic_class_method_type_arg_from_block(class_name, "new", args, block)
           return inferred
         end
       end
@@ -124130,6 +124133,26 @@ module Adamas::HIR
             base_method_name = "#{inferred_owner}.#{method_name}"
             full_method_name = base_method_name
           end
+        end
+      end
+      # A bare generic owner of a block-taking class method binds its formal
+      # from the block output. Without this, the overload index above borrows
+      # whichever specialization was registered first (`Pointer(Void).malloc`
+      # for `Pointer.malloc(size) { |i| yield i }` inside `Slice.new`).
+      if receiver_id.nil? && method_name != "new" && !has_named_args && !has_splat &&
+         (bare_owner = class_name_str) && !bare_owner.includes?('(') &&
+         @generic_templates.has_key?(bare_owner) &&
+         (owner_block = block_expr) && call_arena[owner_block].is_a?(Adamas::Compiler::Frontend::BlockNode)
+        inferred_arg = with_arena(call_arena) do
+          infer_generic_class_method_type_arg_from_block(bare_owner, method_name, call_args, owner_block)
+        end
+        if inferred_arg
+          inferred_owner = "#{bare_owner}(#{inferred_arg})"
+          monomorphize_generic_class(bare_owner, [inferred_arg], inferred_owner) unless @monomorphized.includes?(inferred_owner)
+          class_name_str = inferred_owner
+          static_class_name = inferred_owner
+          base_method_name = "#{inferred_owner}.#{method_name}"
+          full_method_name = base_method_name
         end
       end
       # `mangle_function_name(..., has_block: true)` must match `function_full_name_for_def`
