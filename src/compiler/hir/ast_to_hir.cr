@@ -131943,7 +131943,7 @@ module Adamas::HIR
         end
         remember_callsite_arg_types(target, arg_types, call_literals, source_argument_facts: source_facts)
         lower_required_virtual_target_function(target, exact_demand: true)
-        force_required_union_arm_body(target)
+        force_required_union_arm_body(ctx, target)
         function = @module.function_by_name(target)
         unless function && function_state(target).completed? && @module.has_function_with_body?(target)
           raise LoweringError.new("metaclass union arm has no complete body: #{target}", node)
@@ -132076,7 +132076,7 @@ module Adamas::HIR
         bind_exact_source_call_target(target, source_name, definition, arena, node, "NamedTuple receiver arm")
         remember_callsite_arg_types(target, arg_types)
         lower_required_virtual_target_function(target, exact_demand: true)
-        force_required_union_arm_body(target)
+        force_required_union_arm_body(ctx, target)
         function = @module.function_by_name(target)
         unless function && function_state(target).completed? && @module.has_function_with_body?(target)
           raise LoweringError.new("NamedTuple receiver arm has no complete body: #{target}", node)
@@ -132153,7 +132153,7 @@ module Adamas::HIR
     # an exact body demand its own bounded force chain, independent of the
     # caller's speculative return-discovery depth. The force path still
     # checks active bodies and whether it can detach from an inline yield.
-    private def force_required_union_arm_body(name : String) : Nil
+    private def force_required_union_arm_body(ctx : LoweringContext, name : String) : Nil
       return if @module.has_function_with_body?(name)
 
       saved_force_depth = @force_lower_return_type_depth
@@ -132167,6 +132167,39 @@ module Adamas::HIR
       ensure
         @force_lower_return_type_depth = saved_force_depth
       end
+      suspend_behind_queued_union_arm(ctx, name)
+    end
+
+    # The arm force can run while the retry driver is already active. When
+    # the arm suspends on its own unsettled producer, the driver takes over
+    # the arm's continuation and the force returns bodiless
+    # (`LittleEndian.decode$UInt64.class_IO` waiting on
+    # `StaticArray(UInt8, 8)#to_slice` while `UInt64.from_io` dispatches over
+    # `BigEndian.class | LittleEndian.class`). Dispatch cannot emit an arm
+    # without its body, so the dispatching consumer suspends behind that
+    # queued continuation, like a consumer of any other pending producer.
+    # The driver drains the arm first and then replays the consumer.
+    private def suspend_behind_queued_union_arm(ctx : LoweringContext, name : String) : Nil
+      return if @module.has_function_with_body?(name)
+      return unless @force_lower_retry_driver_active
+      consumer = ctx.source_result_replay_consumer || ctx.function.name
+      return if consumer == name
+      return unless force_lower_replay_recipe_available?(consumer)
+      queued = @force_lower_retry_work.find do |request|
+        request.is_a?(ForceLowerSuspendedRequest) && request.name == name &&
+          force_lower_retry_source_current?(request)
+      end
+      return unless queued
+      replay = queued.replay_callsite
+      return unless replay
+      source = replay.exact_source_binding ||
+               ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name)
+      return unless force_lower_exact_source_matches?(name, source)
+      if env_has?("DEBUG_FORCE_LOWER_DEPTH")
+        STDERR.puts "[FORCE_LOWER_SUSPENDED] consumer=#{consumer} context=#{ctx.function.name} producer=#{name} queued_arm=1"
+      end
+      (@force_lower_provisional_dependencies[consumer] ||= Set(String).new) << name
+      raise ExactResultPending.new(consumer, name, source)
     end
 
     private def try_emit_union_receiver_dispatch(
@@ -132454,7 +132487,7 @@ module Adamas::HIR
           # into a lowering error. Recursion stays bounded by the in-progress
           # state check inside force_lower.
           lower_required_virtual_target_function(vm, exact_demand: true)
-          force_required_union_arm_body(vm)
+          force_required_union_arm_body(ctx, vm)
         else
           lower_function_if_needed(vm)
         end
