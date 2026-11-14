@@ -84882,6 +84882,10 @@ module Adamas::HIR
     private def resolved_case_condition_type_name?(type_name : String) : Bool
       return false if type_name.empty?
       return true if type_name_exists?(type_name)
+      # Compiler-defined types (Crystal's Program declares Tuple, NamedTuple,
+      # Pointer, Proc and the scalars itself) name types even when no prelude
+      # template registers them, so `in Tuple(Int32, Bool)` stays a type test.
+      return true if BUILTIN_TYPE_NAMES.includes?(type_name)
 
       if type_name.ends_with?(".class")
         return resolved_case_condition_type_name?(type_name[0, type_name.bytesize - 6])
