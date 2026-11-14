@@ -14224,6 +14224,33 @@ module Adamas::HIR
       end
       return nil if @resolved_enum_name_negative_cache.includes?(name)
 
+      # A union of several non-Nil arms never names an enum. The
+      # namespace-suffix fallbacks below would otherwise read
+      # `Tuple(Int32, Bool) | Sys::Errno` as its last component `Errno` and
+      # tag a union-returning call as that enum. A nilable enum (`E?`, spelled
+      # `E | Nil` in either order) still carries its enum's identity, as
+      # track_enum_value strips `?`; resolve its one non-Nil arm.
+      if name.includes?('|')
+        arms = split_union_type_name(name)
+        if arms.size > 1
+          non_nil_arm : String? = nil
+          non_nil_count = 0
+          arms.each do |arm|
+            arm = arm.strip
+            next if arm == "Nil" || arm == "::Nil"
+            non_nil_count += 1
+            non_nil_arm = arm
+          end
+          enum_name = (non_nil_count == 1 && (arm_name = non_nil_arm)) ? resolve_enum_name(arm_name) : nil
+          if enum_name
+            @resolved_enum_name_cache[name] = enum_name
+          else
+            @resolved_enum_name_negative_cache << name
+          end
+          return enum_name
+        end
+      end
+
       unless enum_info = @enum_info
         @resolved_enum_name_negative_cache << name
         return nil
