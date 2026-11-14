@@ -113422,19 +113422,16 @@ module Adamas::HIR
     # Used when we need the return type of a callee that was deferred.
     # Returns true only when the requested body or return evidence advances.
     #
-    # `bypass_inline_yield` allows force-lowering from inline-yield contexts,
-    # but only when the callee is provably yield-free (no &-param, no implicit
-    # yield in its body). That invariant means lowering the callee cannot
-    # re-enter inline-yield processing, which is the reason the suppression
-    # exists in the first place. The inline-yield state is temporarily reset
-    # during body lowering so transitive force-lowers for other yield-free
-    # callees proceed normally.
+    # `bypass_inline_yield` allows force-lowering from inline-yield contexts.
+    # The inline-yield state, including explicit Proc yield targets, is
+    # temporarily reset during body lowering, so the callee cannot borrow the
+    # caller's inline block and transitive force-lowers proceed normally.
     #
     # Once we enter bypass mode, @force_lower_yield_free_only_depth keeps the
-    # yield-free guard active for every transitive force_lower inside the
-    # subtree. Without that guard, a nested force_lower would see
-    # in_inline_yield=false (because the parent reset the state) and could
-    # recurse through a yield-bearing callee unchecked.
+    # tighter depth cap for every transitive force_lower inside the subtree,
+    # and the retry/replay paths inherit the bypass. The reset covers the
+    # explicit Proc yield targets too, so the callee's own yield binds to its
+    # block parameter rather than to the caller's inline block.
     private def force_lower_function_for_return_type(
       name : String,
       bypass_inline_yield : Bool = false,
@@ -113484,11 +113481,17 @@ module Adamas::HIR
                        @inline_yield_function_depth == 0 &&
                        @inline_yield_block_body_depth == 0 &&
                        @inline_yield_name_stack.empty?
-      if in_inline_yield || in_yield_free_only
-        unless owned_callback
-          return false if in_inline_yield && !bypass_inline_yield
-          return false unless callee_is_yield_free?(name)
-        end
+      # A bypass force from an inline frame resets the whole yield context
+      # below (depth counters, name stack, explicit Proc yield targets and
+      # return hints), and every force inside that subtree inherits it. The
+      # callee's own `yield` then binds to its block parameter exactly as in
+      # ordinary lowering and cannot borrow the caller's inline block, so a
+      # yield-bearing callee such as the `_block` fallback of
+      # `CS.decode_frame(ip, &)` is admitted under the tighter depth cap.
+      # Refusing it silently left its wrapper with a Void result, and a retry
+      # after the outer frame was restored refused it again.
+      if in_inline_yield && !bypass_inline_yield && !owned_callback
+        return false
       end
 
       # Don't force if it would cause infinite recursion
@@ -113547,12 +113550,20 @@ module Adamas::HIR
         saved_iy_stack = @inline_yield_name_stack
         saved_tuple_each_next_stack = @inline_tuple_each_next_stack
         saved_tuple_each_loop_exit_depth_stack = @inline_tuple_each_loop_exit_depth_stack
+        # Proc frames push their yield target and return hint together with
+        # `@inline_yield_proc_depth`. Reset them with the depth so that
+        # `lower_yield` in a forced body never binds to another function's
+        # captured block value.
+        saved_explicit_yield_target_stack = @explicit_yield_target_stack
+        saved_expected_proc_return_type_hint_stack = @expected_proc_return_type_hint_stack
         @inline_yield_function_depth = 0
         @inline_yield_block_body_depth = 0
         @inline_yield_proc_depth = 0
         @inline_yield_name_stack = [] of String
         @inline_tuple_each_next_stack = [] of Bool
         @inline_tuple_each_loop_exit_depth_stack = [] of Int32
+        @explicit_yield_target_stack = [] of YieldTarget
+        @expected_proc_return_type_hint_stack = [] of TypeRef
         @force_lower_yield_free_only_depth += 1
       end
 
@@ -113606,6 +113617,8 @@ module Adamas::HIR
           @inline_yield_name_stack = saved_iy_stack.not_nil!
           @inline_tuple_each_next_stack = saved_tuple_each_next_stack.not_nil!
           @inline_tuple_each_loop_exit_depth_stack = saved_tuple_each_loop_exit_depth_stack.not_nil!
+          @explicit_yield_target_stack = saved_explicit_yield_target_stack.not_nil!
+          @expected_proc_return_type_hint_stack = saved_expected_proc_return_type_hint_stack.not_nil!
           @force_lower_yield_free_only_depth -= 1
         end
         @lowering_depth = saved_depth
