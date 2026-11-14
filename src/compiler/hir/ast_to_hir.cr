@@ -13128,30 +13128,42 @@ module Adamas::HIR
       formal_types.size == arg_types.size ? formal_types : nil
     end
 
-    # A dispatch name can be anchored on one member of a reference union.
-    # For a closed set of concrete classes with source definitions, resolve
-    # each arm independently before using any result as the dispatch ABI.
-    private def concrete_class_union_noarg_source_result(
-      variants : Array(String), method_name : String,
-    ) : TypeRef?
+    # A dispatch name can be anchored on one member of a closed union. For a
+    # closed set of concrete receivers (leaf classes and non-abstract structs)
+    # with source definitions, resolve each arm independently and return the
+    # per-arm results in variant order. Callers join them for the dispatch ABI;
+    # the inline union dispatcher also wraps each branch into that join.
+    private def concrete_union_arm_source_results(
+      variants : Array(String), method_name : String, arg_types : Array(TypeRef),
+    ) : Array(TypeRef)?
       owners = variants.map { |name| resolve_type_alias_chain(name).lchop("::") }
+      has_struct_arm = false
       return nil unless owners.all? do |owner|
-        strip_generic_args(owner) == owner && @class_info.has_key?(owner) &&
-          @module.get_type_descriptor(type_ref_for_name(owner)).try(&.kind) == TypeKind::Class &&
+        kind = @module.get_type_descriptor(type_ref_for_name(owner)).try(&.kind)
+        has_struct_arm = true if kind == TypeKind::Struct
+        owner != "Nil" && strip_generic_args(owner) == owner && @class_info.has_key?(owner) &&
+          (kind == TypeKind::Class || kind == TypeKind::Struct) &&
           !class_has_subclasses?(owner) && !@abstract_class_names.includes?(owner)
       end
+      # Unknown positional types cannot discriminate the overloads of an arm.
+      unknown_args = arg_types.any? { |type| type == TypeRef::VOID || type == TypeRef::POINTER }
 
       targets = owners.map do |owner|
         base = "#{owner}##{method_name}"
         # Require a registered declaration on this concrete owner. Unknown,
         # generated, and inherited-only methods keep their existing corridor.
-        return nil if function_def_overloads(base).empty?
-        lookup_function_def_for_call(base, 0, false, [] of TypeRef)
+        overloads = function_def_overloads(base)
+        return nil if overloads.empty?
+        return nil if unknown_args && overloads.size > 1
+        lookup_function_def_for_call(base, arg_types.size, false, arg_types)
       end
-      candidates = [] of TypeRef
+      results = [] of TypeRef
       targets.each_with_index do |target, index|
         owner = owners[index]
         unless target
+          # A positional call-site type can be inexact; only the zero-argument
+          # shape proves that this arm has no matching overload.
+          return nil unless arg_types.empty?
           # A nearer declaration can coexist with an overload supplied by
           # inheritance, a module, or a generated getter.
           return nil if registered_generated_accessor_request?("#{owner}##{method_name}", "#{owner}##{method_name}")
@@ -13164,14 +13176,17 @@ module Adamas::HIR
           raise LoweringError.new("no overload matches #{owner}##{method_name} for zero arguments")
         end
         name, definition = target
-        result = get_function_return_type(name, 0, definition)
+        result = get_function_return_type(name, arg_types.size, definition)
         if result == TypeRef::VOID
-          result = resolve_return_type_from_def(name, "#{owner}##{method_name}", type_ref_for_name(owner), 0, definition) || TypeRef::VOID
+          result = resolve_return_type_from_def(name, "#{owner}##{method_name}", type_ref_for_name(owner), arg_types.size, definition) || TypeRef::VOID
         end
         return nil if result == TypeRef::VOID
-        candidates << result
+        # The inline dispatcher of a union with a struct arm can embed only a
+        # plain member value into the join, not a narrower union.
+        return nil if has_struct_arm && @module.get_type_descriptor(result).try(&.kind) == TypeKind::Union
+        results << result
       end
-      union_type_for_value_set(candidates)
+      results
     end
 
     # A call on a union receiver dispatches to each arm's own Def, so its
@@ -13232,9 +13247,11 @@ module Adamas::HIR
       end
       return TypeRef::VOID if variants.size < 2
 
-      if arg_types.empty? && !has_block_call && !has_splat && !call_has_named_args
-        if result = concrete_class_union_noarg_source_result(variants, method_name)
-          return result
+      if !has_block_call && !has_splat && !call_has_named_args
+        if arm_results = concrete_union_arm_source_results(variants, method_name, arg_types)
+          if result = union_type_for_value_set(arm_results)
+            return result
+          end
         end
       end
 
@@ -132943,6 +132960,29 @@ module Adamas::HIR
         end
         if direct_heap_aggregate_proc_return_wrap_compatible?(concrete_returns, dispatch_return_type)
           explicit_branch_return_types = concrete_returns
+        end
+      end
+
+      # Concrete class/struct arms resolve their own source results (see
+      # concrete_union_arm_source_results). When the dispatch result is their
+      # join, each branch keeps its arm's own result and is wrapped into the
+      # join instead of claiming the join as its call ABI.
+      if explicit_branch_return_types.nil? && !has_block_call && block_id.nil? &&
+         @module.get_type_descriptor(dispatch_return_type).try(&.kind) == TypeKind::Union
+        if arm_results = concrete_union_arm_source_results(variants, mb, arg_types)
+          if union_type_for_value_set(arm_results) == dispatch_return_type
+            arm_refs = variants.map { |variant| type_ref_for_name(resolve_type_alias_chain(variant).lchop("::")) }
+            branch_types = [] of TypeRef
+            vms.each do |branch|
+              arm_index = arm_refs.index(branch[1])
+              break unless arm_index
+              branch_type = arm_results[arm_index]
+              break unless branch_type == dispatch_return_type ||
+                           exact_or_canonical_proc_union_member_variant_id(dispatch_return_type, branch_type) >= 0
+              branch_types << branch_type
+            end
+            explicit_branch_return_types = branch_types if branch_types.size == vms.size
+          end
         end
       end
 
