@@ -27266,3 +27266,42 @@ reaches the strict pending Hash(Void, Void) result in update_linear_scan
   queue validates full current recipes, but the graph stores name pairs. A stale
   edge could cause a conservative false cycle; this is an unmeasured risk, not
   evidence of false settlement.
+
+
+### 2026-11-14 — Prelude hello with the in-repo stdlib
+
+Three chains on GPT tip 872c21f9, one fix per commit, each with its
+oracle-qualified regression unless stated otherwise.
+
+- [x] Chain 1, 6e194b7e..6b18c90d (13 fixes): metaclass-union class-method
+  dispatch, member-receiver block yields, union-carrier facts before is_a?,
+  enum disjointness, compiler-defined generic case arms, context-free aliases,
+  nilable-enum spelling, bypass yield isolation, queued retry settlement,
+  provisional producers, autocast explicit `new`, enum union arms, queued
+  union-arm continuation.
+- [x] Chain 2, a4a5d7be..e2669226 (10 fixes): type-position typeof text, enum
+  alias coverage per ancestor, primitive-template receipt for padded explicit
+  calls, noreturn bodies behind a Void slot, exact abstract force targets by
+  selected source, class-method generic owner from a block, inherited bodies
+  per receiver when self dispatch differs, block presence through receiver
+  repair, early aliases out of declaration checks, forall binding for
+  captured block inputs.
+- [x] Chain 3, abd71e54..a8e057ff: union-receiver calls inferred from every
+  arm's source Def (`union_receiver_loop_body_local_repro.sh`); receiver
+  repairs that land on the identical call are skipped (final-missing
+  `churn=hir_body_revision`); an abstract Def is never bound as an exact body
+  source (six parked `Crystal::EventLoop::Polling#read/write/close` targets).
+  The last two have no no-prelude reducer; prelude hello is the evidence.
+- [x] Prelude `puts` compiles and prints with the in-repo stdlib. Fast gate:
+  20/20 chain regressions including prelude hello; HIR specs show the same
+  failure list as before the chain.
+- [ ] Nested inline yields through an abstract `system_run` drop a top-level
+  `total &+= f` accumulation: V2 exits 0, original Crystal 10. Present before
+  all three chains.
+- [ ] `x = t1.d(3)` on `t1 : J1 | J0` with `Int32`/`Int64` arm results:
+  `x.is_a?(Int32)` is false for the Int32 arm (V2 22, original Crystal 21).
+  Present before all three chains.
+- [ ] k21: the forall binder fails closed for named-argument calls.
+- [ ] `contains_return_after_yield?` is over-conservative; deep yield chains
+  (e4/e6) still fall back to block calls.
+- [ ] Next: S1 -> S2 bootstrap on this branch, then LavinMQ parity.
