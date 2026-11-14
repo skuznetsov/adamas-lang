@@ -33953,6 +33953,15 @@ module Adamas::HIR
           end
         end
         expr_node.args.each { |arg| collect_local_assignment_types(arg, name, self_type_name, output, body, visited, binding_is_enclosing) }
+        # The receiver is evaluated before the call and binds its own locals
+        # (`bsi { |v, i| yield v }.try { ... }` binds `v` in the receiver's
+        # block). collect_yield_arg_lists visits receivers, so a yield found
+        # there must find its argument's binding here too.
+        if (callee = node_for_expr(expr_node.callee)).is_a?(Adamas::Compiler::Frontend::MemberAccessNode)
+          collect_local_assignment_types(callee.object, name, self_type_name, output, body, visited, binding_is_enclosing)
+        end
+      when Adamas::Compiler::Frontend::MemberAccessNode
+        collect_local_assignment_types(expr_node.object, name, self_type_name, output, body, visited, binding_is_enclosing)
       when Adamas::Compiler::Frontend::DefNode
         if body = expr_node.body
           # A nested def has its own locals: outer guards never apply inside.
