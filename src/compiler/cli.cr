@@ -2438,6 +2438,15 @@ module Adamas
           hir_converter.pre_register_class_scoped_macros(n)
           i += 1
         end
+        # Top-level aliases, like nested ones, exist before any method is
+        # typed; class registration below resolves signatures eagerly.
+        i = 0
+        while i < alias_nodes.size
+          n, a = alias_nodes.unsafe_fetch(i)
+          hir_converter.arena = a
+          hir_converter.pre_register_context_free_alias(n)
+          i += 1
+        end
         bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_scoped_macro_prescan"; STDERR.flush
 
         log(options, out_io, "    Modules: #{module_nodes.size}")

@@ -15695,8 +15695,41 @@ module Adamas::HIR
             member,
             qualified_source_declaration_name(owner_name, nested_name, publish_namespaces: false)
           )
+        when Adamas::Compiler::Frontend::AliasNode
+          pre_register_context_free_alias(member, owner_name)
         end
       end
+    end
+
+    # Crystal declares every alias before typing any method, so a method
+    # registered earlier may spell `{FD::Handle, Bool}` before the module
+    # that declares `alias Handle = Int32` (event_loop/polling.cr precedes
+    # system/unix/file_descriptor.cr). Registration publishes signature types
+    # eagerly; an alias reached after its first use was minted as a phantom
+    # class and never re-resolved. A forward class reference becomes the real
+    # class by name, an alias does not. Declare early only aliases whose
+    # target resolution is context-free: resolve_alias_target returns builtin,
+    # primitive and LibC carrier names unchanged, so this entry is identical
+    # to the one ordinary registration stores later in source order.
+    def pre_register_context_free_alias(
+      node : Adamas::Compiler::Frontend::AliasNode,
+      owner_name : String? = @current_class,
+    ) : Nil
+      alias_name = safe_slice_to_string(node.name).try(&.strip) || ""
+      target = safe_slice_to_string(node.value).try(&.strip) || ""
+      return if alias_name.empty? || target.empty?
+      return unless simple_identifier_token?(alias_name)
+      return unless builtin_alias_target?(target) ||
+                    LIBC_TYPE_ALIASES.has_key?(target) ||
+                    BUILTIN_TYPE_NAMES.includes?(target)
+      # register_alias reads the source text; skip any declaration whose two
+      # spellings disagree instead of pre-empting a different target.
+      if pair = extract_alias_name_value_from_source(node, @arena)
+        return unless pair[0] == alias_name && pair[1] == target
+      end
+      full_alias_name = qualified_source_declaration_name(owner_name, alias_name, publish_namespaces: false)
+      return if @type_aliases.has_key?(full_alias_name)
+      register_source_type_alias(full_alias_name, target)
     end
 
     private def lookup_macro_entry(
