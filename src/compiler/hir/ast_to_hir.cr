@@ -61985,7 +61985,7 @@ module Adamas::HIR
               )
               receiver_repair_semantic_value_type(func.name, arg, raw_type)
             end
-            has_block_call = !inst.block.nil?
+            has_block_call = !inst.block.nil? || block_abi_callback_call?(method_name_text, arg_types)
             # Non-inline block calls carry the callback twice in HIR: the block
             # region is stored on Call#block and its executable Proc is appended
             # to Call#args for the callee ABI.  Receiver repair resolves source
@@ -62660,6 +62660,13 @@ module Adamas::HIR
             if inst_has_concrete_type && corrected_introduces_arity && same_owner_arity_downgrade
               targets_to_lower << method_name_text unless @module.has_function_with_body?(method_name_text)
               next
+            end
+
+            # A raw callback alias (`T__rawcb_*`) is the body of `T` re-keyed by
+            # the exact callback contract its trailing Proc was materialized for.
+            # Re-resolution can find only `T`; rewriting to it drops that contract.
+            if raw_callback_abi_for(method_name_text) && method_name_text.starts_with?("#{corrected_name}__rawcb_")
+              corrected_name = method_name_text
             end
 
             needs_materialization = !@module.has_function_with_body?(corrected_name) &&
@@ -136715,6 +136722,27 @@ module Adamas::HIR
 
     # True when the last lowered argument is a materialized Proc for `&block` plumbing
     # (lower_call appends the proc after real positional args).
+    # lower_call materializes a non-inlined literal block (for example when
+    # yield_return_requires_block_fallback? refuses inlining) only as the
+    # trailing callback Proc of a block-ABI target. That Call records no block
+    # region: lowering a detached block copy in the caller would hoist capture
+    # boxes. The emitted symbol's ABI block flag is then the only authority that
+    # the trailing Proc is the callback, not a positional argument. Without it,
+    # receiver repair re-keys an inherited `Base#m$A_block` call for a subclass
+    # receiver as `Sub#m$A_Proc(...)`, a target with no body.
+    private def block_abi_callback_call?(method_name : String, arg_types : Array(TypeRef)) : Bool
+      return false unless trailing = arg_types.last?
+      return false unless descriptor = @module.get_type_descriptor(trailing)
+      return false unless descriptor.kind == TypeKind::Proc ||
+                          descriptor.name == "Proc" ||
+                          descriptor.name.starts_with?("Proc(")
+      # register_raw_callback_contract_target admits only block callshapes, and
+      # its `__rawcb_` alias tail hides the ABI block flag from the suffix.
+      return true if raw_callback_abi_for(method_name)
+      return false unless suffix = method_suffix(method_name)
+      suffix_has_block_flag?(suffix)
+    end
+
     private def materialized_trailing_block_proc_arg?(arg_types : Array(TypeRef)) : Bool
       return false if arg_types.size < 2
       trailing = arg_types.last
