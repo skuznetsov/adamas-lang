@@ -13174,6 +13174,42 @@ module Adamas::HIR
       union_type_for_value_set(candidates)
     end
 
+    # A call on a union receiver dispatches to each arm's own Def, so its
+    # static type is the union of the arm results. AST-only inference (loop
+    # header phis, local type discovery) has no lowered dispatch to read, so
+    # select every arm's source Def here. Any arm without a declared, resolved
+    # result fails closed and leaves the caller's existing corridor in charge.
+    private def union_receiver_source_call_return_type(
+      recv_name : String, member_name : String, arg_types : Array(TypeRef),
+    ) : TypeRef?
+      variants = split_union_type_name(recv_name)
+      return nil if variants.size < 2
+      unknown_args = arg_types.any? { |type| type == TypeRef::VOID || type == TypeRef::POINTER }
+      results = [] of TypeRef
+      variants.each do |variant|
+        owner = resolve_type_alias_chain(variant).lchop("::")
+        base = resolve_method_with_inheritance(owner, member_name) || "#{owner}##{member_name}"
+        selected = lookup_function_def_for_call(base, arg_types.size, false, arg_types)
+        return nil unless selected
+        name, definition = selected
+        return nil unless definition.return_type
+        # Unknown positional types cannot discriminate overloads of this arm.
+        if unknown_args
+          return nil if function_def_overloads(base).any? do |candidate_name|
+            candidate = @function_defs[candidate_name]?
+            candidate && candidate.object_id != definition.object_id
+          end
+        end
+        selected_base = strip_type_suffix(name)
+        result = with_namespace_override(method_owner(selected_base)) do
+          resolve_return_type_from_def(name, selected_base, type_ref_for_name(owner), arg_types.size, definition)
+        end
+        return nil unless result && result != TypeRef::VOID
+        results << result
+      end
+      union_type_for_value_set(results)
+    end
+
     private def infer_virtual_return_type_from_union_targets(
       union_name : String,
       method_name : String,
@@ -32524,6 +32560,9 @@ module Adamas::HIR
                 exact_owner = recv_name
                 exact_base = resolve_method_with_inheritance(exact_owner, member_name) || "#{exact_owner}##{member_name}"
                 exact_arg_types = infer_arg_types_for_call(expr_node.args, self_type_name)
+                if union_return = union_receiver_source_call_return_type(recv_name, member_name, exact_arg_types)
+                  return union_return
+                end
                 if expr_node.args.empty? && !block_expr && !block_pass_expr && !expr_node.named_args &&
                    (module_return = included_module_noarg_call_return_type(
                      exact_owner,
