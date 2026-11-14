@@ -27298,9 +27298,15 @@ oracle-qualified regression unless stated otherwise.
 - [ ] Nested inline yields through an abstract `system_run` drop a top-level
   `total &+= f` accumulation: V2 exits 0, original Crystal 10. Present before
   all three chains.
-- [ ] `x = t1.d(3)` on `t1 : J1 | J0` with `Int32`/`Int64` arm results:
-  `x.is_a?(Int32)` is false for the Int32 arm (V2 22, original Crystal 21).
-  Present before all three chains.
+- [x] be12968f: a call on a closed union of concrete class/struct receivers
+  joins every arm's own source result, with arguments and with struct arms
+  (`union_arm_source_result_join_repro.sh`). `x = t1.d(3)` on `J1 | J0` with
+  `Int32`/`Int64` arms now keeps `x.is_a?(Int32)` true for the Int32 arm.
+- [ ] Struct-arm union whose arms both return `Int32?`: `x.is_a?(Nil) ? 5 : x`
+  reports "must return Int32, but it is returning Int32 | Nil | Int32". The
+  arm results are unions, so the struct dispatcher keeps the anchor result.
+- [ ] Union arm with only an inherited `def` (`C1 < Base`, `Base#d : Int32`,
+  `C0#d : Int64`) still takes one arm's result (V2 22, original Crystal 12).
 - [ ] k21: the forall binder fails closed for named-argument calls.
 - [ ] `contains_return_after_yield?` is over-conservative; deep yield chains
   (e4/e6) still fall back to block calls.
