@@ -10094,7 +10094,14 @@ module Adamas::HIR
                      end
 
       return_contract = block_call_return_contract_for(block_def, source_arena, block_return_name, block_target_owner_name(shape_base_method_name))
-      arg_shape_needed = arity_target.includes?("$arity") && def_has_untyped_regular_param?(block_def)
+      # A forall-typed regular param is registered under its declared spelling
+      # (`named$T_block`), not collapsed to `$arity`, yet it is just as
+      # callsite-dependent: Crystal instantiates the def per argument types.
+      # Without a re-key, a captured-block callee (`&callback : T -> _`, which
+      # has no block-return contract) was lowered with T unbound.
+      arg_shape_needed = (def_has_untyped_regular_param?(block_def) &&
+                          (arity_target.includes?("$arity") || !block_def.forall_type_params.empty?)) ||
+                         def_regular_param_mentions_forall?(block_def)
       return arity_target unless return_contract || arg_shape_needed
 
       shape_keyed = if contract = return_contract
@@ -79617,6 +79624,22 @@ module Adamas::HIR
 
       if source_input_bindings
         param_map = param_map ? param_map.merge(source_input_bindings) : source_input_bindings
+      elsif exact_included_origin.nil? && (definition = func_def)
+        # Method variables of any selected Def (`value : T`, `forall T`) are
+        # bound by this call's positional arguments, as for an included Def
+        # above. Without them the block saw a bare `T` input, so its result
+        # was not inferable and the call forced the unbound base body.
+        # Use the binder lower_def applies to the callee body, so a generic
+        # restriction (`box : Box(T)`) binds T as it does there.
+        if !forall_type_param_names(definition).empty? && (forall_arg_types = call_arg_types_for_infer)
+          forall_map = method_forall_call_bindings(
+            definition, forall_arg_types, return_declaration_owner_for(resolved_mangled, resolved_base),
+            has_named_args: call_has_named_args,
+          )
+          unless forall_map.empty?
+            param_map = param_map ? param_map.merge(forall_map) : forall_map
+          end
+        end
       end
       resolved_names = if param_map.nil? || param_map.empty?
                          input_names
@@ -160889,6 +160912,18 @@ module Adamas::HIR
         found = true if param.is_double_splat && param.type_annotation.nil?
       end
       found
+    end
+
+    # A regular param whose restriction mentions a method forall variable
+    # (`box : Box(T)`, `forall T`) depends on the callsite like an untyped one.
+    private def def_regular_param_mentions_forall?(func_def : Adamas::Compiler::Frontend::DefNode) : Bool
+      formals = forall_type_param_names(func_def)
+      return false if formals.empty?
+      function_param_infos(func_def).any? do |param|
+        next false if param.is_block || param.is_double_splat || named_only_separator?(param)
+        next false unless restriction = param.type_annotation
+        formals.any? { |formal| type_name_includes_param?(restriction, formal) }
+      end
     end
 
     private def def_has_untyped_regular_param?(func_def : Adamas::Compiler::Frontend::DefNode) : Bool
