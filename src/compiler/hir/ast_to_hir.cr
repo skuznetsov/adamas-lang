@@ -7635,29 +7635,42 @@ module Adamas::HIR
       return keys if chain.empty?
       method_name = parse_method_name_compact(keys.first).method
       return keys unless method_name
-      parent_defs = nil.as(Array(Adamas::Compiler::Frontend::DefNode)?)
+      # One overload set per ancestor that declares the method.
+      parent_def_sets = nil.as(Array(Array(Adamas::Compiler::Frontend::DefNode))?)
       chain.each do |parent|
         bucket = @method_index[method_index_owner_key(parent)]?.try(&.[method_name]?)
         next unless bucket
+        defs = [] of Adamas::Compiler::Frontend::DefNode
         method_index_candidates_for_separator(bucket, '#').each do |name|
           if def_node = @function_defs[name]?
-            (parent_defs ||= [] of Adamas::Compiler::Frontend::DefNode) << def_node
+            defs << def_node
           end
         end
+        (parent_def_sets ||= [] of Array(Adamas::Compiler::Frontend::DefNode)) << defs unless defs.empty?
       end
-      return keys unless parent_defs
+      return keys unless parent_def_sets
       # Enum instance methods are attached to every concrete enum on purpose
       # (attach_enum_instance_methods*), so `Op#m` shares its DefNode with
       # `Enum#m` but must keep the concrete owner (`@type`, self type). The
-      # alias hazard above only exists when the own bucket covers a strict
-      # subset of the parent overloads; a complete per-enum copy is kept.
+      # alias hazard above is per ancestor: an alias hides the other overloads
+      # of the ancestor it shares a DefNode with only when the own bucket
+      # covers a strict subset of that ancestor's set. A complete per-enum copy
+      # of `Enum`'s overloads is kept even when another ancestor declares
+      # overloads of the same name (`Object#to_s`) that the copy never mirrors.
       if (enum_info = @enum_info) && enum_info.has_key?(owner)
         own_defs = keys.compact_map { |name| @function_defs[name]? }
-        return keys if parent_defs.all? { |pd| own_defs.any?(&.same?(pd)) }
+        uncovered = parent_def_sets.reject do |defs|
+          defs.all? { |pd| own_defs.any?(&.same?(pd)) }
+        end
+        return keys if uncovered.empty?
+        return keys.reject do |name|
+          def_node = @function_defs[name]?
+          def_node && uncovered.any? { |defs| defs.any?(&.same?(def_node)) }
+        end
       end
       keys.reject do |name|
         def_node = @function_defs[name]?
-        def_node && parent_defs.any?(&.same?(def_node))
+        def_node && parent_def_sets.any? { |defs| defs.any?(&.same?(def_node)) }
       end
     end
 
