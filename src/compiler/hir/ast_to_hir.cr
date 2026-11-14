@@ -133812,6 +133812,20 @@ module Adamas::HIR
         return coerce_named_tuple_into_union(ctx, value_id, value_type, target_type)
       end
 
+      # An enum value travels in its base-integer carrier, but its union arm
+      # is the enum's own. `return Errno::B` from a `Int32 | Errno` method
+      # must not land in the Int32 arm, and `String | Errno` has no carrier
+      # arm at all.
+      if is_union_type?(target_type) && enum_carrier_receiver?(ctx, value_id, value_type)
+        enum_variant_id = get_union_variant_id(target_type, enum_tracked_type(ctx, value_id))
+        if enum_variant_id >= 0
+          wrap = UnionWrap.new(ctx.next_id, target_type, value_id, enum_variant_id)
+          ctx.emit(wrap)
+          ctx.register_type(wrap.id, target_type)
+          return wrap.id
+        end
+      end
+
       if needs_union_coercion?(value_type, target_type)
         variant_id = get_union_variant_id(target_type, value_type)
         if variant_id >= 0

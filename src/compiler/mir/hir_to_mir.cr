@@ -11308,7 +11308,11 @@ module Adamas
         if descriptor = @mir_module.get_union_descriptor(union_type)
           hir_value_type = @hir_value_types[wrap.value]? || HIR::TypeRef::POINTER
           mir_value_type = convert_type(hir_value_type)
-          if variant_type_id <= 0
+          # Negative ids ask for a match by value type; 0 is the first
+          # variant. An enum value travels in its integer carrier, so a type
+          # match would move `Errno` (variant 0 of `Errno | Int32`) into the
+          # Int32 arm.
+          if variant_type_id < 0
             matched_variant : UnionVariantDescriptor? = nil
             variant_idx = 0
             variants = descriptor.variants
