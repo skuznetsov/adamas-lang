@@ -27317,8 +27317,13 @@ oracle-qualified regression unless stated otherwise.
   found `if x.is_a?(T) && c ... else` narrowing `x` in the else branch
   (wrong result), fixed by is_a_else_narrowing_targets
   (regression_tests/is_a_else_and_condition_repro.sh).
-- [ ] Union arm with only an inherited `def` (`C1 < Base`, `Base#d : Int32`,
-  `C0#d : Int64`) still takes one arm's result (V2 22, original Crystal 12).
+- [x] Union arm with only an inherited `def` (`C1 < Base`, `Base#d : Int32`,
+  `C0#d : Int64`) took one arm's result (V2 22, original Crystal 12). The arm
+  now resolves the nearest class ancestor's annotated Def
+  (regression_tests/union_arm_inherited_def_repro.sh).
+- [ ] Inherited union arm still falls back when the ancestor Def has no
+  return annotation (u6: V2 22, original 12) or a generic ancestor sits on the
+  way (u10: V2 77, original 57).
 - [x] k21: the forall binder failed closed for named-argument block calls
   (`named(box: Box.new(5)) { }`). The selected formal-slot source binding now
   reaches deferred body lowering and callback input inference

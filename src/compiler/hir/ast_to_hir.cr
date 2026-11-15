@@ -13133,6 +13133,23 @@ module Adamas::HIR
       formal_types.size == arg_types.size ? formal_types : nil
     end
 
+    # The nearest class ancestor that declares `method_name` for an owner that
+    # declares none itself. resolve_method_with_inheritance names a value-type
+    # or module-supplied target after the requested owner, which hides the
+    # declaring Def. An included module on the way would take precedence over
+    # the class ancestor, and a generic ancestor keeps its methods in its
+    # template, so both fail closed.
+    private def inherited_class_method_declaration_base(owner : String, method_name : String) : String?
+      get_ancestor_chain(owner).each_with_index do |ancestor, index|
+        return nil if source_included_instance_method_family?(ancestor, method_name)
+        next if index == 0
+        return nil if strip_generic_args(ancestor) != ancestor
+        candidate = "#{ancestor}##{method_name}"
+        return candidate unless function_def_overloads(candidate).empty?
+      end
+      nil
+    end
+
     # A dispatch name can be anchored on one member of a closed union. For a
     # closed set of concrete receivers (leaf classes and non-abstract structs)
     # with source definitions, resolve each arm independently and return the
@@ -13153,12 +13170,22 @@ module Adamas::HIR
       # Unknown positional types cannot discriminate the overloads of an arm.
       unknown_args = arg_types.any? { |type| type == TypeRef::VOID || type == TypeRef::POINTER }
 
-      targets = owners.map do |owner|
+      # An arm without its own declaration dispatches to the nearest ancestor
+      # that has one (`C1 < Base` with only `Base#d`). Its result is resolved
+      # against the arm, so it must be declared.
+      inherited_arms = Array(Bool).new(owners.size, false)
+      targets = owners.map_with_index do |owner, owner_index|
         base = "#{owner}##{method_name}"
-        # Require a registered declaration on this concrete owner. Unknown,
-        # generated, and inherited-only methods keep their existing corridor.
         overloads = function_def_overloads(base)
-        return nil if overloads.empty?
+        if overloads.empty?
+          # Unknown, generated, and module-supplied methods keep their
+          # existing corridor.
+          inherited_base = inherited_class_method_declaration_base(owner, method_name)
+          return nil unless inherited_base
+          overloads = function_def_overloads(inherited_base)
+          base = inherited_base
+          inherited_arms[owner_index] = true
+        end
         return nil if unknown_args && overloads.size > 1
         lookup_function_def_for_call(base, arg_types.size, false, arg_types)
       end
@@ -13181,10 +13208,21 @@ module Adamas::HIR
           raise LoweringError.new("no overload matches #{owner}##{method_name} for zero arguments")
         end
         name, definition = target
-        result = get_function_return_type(name, arg_types.size, definition)
-        if result == TypeRef::VOID
-          result = resolve_return_type_from_def(name, "#{owner}##{method_name}", type_ref_for_name(owner), arg_types.size, definition) || TypeRef::VOID
-        end
+        result = if inherited_arms[index]
+                   # The ancestor's own lowered result types its own `self`.
+                   return nil unless definition.return_type
+                   selected_base = strip_type_suffix(name)
+                   inherited_result = with_namespace_override(method_owner(selected_base)) do
+                     resolve_return_type_from_def(name, selected_base, type_ref_for_name(owner), arg_types.size, definition)
+                   end
+                   inherited_result || TypeRef::VOID
+                 else
+                   own_result = get_function_return_type(name, arg_types.size, definition)
+                   if own_result == TypeRef::VOID
+                     own_result = resolve_return_type_from_def(name, "#{owner}##{method_name}", type_ref_for_name(owner), arg_types.size, definition) || TypeRef::VOID
+                   end
+                   own_result
+                 end
         return nil if result == TypeRef::VOID
         # The inline dispatcher of a union with a struct arm can embed only a
         # plain member value into the join, not a narrower union.
