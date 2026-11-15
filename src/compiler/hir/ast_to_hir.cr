@@ -78717,7 +78717,11 @@ module Adamas::HIR
       mangled_method_name : String,
       base_method_name : String,
     ) : String?
-      func_def = @function_defs[mangled_method_name]? || @function_defs[base_method_name]?
+      # A shape-keyed block target (`fm$Int32_block`) has no def of its own; its
+      # durable record names the shared yield def (`fm$block$arity1`) whose block
+      # annotation (`&f : Int32 -> _`) carries the result type param.
+      func_def = @function_defs[mangled_method_name]? || @function_defs[base_method_name]? ||
+                 @block_shape_specializations[mangled_method_name]?.try(&.source_def)
       return nil if !func_def
 
       block_param = func_def.params.try { |ps| find_param(ps) { |_p| _p.is_block } }
