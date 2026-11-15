@@ -103415,10 +103415,10 @@ module Adamas::HIR
     end
 
     # Inverse of apply_is_a_narrowing for the else branch of `if x.is_a?(T)`.
-    # When `x` was a union and `T` is one variant, the else branch narrows
-    # `x` to `union - T`. Conservatively narrows only when a single variant
-    # remains, since multi-variant remainders need a different runtime
-    # representation that we don't have a clean abstraction for here.
+    # When `x` was a union, the else branch narrows `x` to the variants that
+    # statically fail `is_a?(T)`: `Int32 | Box(Int32)` minus the bare generic
+    # `Box` is `Int32`. Without a static verdict for every variant, only an
+    # exact single-variant name match narrows.
     private def apply_is_a_else_narrowing(ctx : LoweringContext, targets : Array(IsANarrowingTarget)) : Nil
       return if targets.empty?
 
@@ -103432,7 +103432,27 @@ module Adamas::HIR
           local_id = ctx.lookup_local(name)
           if local_id
             local_type = ctx.type_of(local_id)
-            if local_type != target_type && is_union_type?(local_type)
+            split = if local_type != target_type && is_union_type?(local_type)
+                      union_variants_satisfying_union_check(local_type, target_type)
+                    end
+            if split && (descriptor = union_descriptor_from_sidecar(local_type))
+              matched, total = split
+              if !matched.empty? && matched.size < total
+                matched_ids = matched.map { |(variant_id, _)| variant_id }
+                remaining = descriptor.variants.reject { |variant| matched_ids.includes?(variant.type_id) }
+                remaining_types = remaining.map { |variant| exact_hir_type_ref_for_union_variant(variant) }
+                unless remaining_types.any?(&.==(TypeRef::VOID))
+                  remaining_ref = if remaining_types.size == 1
+                                    remaining_types.first
+                                  else
+                                    create_union_type(remaining_types.map { |type| generic_param_type_name_from_ref(type) }.join(" | "))
+                                  end
+                  if remaining_ref != TypeRef::VOID && remaining_ref != local_type
+                    inverse << IsANarrowingTarget.new(name, remaining_ref)
+                  end
+                end
+              end
+            elsif local_type != target_type && is_union_type?(local_type)
               type_desc = @module.get_type_descriptor(local_type)
               if type_desc
                 target_name = get_type_name_from_ref(target_type)
