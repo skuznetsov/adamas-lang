@@ -1475,89 +1475,7 @@ module Adamas
             end
 
             if current_byte == '\\'.ord.to_u8 && @offset + 1 < @byte_size
-              # Escape sequence
-              advance(1) # Skip backslash
-              case current_byte
-              when 'n'.ord.to_u8
-                buffer.write_byte '\n'.ord.to_u8
-              when 't'.ord.to_u8
-                buffer.write_byte '\t'.ord.to_u8
-              when 'r'.ord.to_u8
-                buffer.write_byte '\r'.ord.to_u8
-              when 'a'.ord.to_u8
-                buffer.write_byte '\a'.ord.to_u8
-              when 'b'.ord.to_u8
-                buffer.write_byte '\b'.ord.to_u8
-              when 'v'.ord.to_u8
-                buffer.write_byte '\v'.ord.to_u8
-              when 'f'.ord.to_u8
-                buffer.write_byte '\f'.ord.to_u8
-              when 'e'.ord.to_u8
-                buffer.write_byte 27_u8
-              when '\\'.ord.to_u8
-                buffer.write_byte '\\'.ord.to_u8
-              when '"'.ord.to_u8
-                buffer.write_byte '"'.ord.to_u8
-              when '#'.ord.to_u8
-                # Crystal treats \\# as an escape, so the following brace is
-                # literal text and must not start interpolation.
-                buffer.write_byte '#'.ord.to_u8
-              when 'u'.ord.to_u8
-                # Phase 58: Unicode escapes \uXXXX or \u{XXXX}
-                advance(1)
-                if current_byte == '{'.ord.to_u8
-                  # Variable length \u{X...XXXXXX}
-                  advance(1) # Skip '{'
-                  codepoint = parse_unicode_hex_digits('}'.ord.to_u8)
-                  if codepoint
-                    write_utf8(buffer, codepoint)
-                  else
-                    # Invalid Unicode escape - keep as is
-                    buffer.write_byte '\\'.ord.to_u8
-                    buffer.write_byte 'u'.ord.to_u8
-                  end
-                else
-                  # Fixed length \uXXXX (4 hex digits)
-                  codepoint = parse_unicode_hex_fixed(4)
-                  if codepoint
-                    write_utf8(buffer, codepoint)
-                  else
-                    # Invalid Unicode escape - keep as is
-                    buffer.write_byte '\\'.ord.to_u8
-                    buffer.write_byte 'u'.ord.to_u8
-                  end
-                end
-                next # Don't advance again, helper methods already did
-              when 'x'.ord.to_u8
-                # Phase 59: Hex escapes \xXX (2 hex digits)
-                advance(1)
-                byte_value = parse_unicode_hex_fixed(2)
-                if byte_value
-                  buffer.write_byte byte_value.to_u8
-                else
-                  # Invalid hex escape - keep as is
-                  buffer.write_byte '\\'.ord.to_u8
-                  buffer.write_byte 'x'.ord.to_u8
-                end
-                next # Don't advance again, helper methods already did
-              else
-                # Phase 62: Check for octal escapes \NNN (1-3 octal digits)
-                if octal_digit?(current_byte)
-                  byte_value = parse_octal_fixed(3)
-                  if byte_value
-                    buffer.write_byte byte_value.to_u8
-                  else
-                    # Should not happen if octal_digit? returned true
-                    buffer.write_byte '\\'.ord.to_u8
-                    buffer.write_byte current_byte
-                  end
-                  next # Don't advance again, parse_octal_fixed already did
-                else
-                  buffer.write_byte '\\'.ord.to_u8 unless quoted_symbol
-                  buffer.write_byte current_byte
-                end
-              end
-              advance(1)
+              write_string_escape(buffer, quoted_symbol)
             else
               buffer.write_byte current_byte
               advance(1)
@@ -1589,6 +1507,93 @@ module Adamas
             processed_bytes,
             build_span(start_offset, start_line, start_column)
           )
+        end
+
+        # Decodes the escape sequence at the current backslash into `buffer` and
+        # leaves the cursor after it.
+        private def write_string_escape(buffer : IO::Memory, quoted_symbol : Bool = false) : Nil
+          advance(1) # Skip backslash
+          case current_byte
+          when 'n'.ord.to_u8
+            buffer.write_byte '\n'.ord.to_u8
+          when 't'.ord.to_u8
+            buffer.write_byte '\t'.ord.to_u8
+          when 'r'.ord.to_u8
+            buffer.write_byte '\r'.ord.to_u8
+          when 'a'.ord.to_u8
+            buffer.write_byte '\a'.ord.to_u8
+          when 'b'.ord.to_u8
+            buffer.write_byte '\b'.ord.to_u8
+          when 'v'.ord.to_u8
+            buffer.write_byte '\v'.ord.to_u8
+          when 'f'.ord.to_u8
+            buffer.write_byte '\f'.ord.to_u8
+          when 'e'.ord.to_u8
+            buffer.write_byte 27_u8
+          when '\\'.ord.to_u8
+            buffer.write_byte '\\'.ord.to_u8
+          when '"'.ord.to_u8
+            buffer.write_byte '"'.ord.to_u8
+          when '#'.ord.to_u8
+            # Crystal treats \\# as an escape, so the following brace is
+            # literal text and must not start interpolation.
+            buffer.write_byte '#'.ord.to_u8
+          when 'u'.ord.to_u8
+            # Phase 58: Unicode escapes \uXXXX or \u{XXXX}
+            advance(1)
+            if current_byte == '{'.ord.to_u8
+              # Variable length \u{X...XXXXXX}
+              advance(1) # Skip '{'
+              codepoint = parse_unicode_hex_digits('}'.ord.to_u8)
+              if codepoint
+                write_utf8(buffer, codepoint)
+              else
+                # Invalid Unicode escape - keep as is
+                buffer.write_byte '\\'.ord.to_u8
+                buffer.write_byte 'u'.ord.to_u8
+              end
+            else
+              # Fixed length \uXXXX (4 hex digits)
+              codepoint = parse_unicode_hex_fixed(4)
+              if codepoint
+                write_utf8(buffer, codepoint)
+              else
+                # Invalid Unicode escape - keep as is
+                buffer.write_byte '\\'.ord.to_u8
+                buffer.write_byte 'u'.ord.to_u8
+              end
+            end
+            return # Don't advance again, helper methods already did
+          when 'x'.ord.to_u8
+            # Phase 59: Hex escapes \xXX (2 hex digits)
+            advance(1)
+            byte_value = parse_unicode_hex_fixed(2)
+            if byte_value
+              buffer.write_byte byte_value.to_u8
+            else
+              # Invalid hex escape - keep as is
+              buffer.write_byte '\\'.ord.to_u8
+              buffer.write_byte 'x'.ord.to_u8
+            end
+            return # Don't advance again, helper methods already did
+          else
+            # Phase 62: Check for octal escapes \NNN (1-3 octal digits)
+            if octal_digit?(current_byte)
+              byte_value = parse_octal_fixed(3)
+              if byte_value
+                buffer.write_byte byte_value.to_u8
+              else
+                # Should not happen if octal_digit? returned true
+                buffer.write_byte '\\'.ord.to_u8
+                buffer.write_byte current_byte
+              end
+              return # Don't advance again, parse_octal_fixed already did
+            else
+              buffer.write_byte '\\'.ord.to_u8 unless quoted_symbol
+              buffer.write_byte current_byte
+            end
+          end
+          advance(1)
         end
 
         # Lex backtick command literal: ` ... `
@@ -2873,6 +2878,126 @@ module Adamas
           )
         end
 
+        # Decodes a heredoc body that starts at `body_start` and ends where the
+        # closing delimiter's line starts. As in Crystal, each line loses up to
+        # `indent` leading blanks (lines inside an interpolation keep theirs),
+        # the line break before the closing delimiter is not content, and a
+        # non-raw body decodes escapes and keeps `#{...}` for the parser.
+        private def decode_heredoc_body(
+          body_start : Tuple(Int32, Int32, Int32),
+          body_end_offset : Int32,
+          indent : Int32,
+          raw : Bool,
+        ) : {Slice(UInt8), Bool}
+          restore_position(body_start)
+          buffer = IO::Memory.new
+          backslash = '\\'.ord.to_u8
+          has_interpolation = false
+          interpolation_depth = 0
+          at_line_start = true
+          # Buffer range of the last source line break, so a decoded `\n` is
+          # never mistaken for it.
+          break_start = -1
+          break_end = -1
+
+          while @offset < body_end_offset
+            if at_line_start
+              at_line_start = false
+              if interpolation_depth == 0
+                skipped = 0
+                while skipped < indent && @offset < body_end_offset &&
+                      (current_byte == SPACE || current_byte == TAB)
+                  advance
+                  skipped += 1
+                end
+                next
+              end
+            end
+
+            byte = current_byte
+            if byte == NEWLINE ||
+               (byte == CARRIAGE_RETURN && @offset + 1 < body_end_offset && @bytes_ptr[@offset + 1] == NEWLINE)
+              break_start = buffer.size
+              if byte == CARRIAGE_RETURN
+                buffer.write_byte(byte)
+                advance
+              end
+              buffer.write_byte(NEWLINE)
+              advance
+              break_end = buffer.size
+              at_line_start = true
+              next
+            end
+
+            if raw
+              buffer.write_byte(byte)
+              advance
+              next
+            end
+
+            if interpolation_depth > 0
+              if byte == DOUBLE_QUOTE || byte == SINGLE_QUOTE
+                buffer.write_byte(byte)
+                advance
+                while @offset < body_end_offset
+                  quoted = current_byte
+                  buffer.write_byte(quoted)
+                  advance
+                  if quoted == backslash && @offset < body_end_offset
+                    buffer.write_byte(current_byte)
+                    advance
+                    next
+                  end
+                  break if quoted == byte
+                end
+                next
+              end
+              if byte == LEFT_BRACE
+                interpolation_depth += 1
+              elsif byte == RIGHT_BRACE
+                interpolation_depth -= 1
+              end
+              buffer.write_byte(byte)
+              advance
+              next
+            end
+
+            if byte == HASH && @offset + 1 < body_end_offset && @bytes_ptr[@offset + 1] == LEFT_BRACE
+              has_interpolation = true
+              buffer.write_byte(byte)
+              advance
+              buffer.write_byte(current_byte)
+              advance
+              interpolation_depth = 1
+              next
+            end
+
+            if byte == backslash && @offset + 1 < body_end_offset
+              following = @bytes_ptr[@offset + 1]
+              if following == NEWLINE || following == CARRIAGE_RETURN
+                # A backslash line continuation drops the line break and the
+                # blanks that follow it.
+                advance
+                while @offset < body_end_offset &&
+                      (current_byte == SPACE || current_byte == TAB ||
+                      current_byte == NEWLINE || current_byte == CARRIAGE_RETURN)
+                  advance
+                end
+                next
+              end
+              write_string_escape(buffer)
+              next
+            end
+
+            buffer.write_byte(byte)
+            advance
+          end
+
+          size = buffer.size
+          size = break_start if break_end == size && break_start >= 0
+          {retain_processed_slice(buffer.to_slice[0, size]), has_interpolation}
+        end
+
         # Scan heredoc: <<-DELIMITER ... DELIMITER
         # Returns String token or nil if not valid heredoc
         private def scan_heredoc(start_offset : Int32, start_line : Int32, start_column : Int32) : Token?
@@ -2885,6 +3010,7 @@ module Adamas
           end
           debug { "[HEREDOC] current_byte=#{current_byte} (#{current_byte.chr})" }
           delimiter : String = ""
+          raw_heredoc = false
           # Heredoc inside interpolation is not allowed
           if @macro_expr_depth > 0
             emit_diagnostic("heredoc cannot be used inside interpolation", Span.new(start_offset, @offset, start_line, start_column, @line, @column))
@@ -2892,6 +3018,7 @@ module Adamas
           end
           if current_byte == SINGLE_QUOTE || current_byte == DOUBLE_QUOTE
             quote = current_byte
+            raw_heredoc = quote == SINGLE_QUOTE
             advance # consume opening quote
             delimiter_start = @offset
             while @offset < @rope.size && current_byte != quote
@@ -2962,11 +3089,11 @@ module Adamas
           end
           debug { "[HEREDOC] starting content scan at offset #{@offset}" }
 
-          # Accumulate content until we find delimiter on its own line
-          content = IO::Memory.new
-
+          # Find the delimiter on its own line; the body is decoded afterwards,
+          # once the closing indentation is known.
           min_indent_seen = Int32::MAX
           closing_indent = 0
+          closing_line_offset = -1
 
           loop do
             debug { "[HEREDOC] loop iteration, offset=#{@offset}" }
@@ -3005,6 +3132,7 @@ module Adamas
               if @offset >= @rope.size || current_byte == '\n'.ord.to_u8 || current_byte == '\r'.ord.to_u8
                 debug { "[HEREDOC] delimiter properly terminated, breaking" }
                 closing_indent = indent
+                closing_line_offset = line_start
                 # Found end delimiter, consume newline if present
                 if @offset < @rope.size && (current_byte == '\n'.ord.to_u8 || current_byte == '\r'.ord.to_u8)
                   advance
@@ -3021,7 +3149,6 @@ module Adamas
             debug { "[HEREDOC] rewinding to line_start=#{line_start}" }
             restore_position(line_start_position)
             while @offset < @rope.size && current_byte != '\n'.ord.to_u8
-              content.write_byte(current_byte)
               advance
             end
 
@@ -3033,8 +3160,6 @@ module Adamas
             end
 
             # Consume newline
-            debug { "[HEREDOC] consumed line, adding newline" }
-            content.write_byte('\n'.ord.to_u8)
             advance
           end
 
@@ -3045,11 +3170,11 @@ module Adamas
 
           # Create string token
           # Token expects (kind, slice, span)
-          debug { "[HEREDOC] creating token, content.size=#{content.size}" }
-          content_slice = Slice(UInt8).new(content.size)
-          content.to_slice.copy_to(content_slice)
-
           body_end_position = capture_position
+          content_slice, has_interpolation = decode_heredoc_body(
+            body_start_position, closing_line_offset, closing_indent, raw_heredoc
+          )
+          debug { "[HEREDOC] creating token, content.size=#{content_slice.size}" }
           @heredoc_body_position = body_end_position
           @heredoc_header_newline_offset ||= header_newline_offset
           restore_position(tail_position)
@@ -3066,7 +3191,7 @@ module Adamas
 
           debug { "[HEREDOC] returning String token" }
           Token.new(
-            Token::Kind::String,
+            has_interpolation ? Token::Kind::StringInterpolation : Token::Kind::String,
             content_slice,
             Span.new(
               start_offset,
