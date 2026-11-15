@@ -108291,6 +108291,7 @@ module Adamas::HIR
       truthy_targets = truthy_narrowing_targets(node.condition)
       falsy_targets = falsy_narrowing_targets(node.condition)
       is_a_targets = is_a_narrowing_targets(node.condition)
+      is_a_else_targets = is_a_else_narrowing_targets(node.condition)
 
       cond_id = lower_expr(ctx, node.condition)
       branch_cell_proofs = ctx.closure_cell_write_proofs_on(ctx.current_block)
@@ -108319,6 +108320,7 @@ module Adamas::HIR
           end
         end
         apply_truthy_narrowing(ctx, falsy_targets)
+        apply_is_a_else_narrowing(ctx, is_a_else_targets)
         return lower_static_if_branch(ctx, pre_branch_locals, pre_inline_caller_locals) do
           lower_expr(ctx, node.false_branch)
         end
@@ -108360,6 +108362,9 @@ module Adamas::HIR
       ctx.rebind_closure_cell_write_proofs(branch_cell_proofs, else_block)
       ctx.restore_locals(pre_branch_locals)
       apply_truthy_narrowing(ctx, falsy_targets)
+      # The else arm sees the condition's negative is_a? filters, as in
+      # lower_if (`x.is_a?(Nil) ? 5 : x` reads `x` as the remaining variant).
+      apply_is_a_else_narrowing(ctx, is_a_else_targets)
       else_value = lower_expr(ctx, node.false_branch)
       else_exit = ctx.current_block
       else_exit_cell_proofs = ctx.closure_cell_write_proofs_on(else_exit)

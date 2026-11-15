@@ -27309,9 +27309,14 @@ oracle-qualified regression unless stated otherwise.
   joins every arm's own source result, with arguments and with struct arms
   (`union_arm_source_result_join_repro.sh`). `x = t1.d(3)` on `J1 | J0` with
   `Int32`/`Int64` arms now keeps `x.is_a?(Int32)` true for the Int32 arm.
-- [ ] Struct-arm union whose arms both return `Int32?`: `x.is_a?(Nil) ? 5 : x`
-  reports "must return Int32, but it is returning Int32 | Nil | Int32". The
-  arm results are unions, so the struct dispatcher keeps the anchor result.
+- [x] Struct-arm union whose arms both return `Int32?`: `x.is_a?(Nil) ? 5 : x`
+  reported "must return Int32, but it is returning Int32 | Nil | Int32". The
+  root was not union dispatch: a ternary else arm ignored the condition's
+  negative is_a? filters (any nilable local). Fixed in lower_ternary
+  (regression_tests/ternary_is_a_else_narrowing_repro.sh). The same audit
+  found `if x.is_a?(T) && c ... else` narrowing `x` in the else branch
+  (wrong result), fixed by is_a_else_narrowing_targets
+  (regression_tests/is_a_else_and_condition_repro.sh).
 - [ ] Union arm with only an inherited `def` (`C1 < Base`, `Base#d : Int32`,
   `C0#d : Int64`) still takes one arm's result (V2 22, original Crystal 12).
 - [x] k21: the forall binder failed closed for named-argument block calls
