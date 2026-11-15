@@ -79169,6 +79169,7 @@ module Adamas::HIR
       selected_source_target : SelectedCallTarget? = nil,
       source_inputs : Array(SourceCallArgument)? = nil,
       source_input_bindings : Hash(String, String)? = nil,
+      source_binding : SourceCallBinding? = nil,
     ) : Array(TypeRef)?
       debug_trace_each = env_get("DEBUG_TRACE_EACH_WITH_INDEX") &&
                          (mangled_method_name.includes?("each_with_index") || base_method_name.includes?("each_with_index"))
@@ -79716,9 +79717,18 @@ module Adamas::HIR
         # Use the binder lower_def applies to the callee body, so a generic
         # restriction (`box : Box(T)`) binds T as it does there.
         if !forall_type_param_names(definition).empty? && (forall_arg_types = call_arg_types_for_infer)
+          # Named actuals are paired with formals only through the selected
+          # call's formal-slot projection; without it the binder fails closed.
+          named_source_binding = if call_has_named_args && (binding = source_binding) &&
+                                    (binding_arena = registered_arena_for_def(definition) || @function_def_arenas[resolved_mangled]?) &&
+                                    source_call_binding_matches?(binding, definition, binding_arena)
+                                   binding
+                                 end
           forall_map = method_forall_call_bindings(
             definition, forall_arg_types, return_declaration_owner_for(resolved_mangled, resolved_base),
             has_named_args: call_has_named_args,
+            source_binding: named_source_binding,
+            declaration_arena: named_source_binding.try(&.declaration_arena),
           )
           unless forall_map.empty?
             param_map = param_map ? param_map.merge(forall_map) : forall_map
@@ -125928,6 +125938,7 @@ module Adamas::HIR
             arg_types,
             !!call_has_named_args, node, call_arena, proc_constructor_receiver,
             m3e_input, selected_block_source_target,
+            source_binding: source_call_binding,
           )
           if method_name == "try" && receiver_id
             if non_nil = non_nil_type_for_union(ctx.type_of(receiver_id))
@@ -125948,6 +125959,7 @@ module Adamas::HIR
           arg_types,
           !!call_has_named_args, node, call_arena, proc_constructor_receiver,
           m3e_input, selected_block_source_target,
+          source_binding: source_call_binding,
         )
         if method_name == "try" && receiver_id
           if non_nil = non_nil_type_for_union(ctx.type_of(receiver_id))
@@ -126066,6 +126078,7 @@ module Adamas::HIR
                    selected_call_entry_arena,
                    selected_block_source_target.try(&.included_origin),
                  ),
+                 source_binding: source_call_binding,
                )
               block_param_types_inline = selected_block_types
             end
@@ -126751,6 +126764,20 @@ module Adamas::HIR
           )
           primary_mangled_name = mangled_method_name
         end
+      end
+      if exact_forall_source_binding.nil? && has_block_call && has_named_args &&
+         !allocator_explicit_new_call && !source_default_entry && !has_splat && !source_has_splat &&
+         (selected_def = selected_call_entry_def) &&
+         (declaration_arena = selected_call_entry_arena || registered_arena_for_def(selected_def)) &&
+         (exact_binding = complete_exact_forall_source_call_binding(
+           source_call_binding, selected_def, declaration_arena, ctx, args, arg_types,
+         ))
+        # A block call keeps its block-shaped symbol, but its named actuals
+        # still bind the method forall variables of the deferred body
+        # (`named(box: Box.new(5)) { }` with `box : Box(T)`). The legacy
+        # source-order vectors cannot be paired with formals, so only this
+        # formal-slot projection can carry them.
+        exact_forall_source_binding = exact_binding
       end
 
       # Tuple has implicit splat type param T; map it from concrete tuple elements at the callsite.

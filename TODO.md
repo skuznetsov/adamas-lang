@@ -27314,7 +27314,10 @@ oracle-qualified regression unless stated otherwise.
   arm results are unions, so the struct dispatcher keeps the anchor result.
 - [ ] Union arm with only an inherited `def` (`C1 < Base`, `Base#d : Int32`,
   `C0#d : Int64`) still takes one arm's result (V2 22, original Crystal 12).
-- [ ] k21: the forall binder fails closed for named-argument calls.
+- [x] k21: the forall binder failed closed for named-argument block calls
+  (`named(box: Box.new(5)) { }`). The selected formal-slot source binding now
+  reaches deferred body lowering and callback input inference
+  (regression_tests/named_forall_captured_block_repro.sh).
 - [ ] `contains_return_after_yield?` is over-conservative; deep yield chains
   (e4/e6) still fall back to block calls.
 - [ ] Next: S1 -> S2 bootstrap on this branch, then LavinMQ parity.
