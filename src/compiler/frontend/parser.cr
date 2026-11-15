@@ -11034,6 +11034,12 @@ module Adamas
           slice = token.slice
           return false if slice.size < 3 # Minimum: %w(...) needs at least 4 chars, but %() needs 3
           return false unless slice[0] == '%'.ord
+          # A quoted literal's slice is its decoded content, so `"%(ab)"` or
+          # `"%d|%x\n"` also starts with `%` and a delimiter. Only a token the
+          # lexer scanned from a source `%` is a percent literal.
+          source_offset = token.span.start_offset
+          return false unless source_offset >= 0 && source_offset < @source.bytesize
+          return false unless @source.byte_at(source_offset) == '%'.ord.to_u8
 
           # Check for valid percent-literal syntax:
           # %w[...], %i(...), %q{...}, %Q<...>, %(...)

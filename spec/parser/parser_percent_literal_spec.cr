@@ -57,6 +57,32 @@ describe "Adamas::Compiler::Frontend::Parser percent literals" do
     end
   end
 
+  it "keeps a quoted literal whose content looks like a percent literal" do
+    cases = [
+      {"\"%(ab)\"", "%(ab)"},
+      {"\"%d|%x\\n\"", "%d|%x\n"},
+      {"\"%|ab|\"", "%|ab|"},
+      {"\"%w[a b]\"", "%w[a b]"},
+      {"%(ab)", "ab"},
+      {"%|a b|", "a b"},
+    ]
+
+    cases.each do |test_case|
+      parser = Adamas::Compiler::Frontend::Parser.new(
+        Adamas::Compiler::Frontend::Lexer.new(test_case[0])
+      )
+      program = parser.parse_program
+
+      parser.diagnostics.should be_empty
+      program.roots.size.should eq(1)
+      node = program.arena[program.roots[0]]
+      Adamas::Compiler::Frontend.node_kind(node).should eq(
+        Adamas::Compiler::Frontend::NodeKind::String
+      )
+      String.new(Adamas::Compiler::Frontend.node_literal(node).not_nil!).should eq(test_case[1])
+    end
+  end
+
   it "parses a %w word array inside macro control syntax" do
     source = <<-CRYSTAL
       macro m
