@@ -27295,9 +27295,16 @@ oracle-qualified regression unless stated otherwise.
 - [x] Prelude `puts` compiles and prints with the in-repo stdlib. Fast gate:
   20/20 chain regressions including prelude hello; HIR specs show the same
   failure list as before the chain.
-- [ ] Nested inline yields through an abstract `system_run` drop a top-level
-  `total &+= f` accumulation: V2 exits 0, original Crystal 10. Present before
-  all three chains.
+- [x] Nested inline yields through an abstract `system_run` drop a top-level
+  `total &+= f` accumulation (V2 0, original Crystal 10). The inline-return
+  exit now merges every outer caller frame and refreshes the enclosing loop's
+  saved back edge (`inline_return_outer_caller_frames_repro.sh`).
+- [ ] Callee `yield x; return if x == 7; yield x &+ 1` reached through an
+  inlined `all { |f| yield f }` inside a loop: the outer block becomes a proc
+  whose by-ref box for `total` is allocated every iteration; the loop phi
+  never reloads it and the exit reads the box outside its dominance (V2 11,
+  original Crystal 29; `$A/wip/open/proc_box_loop_reload_two_yields.cr`).
+  A direct `one(v) { total &+= f }` uses the global cell and works.
 - [x] be12968f: a call on a closed union of concrete class/struct receivers
   joins every arm's own source result, with arguments and with struct arms
   (`union_arm_source_result_join_repro.sh`). `x = t1.d(3)` on `J1 | J0` with
