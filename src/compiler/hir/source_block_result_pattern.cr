@@ -584,7 +584,10 @@ class Adamas::HIR::AstToHir
       replace_source_block_result_bindings!(bindings, candidate)
       true
     else
-      split_generic_base_and_args(application).nil?
+      # A bare generic module name admits every application of it, as
+      # `Array` admits `Array(Int32)`: `other : Indexable` accepts an
+      # includer of `Indexable(T)`. The bases already matched above.
+      true
     end
   end
 
