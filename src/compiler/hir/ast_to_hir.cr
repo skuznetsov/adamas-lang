@@ -107467,6 +107467,8 @@ module Adamas::HIR
           name = safe_slice_to_string(target.name) || ""
           vars << name
           note_assigned_var_yield_origin(name)
+        else
+          collect_assigned_vars_in_expr(node.target, vars, visited_blocks)
         end
         # Also check the value side for nested assignments
         collect_assigned_vars_in_expr(node.value, vars, visited_blocks)
@@ -107487,59 +107489,12 @@ module Adamas::HIR
         if value = node.value
           collect_assigned_vars_in_expr(value, vars, visited_blocks)
         end
-      when Adamas::Compiler::Frontend::WhileNode
-        # Nested while - check its body
-        collect_assigned_vars(node.body, visited_blocks).each { |v| vars << v }
-      when Adamas::Compiler::Frontend::LoopNode
-        # Nested loop - check its body
-        collect_assigned_vars(node.body, visited_blocks).each { |v| vars << v }
-      when Adamas::Compiler::Frontend::IfNode
-        # Check all branches including elsif
-        collect_assigned_vars(node.then_body, visited_blocks).each { |v| vars << v }
-        if elsifs = node.elsifs
-          elsifs.each do |elsif_branch|
-            collect_assigned_vars(elsif_branch.body, visited_blocks).each { |v| vars << v }
-          end
-        end
-        if else_body = node.else_body
-          collect_assigned_vars(else_body, visited_blocks).each { |v| vars << v }
-        end
-      when Adamas::Compiler::Frontend::UnlessNode
-        # Check all branches
-        collect_assigned_vars(node.then_branch, visited_blocks).each { |v| vars << v }
-        if else_body = node.else_branch
-          collect_assigned_vars(else_body, visited_blocks).each { |v| vars << v }
-        end
-      when Adamas::Compiler::Frontend::CaseNode
-        # Check all when branches and else
-        node.when_branches.each do |when_branch|
-          collect_assigned_vars(when_branch.body, visited_blocks).each { |v| vars << v }
-        end
-        if else_body = node.else_branch
-          collect_assigned_vars(else_body, visited_blocks).each { |v| vars << v }
-        end
-      when Adamas::Compiler::Frontend::BeginNode
-        # A begin/rescue/ensure is transparent to loop-carried assignment
-        # discovery. Missing this case meant an outer local assigned inside a
-        # protected body never received a loop phi; the body computed the new
-        # value but the post-loop binding still returned its pre-loop value.
-        collect_assigned_vars(node.body, visited_blocks).each { |v| vars << v }
-        if clauses = node.rescue_clauses
-          clauses.each do |clause|
-            collect_assigned_vars(clause.body, visited_blocks).each { |v| vars << v }
-          end
-        end
-        if else_body = node.else_body
-          collect_assigned_vars(else_body, visited_blocks).each { |v| vars << v }
-        end
-        if ensure_body = node.ensure_body
-          collect_assigned_vars(ensure_body, visited_blocks).each { |v| vars << v }
-        end
-      when Adamas::Compiler::Frontend::BinaryNode
-        collect_assigned_vars_in_expr(node.left, vars, visited_blocks)
-        collect_assigned_vars_in_expr(node.right, vars, visited_blocks)
       when Adamas::Compiler::Frontend::CallNode
+        collect_assigned_vars_in_expr(node.callee, vars, visited_blocks)
         node.args.each { |arg| collect_assigned_vars_in_expr(arg, vars, visited_blocks) }
+        if named_args = node.named_args
+          named_args.each { |arg| collect_assigned_vars_in_expr(arg.value, vars, visited_blocks) }
+        end
         # Also check block body for outer variables modified inside blocks
         if block_id = node.block
           block_node = @arena[block_id]
@@ -107555,9 +107510,10 @@ module Adamas::HIR
             block_vars.each { |v| vars << v }
           end
         end
-      when Adamas::Compiler::Frontend::GroupingNode
-        collect_assigned_vars_in_expr(node.expression, vars, visited_blocks)
       when Adamas::Compiler::Frontend::YieldNode
+        if args = node.args
+          args.each { |arg| collect_assigned_vars_in_expr(arg, vars, visited_blocks) }
+        end
         if inline_block = @inline_yield_block_stack.last?
           block_id = inline_block.object_id
           unless visited_blocks.includes?(block_id)
@@ -107594,6 +107550,17 @@ module Adamas::HIR
             end
             block_vars.each { |v| vars << v }
           end
+        end
+      when Adamas::Compiler::Frontend::ProcLiteralNode
+        # A proc body runs when called, not here; its writes to outer locals
+        # are closure-cell captures, not loop-carried assignments.
+      else
+        # Control flow (if/unless/while/case/begin) and every other
+        # expression: an assignment or a yield can sit in any child,
+        # conditions included (`c ? (x = 1) : y`, `if yield(n) > 1`,
+        # `unless !yield`, `(yield n).abs`).
+        each_proc_scan_child(expr_id) do |child|
+          collect_assigned_vars_in_expr(child, vars, visited_blocks)
         end
       end
     end
