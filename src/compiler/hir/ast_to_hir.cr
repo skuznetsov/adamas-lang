@@ -68879,6 +68879,12 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::RangeNode
         collect_yield_arg_lists(node.begin_expr, lists)
         collect_yield_arg_lists(node.end_expr, lists)
+      when Adamas::Compiler::Frontend::AsNode,
+           Adamas::Compiler::Frontend::AsQuestionNode,
+           Adamas::Compiler::Frontend::IsANode,
+           Adamas::Compiler::Frontend::RespondsToNode
+        # `(yield x).is_a?(T)` and other type tests/casts still pass `x` to the block.
+        collect_yield_arg_lists(node.expression, lists)
       when Adamas::Compiler::Frontend::BeginNode
         collect_yield_arg_lists(node.body, lists)
         if clauses = node.rescue_clauses
@@ -68972,6 +68978,12 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::TypeofNode
         # A compile-time use still specializes the enclosing method's body.
         node.args.any? { |arg| yield_in_value_position?(arg, true, depth + 1) }
+      when Adamas::Compiler::Frontend::AsNode,
+           Adamas::Compiler::Frontend::AsQuestionNode,
+           Adamas::Compiler::Frontend::IsANode,
+           Adamas::Compiler::Frontend::RespondsToNode
+        # A type test or cast consumes the yielded value.
+        yield_in_value_position?(node.expression, true, depth + 1)
       when Adamas::Compiler::Frontend::ArrayLiteralNode
         node.elements.any? { |el| yield_in_value_position?(el, true, depth + 1) }
       when Adamas::Compiler::Frontend::TupleLiteralNode
@@ -69218,6 +69230,11 @@ module Adamas::HIR
         false
       when Adamas::Compiler::Frontend::RangeNode
         contains_yield_in_expr?(node.begin_expr, preferred_arena) || contains_yield_in_expr?(node.end_expr, preferred_arena)
+      when Adamas::Compiler::Frontend::AsNode,
+           Adamas::Compiler::Frontend::AsQuestionNode,
+           Adamas::Compiler::Frontend::IsANode,
+           Adamas::Compiler::Frontend::RespondsToNode
+        contains_yield_in_expr?(node.expression, preferred_arena)
       when Adamas::Compiler::Frontend::BeginNode
         return true if contains_yield?(node.body, preferred_arena)
         if clauses = node.rescue_clauses
