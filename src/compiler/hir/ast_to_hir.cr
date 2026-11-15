@@ -103386,6 +103386,45 @@ module Adamas::HIR
       end.uniq.sort_by { |(type, literal)| {type.id, literal ? 1 : 0} }
     end
 
+    # Targets the else branch of a condition may invert (original Crystal's
+    # TypeFilters.not swaps in the condition's negative filters). A falsy
+    # `a || b` means `!a && !b`, so either side's target holds. A falsy
+    # `a && b` means only `!a || !b`: TypeFilters.and joins the negative
+    # filters with TypeFilter.or, so a target survives only when both sides
+    # carry the same one. The then-branch set (`is_a_narrowing_targets`)
+    # unions `&&` sides and must not be inverted.
+    private def is_a_else_narrowing_targets(condition_id : ExprId) : Array(IsANarrowingTarget)
+      return [] of IsANarrowingTarget if condition_id.invalid?
+
+      node = @arena[condition_id]
+      case node
+      when Adamas::Compiler::Frontend::GroupingNode
+        is_a_else_narrowing_targets(node.expression)
+      when Adamas::Compiler::Frontend::BinaryNode
+        op = (safe_slice_to_string(node.operator) || "")
+        if op == "||"
+          left = is_a_else_narrowing_targets(node.left)
+          left.concat(is_a_else_narrowing_targets(node.right))
+          left
+        elsif op == "&&"
+          right = is_a_else_narrowing_targets(node.right)
+          is_a_else_narrowing_targets(node.left).select do |left_entry|
+            right.any? do |right_entry|
+              right_entry.name == left_entry.name &&
+                right_entry.type == left_entry.type &&
+                right_entry.type_literal == left_entry.type_literal
+            end
+          end
+        else
+          [] of IsANarrowingTarget
+        end
+      when Adamas::Compiler::Frontend::IsANode, Adamas::Compiler::Frontend::CallNode
+        is_a_narrowing_targets(condition_id)
+      else
+        [] of IsANarrowingTarget
+      end
+    end
+
     # Inverse of apply_is_a_narrowing for the else branch of `if x.is_a?(T)`.
     # When `x` was a union and `T` is one variant, the else branch narrows
     # `x` to `union - T`. Conservatively narrows only when a single variant
@@ -105062,6 +105101,7 @@ module Adamas::HIR
       truthy_targets = truthy_narrowing_targets(node.condition)
       falsy_targets = falsy_narrowing_targets(node.condition)
       is_a_targets = is_a_narrowing_targets(node.condition)
+      is_a_else_targets = is_a_else_narrowing_targets(node.condition)
       static_cond = static_is_a_condition_value(ctx, node.condition)
       static_cond = static_nil_condition_value(ctx, node.condition) if static_cond.nil?
       unless static_cond.nil?
@@ -105087,7 +105127,7 @@ module Adamas::HIR
         branch_scope = ctx.push_scope(ScopeKind::Block)
         return with_owned_scope_error_cleanup(ctx, branch_scope, pre_inline_caller_locals) do
           apply_truthy_narrowing(ctx, falsy_targets)
-          apply_is_a_else_narrowing(ctx, is_a_targets)
+          apply_is_a_else_narrowing(ctx, is_a_else_targets)
           lower_static_if_branch(ctx, pre_branch_locals, pre_inline_caller_locals, branch_scope) do
             if else_body = node.else_body
               if else_body.empty?
@@ -105237,7 +105277,7 @@ module Adamas::HIR
           branch_scope = ctx.push_scope(ScopeKind::Block)
           return with_owned_scope_error_cleanup(ctx, branch_scope, pre_inline_caller_locals) do
             apply_truthy_narrowing(ctx, falsy_targets)
-            apply_is_a_else_narrowing(ctx, is_a_targets)
+            apply_is_a_else_narrowing(ctx, is_a_else_targets)
             lower_static_if_branch(ctx, pre_branch_locals, pre_inline_caller_locals, branch_scope) do
               if else_body = node.else_body
                 if else_body.empty?
@@ -105435,7 +105475,7 @@ module Adamas::HIR
         else_exit_block, else_value, else_locals, else_inline_locals, else_cell_proofs =
           with_owned_scope_error_cleanup(ctx, else_scope, test_inline_locals) do
             apply_truthy_narrowing(ctx, accumulated_falsy_targets)
-            apply_is_a_else_narrowing(ctx, is_a_targets) unless has_elsifs
+            apply_is_a_else_narrowing(ctx, is_a_else_targets) unless has_elsifs
             branch_value = if else_body = node.else_body
                              if else_body.empty?
                                nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
@@ -106249,6 +106289,7 @@ module Adamas::HIR
       truthy_targets = truthy_narrowing_targets(node.condition)
       falsy_targets = falsy_narrowing_targets(node.condition)
       is_a_targets = is_a_narrowing_targets(node.condition)
+      is_a_else_targets = is_a_else_narrowing_targets(node.condition)
 
       static_cond = static_is_a_condition_value(ctx, node.condition)
       static_cond = static_nil_condition_value(ctx, node.condition) if static_cond.nil?
@@ -106272,7 +106313,7 @@ module Adamas::HIR
             end
           else
             apply_truthy_narrowing(ctx, falsy_targets)
-            apply_is_a_else_narrowing(ctx, is_a_targets)
+            apply_is_a_else_narrowing(ctx, is_a_else_targets)
             lower_static_if_branch(ctx, pre_branch_locals, pre_inline_caller_locals, branch_scope) do
               lower_body(ctx, node.then_branch)
             end
