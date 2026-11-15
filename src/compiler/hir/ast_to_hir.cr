@@ -8509,6 +8509,12 @@ module Adamas::HIR
     # loop whose back edge it feeds; once that loop is lowered the value no
     # longer dominates anything that follows.
     @inline_loop_var_backedge_values : Hash(String, {Int32, ValueId}) = {} of String => {Int32, ValueId}
+    # Path state of inlined yield blocks' caller locals: the caller frames and
+    # the loop back-edge values those frames do not show. Branch lowering
+    # captures, restores and merges the two together.
+    private record InlineCallerLocalsSnapshot,
+      frames : Array(Hash(String, ValueId)),
+      loop_backedges : Hash(String, {Int32, ValueId})
     # collect_assigned_vars yield-block depth and, when set, the {name, depth}
     # origin of every name assigned inside an inlined yield block (depth >= 1,
     # depth d = @inline_yield_block_stack[-d]).
@@ -8788,7 +8794,7 @@ module Adamas::HIR
     # Each entry is tagged with the owning loop's exit block: only while/until
     # push these stacks, so a `break` out of an intrinsic iterator loop nested
     # inside them must not record into the enclosing loop's entry.
-    @loop_break_inline_locals_stack : Array({BlockId, Array({BlockId, Array(Hash(String, ValueId))})}) = [] of {BlockId, Array({BlockId, Array(Hash(String, ValueId))})}
+    @loop_break_inline_locals_stack : Array({BlockId, Array({BlockId, InlineCallerLocalsSnapshot})}) = [] of {BlockId, Array({BlockId, InlineCallerLocalsSnapshot})}
     # Track break values for while expression result (break VALUE passes value out of while)
     @loop_break_value_stack : Array({BlockId, Array({BlockId, ValueId})}) = [] of {BlockId, Array({BlockId, ValueId})}
     # Parsed text of type-position typeof expressions, keyed by their text.
@@ -9436,7 +9442,7 @@ module Adamas::HIR
       @inline_yield_return_stack = [] of InlineReturnContext
       @inline_yield_return_override_stack = [] of InlineReturnOverride
       @inline_yield_return_caller_locals_stack = [] of Array({BlockId, Hash(String, ValueId)})
-      @loop_break_inline_locals_stack = [] of {BlockId, Array({BlockId, Array(Hash(String, ValueId))})}
+      @loop_break_inline_locals_stack = [] of {BlockId, Array({BlockId, InlineCallerLocalsSnapshot})}
       # Closure by-reference state. Keep this explicit because generated
       # stage2 can miss inline-default ivar initialization and leave Sets nil.
       @closure_ref_cells = {} of String => {String, String, TypeRef}
@@ -102166,7 +102172,7 @@ module Adamas::HIR
       # both source operands: unrelated errors and RHS result types survive a
       # constant Nil/Bool left value. Let CFG optimization fold the branch.
       pre_branch_locals = ctx.save_locals
-      pre_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
+      pre_inline_caller_locals = capture_inline_caller_locals
       branch_cell_proofs = ctx.closure_cell_write_proofs_on(ctx.current_block)
 
       then_block = ctx.create_block
@@ -102201,7 +102207,7 @@ module Adamas::HIR
       then_exit = ctx.current_block
       then_exit_cell_proofs = ctx.closure_cell_write_proofs_on(then_exit)
       then_locals = ctx.save_locals.locals
-      then_inline_locals = @inline_caller_locals_stack.map(&.dup)
+      then_inline_locals = capture_inline_caller_locals
       then_block_data = ctx.get_block(ctx.current_block)
       then_has_noreturn = block_has_raise_instruction?(then_block_data)
       then_flows_to_merge = then_block_data.terminator.is_a?(Unreachable) &&
@@ -102215,7 +102221,7 @@ module Adamas::HIR
       ctx.current_block = else_block
       ctx.rebind_closure_cell_write_proofs(branch_cell_proofs, else_block)
       ctx.restore_locals(pre_branch_locals)
-      @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
+      restore_inline_caller_locals(pre_inline_caller_locals)
       else_value = if op_str == "||"
                      rhs_value = nil.as(ValueId?)
                      with_scoped_condition_narrowing(ctx, falsy_targets, capture_source) do
@@ -102228,7 +102234,7 @@ module Adamas::HIR
       else_exit = ctx.current_block
       else_exit_cell_proofs = ctx.closure_cell_write_proofs_on(else_exit)
       else_locals = ctx.save_locals.locals
-      else_inline_locals = @inline_caller_locals_stack.map(&.dup)
+      else_inline_locals = capture_inline_caller_locals
       else_block_data = ctx.get_block(ctx.current_block)
       else_has_noreturn = block_has_raise_instruction?(else_block_data)
       else_flows_to_merge = else_block_data.terminator.is_a?(Unreachable) &&
@@ -105132,14 +105138,14 @@ module Adamas::HIR
     private def with_owned_scope_error_cleanup(
       ctx : LoweringContext,
       owned_scope : ScopeId,
-      inline_caller_locals_snapshot : Array(Hash(String, ValueId))? = nil,
+      inline_caller_locals_snapshot : InlineCallerLocalsSnapshot? = nil,
       &
     )
       yield
     rescue error
       ctx.pop_scope if ctx.current_scope == owned_scope
       if snapshot = inline_caller_locals_snapshot
-        @inline_caller_locals_stack = snapshot.map(&.dup)
+        restore_inline_caller_locals(snapshot)
       end
       raise error
     end
@@ -105153,7 +105159,7 @@ module Adamas::HIR
       static_cond = static_nil_condition_value(ctx, node.condition) if static_cond.nil?
       unless static_cond.nil?
         pre_branch_locals = ctx.save_locals
-        pre_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
+        pre_inline_caller_locals = capture_inline_caller_locals
         if static_cond
           branch_scope = ctx.push_scope(ScopeKind::Block)
           return with_owned_scope_error_cleanup(ctx, branch_scope, pre_inline_caller_locals) do
@@ -105197,7 +105203,7 @@ module Adamas::HIR
 
       # Collect all branches:
       # (exit_block, value, locals, flows_to_merge, inline_caller_locals_stack_snapshot)
-      branches = [] of {BlockId, ValueId, Hash(String, ValueId), Bool, Array(Hash(String, ValueId))}
+      branches = [] of {BlockId, ValueId, Hash(String, ValueId), Bool, InlineCallerLocalsSnapshot}
 
       # Build the chain: if -> elsif1 -> elsif2 -> ... -> else
       # Each test that fails jumps to the next test block (or final else block)
@@ -105243,7 +105249,7 @@ module Adamas::HIR
         static_val = static_literal_condition_value(node.condition) if static_val.nil?
         unless static_val.nil?
           pre_branch_locals = ctx.save_locals
-          pre_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
+          pre_inline_caller_locals = capture_inline_caller_locals
           if static_val
             branch_scope = ctx.push_scope(ScopeKind::Block)
             return with_owned_scope_error_cleanup(ctx, branch_scope, pre_inline_caller_locals) do
@@ -105299,10 +105305,10 @@ module Adamas::HIR
         else_reachable = reachable_after_condition.includes?(next_test_block)
         if then_reachable != else_reachable
           pre_branch_locals = ctx.save_locals
-          pre_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
+          pre_inline_caller_locals = capture_inline_caller_locals
 
           if then_reachable
-            @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
+            restore_inline_caller_locals(pre_inline_caller_locals)
             ctx.current_block = then_block
             branch_scope = ctx.push_scope(ScopeKind::Block)
             return with_owned_scope_error_cleanup(ctx, branch_scope, pre_inline_caller_locals) do
@@ -105319,7 +105325,7 @@ module Adamas::HIR
             end
           end
 
-          @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
+          restore_inline_caller_locals(pre_inline_caller_locals)
           ctx.current_block = next_test_block
           branch_scope = ctx.push_scope(ScopeKind::Block)
           return with_owned_scope_error_cleanup(ctx, branch_scope, pre_inline_caller_locals) do
@@ -105349,11 +105355,11 @@ module Adamas::HIR
       # For inlined yield-blocks, mutable caller locals are tracked outside ctx.locals.
       # Branch lowering must restore that stack as well, otherwise then-branch updates
       # can leak into elsif/else and produce invalid phi incoming values.
-      pre_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
+      pre_inline_caller_locals = capture_inline_caller_locals
       accumulated_falsy_targets = falsy_targets.dup
 
       # Process "then" branch
-      @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
+      restore_inline_caller_locals(pre_inline_caller_locals)
       ctx.current_block = then_block
       ctx.rebind_closure_cell_write_proofs(branch_cell_proofs, then_block)
       then_scope = ctx.push_scope(ScopeKind::Block)
@@ -105370,7 +105376,7 @@ module Adamas::HIR
           exit_block = ctx.current_block
           cell_proofs = ctx.closure_cell_write_proofs_on(exit_block)
           locals = ctx.save_locals.locals
-          inline_locals = @inline_caller_locals_stack.map(&.dup)
+          inline_locals = capture_inline_caller_locals
           unless ctx.current_scope == then_scope
             raise LoweringError.new("if then branch lost its owned Block scope", node)
           end
@@ -105406,7 +105412,7 @@ module Adamas::HIR
         elsifs.each_with_index do |elsif_branch, idx|
           next if elsif_chain_closed
           ctx.restore_locals(test_locals)
-          @inline_caller_locals_stack = test_inline_locals.map(&.dup)
+          restore_inline_caller_locals(test_inline_locals)
 
           # We're now in the test block for this elsif
           ctx.current_block = next_test_block
@@ -105461,7 +105467,7 @@ module Adamas::HIR
 
           test_cell_proofs = ctx.closure_cell_write_proofs_on(elsif_entry_block)
           test_locals = ctx.save_locals
-          test_inline_locals = @inline_caller_locals_stack.map(&.dup)
+          test_inline_locals = capture_inline_caller_locals
           if elsif_static == false
             merge_narrowing_target_names(accumulated_falsy_targets, elsif_falsy_targets)
             next
@@ -105486,7 +105492,7 @@ module Adamas::HIR
               exit_block = ctx.current_block
               cell_proofs = ctx.closure_cell_write_proofs_on(exit_block)
               locals = ctx.save_locals.locals
-              inline_locals = @inline_caller_locals_stack.map(&.dup)
+              inline_locals = capture_inline_caller_locals
               unless ctx.current_scope == elsif_scope
                 raise LoweringError.new("if elsif branch lost its owned Block scope", node)
               end
@@ -105515,7 +105521,7 @@ module Adamas::HIR
       # Process final else branch
       unless elsif_chain_closed
         ctx.restore_locals(test_locals)
-        @inline_caller_locals_stack = test_inline_locals.map(&.dup)
+        restore_inline_caller_locals(test_inline_locals)
         ctx.current_block = next_test_block
         ctx.rebind_closure_cell_write_proofs(test_cell_proofs, next_test_block)
         else_scope = ctx.push_scope(ScopeKind::Block)
@@ -105540,7 +105546,7 @@ module Adamas::HIR
             exit_block = ctx.current_block
             cell_proofs = ctx.closure_cell_write_proofs_on(exit_block)
             locals = ctx.save_locals.locals
-            inline_locals = @inline_caller_locals_stack.map(&.dup)
+            inline_locals = capture_inline_caller_locals
             unless ctx.current_scope == else_scope
               raise LoweringError.new("if else branch lost its owned Block scope", node)
             end
@@ -105580,7 +105586,7 @@ module Adamas::HIR
         merge_inline_caller_locals_after_if(
           ctx,
           pre_inline_caller_locals,
-          [] of {BlockId, Array(Hash(String, ValueId))}
+          [] of {BlockId, InlineCallerLocalsSnapshot}
         )
         # All branches return/raise. Keep the detached merge block available as
         # a value placeholder for the surrounding lowering code, but mark it
@@ -105677,29 +105683,31 @@ module Adamas::HIR
 
     private def merge_inline_caller_locals_after_if(
       ctx : LoweringContext,
-      pre_inline_caller_locals : Array(Hash(String, ValueId)),
-      branch_inline_info : Array({BlockId, Array(Hash(String, ValueId))}),
+      pre_inline_caller_locals : InlineCallerLocalsSnapshot,
+      branch_inline_info : Array({BlockId, InlineCallerLocalsSnapshot}),
     ) : Nil
-      return if pre_inline_caller_locals.empty?
+      pre_frames = pre_inline_caller_locals.frames
+      return if pre_frames.empty?
 
       if branch_inline_info.empty?
         restored_stack = [] of Hash(String, ValueId)
         i = 0
-        while i < pre_inline_caller_locals.size
-          restored_stack << pre_inline_caller_locals.unsafe_fetch(i).dup
+        while i < pre_frames.size
+          restored_stack << pre_frames.unsafe_fetch(i).dup
           i += 1
         end
         @inline_caller_locals_stack = restored_stack
+        merge_inline_loop_backedges_after_if(ctx, pre_inline_caller_locals, branch_inline_info)
         return
       end
 
       if branch_inline_info.size == 1
         branch_entry = branch_inline_info.unsafe_fetch(0)
-        inline_snapshot = branch_entry[1]
+        inline_snapshot = branch_entry[1].frames
         merged_single = [] of Hash(String, ValueId)
         i = 0
-        while i < pre_inline_caller_locals.size
-          merged_single << pre_inline_caller_locals.unsafe_fetch(i).dup
+        while i < pre_frames.size
+          merged_single << pre_frames.unsafe_fetch(i).dup
           i += 1
         end
         limit = merged_single.size < inline_snapshot.size ? merged_single.size : inline_snapshot.size
@@ -105709,22 +105717,23 @@ module Adamas::HIR
           i += 1
         end
         @inline_caller_locals_stack = merged_single
+        merge_inline_loop_backedges_after_if(ctx, pre_inline_caller_locals, branch_inline_info)
         return
       end
 
       saved_ctx_locals = ctx.save_locals
       merged_stack = [] of Hash(String, ValueId)
       i = 0
-      while i < pre_inline_caller_locals.size
-        merged_stack << pre_inline_caller_locals.unsafe_fetch(i).dup
+      while i < pre_frames.size
+        merged_stack << pre_frames.unsafe_fetch(i).dup
         i += 1
       end
 
       begin
         idx = 0
         while idx < merged_stack.size
-          pre_locals = if idx < pre_inline_caller_locals.size
-                         pre_inline_caller_locals.unsafe_fetch(idx)
+          pre_locals = if idx < pre_frames.size
+                         pre_frames.unsafe_fetch(idx)
                        else
                          {} of String => ValueId
                        end
@@ -105733,7 +105742,7 @@ module Adamas::HIR
           while branch_idx < branch_inline_info.size
             branch_entry = branch_inline_info.unsafe_fetch(branch_idx)
             exit_block = branch_entry[0]
-            inline_snapshot = branch_entry[1]
+            inline_snapshot = branch_entry[1].frames
             locals = if idx < inline_snapshot.size
                        inline_snapshot.unsafe_fetch(idx)
                      else
@@ -105753,6 +105762,119 @@ module Adamas::HIR
       end
 
       @inline_caller_locals_stack = merged_stack
+      merge_inline_loop_backedges_after_if(ctx, pre_inline_caller_locals, branch_inline_info)
+    end
+
+    private def capture_inline_caller_locals : InlineCallerLocalsSnapshot
+      InlineCallerLocalsSnapshot.new(
+        @inline_caller_locals_stack.map(&.dup),
+        @inline_loop_var_backedge_values.dup,
+      )
+    end
+
+    private def restore_inline_caller_locals(snapshot : InlineCallerLocalsSnapshot) : Nil
+      @inline_caller_locals_stack = snapshot.frames.map(&.dup)
+      @inline_loop_var_backedge_values = snapshot.loop_backedges.dup
+    end
+
+    # A loop variable written by a yielded block keeps its caller-frame
+    # binding and saves the write as a back-edge value (see the revert in
+    # inline_block_body). That value is path state like the frames: a write
+    # in one arm must not reach the other arms or the join, or the back edge
+    # and later yields read a value that does not dominate them. At the join,
+    # every back-edge value of a loop still being lowered takes, per flowing
+    # arm, the arm's saved value or else its frame binding, merged with a phi
+    # when the arms disagree. Values of loops that already finished are read
+    # only right after their loop and stay as the last arm left them.
+    private def merge_inline_loop_backedges_after_if(
+      ctx : LoweringContext,
+      pre_inline_caller_locals : InlineCallerLocalsSnapshot,
+      branch_inline_info : Array({BlockId, InlineCallerLocalsSnapshot}),
+    ) : Nil
+      depth = @inline_loop_vars_stack.size
+      current = @inline_loop_var_backedge_values
+      merged = {} of String => {Int32, ValueId}
+      current.each do |name, entry|
+        merged[name] = entry if entry[0] > depth
+      end
+
+      if branch_inline_info.size < 2
+        source = branch_inline_info.empty? ? pre_inline_caller_locals : branch_inline_info.unsafe_fetch(0)[1]
+        source.loop_backedges.each do |name, entry|
+          merged[name] = entry if entry[0] <= depth
+        end
+        @inline_loop_var_backedge_values = merged
+        return
+      end
+
+      names = [] of String
+      branch_inline_info.each do |branch|
+        branch[1].loop_backedges.each do |name, entry|
+          names << name if entry[0] <= depth && !names.includes?(name)
+        end
+      end
+      unless names.empty?
+        pre_values = {} of String => ValueId
+        branch_values = branch_inline_info.map { |branch| {branch[0], {} of String => ValueId} }
+        names.each do |name|
+          pre_value = inline_loop_path_value(pre_inline_caller_locals, name, depth)
+          arm_values = [] of ValueId
+          branch_inline_info.each do |branch|
+            if value = inline_loop_path_value(branch[1], name, depth)
+              arm_values << value
+            end
+          end
+          if pre_value && arm_values.size == branch_inline_info.size
+            pre_values[name] = pre_value
+            arm_values.each_with_index do |value, index|
+              branch_values.unsafe_fetch(index)[1][name] = value
+            end
+          elsif entry = current[name]?
+            # No binding on some path to merge with: keep the last write.
+            merged[name] = entry
+          end
+        end
+
+        unless pre_values.empty?
+          saved_ctx_locals = ctx.save_locals
+          merged_values = {} of String => ValueId
+          begin
+            ctx.restore_locals(pre_values)
+            merge_if_branch_locals(ctx, pre_values, branch_values)
+            merged_values = ctx.save_locals.locals
+          ensure
+            ctx.restore_locals(saved_ctx_locals)
+          end
+          pre_values.each_key do |name|
+            if value = merged_values[name]?
+              merged[name] = {innermost_inline_loop_depth(name), value}
+            end
+          end
+        end
+      end
+      @inline_loop_var_backedge_values = merged
+    end
+
+    # The value of loop variable `name` on the path `snapshot` describes: its
+    # saved back-edge value for a loop still being lowered, else its innermost
+    # caller-frame binding.
+    private def inline_loop_path_value(
+      snapshot : InlineCallerLocalsSnapshot,
+      name : String,
+      depth : Int32,
+    ) : ValueId?
+      if entry = snapshot.loop_backedges[name]?
+        return entry[1] if entry[0] <= depth
+      end
+      frames = snapshot.frames
+      index = frames.size - 1
+      while index >= 0
+        if value = frames.unsafe_fetch(index)[name]?
+          return value
+        end
+        index -= 1
+      end
+      nil
     end
 
     # Two-arm form of merge_inline_caller_locals_after_if for constructs that
@@ -105760,11 +105882,11 @@ module Adamas::HIR
     # the join (ternary, `&&`, `||`).
     private def merge_inline_caller_locals_after_branches(
       ctx : LoweringContext,
-      pre_inline_caller_locals : Array(Hash(String, ValueId)),
-      then_arm : {BlockId, Array(Hash(String, ValueId)), Bool},
-      else_arm : {BlockId, Array(Hash(String, ValueId)), Bool},
+      pre_inline_caller_locals : InlineCallerLocalsSnapshot,
+      then_arm : {BlockId, InlineCallerLocalsSnapshot, Bool},
+      else_arm : {BlockId, InlineCallerLocalsSnapshot, Bool},
     ) : Nil
-      flowing = [] of {BlockId, Array(Hash(String, ValueId))}
+      flowing = [] of {BlockId, InlineCallerLocalsSnapshot}
       flowing << {then_arm[0], then_arm[1]} if then_arm[2]
       flowing << {else_arm[0], else_arm[1]} if else_arm[2]
       merge_inline_caller_locals_after_if(ctx, pre_inline_caller_locals, flowing)
@@ -105773,7 +105895,7 @@ module Adamas::HIR
     private def lower_static_if_branch(
       ctx : LoweringContext,
       pre_branch_locals : LoweringContext::LocalsSnapshot,
-      pre_inline_caller_locals : Array(Hash(String, ValueId)),
+      pre_inline_caller_locals : InlineCallerLocalsSnapshot,
       owned_scope : ScopeId? = nil,
       &
     ) : ValueId
@@ -105782,7 +105904,7 @@ module Adamas::HIR
         value = yield
         exit_block = ctx.current_block
         branch_locals = ctx.save_locals.locals
-        branch_inline_locals = @inline_caller_locals_stack.map(&.dup)
+        branch_inline_locals = capture_inline_caller_locals
       rescue error
         ctx.pop_scope if ctx.current_scope == owned_scope
         raise error
@@ -106357,7 +106479,7 @@ module Adamas::HIR
       static_cond = static_nil_condition_value(ctx, node.condition) if static_cond.nil?
       unless static_cond.nil?
         pre_branch_locals = ctx.save_locals
-        pre_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
+        pre_inline_caller_locals = capture_inline_caller_locals
         branch_scope = ctx.push_scope(ScopeKind::Block)
 
         return with_owned_scope_error_cleanup(ctx, branch_scope, pre_inline_caller_locals) do
@@ -106406,10 +106528,10 @@ module Adamas::HIR
       # Save locals state after lowering the condition so branch bodies can see
       # locals introduced by condition expressions such as `out` parameters.
       pre_branch_locals = ctx.save_locals
-      pre_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
+      pre_inline_caller_locals = capture_inline_caller_locals
 
       # Then (was unless body)
-      @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
+      restore_inline_caller_locals(pre_inline_caller_locals)
       ctx.current_block = then_block
       ctx.rebind_closure_cell_write_proofs(branch_cell_proofs, then_block)
       ctx.restore_locals(pre_branch_locals)
@@ -106421,7 +106543,7 @@ module Adamas::HIR
           exit_block = ctx.current_block
           cell_proofs = ctx.closure_cell_write_proofs_on(exit_block)
           locals = ctx.save_locals.locals
-          inline_locals = @inline_caller_locals_stack.map(&.dup)
+          inline_locals = capture_inline_caller_locals
           unless ctx.current_scope == then_scope
             raise LoweringError.new("unless body lost its owned Block scope", node)
           end
@@ -106444,7 +106566,7 @@ module Adamas::HIR
       end
 
       # Else branch (if any)
-      @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
+      restore_inline_caller_locals(pre_inline_caller_locals)
       ctx.current_block = else_block
       ctx.rebind_closure_cell_write_proofs(branch_cell_proofs, else_block)
       ctx.restore_locals(pre_branch_locals)
@@ -106463,7 +106585,7 @@ module Adamas::HIR
           exit_block = ctx.current_block
           cell_proofs = ctx.closure_cell_write_proofs_on(exit_block)
           locals = ctx.save_locals.locals
-          inline_locals = @inline_caller_locals_stack.map(&.dup)
+          inline_locals = capture_inline_caller_locals
           unless ctx.current_scope == else_scope
             raise LoweringError.new("unless else branch lost its owned Block scope", node)
           end
@@ -106585,7 +106707,7 @@ module Adamas::HIR
       merge_inline_caller_locals_after_if(
         ctx,
         pre_inline_caller_locals,
-        [] of {BlockId, Array(Hash(String, ValueId))}
+        [] of {BlockId, InlineCallerLocalsSnapshot}
       )
       nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
       ctx.emit(nil_lit)
@@ -106598,7 +106720,7 @@ module Adamas::HIR
       yield_origins = [] of {String, Int32}
       assigned_vars = collect_assigned_vars_with_yield_origins(node.body, yield_origins)
       inline_vars = Set(String).new
-      pre_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
+      pre_inline_caller_locals = capture_inline_caller_locals
 
       # Save the initial values of variables before the loop
       pre_loop_block = ctx.current_block
@@ -106768,7 +106890,7 @@ module Adamas::HIR
 
       # Body block
       ctx.current_block = body_block
-      break_inline_locals = [] of {BlockId, Array(Hash(String, ValueId))}
+      break_inline_locals = [] of {BlockId, InlineCallerLocalsSnapshot}
       updated_loop_values, break_info, break_values = with_loop_body_frame(
         ctx, node, cond_block, exit_block, phi_nodes, assigned_vars, inline_vars,
         break_inline_locals: break_inline_locals, shadow_key: shadow_key,
@@ -106916,8 +107038,8 @@ module Adamas::HIR
         end
       end
 
-      unless pre_inline_caller_locals.empty?
-        flowing_inline_info = [{cond_branch_block, @inline_caller_locals_stack.map(&.dup)}] of {BlockId, Array(Hash(String, ValueId))}
+      unless pre_inline_caller_locals.frames.empty?
+        flowing_inline_info = [{cond_branch_block, capture_inline_caller_locals}] of {BlockId, InlineCallerLocalsSnapshot}
         break_inline_locals.each do |entry|
           flowing_inline_info << entry
         end
@@ -107800,7 +107922,7 @@ module Adamas::HIR
       phi_nodes : Hash(String, Phi),
       assigned_vars : Array(String),
       inline_vars : Set(String),
-      break_inline_locals : Array({BlockId, Array(Hash(String, ValueId))})? = nil,
+      break_inline_locals : Array({BlockId, InlineCallerLocalsSnapshot})? = nil,
       shadow_key : {FunctionId, BlockId}? = nil,
       &
     ) : {Hash(String, ValueId), Array({BlockId, Hash(String, ValueId)}), Array({BlockId, ValueId})}
@@ -108370,7 +108492,7 @@ module Adamas::HIR
       static_val = static_literal_condition_value(node.condition) if static_val.nil?
       unless static_val.nil?
         pre_branch_locals = ctx.save_locals
-        pre_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
+        pre_inline_caller_locals = capture_inline_caller_locals
         ctx.push_scope(ScopeKind::Block)
         if static_val
           apply_truthy_narrowing(ctx, truthy_targets)
@@ -108390,7 +108512,7 @@ module Adamas::HIR
 
       # Save locals before branching
       pre_branch_locals = ctx.save_locals
-      pre_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
+      pre_inline_caller_locals = capture_inline_caller_locals
 
       then_block = ctx.create_block
       else_block = ctx.create_block
@@ -108410,7 +108532,7 @@ module Adamas::HIR
       then_exit = ctx.current_block
       then_exit_cell_proofs = ctx.closure_cell_write_proofs_on(then_exit)
       then_locals = ctx.save_locals.locals
-      then_inline_locals = @inline_caller_locals_stack.map(&.dup)
+      then_inline_locals = capture_inline_caller_locals
 
       # Check if then branch flows to merge
       then_block_data = ctx.get_block(ctx.current_block)
@@ -108425,7 +108547,7 @@ module Adamas::HIR
       ctx.current_block = else_block
       ctx.rebind_closure_cell_write_proofs(branch_cell_proofs, else_block)
       ctx.restore_locals(pre_branch_locals)
-      @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
+      restore_inline_caller_locals(pre_inline_caller_locals)
       apply_truthy_narrowing(ctx, falsy_targets)
       # The else arm sees the condition's negative is_a? filters, as in
       # lower_if (`x.is_a?(Nil) ? 5 : x` reads `x` as the remaining variant).
@@ -108434,7 +108556,7 @@ module Adamas::HIR
       else_exit = ctx.current_block
       else_exit_cell_proofs = ctx.closure_cell_write_proofs_on(else_exit)
       else_locals = ctx.save_locals.locals
-      else_inline_locals = @inline_caller_locals_stack.map(&.dup)
+      else_inline_locals = capture_inline_caller_locals
 
       # Check if else branch flows to merge
       else_block_data = ctx.get_block(ctx.current_block)
@@ -109596,8 +109718,8 @@ module Adamas::HIR
       branch_locals = [] of Tuple(BlockId, Hash(String, ValueId)) # Track locals for each branch
       # Caller locals of inlined yield blocks: every arm starts from the
       # stack the comparison chain leaves, and the join merges the arms.
-      pre_case_inline_locals = @inline_caller_locals_stack.map(&.dup)
-      branch_inline_info = [] of {BlockId, Array(Hash(String, ValueId))}
+      pre_case_inline_locals = capture_inline_caller_locals
+      branch_inline_info = [] of {BlockId, InlineCallerLocalsSnapshot}
       nil_was_checked = false # Track if any when branch checks .nil? (for else narrowing)
       # Set once a `when` type check matches every value the subject can hold.
       # Later branches and the else body are then unreachable; Crystal types
@@ -109663,7 +109785,7 @@ module Adamas::HIR
         end
 
         # When body - restore locals before each branch
-        chain_inline_locals = @inline_caller_locals_stack.map(&.dup)
+        chain_inline_locals = capture_inline_caller_locals
         ctx.current_block = when_block
         ctx.restore_locals(pre_case_locals)
         # Re-register the subject variable if it was assigned in `case var = expr`.
@@ -109825,11 +109947,11 @@ module Adamas::HIR
         if when_flows_to_merge
           # Save branch locals before jumping to merge (only if flowing)
           branch_locals << {exit_block, filtered_when_locals}
-          branch_inline_info << {exit_block, @inline_caller_locals_stack.map(&.dup)}
+          branch_inline_info << {exit_block, capture_inline_caller_locals}
           ctx.terminate(Jump.new(merge_block))
           incoming << {exit_block, result}
         end
-        @inline_caller_locals_stack = chain_inline_locals
+        restore_inline_caller_locals(chain_inline_locals)
 
         ctx.current_block = next_block
         if branch_proven_taken
@@ -109909,7 +110031,7 @@ module Adamas::HIR
       if else_flows_to_merge
         # Save else branch locals (only if flowing)
         branch_locals << {else_exit, filtered_else_locals}
-        branch_inline_info << {else_exit, @inline_caller_locals_stack.map(&.dup)}
+        branch_inline_info << {else_exit, capture_inline_caller_locals}
         ctx.terminate(Jump.new(merge_block))
         incoming << {else_exit, else_result}
       end
@@ -111151,10 +111273,10 @@ module Adamas::HIR
         if (break_inline_locals_entry = @loop_break_inline_locals_stack.last?) && break_inline_locals_entry[0] == exit_block
           break_inline_locals = break_inline_locals_entry[1]
           unless @inline_caller_locals_stack.empty?
-            snapshot_stack = @inline_caller_locals_stack.map(&.dup)
+            snapshot_stack = capture_inline_caller_locals
             if caller_locals_index = @inline_active_caller_locals_index_stack.last?
               if snapshot = snapshot_active_inline_caller_locals(ctx, caller_locals_index)
-                snapshot_stack[caller_locals_index] = snapshot
+                snapshot_stack.frames[caller_locals_index] = snapshot
               end
             end
             break_inline_locals << {ctx.current_block, snapshot_stack}
@@ -143890,7 +144012,7 @@ module Adamas::HIR
       as_question_result : Bool = false,
     ) : ValueId
       pre_block_locals = ctx.save_locals
-      pre_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
+      pre_inline_caller_locals = capture_inline_caller_locals
       nil_check = if as_question_result
                     lower_as_question_nil_check(ctx, receiver_id)
                   else
@@ -143937,7 +144059,7 @@ module Adamas::HIR
       end
 
       value_locals = ctx.save_locals.locals
-      value_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
+      value_inline_caller_locals = capture_inline_caller_locals
       value_exit_block = ctx.current_block
       block_data = ctx.get_block(value_exit_block)
       value_has_noreturn = block_has_raise_or_return_instruction?(block_data)
@@ -143987,7 +144109,7 @@ module Adamas::HIR
       as_question_result : Bool = false,
     ) : ValueId
       pre_block_locals = ctx.save_locals
-      pre_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
+      pre_inline_caller_locals = capture_inline_caller_locals
       nil_check = if as_question_result
                     lower_as_question_nil_check(ctx, receiver_id)
                   else
@@ -144029,7 +144151,7 @@ module Adamas::HIR
       end
 
       value_locals = ctx.save_locals.locals
-      value_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
+      value_inline_caller_locals = capture_inline_caller_locals
       value_exit_block = ctx.current_block
       block_data = ctx.get_block(value_exit_block)
       value_has_noreturn = block_has_raise_or_return_instruction?(block_data)
@@ -144569,11 +144691,11 @@ module Adamas::HIR
       class_dispatch : Bool = false,
     ) : ValueId
       pre_locals = ctx.save_locals
-      pre_inline_locals = @inline_caller_locals_stack.map(&.dup)
+      pre_inline_locals = capture_inline_caller_locals
       merge_block = ctx.create_block
       incoming = [] of {BlockId, ValueId}
       branch_locals = [] of {BlockId, Hash(String, ValueId)}
-      branch_inline_locals = [] of {BlockId, Array(Hash(String, ValueId))}
+      branch_inline_locals = [] of {BlockId, InlineCallerLocalsSnapshot}
       variants.each_with_index do |(type_ref, variant_id, concrete_key), index|
         next_variant : BlockId? = nil
         if class_dispatch || index < variants.size - 1
@@ -144590,7 +144712,7 @@ module Adamas::HIR
           ctx.current_block = variant_block
         end
         ctx.restore_locals(pre_locals)
-        @inline_caller_locals_stack = pre_inline_locals.map(&.dup)
+        restore_inline_caller_locals(pre_inline_locals)
         concrete = if class_dispatch
                      Cast.new(ctx.next_id, type_ref, receiver_id, type_ref, false)
                    else
@@ -144623,7 +144745,7 @@ module Adamas::HIR
            !control_flow_dead_block?(ctx, exit_block)
           incoming << {exit_block, value}
           branch_locals << {exit_block, ctx.save_locals.locals}
-          branch_inline_locals << {exit_block, @inline_caller_locals_stack.map(&.dup)}
+          branch_inline_locals << {exit_block, capture_inline_caller_locals}
           ctx.terminate(Jump.new(merge_block))
         end
         if next_variant
@@ -152914,7 +153036,7 @@ module Adamas::HIR
         @loop_phi_stack = [] of Hash(String, Phi)
         @loop_break_info_stack = [] of Array({BlockId, Hash(String, ValueId)})
         @loop_break_value_stack = [] of {BlockId, Array({BlockId, ValueId})}
-        @loop_break_inline_locals_stack = [] of {BlockId, Array({BlockId, Array(Hash(String, ValueId))})}
+        @loop_break_inline_locals_stack = [] of {BlockId, Array({BlockId, InlineCallerLocalsSnapshot})}
         @inline_next_stack = [] of InlineNextContext
         @inline_tuple_each_next_stack = [] of Bool
         @inline_tuple_each_loop_exit_depth_stack = [] of Int32
@@ -155569,7 +155691,7 @@ module Adamas::HIR
       @loop_inline_next_depth_stack = [] of Int32
       @loop_phi_stack = [] of Hash(String, Phi)
       @loop_break_info_stack = [] of Array({BlockId, Hash(String, ValueId)})
-      @loop_break_inline_locals_stack = [] of {BlockId, Array({BlockId, Array(Hash(String, ValueId))})}
+      @loop_break_inline_locals_stack = [] of {BlockId, Array({BlockId, InlineCallerLocalsSnapshot})}
       @loop_break_value_stack = [] of {BlockId, Array({BlockId, ValueId})}
 
       @inline_yield_proc_depth += 1
@@ -157415,7 +157537,7 @@ module Adamas::HIR
       @loop_inline_next_depth_stack = [] of Int32
       @loop_phi_stack = [] of Hash(String, Phi)
       @loop_break_info_stack = [] of Array({BlockId, Hash(String, ValueId)})
-      @loop_break_inline_locals_stack = [] of {BlockId, Array({BlockId, Array(Hash(String, ValueId))})}
+      @loop_break_inline_locals_stack = [] of {BlockId, Array({BlockId, InlineCallerLocalsSnapshot})}
       @loop_break_value_stack = [] of {BlockId, Array({BlockId, ValueId})}
 
       saved_arena_outer = @arena
