@@ -106495,6 +106495,9 @@ module Adamas::HIR
       then_exit, then_value, then_locals, then_inline_locals, then_exit_cell_proofs =
         with_owned_scope_error_cleanup(ctx, then_scope, pre_inline_caller_locals) do
           apply_truthy_narrowing(ctx, falsy_targets)
+          # The unless body runs when the condition fails, so it sees the
+          # negative is_a? filters, as the else arm of lower_if does.
+          apply_is_a_else_narrowing(ctx, is_a_else_targets)
           branch_value = lower_body(ctx, node.then_branch)
           exit_block = ctx.current_block
           cell_proofs = ctx.closure_cell_write_proofs_on(exit_block)
