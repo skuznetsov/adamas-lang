@@ -107782,11 +107782,12 @@ module Adamas::HIR
 
     private def lookup_local_for_phi(ctx : LoweringContext, name : String, inline_vars : Set(String)) : ValueId?
       debug_lookup = env_get("DEBUG_LOOP_PHI_LOOKUP")
-      if val = ctx.lookup_local(name)
+      ctx_val = ctx.lookup_local(name)
+      if ctx_val && !inline_callee_frame_var?(name)
         if debug_lookup
-          STDERR.puts "[LOOP_PHI_LOOKUP] fn=#{ctx.function.name} var=#{name} source=ctx val=#{val} type=#{ctx.type_of(val).id}"
+          STDERR.puts "[LOOP_PHI_LOOKUP] fn=#{ctx.function.name} var=#{name} source=ctx val=#{ctx_val} type=#{ctx.type_of(ctx_val).id}"
         end
-        return val
+        return ctx_val
       end
 
       # When lowering loops inside an inlined callee, don't capture same-named
@@ -107817,6 +107818,9 @@ module Adamas::HIR
                 next
               end
               inline_vars.add(name)
+              # The frame shows the value at the last yield entry; a write
+              # since then is the enclosing loop's active back-edge value.
+              val = active_loop_backedge_value(name) || val
               if debug_lookup
                 STDERR.puts "[LOOP_PHI_LOOKUP] fn=#{ctx.function.name} var=#{name} source=inline_stack idx=#{idx} val=#{val} type=#{val_type.id}"
               end
@@ -107845,10 +107849,34 @@ module Adamas::HIR
         end
       end
 
+      if ctx_val
+        if debug_lookup
+          STDERR.puts "[LOOP_PHI_LOOKUP] fn=#{ctx.function.name} var=#{name} source=ctx_no_frame val=#{ctx_val}"
+        end
+        return ctx_val
+      end
+
       if debug_lookup
         STDERR.puts "[LOOP_PHI_LOOKUP] fn=#{ctx.function.name} var=#{name} source=miss"
       end
       nil
+    end
+
+    # Inlined callee code starts with only callee locals in ctx, but a loop
+    # that carries a yielded block's caller local (`acc` in
+    # `while c; yield x; end`) also binds the caller's name in ctx: to its
+    # header phi while the loop is lowered and to its exit value after it.
+    # That binding only mirrors the caller frame, and goes stale as soon as a
+    # later yield writes the frame. A loop in callee code (nested in that
+    # loop or after it) must not take it for a callee local: the block's
+    # writes go to the caller frame and the loop back-edge values, so a ctx
+    # phi would never see them. Such a loop carries the name through the
+    # caller frame like the first loop does. In a yielded block's own body
+    # ctx holds the caller's real bindings and they stay authoritative.
+    private def inline_callee_frame_var?(name : String) : Bool
+      marker = @inline_callee_local_names_frame_stack.last?
+      return false unless marker && marker >= 0
+      !(@inline_callee_local_names_stack.last?.try(&.includes?(name)))
     end
 
     # 1-based depth of the innermost loop on @inline_loop_vars_stack that
