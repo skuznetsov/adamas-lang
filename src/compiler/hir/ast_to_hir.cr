@@ -109498,15 +109498,16 @@ module Adamas::HIR
     end
 
     private def lower_case(ctx : LoweringContext, node : Adamas::Compiler::Frontend::CaseNode) : ValueId
-      # Save locals state before case for proper phi merging
-      pre_case_locals = ctx.save_locals
-
       # Lower case subject
       subject_id = if subj = node.value
                      lower_expr(ctx, subj)
                    else
                      nil
                    end
+      # Locals the subject leaves (`case (x = f; y)`, a yield whose block
+      # writes a local): the base the join merges against. Each arm starts
+      # from the locals its comparison chain leaves instead (see below).
+      pre_case_locals = ctx.save_locals
       if subj = node.value
         if sid = subject_id
           refine_void_value_type_from_expr(ctx, sid, subj, @current_class)
@@ -109594,10 +109595,13 @@ module Adamas::HIR
           ctx.terminate(Branch.new(cond_val, when_block, next_block))
         end
 
-        # When body - restore locals before each branch
+        # When body. The comparisons run in order along the chain, so an
+        # assignment in this or an earlier `when` condition reaches this arm,
+        # the later comparisons and the else, but not the earlier arms.
         chain_inline_locals = capture_inline_caller_locals
+        chain_locals = ctx.save_locals
         ctx.current_block = when_block
-        ctx.restore_locals(pre_case_locals)
+        ctx.restore_locals(chain_locals)
         # Re-register the subject variable if it was assigned in `case var = expr`.
         # restore_locals wipes locals back to pre-case state, losing the assignment.
         if svn = subject_var_name
@@ -109740,7 +109744,7 @@ module Adamas::HIR
         # would make merge_case_locals try to phi narrowed values of the
         # subject across branches, which confuses downstream type inference.
         assigned_when = collect_assigned_var_set(when_branch.body)
-        filtered_when_locals = pre_case_locals.locals.dup
+        filtered_when_locals = chain_locals.locals.dup
         assigned_when.each do |name|
           if v = post_when_locals[name]?
             filtered_when_locals[name] = v
@@ -109762,6 +109766,7 @@ module Adamas::HIR
           incoming << {exit_block, result}
         end
         restore_inline_caller_locals(chain_inline_locals)
+        ctx.restore_locals(chain_locals)
 
         ctx.current_block = next_block
         if branch_proven_taken
@@ -109770,8 +109775,9 @@ module Adamas::HIR
         end
       end
 
-      # Else branch - restore locals before else branch
-      ctx.restore_locals(pre_case_locals)
+      # Else branch: starts from the locals the whole comparison chain left
+      # (every arm restored them on exit).
+      else_base_locals = ctx.save_locals
       # Re-register the subject variable (same as for when branches)
       if svn = subject_var_name
         if subject_id
@@ -109818,7 +109824,7 @@ module Adamas::HIR
                       else
                         Set(String).new
                       end
-      filtered_else_locals = pre_case_locals.locals.dup
+      filtered_else_locals = else_base_locals.locals.dup
       assigned_else.each do |name|
         if v = post_else_locals[name]?
           filtered_else_locals[name] = v
