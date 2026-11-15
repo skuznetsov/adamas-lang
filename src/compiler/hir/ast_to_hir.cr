@@ -8622,9 +8622,14 @@ module Adamas::HIR
       property callback_result_context : InlineCallbackResultContext? = nil
       property source_declared_return_contract : SourceBlockResultPattern? = nil
       property discards_method_result : Bool = false
+      # Caller frames below the one that called the inlined method, as they
+      # stand on each edge into exit_block. Recorded only once the body has
+      # an early edge (explicit return or block break).
+      getter outer_caller_locals_incoming : Array({BlockId, Array(Hash(String, ValueId))})
 
       def initialize(@exit_block : BlockId, @incoming : Array({BlockId, ValueId}), @function_id : FunctionId)
         @explicit_return_incoming_indices = [] of Int32
+        @outer_caller_locals_incoming = [] of {BlockId, Array(Hash(String, ValueId))}
       end
     end
 
@@ -105715,6 +105720,105 @@ module Adamas::HIR
       end
     end
 
+    # A block yielded from an inlined method can assign locals of any
+    # enclosing caller frame, not only of the frame that called the method.
+    # Record those outer frames on an edge into the inline-return exit; loop
+    # variables present in a frame take their active saved back-edge value,
+    # as in snapshot_inline_caller_locals_for_return. The fall-through edge
+    # records only after an early edge did, since one edge needs no merge.
+    private def record_inline_return_outer_caller_locals(
+      inline_return : InlineReturnContext,
+      block : BlockId,
+      frame_index : Int32,
+    ) : Nil
+      return if frame_index <= 0 || frame_index > @inline_caller_locals_stack.size
+      loop_vars = inline_loop_vars_union
+      frames = [] of Hash(String, ValueId)
+      index = 0
+      while index < frame_index
+        frame = @inline_caller_locals_stack.unsafe_fetch(index).dup
+        if loop_vars
+          loop_vars.each do |name|
+            next unless frame.has_key?(name)
+            if saved = active_loop_backedge_value(name)
+              frame[name] = saved
+            end
+          end
+        end
+        frames << frame
+        index += 1
+      end
+      inline_return.outer_caller_locals_incoming << {block, frames}
+    end
+
+    # Merge the outer caller frames across the inline-return edges, like
+    # merge_inline_caller_locals_for_inline_return does for the calling frame.
+    # Without it, an outer local assigned by the yielded block on one path
+    # (`return if ...; yield x`) kept that path's value on every path.
+    private def merge_outer_inline_caller_locals_for_inline_return(
+      ctx : LoweringContext,
+      inline_return : InlineReturnContext,
+    ) : Nil
+      edges = inline_return.outer_caller_locals_incoming
+      return if edges.size < 2
+      return unless edges.size == inline_return.incoming.size
+      frame_count = @inline_caller_locals_stack.size - 1
+      saved_ctx_locals = ctx.save_locals
+      begin
+        frame_index = 0
+        while frame_index < frame_count
+          branches = [] of {BlockId, Hash(String, ValueId)}
+          edges.each do |edge|
+            frames = edge[1]
+            break unless frame_index < frames.size
+            branches << {edge[0], frames.unsafe_fetch(frame_index)}
+          end
+          if branches.size == edges.size
+            pre_frame = @inline_caller_locals_stack.unsafe_fetch(frame_index)
+            ctx.restore_locals(pre_frame)
+            merge_if_branch_locals(ctx, pre_frame, branches)
+            @inline_caller_locals_stack[frame_index] = ctx.save_locals.locals
+          end
+          frame_index += 1
+        end
+      ensure
+        ctx.restore_locals(saved_ctx_locals)
+      end
+    end
+
+    # Innermost caller-frame binding of each active inline loop variable.
+    private def inline_loop_var_bindings : Hash(String, ValueId)?
+      loop_vars = inline_loop_vars_union
+      return nil unless loop_vars
+      bindings = {} of String => ValueId
+      loop_vars.each do |name|
+        index = @inline_caller_locals_stack.size - 1
+        while index >= 0
+          if value = @inline_caller_locals_stack.unsafe_fetch(index)[name]?
+            bindings[name] = value
+            break
+          end
+          index -= 1
+        end
+      end
+      bindings
+    end
+
+    # A loop variable written by a yielded block keeps its header binding and
+    # saves the write as the loop's back-edge value. When an inline-return
+    # merge rebinds the variable, the merged value supersedes that saved
+    # write: the write reaches the exit only on its own path.
+    private def refresh_inline_loop_backedges_after_merge(before : Hash(String, ValueId)?) : Nil
+      return unless before
+      after = inline_loop_var_bindings
+      return unless after
+      after.each do |name, value|
+        next unless active = active_loop_backedge_value(name)
+        next if value == active || before[name]? == value
+        @inline_loop_var_backedge_values[name] = {innermost_inline_loop_depth(name), value}
+      end
+    end
+
     private def debug_inline_locals_snapshot(
       ctx : LoweringContext,
       tag : String,
@@ -110230,6 +110334,7 @@ module Adamas::HIR
                 return_locals << {current_block, snapshot_inline_caller_locals_for_return(caller_locals)}
               end
             end
+            record_inline_return_outer_caller_locals(inline_return, current_block, @inline_caller_locals_stack.size - 1)
             nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
             ctx.emit(nil_lit)
             return nil_lit.id
@@ -110833,6 +110938,7 @@ module Adamas::HIR
           return_locals << {current_block, snapshot_inline_caller_locals_for_return(caller_locals)}
         end
       end
+      record_inline_return_outer_caller_locals(inline_return, current_block, inline_return_index)
       true
     end
 
@@ -145267,12 +145373,18 @@ module Adamas::HIR
                 return_locals << {ctx.current_block, snapshot_inline_caller_locals_for_return(current_caller_locals)}
               end
             end
+            unless inline_return.outer_caller_locals_incoming.empty?
+              record_inline_return_outer_caller_locals(inline_return, ctx.current_block, @inline_caller_locals_stack.size - 1)
+            end
           end
 
           ctx.switch_to_block(inline_return.exit_block)
+          loop_bindings_before_return = inline_loop_var_bindings
           if return_locals = @inline_yield_return_caller_locals_stack.last?
             merge_inline_caller_locals_for_inline_return(ctx, caller_locals, return_locals)
           end
+          merge_outer_inline_caller_locals_for_inline_return(ctx, inline_return)
+          refresh_inline_loop_backedges_after_merge(loop_bindings_before_return)
 
           if inline_return.incoming.empty?
             @control_flow_dead_blocks.add({ctx.function.id, inline_return.exit_block})
