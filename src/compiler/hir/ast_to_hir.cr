@@ -109362,23 +109362,23 @@ module Adamas::HIR
       name : String,
       subject_id : ValueId,
       covered : Set(Int32),
-    ) : Nil
+    ) : Bool
       source_type = ctx.type_of(subject_id)
       descriptor = union_descriptor_from_sidecar(source_type)
-      return unless descriptor
+      return false unless descriptor
 
       matched = descriptor.variants.select { |variant| covered.includes?(variant.type_id) }
-      return unless matched.size == covered.size && matched.size < descriptor.variants.size
+      return false unless matched.size == covered.size && matched.size < descriptor.variants.size
 
       types = matched.map { |variant| exact_hir_type_ref_for_union_variant(variant) }
-      return if types.any?(&.==(TypeRef::VOID))
+      return false if types.any?(&.==(TypeRef::VOID))
       if types.size == 1
         narrowed_type = types.first
         narrowed = UnionUnwrap.new(ctx.next_id, narrowed_type, subject_id, matched.first.type_id, false)
       else
         union_name = types.map { |type| generic_param_type_name_from_ref(type) }.join(" | ")
         narrowed_type = create_union_type(union_name)
-        return if narrowed_type == source_type || !is_union_type?(narrowed_type)
+        return false if narrowed_type == source_type || !is_union_type?(narrowed_type)
         narrowed = if all_ref_union_type_ref?(source_type) && all_ref_union_type_ref?(narrowed_type)
                      Copy.new(ctx.next_id, narrowed_type, subject_id)
                    else
@@ -109393,6 +109393,7 @@ module Adamas::HIR
         ctx.mark_type_literal(narrowed.id) if !facts.empty? && facts.all? { |(_, literal)| literal }
       end
       ctx.register_local(name, narrowed.id)
+      true
     end
 
     private def case_union_member_disjoint?(member_type : TypeRef, check_type : TypeRef) : Bool
@@ -109720,9 +109721,20 @@ module Adamas::HIR
           ctx.register_local(svn, subject_id)
         end
       end
+      # Every exact tag test along the chain sent the values carrying its tag
+      # to an arm, so the else sees only the variants no `when` tested:
+      # `case v when Box` over `Int32 | Box(Int32)` leaves `v : Int32` there.
+      else_tag_narrowed = false
+      if !subject_exhausted && subject_id && (uncovered = uncovered_union_variants) && !uncovered.empty?
+        if svn = subject_var_name
+          if ctx.lookup_local(svn) == subject_id
+            else_tag_narrowed = apply_case_union_tag_narrowing(ctx, svn, subject_id, uncovered)
+          end
+        end
+      end
       # Narrow the subject in the else branch: if .nil? was checked in a when branch,
       # the else branch can narrow the subject to the non-nil type.
-      if nil_was_checked && subject_id
+      if nil_was_checked && subject_id && !else_tag_narrowed
         if svn = subject_var_name
           subj_type = ctx.type_of(subject_id)
           if is_union_type?(subj_type)
