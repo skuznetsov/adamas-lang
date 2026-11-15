@@ -102166,6 +102166,7 @@ module Adamas::HIR
       # both source operands: unrelated errors and RHS result types survive a
       # constant Nil/Bool left value. Let CFG optimization fold the branch.
       pre_branch_locals = ctx.save_locals
+      pre_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
       branch_cell_proofs = ctx.closure_cell_write_proofs_on(ctx.current_block)
 
       then_block = ctx.create_block
@@ -102200,6 +102201,7 @@ module Adamas::HIR
       then_exit = ctx.current_block
       then_exit_cell_proofs = ctx.closure_cell_write_proofs_on(then_exit)
       then_locals = ctx.save_locals.locals
+      then_inline_locals = @inline_caller_locals_stack.map(&.dup)
       then_block_data = ctx.get_block(ctx.current_block)
       then_has_noreturn = block_has_raise_instruction?(then_block_data)
       then_flows_to_merge = then_block_data.terminator.is_a?(Unreachable) &&
@@ -102213,6 +102215,7 @@ module Adamas::HIR
       ctx.current_block = else_block
       ctx.rebind_closure_cell_write_proofs(branch_cell_proofs, else_block)
       ctx.restore_locals(pre_branch_locals)
+      @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
       else_value = if op_str == "||"
                      rhs_value = nil.as(ValueId?)
                      with_scoped_condition_narrowing(ctx, falsy_targets, capture_source) do
@@ -102225,6 +102228,7 @@ module Adamas::HIR
       else_exit = ctx.current_block
       else_exit_cell_proofs = ctx.closure_cell_write_proofs_on(else_exit)
       else_locals = ctx.save_locals.locals
+      else_inline_locals = @inline_caller_locals_stack.map(&.dup)
       else_block_data = ctx.get_block(ctx.current_block)
       else_has_noreturn = block_has_raise_instruction?(else_block_data)
       else_flows_to_merge = else_block_data.terminator.is_a?(Unreachable) &&
@@ -102244,6 +102248,11 @@ module Adamas::HIR
       flowing_cell_proofs << then_exit_cell_proofs if then_flows_to_merge
       flowing_cell_proofs << else_exit_cell_proofs if else_flows_to_merge
       ctx.join_closure_cell_write_proofs(merge_block, flowing_cell_proofs)
+      merge_inline_caller_locals_after_branches(
+        ctx, pre_inline_caller_locals,
+        {then_exit, then_inline_locals, then_flows_to_merge},
+        {else_exit, else_inline_locals, else_flows_to_merge},
+      )
 
       if then_flows_to_merge || else_flows_to_merge
         if then_flows_to_merge && else_flows_to_merge
@@ -105746,6 +105755,21 @@ module Adamas::HIR
       @inline_caller_locals_stack = merged_stack
     end
 
+    # Two-arm form of merge_inline_caller_locals_after_if for constructs that
+    # track each arm's exit block, inline snapshot and whether it flows to
+    # the join (ternary, `&&`, `||`).
+    private def merge_inline_caller_locals_after_branches(
+      ctx : LoweringContext,
+      pre_inline_caller_locals : Array(Hash(String, ValueId)),
+      then_arm : {BlockId, Array(Hash(String, ValueId)), Bool},
+      else_arm : {BlockId, Array(Hash(String, ValueId)), Bool},
+    ) : Nil
+      flowing = [] of {BlockId, Array(Hash(String, ValueId))}
+      flowing << {then_arm[0], then_arm[1]} if then_arm[2]
+      flowing << {else_arm[0], else_arm[1]} if else_arm[2]
+      merge_inline_caller_locals_after_if(ctx, pre_inline_caller_locals, flowing)
+    end
+
     private def lower_static_if_branch(
       ctx : LoweringContext,
       pre_branch_locals : LoweringContext::LocalsSnapshot,
@@ -108366,6 +108390,7 @@ module Adamas::HIR
 
       # Save locals before branching
       pre_branch_locals = ctx.save_locals
+      pre_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
 
       then_block = ctx.create_block
       else_block = ctx.create_block
@@ -108385,6 +108410,7 @@ module Adamas::HIR
       then_exit = ctx.current_block
       then_exit_cell_proofs = ctx.closure_cell_write_proofs_on(then_exit)
       then_locals = ctx.save_locals.locals
+      then_inline_locals = @inline_caller_locals_stack.map(&.dup)
 
       # Check if then branch flows to merge
       then_block_data = ctx.get_block(ctx.current_block)
@@ -108399,6 +108425,7 @@ module Adamas::HIR
       ctx.current_block = else_block
       ctx.rebind_closure_cell_write_proofs(branch_cell_proofs, else_block)
       ctx.restore_locals(pre_branch_locals)
+      @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
       apply_truthy_narrowing(ctx, falsy_targets)
       # The else arm sees the condition's negative is_a? filters, as in
       # lower_if (`x.is_a?(Nil) ? 5 : x` reads `x` as the remaining variant).
@@ -108407,6 +108434,7 @@ module Adamas::HIR
       else_exit = ctx.current_block
       else_exit_cell_proofs = ctx.closure_cell_write_proofs_on(else_exit)
       else_locals = ctx.save_locals.locals
+      else_inline_locals = @inline_caller_locals_stack.map(&.dup)
 
       # Check if else branch flows to merge
       else_block_data = ctx.get_block(ctx.current_block)
@@ -108423,6 +108451,11 @@ module Adamas::HIR
       flowing_cell_proofs << then_exit_cell_proofs if then_flows_to_merge
       flowing_cell_proofs << else_exit_cell_proofs if else_flows_to_merge
       ctx.join_closure_cell_write_proofs(merge_block, flowing_cell_proofs)
+      merge_inline_caller_locals_after_branches(
+        ctx, pre_inline_caller_locals,
+        {then_exit, then_inline_locals, then_flows_to_merge},
+        {else_exit, else_inline_locals, else_flows_to_merge},
+      )
 
       # Only create phi if at least one branch flows to merge
       if then_flows_to_merge || else_flows_to_merge
@@ -109561,7 +109594,11 @@ module Adamas::HIR
       merge_block = ctx.create_block
       incoming = [] of Tuple(BlockId, ValueId)
       branch_locals = [] of Tuple(BlockId, Hash(String, ValueId)) # Track locals for each branch
-      nil_was_checked = false                                     # Track if any when branch checks .nil? (for else narrowing)
+      # Caller locals of inlined yield blocks: every arm starts from the
+      # stack the comparison chain leaves, and the join merges the arms.
+      pre_case_inline_locals = @inline_caller_locals_stack.map(&.dup)
+      branch_inline_info = [] of {BlockId, Array(Hash(String, ValueId))}
+      nil_was_checked = false # Track if any when branch checks .nil? (for else narrowing)
       # Set once a `when` type check matches every value the subject can hold.
       # Later branches and the else body are then unreachable; Crystal types
       # the subject there as NoReturn and never instantiates their calls.
@@ -109626,6 +109663,7 @@ module Adamas::HIR
         end
 
         # When body - restore locals before each branch
+        chain_inline_locals = @inline_caller_locals_stack.map(&.dup)
         ctx.current_block = when_block
         ctx.restore_locals(pre_case_locals)
         # Re-register the subject variable if it was assigned in `case var = expr`.
@@ -109787,9 +109825,11 @@ module Adamas::HIR
         if when_flows_to_merge
           # Save branch locals before jumping to merge (only if flowing)
           branch_locals << {exit_block, filtered_when_locals}
+          branch_inline_info << {exit_block, @inline_caller_locals_stack.map(&.dup)}
           ctx.terminate(Jump.new(merge_block))
           incoming << {exit_block, result}
         end
+        @inline_caller_locals_stack = chain_inline_locals
 
         ctx.current_block = next_block
         if branch_proven_taken
@@ -109869,12 +109909,14 @@ module Adamas::HIR
       if else_flows_to_merge
         # Save else branch locals (only if flowing)
         branch_locals << {else_exit, filtered_else_locals}
+        branch_inline_info << {else_exit, @inline_caller_locals_stack.map(&.dup)}
         ctx.terminate(Jump.new(merge_block))
         incoming << {else_exit, else_result}
       end
 
       # Merge
       ctx.current_block = merge_block
+      merge_inline_caller_locals_after_if(ctx, pre_case_inline_locals, branch_inline_info)
 
       # Only merge locals and create phi if at least one branch flows
       if incoming.empty?
