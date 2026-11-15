@@ -66709,89 +66709,20 @@ module Adamas::HIR
       false
     end
 
-    # Deep yield check that also scans CaseNode values and when-conditions.
-    # Used by lower_block_to_proc to find yields in all expression positions.
-    # The regular contains_yield? intentionally doesn't scan case values
-    # to avoid affecting method registration semantics.
-    private def contains_yield_deep?(
-      body : Array(ExprId),
-      preferred_arena : Adamas::Compiler::Frontend::ArenaLike? = nil,
+    private def case_branches_contain_yield?(
+      branches : Array(Adamas::Compiler::Frontend::WhenBranch),
+      preferred_arena : Adamas::Compiler::Frontend::ArenaLike?,
     ) : Bool
-      return true if contains_yield?(body, preferred_arena)
-      # Scan case values and when-conditions that contains_yield? misses
-      idx = 0
-      while idx < body.size
-        return true if contains_yield_in_case_positions?(body.unsafe_fetch(idx), preferred_arena)
-        idx += 1
-      end
-      false
-    end
-
-    private def contains_yield_in_case_positions?(
-      expr_id : ExprId,
-      preferred_arena : Adamas::Compiler::Frontend::ArenaLike? = nil,
-    ) : Bool
-      return false if expr_id.null_ptr? || expr_id.invalid?
-      node = node_for_yield_scan(expr_id, preferred_arena)
-      return false unless node
-      case node
-      when Adamas::Compiler::Frontend::CaseNode
-        # Check case value (e.g. `case yield e` — yield is in the value position)
-        if case_val = node.value
-          return true if contains_yield_in_expr?(case_val, preferred_arena)
+      branch_idx = 0
+      while branch_idx < branches.size
+        branch = branches.unsafe_fetch(branch_idx)
+        cond_idx = 0
+        while cond_idx < branch.conditions.size
+          return true if contains_yield_in_expr?(branch.conditions.unsafe_fetch(cond_idx), preferred_arena)
+          cond_idx += 1
         end
-        # Check when conditions
-        branch_idx = 0
-        while branch_idx < node.when_branches.size
-          w = node.when_branches.unsafe_fetch(branch_idx)
-          cond_idx = 0
-          while cond_idx < w.conditions.size
-            return true if contains_yield_in_expr?(w.conditions.unsafe_fetch(cond_idx), preferred_arena)
-            cond_idx += 1
-          end
-          # Recurse into when bodies for nested cases
-          body_idx = 0
-          while body_idx < w.body.size
-            return true if contains_yield_in_case_positions?(w.body.unsafe_fetch(body_idx), preferred_arena)
-            body_idx += 1
-          end
-          branch_idx += 1
-        end
-        if else_body = node.else_branch
-          else_idx = 0
-          while else_idx < else_body.size
-            return true if contains_yield_in_case_positions?(else_body.unsafe_fetch(else_idx), preferred_arena)
-            else_idx += 1
-          end
-        end
-      when Adamas::Compiler::Frontend::IfNode
-        then_idx = 0
-        while then_idx < node.then_body.size
-          return true if contains_yield_in_case_positions?(node.then_body.unsafe_fetch(then_idx), preferred_arena)
-          then_idx += 1
-        end
-        if else_body = node.else_body
-          else_idx = 0
-          while else_idx < else_body.size
-            return true if contains_yield_in_case_positions?(else_body.unsafe_fetch(else_idx), preferred_arena)
-            else_idx += 1
-          end
-        end
-        false
-      when Adamas::Compiler::Frontend::WhileNode
-        idx = 0
-        while idx < node.body.size
-          return true if contains_yield_in_case_positions?(node.body.unsafe_fetch(idx), preferred_arena)
-          idx += 1
-        end
-        false
-      when Adamas::Compiler::Frontend::BlockNode
-        idx = 0
-        while idx < node.body.size
-          return true if contains_yield_in_case_positions?(node.body.unsafe_fetch(idx), preferred_arena)
-          idx += 1
-        end
-        false
+        return true if contains_yield?(branch.body, preferred_arena)
+        branch_idx += 1
       end
       false
     end
@@ -69221,10 +69152,15 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::ProcLiteralNode
         contains_yield?(node.body, preferred_arena)
       when Adamas::Compiler::Frontend::CaseNode
-        branch_idx = 0
-        while branch_idx < node.when_branches.size
-          return true if contains_yield?(node.when_branches.unsafe_fetch(branch_idx).body, preferred_arena)
-          branch_idx += 1
+        # The subject and the `when`/`in` conditions run like any other
+        # expression (`case yield(x)`, `r = case v = yield e`): a yield there
+        # makes the def a yielding def just like a yield in an arm.
+        if subject = node.value
+          return true if contains_yield_in_expr?(subject, preferred_arena)
+        end
+        return true if case_branches_contain_yield?(node.when_branches, preferred_arena)
+        if in_branches = node.in_branches
+          return true if case_branches_contain_yield?(in_branches, preferred_arena)
         end
         if else_branch = node.else_branch
           return true if contains_yield?(else_branch, preferred_arena)
@@ -144602,7 +144538,7 @@ module Adamas::HIR
       block : Adamas::Compiler::Frontend::BlockNode,
       arena : Adamas::Compiler::Frontend::ArenaLike,
     ) : Bool
-      return false unless contains_yield_deep?(block.body, arena)
+      return false unless contains_yield?(block.body, arena)
       index = @inline_yield_block_stack.size - 1
       while index >= 0
         target = @inline_yield_block_stack[index]
@@ -144611,7 +144547,7 @@ module Adamas::HIR
         if with_arena(target_arena) { block_requires_inline_nonlocal_exit?(target.body) }
           return true
         end
-        break unless contains_yield_deep?(target.body, target_arena)
+        break unless contains_yield?(target.body, target_arena)
         index -= 1
       end
       false
@@ -156951,7 +156887,7 @@ module Adamas::HIR
       end
 
       explicit_yield_target = nil.as(CapturedYieldTarget?)
-      has_yield = contains_yield_deep?(block_node.body, block_arena)
+      has_yield = contains_yield?(block_node.body, block_arena)
       if has_yield
         if !@inline_yield_block_stack.empty?
           parent_enum_ledger = @enum_value_types
@@ -157017,7 +156953,7 @@ module Adamas::HIR
         address_taken_captures = detect_address_taken_captures(block_node.body, capture_names, block_arena)
         # Caller blocks a `yield` in this body inlines are part of the thunk's
         # code too; closures nested in them can write the same cells.
-        if explicit_yield_target.nil? && contains_yield_deep?(block_node.body, block_arena)
+        if explicit_yield_target.nil? && contains_yield?(block_node.body, block_arena)
           yield_block_stack_idx = @inline_yield_block_stack.size - 1
           while yield_block_stack_idx >= 0
             yield_blk = @inline_yield_block_stack[yield_block_stack_idx]
@@ -157031,7 +156967,7 @@ module Adamas::HIR
               end
               address_taken_captures.concat(capture_names)
             end
-            break unless contains_yield_deep?(yield_blk.body, yield_blk_arena || block_arena)
+            break unless contains_yield?(yield_blk.body, yield_blk_arena || block_arena)
             yield_block_stack_idx -= 1
           end
         end
@@ -157325,7 +157261,7 @@ module Adamas::HIR
       # caller block stacks visible in that case.
       keep_outer_yield_blocks = explicit_yield_target_binding.nil? &&
                                 !@inline_yield_block_stack.empty? &&
-                                contains_yield_deep?(block_node.body, block_arena)
+                                contains_yield?(block_node.body, block_arena)
       unless keep_outer_yield_blocks
         @inline_yield_block_stack = [] of Adamas::Compiler::Frontend::BlockNode
         @inline_yield_block_arena_stack = [] of Adamas::Compiler::Frontend::ArenaLike
