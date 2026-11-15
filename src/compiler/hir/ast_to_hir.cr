@@ -91860,7 +91860,7 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::WhileNode
         lower_while(ctx, node)
       when Adamas::Compiler::Frontend::UntilNode
-        lower_until(ctx, node)
+        lower_while(ctx, node)
       when Adamas::Compiler::Frontend::TernaryNode
         lower_ternary(ctx, node)
       when Adamas::Compiler::Frontend::CaseNode
@@ -106714,7 +106714,14 @@ module Adamas::HIR
       nil_lit.id
     end
 
-    private def lower_while(ctx : LoweringContext, node : Adamas::Compiler::Frontend::WhileNode) : ValueId
+    # `until c` is `while !c`: one lowering serves both, only the condition's
+    # branch targets swap. A separate copy for `until` fell behind the inline
+    # yield machinery (caller-frame back-edge values, shadow phis, the
+    # caller-frame join at the exit) and dropped yielded blocks' writes.
+    private def lower_while(
+      ctx : LoweringContext,
+      node : Adamas::Compiler::Frontend::WhileNode | Adamas::Compiler::Frontend::UntilNode,
+    ) : ValueId
       # Collect variables that might be assigned in the loop body
       # We need phi nodes at the loop header for these
       yield_origins = [] of {String, Int32}
@@ -106881,12 +106888,17 @@ module Adamas::HIR
       lower_condition_branch(ctx, node.condition, cond_true_block, cond_false_block)
 
       # Keep a single normal-exit predecessor for exit/result phis.
-      ctx.current_block = cond_true_block
+      body_entry_block, cond_branch_block =
+        if node.is_a?(Adamas::Compiler::Frontend::UntilNode)
+          {cond_false_block, cond_true_block}
+        else
+          {cond_true_block, cond_false_block}
+        end
+      ctx.current_block = body_entry_block
       ctx.terminate(Jump.new(body_block))
 
-      ctx.current_block = cond_false_block
+      ctx.current_block = cond_branch_block
       ctx.terminate(Jump.new(exit_block))
-      cond_branch_block = cond_false_block
 
       # Body block
       ctx.current_block = body_block
@@ -107046,7 +107058,8 @@ module Adamas::HIR
         merge_inline_caller_locals_after_if(ctx, pre_inline_caller_locals, flowing_inline_info)
       end
 
-      normal_exit = literal_true_loop_condition?(node.condition) ? nil : cond_branch_block
+      infinite = node.is_a?(Adamas::Compiler::Frontend::WhileNode) && literal_true_loop_condition?(node.condition)
+      normal_exit = infinite ? nil : cond_branch_block
       lower_conditional_loop_exit_result(ctx, normal_exit, break_values, break_info)
     end
 
@@ -108265,204 +108278,6 @@ module Adamas::HIR
           end
         end
       end
-    end
-
-    private def lower_until(ctx : LoweringContext, node : Adamas::Compiler::Frontend::UntilNode) : ValueId
-      # Until is while with inverted condition — needs phi nodes like lower_while
-      assigned_vars = collect_assigned_vars(node.body)
-      inline_vars = Set(String).new
-
-      pre_loop_block = ctx.current_block
-      initial_values = {} of String => ValueId
-      assigned_vars.each do |var_name|
-        if val = lookup_local_for_phi(ctx, var_name, inline_vars)
-          initial_values[var_name] = val
-        end
-      end
-
-      assigned_var_types = {} of String => TypeRef
-      old_body_context = @infer_body_context
-      @infer_body_context = node.body
-      begin
-        assigned_vars.each do |var_name|
-          if inferred = infer_local_type_from_body(node.body, var_name, @current_class)
-            assigned_var_types[var_name] = inferred unless inferred == TypeRef::VOID
-          end
-        end
-      ensure
-        @infer_body_context = old_body_context
-      end
-
-      cond_block = ctx.create_block
-      body_block = ctx.create_block
-      exit_block = ctx.create_block
-
-      ctx.terminate(Jump.new(cond_block))
-
-      # Condition block - create phi nodes for mutable variables
-      ctx.current_block = cond_block
-      phi_nodes = {} of String => Phi
-      assigned_vars.each do |var_name|
-        if initial_val = initial_values[var_name]?
-          var_type = ctx.type_of(initial_val)
-          if var_type == TypeRef::VOID
-            if value = ctx.value_for(initial_val)
-              var_type = value.type unless value.type == TypeRef::VOID
-            end
-          end
-          if var_type == TypeRef::VOID
-            if locals = @current_typeof_locals
-              if inferred_ref = locals[var_name]?
-                var_type = inferred_ref unless inferred_ref == TypeRef::VOID
-              end
-            end
-          end
-          if var_type == TypeRef::VOID
-            if inferred = assigned_var_types[var_name]?
-              var_type = inferred
-            end
-          end
-          if inferred = assigned_var_types[var_name]?
-            pointer_type = var_type == TypeRef::POINTER
-            unless pointer_type
-              if desc = @module.get_type_descriptor(var_type)
-                pointer_type = desc.not_nil!.kind == TypeKind::Pointer
-              end
-            end
-            var_desc_u = @module.get_type_descriptor(var_type)
-            struct_or_class_u = var_desc_u && (var_desc_u.kind == TypeKind::Struct || var_desc_u.kind == TypeKind::Class)
-            if (pointer_type || struct_or_class_u) && numeric_primitive?(inferred)
-              # Avoid widening pointer/struct phis to numeric types based on brittle inference.
-            else
-              merged = union_type_for_values(var_type, inferred)
-              var_type = merged
-            end
-          end
-          phi = Phi.new(ctx.next_id, var_type)
-          incoming = {pre_loop_block, initial_val}
-          if var_type != ctx.type_of(initial_val)
-            val_type = ctx.type_of(initial_val)
-            if is_union_type?(var_type)
-              if variant_id = get_union_variant_id(var_type, val_type)
-                variant_id >= 0
-                wrap = UnionWrap.new(ctx.next_id, var_type, initial_val, variant_id)
-                ctx.emit_to_block(pre_loop_block, wrap)
-                incoming = {pre_loop_block, wrap.id}
-              end
-            elsif numeric_primitive?(val_type) && numeric_primitive?(var_type)
-              cast = Cast.new(ctx.next_id, var_type, initial_val, var_type, safe: false)
-              ctx.emit_to_block(pre_loop_block, cast)
-              incoming = {pre_loop_block, cast.id}
-            end
-          end
-          phi.add_incoming(incoming[0], incoming[1])
-          ctx.emit(phi)
-          phi_nodes[var_name] = phi
-          ctx.register_local(var_name, phi.id)
-          if inline_vars.includes?(var_name)
-            @inline_caller_locals_stack.reverse_each do |locals|
-              if locals.has_key?(var_name)
-                locals[var_name] = phi.id
-                break
-              end
-            end
-          end
-        end
-      end
-
-      # Lower until condition in condition-context and route via wrappers:
-      # condition true => exit, condition false => body.
-      cond_true_block = ctx.create_block
-      cond_false_block = ctx.create_block
-      lower_condition_branch(ctx, node.condition, cond_true_block, cond_false_block)
-
-      ctx.current_block = cond_true_block
-      ctx.terminate(Jump.new(exit_block))
-
-      ctx.current_block = cond_false_block
-      ctx.terminate(Jump.new(body_block))
-
-      # Body block
-      ctx.current_block = body_block
-      updated_loop_values, break_info, break_values = with_loop_body_frame(
-        ctx, node, cond_block, exit_block, phi_nodes, assigned_vars, inline_vars,
-      ) do
-        lower_body(ctx, node.body)
-      end
-      body_exit_block = ctx.current_block
-
-      # Patch phi nodes with back-edge values
-      assigned_vars.each do |var_name|
-        if phi = phi_nodes[var_name]?
-          if updated_val = updated_loop_values[var_name]?
-            incoming_val = updated_val
-            phi_type = ctx.type_of(phi.id)
-            if phi_type != ctx.type_of(updated_val)
-              val_type = ctx.type_of(updated_val)
-              if is_union_type?(phi_type)
-                if variant_id = get_union_variant_id(phi_type, val_type)
-                  variant_id >= 0
-                  wrap = UnionWrap.new(ctx.next_id, phi_type, updated_val, variant_id)
-                  ctx.emit_to_block(body_exit_block, wrap)
-                  incoming_val = wrap.id
-                end
-              elsif numeric_primitive?(val_type) && numeric_primitive?(phi_type)
-                cast = Cast.new(ctx.next_id, phi_type, updated_val, phi_type, safe: false)
-                ctx.emit_to_block(body_exit_block, cast)
-                incoming_val = cast.id
-              end
-            end
-            phi.add_incoming(body_exit_block, incoming_val)
-            ctx.register_local(var_name, phi.id)
-          else
-            # Unchanged on the backedge path — still needs the self-incoming
-            # so the phi covers every real predecessor (L10-β family).
-            phi.add_incoming(body_exit_block, phi.id)
-          end
-        end
-      end
-
-      if ctx.get_block(ctx.current_block).terminator.is_a?(Unreachable)
-        ctx.terminate(Jump.new(cond_block))
-      end
-
-      # Exit block - merge normal exit + break paths
-      ctx.current_block = exit_block
-
-      if break_info.empty?
-        phi_nodes.each do |var_name, phi|
-          if inline_vars.includes?(var_name)
-            if saved = finished_loop_backedge_value(var_name)
-              ctx.register_local(var_name, saved)
-              @inline_caller_locals_stack.reverse_each do |locals|
-                if locals.has_key?(var_name)
-                  locals[var_name] = saved
-                  break
-                end
-              end
-              next
-            end
-          end
-          ctx.register_local(var_name, phi.id)
-        end
-      else
-        phi_nodes.each do |var_name, cond_phi|
-          exit_phi = Phi.new(ctx.next_id, cond_phi.type)
-          # Normal exit path comes from `cond_true_block` (condition became true).
-          exit_phi.add_incoming(cond_true_block, cond_phi.id)
-          break_info.each do |break_block, break_locals|
-            if break_val = break_locals[var_name]?
-              exit_phi.add_incoming(break_block, break_val)
-            else
-              exit_phi.add_incoming(break_block, cond_phi.id)
-            end
-          end
-          ctx.emit(exit_phi)
-          bind_loop_exit_local(ctx, var_name, exit_phi.id, inline_vars, nearest_frame: true)
-        end
-      end
-
-      lower_conditional_loop_exit_result(ctx, cond_true_block, break_values, break_info)
     end
 
     private def lower_ternary(ctx : LoweringContext, node : Adamas::Compiler::Frontend::TernaryNode) : ValueId
