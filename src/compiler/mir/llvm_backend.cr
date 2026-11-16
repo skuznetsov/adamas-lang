@@ -18049,10 +18049,13 @@ module Adamas::MIR
       if inst.type == TypeRef::STRING && (v = inst.string_value)
         STDERR.puts "[EMIT_CONST] string constant" if ENV["ADAMAS_TRACE_EMIT_CONSTANT"]?
         global_name = get_or_create_string_global(v)
-        # String constant is a pointer to the global
+        # String constant is a pointer to the global. The ledger keeps the
+        # String type (its LLVM form is still `ptr`): union wraps pick the
+        # discriminator from it, and Pointer would tag `arr[i] = "lit"` in an
+        # `Int32 | String` array as a Pointer arm.
         @constant_values[inst.id] = global_name
         emit "#{name} = bitcast ptr #{global_name} to ptr"
-        @value_types[inst.id] = TypeRef::POINTER
+        @value_types[inst.id] = TypeRef::STRING
         return
       end
       STDERR.puts "[EMIT_CONST] after string check" if ENV["ADAMAS_TRACE_EMIT_CONSTANT"]?
