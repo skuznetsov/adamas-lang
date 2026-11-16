@@ -3339,6 +3339,9 @@ module Adamas::HIR
     # AST of function definitions for inline expansion
     @function_defs : Hash(String, Adamas::Compiler::Frontend::DefNode)
     @primitive_template_source_bindings : Hash(String, PrimitiveTemplateSourceBinding)
+    # Value self-redispatch wrapper re-owns admitted so far: receiver-owned
+    # target => selected Object source registry name.
+    @value_self_wrapper_admissions : Hash(String, String)
     # An intrinsic annotation belongs to one declaration and arena, not every
     # overload that shares the emitted method family.
     @source_primitive_annotations : Hash(UInt64, {
@@ -4232,9 +4235,19 @@ module Adamas::HIR
       return false unless value_self_redispatch_wrapper_source?(requested_name, resolved_name, resolved_def, resolved_arena)
       return false unless normalize_method_owner_name(get_type_name_from_ref(receiver_type)) == parse_method_name(requested_name).owner
 
-      !inherited_nilary_member_source_binding_for_target(
-        requested_name, resolved_name, resolved_def, resolved_arena, 0, false, false,
-      ).nil?
+      if inherited_nilary_member_source_binding_for_target(
+           requested_name, resolved_name, resolved_def, resolved_arena, 0, false, false,
+         )
+        @value_self_wrapper_admissions[requested_name] = resolved_name
+        return true
+      end
+      # Once the admitted target is materialized it needs no replay binding,
+      # but the re-own still holds: a later call must not fall back to the
+      # shared Object body, whose `self` is Object.
+      @value_self_wrapper_admissions[requested_name]? == resolved_name &&
+        (@module.has_function_with_body?(requested_name) ||
+          function_state(requested_name).in_progress? ||
+          function_state(requested_name).completed?)
     end
 
     # The receiver-independent half of the value wrapper re-own: the exact
@@ -9225,6 +9238,7 @@ module Adamas::HIR
       @union_descriptor_entries = [] of UnionDescriptorRegistration
       @function_defs = Hash(String, Adamas::Compiler::Frontend::DefNode).new(initial_capacity: 32768)
       @primitive_template_source_bindings = {} of String => PrimitiveTemplateSourceBinding
+      @value_self_wrapper_admissions = {} of String => String
       @source_primitive_annotations = {} of UInt64 => {
         Adamas::Compiler::Frontend::DefNode,
         Adamas::Compiler::Frontend::ArenaLike,
@@ -124867,6 +124881,7 @@ module Adamas::HIR
       selected_call_entry_arena : Adamas::Compiler::Frontend::ArenaLike? = nil
       selected_call_entry_origin : IncludedModuleDefOrigin? = nil
       selected_reference_wrapper_target : String? = nil
+      selected_value_wrapper_source : ForceLowerExactSourceBinding? = nil
       double_splat_layout_specialized = false
       selected_call_entry_name : String? = nil
       # Preserve the authoritative structured-resolver selection for the
@@ -125340,6 +125355,27 @@ module Adamas::HIR
             end
             base_method_name = reference_base
             selected_reference_wrapper_target = mangled_method_name
+          end
+        end
+        # A self-result or self-redispatching Object wrapper on a concrete
+        # value receiver (`5.me()`) is re-owned onto that receiver, as member
+        # access does for the parenless form: the shared Object body types
+        # `self` as Object. Return inference replays the selected source
+        # under the receiver owner.
+        if receiver_id && !ctx.type_literal?(receiver_id) && selected_reference_wrapper_target.nil? &&
+           args.empty? && !has_block_call && !has_named_args && !has_splat &&
+           (value_entry_arena = @function_def_arenas[entry_name]?)
+          value_receiver_type = ctx.type_of(receiver_id)
+          value_wrapper_target = "#{normalize_method_owner_name(get_type_name_from_ref(value_receiver_type))}##{method_name}"
+          if preserve_requested_value_self_redispatch_wrapper_owner?(
+               value_wrapper_target, entry_name, entry_def, value_entry_arena, value_receiver_type,
+             )
+            mangled_method_name = value_wrapper_target
+            base_method_name = value_wrapper_target
+            selected_reference_wrapper_target = value_wrapper_target
+            selected_value_wrapper_source = inherited_nilary_member_source_binding_for_target(
+              value_wrapper_target, entry_name, entry_def, value_entry_arena, 0, false, false,
+            )
           end
         end
         if debug_env_filter_match?("DEBUG_CALL_LOOKUP", ctx.function.name, lookup_name, entry_name, mangled_method_name)
@@ -127320,8 +127356,27 @@ module Adamas::HIR
 
       # Try to infer return type using mangled name first, fallback to base name
       # For non-overloaded functions, prefer base name since that's how they're registered in HIR module
-      return_type = get_function_return_type(mangled_method_name, return_def_arg_count,
-        generated_allocator_call_target ? nil : entry_def)
+      value_wrapper_source = selected_value_wrapper_source
+      value_wrapper_source = nil unless mangled_method_name == selected_reference_wrapper_target
+      return_type = if value_wrapper_source
+                      value_wrapper_return_type = TypeRef::VOID
+                      value_wrapper_bound = with_force_lower_exact_source(mangled_method_name, value_wrapper_source) do
+                        value_wrapper_return_type = get_function_return_type(
+                          mangled_method_name,
+                          return_def_arg_count,
+                          value_wrapper_source.source_def,
+                          selected_source_binding: value_wrapper_source,
+                        )
+                        true
+                      end
+                      unless value_wrapper_bound
+                        raise LoweringError.new("value wrapper source changed before return inference: #{mangled_method_name}", node)
+                      end
+                      value_wrapper_return_type
+                    else
+                      get_function_return_type(mangled_method_name, return_def_arg_count,
+                        generated_allocator_call_target ? nil : entry_def)
+                    end
       # Preserve the structured resolver's selected overload through return
       # inference. If typed resolution missed but the exact symbol cache already
       # has a concrete return, keep that contract: an arity-only retry can choose
