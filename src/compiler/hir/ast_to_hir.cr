@@ -4044,7 +4044,8 @@ module Adamas::HIR
       source : ForceLowerExactSourceBinding,
     ) : String?
       source_name = source.source_registry_name || return nil
-      return nil unless preserve_requested_runtime_reference_wrapper_owner?(name, source_name, source.source_def)
+      return nil unless preserve_requested_runtime_reference_wrapper_owner?(name, source_name, source.source_def) ||
+                        value_self_redispatch_wrapper_source?(name, source_name, source.source_def, source.source_arena)
       owner = parse_method_name(name).owner
       owner.empty? ? nil : owner
     end
@@ -4228,6 +4229,24 @@ module Adamas::HIR
       resolved_arena : Adamas::Compiler::Frontend::ArenaLike,
       receiver_type : TypeRef,
     ) : Bool
+      return false unless value_self_redispatch_wrapper_source?(requested_name, resolved_name, resolved_def, resolved_arena)
+      return false unless normalize_method_owner_name(get_type_name_from_ref(receiver_type)) == parse_method_name(requested_name).owner
+
+      !inherited_nilary_member_source_binding_for_target(
+        requested_name, resolved_name, resolved_def, resolved_arena, 0, false, false,
+      ).nil?
+    end
+
+    # The receiver-independent half of the value wrapper re-own: the exact
+    # registered Object nilary source whose body needs the concrete value
+    # owner. Return inference for the re-owned symbol types `self` by the
+    # same rule, so its result agrees with the body lowered under that owner.
+    private def value_self_redispatch_wrapper_source?(
+      requested_name : String,
+      resolved_name : String,
+      resolved_def : Adamas::Compiler::Frontend::DefNode,
+      resolved_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Bool
       requested_parts = parse_method_name(requested_name)
       resolved_parts = parse_method_name(resolved_name)
       return false unless requested_parts.is_instance && resolved_parts.is_instance
@@ -4237,15 +4256,10 @@ module Adamas::HIR
 
       requested_owner = requested_parts.owner
       return false if requested_owner.empty?
-      return false unless normalize_method_owner_name(get_type_name_from_ref(receiver_type)) == requested_owner
       return false unless inherited_value_dispatch_needs_origin?(requested_owner)
       return false unless @function_defs[resolved_name]?.try(&.same?(resolved_def)) == true &&
                           @function_def_arenas[resolved_name]?.try(&.same?(resolved_arena)) == true
-      return false unless object_wrapper_source_redispatches_through_self?(resolved_name, resolved_def)
-
-      !inherited_nilary_member_source_binding_for_target(
-        requested_name, resolved_name, resolved_def, resolved_arena, 0, false, false,
-      ).nil?
+      object_wrapper_source_redispatches_through_self?(resolved_name, resolved_def)
     end
 
     private def object_wrapper_source_redispatches_through_self?(
@@ -4286,7 +4300,8 @@ module Adamas::HIR
                                 )
         end
         same_method_delegate || case_equality_delegate || inequality_delegate ||
-          object_wrapper_forwards_self_to_argument?(resolved_def, source_arena)
+          object_wrapper_forwards_self_to_argument?(resolved_def, source_arena) ||
+          object_wrapper_result_is_self?(resolved_def, source_arena)
       ensure
         @arena = old_arena
       end
@@ -4330,6 +4345,30 @@ module Adamas::HIR
       receiver.is_a?(Adamas::Compiler::Frontend::IdentifierNode) &&
         identifier_name_text(receiver, source_arena) == param_name &&
         source_arena[expression.args.first].is_a?(Adamas::Compiler::Frontend::SelfNode)
+    end
+
+    # An unannotated Object wrapper whose whole body is `self` (`itself`,
+    # `not_nil!`) returns the receiver value: as in Crystal, where every
+    # instantiation types `self` as the receiver, its result is the concrete
+    # receiver type, not Object. A shared Object-owned body would publish
+    # Object for `nil.itself` and lose the receiver's identity.
+    private def object_wrapper_result_is_self?(
+      resolved_def : Adamas::Compiler::Frontend::DefNode,
+      source_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Bool
+      return false if resolved_def.return_type
+      body = resolved_def.body
+      return false unless body && body.size == 1
+      expression = source_arena[body.first]
+      if expression.is_a?(Adamas::Compiler::Frontend::ReturnNode)
+        value = expression.value
+        return false unless value
+        expression = source_arena[value]
+      end
+      while expression.is_a?(Adamas::Compiler::Frontend::GroupingNode)
+        expression = source_arena[expression.expression]
+      end
+      expression.is_a?(Adamas::Compiler::Frontend::SelfNode)
     end
 
     private def canonical_case_equality_wrapper_param_name(
@@ -13154,6 +13193,20 @@ module Adamas::HIR
         return candidate unless function_def_overloads(candidate).empty?
       end
       nil
+    end
+
+    # Whether the nearest declaration of nilary `method_name` for `arm` is an
+    # Object wrapper whose result is `self`, so that receiver's call returns
+    # the receiver's own type.
+    private def object_self_result_arm?(arm : String, method_name : String) : Bool
+      inherited = resolve_method_with_inheritance(arm, method_name) || return false
+      # The resolved name may already be receiver-owned (`Nil#itself`); the
+      # selected source names the declaring owner.
+      selected = lookup_function_def_for_call(inherited, 0, false, [] of TypeRef) || return false
+      parts = parse_method_name(selected[0])
+      return false unless parts.is_instance && parts.owner == "Object"
+      arena = @function_def_arenas[selected[0]]? || return false
+      object_wrapper_result_is_self?(selected[1], arena)
     end
 
     # A dispatch name can be anchored on one member of a closed union. For a
@@ -133173,6 +133226,30 @@ module Adamas::HIR
         end
         if direct_heap_aggregate_proc_return_wrap_compatible?(concrete_returns, dispatch_return_type)
           explicit_branch_return_types = concrete_returns
+        end
+      end
+
+      # An arm that inherits an Object self-result wrapper (`itself`) returns
+      # itself, while the caller's estimate types the shared Object body,
+      # where `self` is Object. Join the arms' own results instead; an arm
+      # with its own declaration keeps its selected result, which must be a
+      # plain member of the join.
+      if explicit_branch_return_types.nil? && !strict_hash_dispatch && args.empty? &&
+         !has_block_call && block_id.nil?
+        self_result_arms = vms.map { |branch| object_self_result_arm?(get_type_name_from_ref(branch[1]), mb) }
+        if self_result_arms.any?
+          arm_types = [] of TypeRef
+          vms.each_with_index do |branch, index|
+            arm_type = self_result_arms[index] ? branch[1] : get_function_return_type(branch[0], 0)
+            break if arm_type == TypeRef::VOID
+            break if !self_result_arms[index] &&
+                     @module.get_type_descriptor(arm_type).try(&.kind) == TypeKind::Union
+            arm_types << arm_type
+          end
+          if arm_types.size == vms.size && (arm_join = union_type_for_value_set(arm_types))
+            explicit_branch_return_types = arm_types
+            dispatch_return_type = arm_join
+          end
         end
       end
 
