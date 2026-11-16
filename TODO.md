@@ -27331,3 +27331,57 @@ oracle-qualified regression unless stated otherwise.
 - [ ] `contains_return_after_yield?` is over-conservative; deep yield chains
   (e4/e6) still fall back to block calls.
 - [ ] Next: S1 -> S2 bootstrap on this branch, then LavinMQ parity.
+
+
+### 2026-11-16 — Wrong results on the GPT tip (chains 4-5)
+
+One fix per commit, each with an oracle-qualified regression
+(original Crystal 1.22 first).
+
+- [x] Lexer/parser: af34e982 `<<-` heredoc bodies are decoded like Crystal
+  (`heredoc_decode_repro.sh`); 4f80dad8 only a source `%` token starts a
+  percent literal (`quoted_percent_literal_repro.sh`).
+- [x] Inline yields and loops: 594efc1c back-edge values merge at branch
+  joins (`inline_yield_loop_backedge_join_repro.sh`); b4f4c18f yielded caller
+  locals ride the frame in callee loops (`inline_nested_loop_frame_var_repro.sh`);
+  37534dba loop-carried assignments are found in every subexpression
+  (`loop_assigned_vars_subexpression_repro.sh`); 80c4b0e4 `until` lowers
+  through the while lowering (`until_inline_yield_caller_locals_repro.sh`).
+- [x] Case/is_a? flow: 7c2bfff3 case arms start from the locals the subject
+  and conditions leave (`case_subject_and_condition_locals_repro.sh`);
+  a27e88f1 yields in case subjects and when conditions
+  (`case_yield_subject_scan_repro.sh`); fe34458a the case else arm narrows to
+  the unclaimed variants (`case_else_tag_narrowing_repro.sh`); 1cedf3a8 an
+  is_a? else arm keeps every statically failing variant
+  (`is_a_else_union_remainder_repro.sh`); bf5c5cb8 runtime `unless x.is_a?`
+  bodies get the negative filters (`unless_is_a_body_narrowing_repro.sh`).
+- [x] 9a75e08d bare module restrictions admit generic module applications
+  (`bare_generic_module_restriction_repro.sh`); e71c65ff block return type
+  params resolve through shape-keyed block targets
+  (`shape_keyed_block_return_param_repro.sh`); 5a3ab182 yields inside
+  is_a?/as/as?/responds_to? are visible to the yield walkers
+  (`yield_type_test_wrapper_repro.sh`).
+- [x] 7897bd37 `as?` with a primitive target lowers to a real `Nil | T`
+  union instead of a selected pointer (`as_question_value_target_repro.sh`).
+- [x] f82d0626 a heap-backed union variant occupies one pointer word in the
+  LLVM payload; `Int32 | String` was 8 bytes wider than its HIR descriptor
+  slot (`union_reference_payload_width_repro.sh`).
+- [x] 18fbf7f4 string constants keep the String type in the backend value
+  ledger, so union wraps tag them String (`string_constant_union_index_set_repro.sh`).
+- [x] 0dd00b34 UInt32/UInt64 interpolation prints unsigned
+  (`unsigned_interpolation_repro.sh`).
+- [x] 34f6fc82 the direct-accessor body recovery applies only to defs with
+  the zero-argument shape; `STDERR.puts x` on `Int32 | String` compiles
+  (`union_fanout_zero_arg_accessor_recovery_repro.sh`).
+- [ ] Int128/UInt128 interpolation truncates to 64 bits.
+- [ ] `x.compact_map(&.as?(Int32))` fails with "case branch lost its owned
+  Block scope" (the block form works). The check in with_case_branch_scope
+  runs in `ensure` and masks the in-flight lowering error.
+- [ ] `typeof([1, nil].first)` prints `Value`; `a : Int32? = 5; typeof(a)`
+  prints the declared union (original Crystal: Int32).
+- [ ] typeof in a generic type argument (`FM(typeof(et(x)))`) infers from a
+  body estimate that any body-local read poisons; blocks prelude
+  `(1..3).each.flat_map`.
+- [ ] Short-circuit RHS assignment leak; subjectless multi-condition `when`;
+  `H.new(func)` "generated allocator callback has no concrete Proc
+  signature"; printf `arg_index` with case + is_a? + yield in while.
