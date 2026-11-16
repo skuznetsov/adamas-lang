@@ -85071,9 +85071,12 @@ module Adamas::HIR
         return type_ref_for_name(target_name)
       when Adamas::Compiler::Frontend::AsQuestionNode
         target_name = normalize_declared_type_name((safe_slice_to_string(value_node.target_type) || ""))
-        # HIR keeps the concrete cast target as the carrier and records possible
-        # null separately on the lowered value via `mark_as_question_result`.
-        return type_ref_for_name(target_name)
+        # HIR keeps a reference cast target as the carrier and records possible
+        # null separately on the lowered value via `mark_as_question_result`;
+        # a primitive target lowers to a real `T | Nil` union.
+        target_ref = type_ref_for_name(target_name)
+        return create_union_type_for_nullable(target_ref) if as_question_value_carrier?(target_ref)
+        return target_ref
       when Adamas::Compiler::Frontend::ArrayLiteralNode
         if custom_name = value_node.custom_name
           return infer_named_collection_literal_type(custom_name, value_node.elements) || TypeRef::VOID
@@ -159237,6 +159240,11 @@ module Adamas::HIR
       target_type_name = resolve_type_name_in_context((safe_slice_to_string(node.target_type) || ""))
       target_type = type_ref_for_name(target_type_name)
 
+      if narrowing = as_question_value_narrowing(ctx.type_of(value_id), target_type)
+        narrowed_type, variant_id = narrowing
+        return lower_as_question_value(ctx, value_id, target_type_name, narrowed_type, variant_id)
+      end
+
       # Emit is_a?(Type) check → Bool
       is_a_result = emit_is_a_check(ctx, value_id, target_type_name)
       # Emit: __adamas_select_ptr(is_a_bool, obj) → ptr (or null)
@@ -159249,6 +159257,114 @@ module Adamas::HIR
       # Mark this value as potentially null so lower_truthy_check emits null check
       ctx.mark_as_question_result(select_call.id)
       select_call.id
+    end
+
+    # Primitive values have no null pointer that could stand for nil.
+    # Abstract `Int`/`Float` targets are not carriers: their result type is
+    # the matched concrete member, decided only at the use site.
+    private def as_question_value_carrier?(type : TypeRef) : Bool
+      case type
+      when TypeRef::BOOL, TypeRef::SYMBOL, TypeRef::CHAR,
+           TypeRef::INT8, TypeRef::INT16, TypeRef::INT32, TypeRef::INT64, TypeRef::INT128,
+           TypeRef::UINT8, TypeRef::UINT16, TypeRef::UINT32, TypeRef::UINT64, TypeRef::UINT128,
+           TypeRef::FLOAT32, TypeRef::FLOAT64
+        true
+      else
+        false
+      end
+    end
+
+    AS_QUESTION_STATICALLY_NIL = -2
+
+    # `x.as?(T)` is typed `T | Nil`. The pointer select used for references
+    # encodes nil as null, which a primitive result cannot carry: `9.as?(Int32)`
+    # became `inttoptr 9` and the narrowed read loaded from that address.
+    # Returns the value-carried narrowed type and the union variant to unwrap
+    # (-1 for a non-union value, AS_QUESTION_STATICALLY_NIL when no member can
+    # match a primitive target), or nil when the pointer carrier applies.
+    private def as_question_value_narrowing(value_type : TypeRef, target_type : TypeRef) : {TypeRef, Int32}?
+      return nil if value_type == TypeRef::VOID || target_type == TypeRef::VOID
+      if is_union_type?(value_type)
+        split = union_variants_satisfying_union_check(value_type, target_type)
+        return nil unless split
+        matched, _total = split
+        if matched.empty?
+          return nil unless as_question_value_carrier?(target_type)
+          return {target_type, AS_QUESTION_STATICALLY_NIL}
+        end
+        return nil unless matched.size == 1
+        variant_id, matched_type = matched.first
+        return nil unless as_question_value_carrier?(matched_type)
+        return {matched_type, variant_id}
+      end
+      static_match = statically_is_a_type?(value_type, target_type)
+      if static_match == false
+        return nil unless as_question_value_carrier?(target_type)
+        return {target_type, AS_QUESTION_STATICALLY_NIL}
+      end
+      return nil unless static_match == true && as_question_value_carrier?(value_type)
+      {value_type, -1}
+    end
+
+    private def lower_as_question_value(
+      ctx : LoweringContext,
+      value_id : ValueId,
+      target_type_name : String,
+      narrowed_type : TypeRef,
+      variant_id : Int32,
+    ) : ValueId
+      result_type = create_union_type_for_nullable(narrowed_type)
+      if variant_id == AS_QUESTION_STATICALLY_NIL
+        return emit_nil_in_nullable_union(ctx, result_type)
+      end
+      is_a_result = emit_is_a_check(ctx, value_id, target_type_name)
+      # Both arms only rewrap the already-lowered value, so the closure-cell
+      # proofs alive here still hold at the join.
+      entry_cell_proofs = ctx.closure_cell_write_proofs_on(ctx.current_block)
+      then_block = ctx.create_block
+      else_block = ctx.create_block
+      merge_block = ctx.create_block
+      ctx.terminate(Branch.new(is_a_result, then_block, else_block))
+
+      ctx.current_block = then_block
+      narrowed_id = value_id
+      if variant_id >= 0
+        unwrap = UnionUnwrap.new(ctx.next_id, narrowed_type, value_id, variant_id, false)
+        ctx.emit(unwrap)
+        ctx.register_type(unwrap.id, narrowed_type)
+        narrowed_id = unwrap.id
+      end
+      some = UnionWrap.new(ctx.next_id, result_type, narrowed_id,
+        merge_union_variant_id(ctx, result_type, narrowed_id, narrowed_type))
+      ctx.emit(some)
+      ctx.register_type(some.id, result_type)
+      then_exit = ctx.current_block
+      ctx.terminate(Jump.new(merge_block))
+
+      ctx.current_block = else_block
+      none_id = emit_nil_in_nullable_union(ctx, result_type)
+      else_exit = ctx.current_block
+      ctx.terminate(Jump.new(merge_block))
+
+      ctx.current_block = merge_block
+      ctx.carry_closure_cell_write_proofs(entry_cell_proofs)
+      phi = Phi.new(ctx.next_id, result_type)
+      phi.add_incoming(then_exit, some.id)
+      phi.add_incoming(else_exit, none_id)
+      ctx.emit(phi)
+      ctx.register_type(phi.id, result_type)
+      phi.id
+    end
+
+    private def emit_nil_in_nullable_union(ctx : LoweringContext, union_type : TypeRef) : ValueId
+      nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+      ctx.emit(nil_lit)
+      ctx.register_type(nil_lit.id, TypeRef::NIL)
+      none = UnionWrap.new(ctx.next_id, union_type, nil_lit.id,
+        merge_union_variant_id(ctx, union_type, nil_lit.id, TypeRef::NIL))
+      ctx.emit(none)
+      ctx.register_type(none.id, union_type)
+      none.id
     end
 
     private def lower_is_a(ctx : LoweringContext, node : Adamas::Compiler::Frontend::IsANode) : ValueId
