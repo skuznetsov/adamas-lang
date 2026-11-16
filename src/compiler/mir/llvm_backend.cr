@@ -7238,7 +7238,7 @@ module Adamas::MIR
       @module.type_registry.types.each do |type|
         next unless type.kind.union?
         type_name = @type_mapper.mangle_name(type.name)
-        max_size = type.variants.try(&.map(&.size).max) || 8_u64
+        max_size = type.variants.try(&.map { |v| union_variant_payload_bytes(v) }.max) || 8_u64
         existing = union_payload_sizes[type_name]? || 0_u64
         union_payload_sizes[type_name] = max_size > existing ? max_size : existing
       end
@@ -7362,11 +7362,22 @@ module Adamas::MIR
       align
     end
 
+    # Bytes a variant occupies inside a union payload. Heap-backed variants
+    # (String, classes, arrays) are one pointer word there; their registry
+    # `size` is the heap instance size (register_class_types widens the shared
+    # String type to 12), which must not widen the payload. This matches the
+    # HIR union descriptor sizing that MIR field offsets and container strides
+    # use, so the emitted LLVM union never writes past its MIR slot.
+    private def union_variant_payload_bytes(v : Type) : UInt64
+      return pointer_word_bytes_u64 if Adamas::MIR.runtime_header_backed_type?(v)
+      v.size
+    end
+
     # Payload byte width of a tagged union: widest variant (pointer-sized for
     # heap-boxed structs), at least a pointer word, rounded up to the union
     # alignment so the emitted array has no partial element.
     private def union_payload_byte_width_for(type : Type, payload_size : UInt64? = nil) : UInt64
-      payload_bytes = payload_size || type.variants.try(&.map(&.size).max) || 8_u64
+      payload_bytes = payload_size || type.variants.try(&.map { |v| union_variant_payload_bytes(v) }.max) || 8_u64
       # V2 ABI: non-primitive structs are heap-allocated and stored as pointers
       # in union payloads. If any variant's LLVM type is "ptr" (8 bytes), ensure
       # the payload can hold it, even if the MIR variant size is smaller.
