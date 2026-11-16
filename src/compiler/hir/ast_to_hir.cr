@@ -31561,7 +31561,23 @@ module Adamas::HIR
         if first_id = expr_node.elements.first?
           if elem_type = infer_type_from_expr(first_id, self_type_name)
             elem_name = get_type_name_from_ref(elem_type)
-            return type_ref_for_name("Array(#{elem_name})") if elem_name != "Void" && elem_name != "Unknown"
+            if elem_name != "Void" && elem_name != "Unknown"
+              # Mixed literals merge like lowering does; an element without
+              # a static type keeps the first-element estimate.
+              element_types = [elem_type]
+              expr_node.elements.each(within: 1..) do |element_id|
+                if element_type = infer_type_from_expr(element_id, self_type_name)
+                  element_types << element_type
+                else
+                  element_types.clear
+                  break
+                end
+              end
+              if merged = array_literal_element_type(element_types)
+                elem_name = get_type_name_from_ref(merged)
+              end
+              return type_ref_for_name("Array(#{elem_name})")
+            end
           end
         end
         return type_ref_for_name("Array(String)")
@@ -157672,6 +157688,65 @@ module Adamas::HIR
     # COLLECTIONS
     # ═══════════════════════════════════════════════════════════════════════
 
+    # Crystal's `Program#virtual_root?` (semantic/type_merge.cr): Object,
+    # Reference, Value, Struct, Number, Int and Float never absorb their
+    # descendants. Enum types are not class types, so their shared `Enum`
+    # parent is no virtual root either (`[Color::Red, Size::Big]` is
+    # `Array(Color | Size)`).
+    private def array_literal_virtual_root_name?(name : String) : Bool
+      name = name.lchop("::")
+      case name
+      when "Object", "Reference", "Value", "Struct", "Number", "Int", "Float", "Enum", "Unknown", "Void"
+        return false
+      end
+      return false if @enum_info.try(&.has_key?(name))
+      @class_info.has_key?(name)
+    end
+
+    # Element type of an `[a, b, ...]` literal: Crystal's `type_combine`.
+    # Two element types whose least common ancestor can be a virtual root
+    # merge into it (`[Dog.new, Cat.new]` is `Array(Animal)`); every other
+    # element type stays a distinct union variant (`[1, nil]` is
+    # `Array(Int32 | Nil)`, never `Array(Value)`).
+    private def array_literal_element_type(types : Array(TypeRef)) : TypeRef?
+      unique = [] of TypeRef
+      types.each do |type_ref|
+        next if type_ref == TypeRef::VOID || unique.includes?(type_ref)
+        unique << type_ref
+      end
+      return nil if unique.empty?
+      return unique.first if unique.size == 1
+
+      names = [] of String
+      unique.each do |type_ref|
+        desc = @module.get_type_descriptor(type_ref)
+        if desc && desc.kind == TypeKind::Union
+          split_union_type_name(desc.name).each { |name| names << name }
+        else
+          names << get_type_name_from_ref(type_ref)
+        end
+      end
+      return nil if names.any? { |name| name == "Unknown" || name == "Void" }
+
+      combined = [] of String
+      names.each do |name|
+        merged = false
+        combined.each_with_index do |existing, index|
+          ancestor = find_common_ancestor_class(existing, name)
+          next unless ancestor && array_literal_virtual_root_name?(ancestor)
+          combined[index] = ancestor
+          merged = true
+          break
+        end
+        combined << name unless merged
+      end
+
+      variants = merge_union_variant_names(combined)
+      return nil if variants.empty?
+      return type_ref_for_name(variants.first) if variants.size == 1
+      create_union_type(variants.join(" | "))
+    end
+
     # Find common ancestor class for two class names by walking parent chains.
     private def find_common_ancestor_class(a : String, b : String) : String?
       return a if a == b
@@ -157741,15 +157816,7 @@ module Adamas::HIR
                        if all_same
                          first_type
                        else
-                         # Mixed types — find common ancestor class
-                         type_names = element_ids.map { |id| get_type_name_from_ref(ctx.type_of(id)) }.uniq
-                         ancestor = type_names.reduce { |a, b| find_common_ancestor_class(a, b) || a }
-                         if ancestor && ancestor != "Unknown" && ancestor != "Void"
-                           element_type_name = ancestor
-                           type_ref_for_name(ancestor)
-                         else
-                           first_type
-                         end
+                         array_literal_element_type(element_ids.map { |id| ctx.type_of(id) }) || first_type
                        end
                      else
                        TypeRef::INT32
