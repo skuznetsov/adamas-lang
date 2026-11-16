@@ -9563,26 +9563,8 @@ module Adamas::MIR
       emit_raw "  ret ptr %str\n"
       emit_raw "}\n\n"
 
-      emit_raw "define ptr @__adamas_int64_to_string(i64 %val) {\n"
-      emit_raw "  %tmp = alloca [24 x i8]\n"
-      emit_raw "  call i32 (ptr, ptr, ...) @sprintf(ptr %tmp, ptr @.long_fmt_no_nl, i64 %val)\n"
-      emit_raw "  %len64 = call i64 @strlen(ptr %tmp)\n"
-      emit_raw "  %len = trunc i64 %len64 to i32\n"
-      emit_raw "  %alloc_32 = add i32 %len, 13\n"
-      emit_raw "  %alloc_64 = sext i32 %alloc_32 to i64\n"
-      emit_raw "  %str = call ptr @__adamas_malloc64(i64 %alloc_64)\n"
-      emit_raw "  store i32 #{@string_type_id}, ptr %str\n"
-      emit_raw "  %bs = getelementptr i8, ptr %str, i32 4\n"
-      emit_raw "  store i32 %len, ptr %bs\n"
-      emit_raw "  %sz = getelementptr i8, ptr %str, i32 8\n"
-      emit_raw "  store i32 %len, ptr %sz\n"
-      emit_raw "  %data = getelementptr i8, ptr %str, i32 12\n"
-      emit_raw "  %len64c = sext i32 %len to i64\n"
-      emit_raw "  call void @llvm.memcpy.p0.p0.i64(ptr %data, ptr %tmp, i64 %len64c, i1 false)\n"
-      emit_raw "  %null_pos = getelementptr i8, ptr %data, i32 %len\n"
-      emit_raw "  store i8 0, ptr %null_pos\n"
-      emit_raw "  ret ptr %str\n"
-      emit_raw "}\n\n"
+      emit_i64_to_string_helper("__adamas_int64_to_string", "@.long_fmt_no_nl")
+      emit_i64_to_string_helper("__adamas_uint64_to_string", "@.ulong_fmt_no_nl")
 
       # File.read — reads entire file into Crystal String
       emit_raw "define ptr @__adamas_file_read(ptr %path) {\n"
@@ -27935,14 +27917,20 @@ module Adamas::MIR
           char_arg = interpolation_i32_arg(part_ref, part_id, base_name, idx, part_llvm_type_check, signed: false)
           emit "%#{base_name}.conv#{idx} = call ptr @__adamas_char_to_string(i32 #{char_arg})"
           string_parts << "%#{base_name}.conv#{idx}"
-        elsif part_type == TypeRef::INT32 || part_type == TypeRef::UINT32
+        elsif part_type == TypeRef::INT32
           # Convert int32 to string
-          int_arg = interpolation_i32_arg(part_ref, part_id, base_name, idx, part_llvm_type_check, signed: part_type == TypeRef::INT32)
+          int_arg = interpolation_i32_arg(part_ref, part_id, base_name, idx, part_llvm_type_check, signed: true)
           emit "%#{base_name}.conv#{idx} = call ptr @__adamas_int_to_string(i32 #{int_arg})"
           string_parts << "%#{base_name}.conv#{idx}"
+        elsif part_type == TypeRef::UINT32
+          # The i32 helper prints signed (`%d`); widen to i64 first.
+          int_arg = interpolation_i32_arg(part_ref, part_id, base_name, idx, part_llvm_type_check, signed: false)
+          emit "%#{base_name}.ext#{idx} = zext i32 #{int_arg} to i64"
+          emit "%#{base_name}.conv#{idx} = call ptr @__adamas_uint64_to_string(i64 %#{base_name}.ext#{idx})"
+          string_parts << "%#{base_name}.conv#{idx}"
         elsif part_type == TypeRef::INT64 || part_type == TypeRef::UINT64
-          # Convert int64 to string
-          emit "%#{base_name}.conv#{idx} = call ptr @__adamas_int64_to_string(i64 #{part_ref})"
+          helper = part_type == TypeRef::UINT64 ? "__adamas_uint64_to_string" : "__adamas_int64_to_string"
+          emit "%#{base_name}.conv#{idx} = call ptr @#{helper}(i64 #{part_ref})"
           string_parts << "%#{base_name}.conv#{idx}"
         elsif part_type == TypeRef::INT128 || part_type == TypeRef::UINT128
           # Convert int128 to string (truncate to i64 — sufficient for practical values like unix_ns)
@@ -28162,8 +28150,9 @@ module Adamas::MIR
                   emit "#{prefix}.str = call ptr @__adamas_int64_to_string(i64 #{prefix}.ext)"
                   "#{prefix}.str"
                 when "Int64", "UInt64"
+                  helper = kind == "UInt64" ? "__adamas_uint64_to_string" : "__adamas_int64_to_string"
                   emit "#{prefix}.raw = load i64, ptr #{payload}, align 4"
-                  emit "#{prefix}.str = call ptr @__adamas_int64_to_string(i64 #{prefix}.raw)"
+                  emit "#{prefix}.str = call ptr @#{helper}(i64 #{prefix}.raw)"
                   "#{prefix}.str"
                 when "Bool"
                   emit "#{prefix}.raw = load i8, ptr #{payload}, align 4"
@@ -28207,6 +28196,31 @@ module Adamas::MIR
       when TypeRef::FLOAT64 then "Float64"
       else                       ""
       end
+    end
+
+    # Runtime helper `ptr @<name>(i64 %val)`: sprintf the value with `fmt`
+    # (signed `%ld` or unsigned `%lu`) and wrap it in a Crystal String.
+    private def emit_i64_to_string_helper(name : String, fmt : String) : Nil
+      emit_raw "define ptr @#{name}(i64 %val) {\n"
+      emit_raw "  %tmp = alloca [24 x i8]\n"
+      emit_raw "  call i32 (ptr, ptr, ...) @sprintf(ptr %tmp, ptr #{fmt}, i64 %val)\n"
+      emit_raw "  %len64 = call i64 @strlen(ptr %tmp)\n"
+      emit_raw "  %len = trunc i64 %len64 to i32\n"
+      emit_raw "  %alloc_32 = add i32 %len, 13\n"
+      emit_raw "  %alloc_64 = sext i32 %alloc_32 to i64\n"
+      emit_raw "  %str = call ptr @__adamas_malloc64(i64 %alloc_64)\n"
+      emit_raw "  store i32 #{@string_type_id}, ptr %str\n"
+      emit_raw "  %bs = getelementptr i8, ptr %str, i32 4\n"
+      emit_raw "  store i32 %len, ptr %bs\n"
+      emit_raw "  %sz = getelementptr i8, ptr %str, i32 8\n"
+      emit_raw "  store i32 %len, ptr %sz\n"
+      emit_raw "  %data = getelementptr i8, ptr %str, i32 12\n"
+      emit_raw "  %len64c = sext i32 %len to i64\n"
+      emit_raw "  call void @llvm.memcpy.p0.p0.i64(ptr %data, ptr %tmp, i64 %len64c, i1 false)\n"
+      emit_raw "  %null_pos = getelementptr i8, ptr %data, i32 %len\n"
+      emit_raw "  store i8 0, ptr %null_pos\n"
+      emit_raw "  ret ptr %str\n"
+      emit_raw "}\n\n"
     end
 
     private def interpolation_i32_arg(part_ref : String, part_id : ValueId, base_name : String, idx : Int32, hint_llvm_type : String?, *, signed : Bool) : String
