@@ -118169,11 +118169,16 @@ module Adamas::HIR
               # Reuse the source-ordered declaration and its arena rather than
               # letting that alias choose a different zero-argument body. This
               # does not admit a call or alter the selected symbol/bindings.
+              # Missing call-site types alone do not make a zero-argument
+              # request: union fanout arms lower `IO#puts$arity1` by name.
+              # Only a selected def with the zero-argument shape belongs to
+              # the accessor family.
               source_body_arena = @arena
               if callback_source_binding.nil? && included_forall_body_demand.nil? && exact_replay_source.nil? &&
                  (effective_call_arg_types.nil? || effective_call_arg_types.empty?) &&
                  (call_arg_types.nil? || call_arg_types.empty?) &&
-                 !suffix_has_block_flag?(method_suffix(name) || "")
+                 !suffix_has_block_flag?(method_suffix(name) || "") &&
+                 source_def_overlaps_zero_arg_accessor?(build_param_stats(resolved_func_def))
                 if method_name = resolved_parts.method
                   if origin = direct_accessor_def_origin(owner, method_name)
                     resolved_func_def = origin[0]
