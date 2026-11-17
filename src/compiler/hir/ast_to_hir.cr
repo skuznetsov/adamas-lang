@@ -11068,6 +11068,37 @@ module Adamas::HIR
       node.has_receiver? && (safe_slice_to_string(node.receiver_storage) || "") == FUN_DEF_RECEIVER
     end
 
+    # Every stdlib raise reaches the platform primitive
+    # `fun __crystal_raise(unwind_ex : LibUnwind::Exception*)`, whose source body
+    # calls `_Unwind_RaiseException`. Rescue frames here are setjmp/longjmp
+    # records, not unwind tables, so that unwinder can only report END_OF_STACK.
+    # The primitive therefore hands the exception object to the compiler's own
+    # raise runtime, exactly as a lowered `raise` statement does.
+    private def setjmp_unwind_raise_body(
+      ctx : LoweringContext,
+      node : Adamas::Compiler::Frontend::DefNode,
+      base_name : String,
+    ) : Array(ExprId)?
+      return nil unless base_name == "__crystal_raise" && @current_class.nil? && fun_def?(node)
+      params = node.params
+      return nil unless params && params.size == 1
+      param_name = params[0].name.try { |slice| safe_slice_to_string(slice) }
+      return nil if param_name.nil? || param_name.empty?
+      param_id = ctx.lookup_local(param_name)
+      return nil unless param_id
+      return nil unless get_type_name_from_ref(ctx.type_of(param_id)) == "Pointer(LibUnwind::Exception)"
+
+      span = node.span
+      record = named_collection_identifier(span, param_name)
+      record = named_collection_member(span, record, "value")
+      exception = named_collection_member(span, record, "exception_object")
+      @arena.retain_source("Exception")
+      exception = @arena.add_typed(
+        Adamas::Compiler::Frontend::AsNode.new(span, exception, "Exception".to_slice)
+      )
+      [@arena.add_typed(Adamas::Compiler::Frontend::RaiseNode.new(span, exception))]
+    end
+
     private def top_level_def_base_name(
       node : Adamas::Compiler::Frontend::DefNode,
       method_name : String,
@@ -87466,7 +87497,11 @@ module Adamas::HIR
       body_scope_snapshot = enter_method_body_lowering_scope(return_type)
       last_value : ValueId? = nil
       begin
-        if body = node.body
+        body = node.body
+        if body && (runtime_body = setjmp_unwind_raise_body(ctx, node, base_name))
+          body = runtime_body
+        end
+        if body
           candidates = entry_box_candidate_names(ctx, body)
           required_boxes = Set(String).new
           saved_entry_box_arena = @arena
