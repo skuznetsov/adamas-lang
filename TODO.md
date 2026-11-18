@@ -27536,3 +27536,12 @@ One fix per commit, each with an oracle-qualified regression
   guarded. Both S1 before and after the logical-assignment change accept
   that case. A separate source restriction check is also needed when an
   explicit field receives an invalid logical or ordinary write.
+- [x] Bind nilary calls on implicit numeric self to the concrete receiver
+  before return inference. Both call syntaxes retain the selected Int or
+  Float definition and its arena. Stock and S1 agree for two widths per
+  template, a concrete override, a required-argument sibling, defaults and
+  a missing constant on the second width. The parent instead requests the
+  constant from abstract Int. The primitive-template regression passes its
+  five native comparisons. Installed-prelude `puts 42` now links, then
+  traps at runtime in Parallel#stack_pool. Both full S2 builds still stop
+  in HIR at CLI#run_check and Exception#backtrace?, respectively.

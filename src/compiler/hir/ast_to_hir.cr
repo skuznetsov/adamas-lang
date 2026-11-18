@@ -126054,6 +126054,17 @@ module Adamas::HIR
         else
           mangled_method_name = entry_name
         end
+        # A bare call within an inherited Int/Float method also carries implicit
+        # self. Bind the selected source to that concrete receiver before a
+        # demand for its result can lower the shared template body.
+        if receiver_id && !ctx.type_literal?(receiver_id) &&
+           args.empty? && !has_block_call && !has_named_args && !has_splat
+          target = selected_primitive_nilary_target(mangled_method_name, ctx.type_of(receiver_id), entry_def)
+          if target != mangled_method_name
+            mangled_method_name = target
+            base_method_name = strip_type_suffix(target)
+          end
+        end
         # Preserve the runtime receiver for already-admitted Object wrappers.
         # The selected source definition remains ancestor-owned so its arena and
         # lexical namespace survive the handoff to concrete-body materialization.
@@ -148960,7 +148971,11 @@ module Adamas::HIR
     # Keep the concrete ABI owner and its exact numeric-template source together.
     # A nilary lookup may return the shared Int/Float key even when inheritance
     # resolved a concrete receiver. Bind before any return inference demands it.
-    private def selected_primitive_member_access_target(name : String, receiver_type : TypeRef) : String
+    private def selected_primitive_nilary_target(
+      name : String,
+      receiver_type : TypeRef,
+      selected_def : Adamas::Compiler::Frontend::DefNode? = nil,
+    ) : String
       physical_owner = normalize_method_owner_name(get_type_name_from_ref(receiver_type))
       template_owner = primitive_template_owner(physical_owner)
       return name unless template_owner
@@ -148977,6 +148992,7 @@ module Adamas::HIR
       selected = lookup_function_def_for_call(physical_name, 0, false, [] of TypeRef)
       source = lookup_function_def_for_call("#{template_owner}##{method}", 0, false, [] of TypeRef)
       return name unless source
+      return name if selected_def && !selected_def.same?(source[1])
       source_parts = parse_method_name(source[0])
       return name unless source_parts.is_instance && source_parts.owner == template_owner &&
                          source_parts.method == method &&
@@ -148990,7 +149006,7 @@ module Adamas::HIR
     end
 
     private def selected_member_access_return_type(name : String, receiver_type : TypeRef) : TypeRef
-      target_name = selected_primitive_member_access_target(name, receiver_type)
+      target_name = selected_primitive_nilary_target(name, receiver_type)
       selected = lookup_function_def_for_call(target_name, 0, false, [] of TypeRef)
       if selected
         get_function_return_type(target_name, 0, selected[1])
@@ -150671,7 +150687,7 @@ module Adamas::HIR
       # Re-own that exact nilary selection before any body-result demand, even
       # when no concrete ClassInfo exists (the no-prelude primitive case).
       if args.empty? && !receiver_is_module_type && !ctx.type_literal?(object_id)
-        primitive_target = selected_primitive_member_access_target(actual_name, receiver_type)
+        primitive_target = selected_primitive_nilary_target(actual_name, receiver_type)
         if primitive_target != actual_name || @primitive_template_source_bindings.has_key?(primitive_target)
           actual_name = primitive_target
           base_method_name = strip_type_suffix(primitive_target)

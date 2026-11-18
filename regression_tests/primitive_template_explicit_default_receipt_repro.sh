@@ -138,6 +138,45 @@ b = lvl1(3_u32)
 LibC.exit(a &+ b)
 CR
 
+# Implicit calls in an inherited body use the same concrete self as explicit
+# member access. A required-argument sibling on the receiver remains callable.
+cat > inherited_implicit_receiver.cr <<'CR'
+lib LibC
+  fun exit(status : Int32) : NoReturn
+end
+
+struct Int32
+  MARK = 11
+end
+
+struct Int64
+  MARK = 13
+
+  def marker(argument : Int32)
+    argument
+  end
+end
+
+struct Int
+  def bare
+    marker
+  end
+
+  def parenthesized
+    marker()
+  end
+
+  def marker
+    {% begin %}
+      {{@type}}::MARK
+    {% end %}
+  end
+end
+
+total = 0_i32.bare &+ 0_i64.bare &+ 0_i32.parenthesized &+ 0_i64.parenthesized
+LibC.exit(total &+ 0_i64.marker(5))
+CR
+
 exit_code() {
   local out
   out="$("$safe" "$1" 5 256 2>&1 || true)"
@@ -171,6 +210,7 @@ check explicit_then_nilary 28
 check nilary_then_explicit 28
 check nested_nilary_with_sibling_overload 28
 check nested_nilary 28
+check inherited_implicit_receiver 53
 
 [[ $fail == 0 ]] || exit 1
 printf 'PASS primitive_template_explicit_default_receipt\n'
