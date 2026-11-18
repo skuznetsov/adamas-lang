@@ -97853,6 +97853,71 @@ module Adamas::HIR
       end
     end
 
+    # True when the dynamic class of `source_id` is exactly `target_type`. A
+    # union source selects its active variant first: its own type when it is
+    # not virtual, else the variant object's type_id header.
+    private def emit_runtime_class_is(ctx : LoweringContext, source_id : ValueId, target_type : TypeRef) : ValueId
+      source_type = ctx.type_of(source_id)
+      if is_union_type?(source_type) && (members = runtime_union_class_members(source_type))
+        selected_id = emit_union_variant_fanout(ctx, source_id, source_type, members, TypeRef::BOOL) do |member_type, variant_id|
+          if virtual_class_receiver_type?(member_type)
+            emit_runtime_class_is(ctx, emit_union_variant_unwrap(ctx, source_id, member_type, variant_id), target_type)
+          else
+            same = Literal.new(ctx.next_id, TypeRef::BOOL, member_type == target_type ? 1_i64 : 0_i64)
+            ctx.emit(same)
+            ctx.register_type(same.id, TypeRef::BOOL)
+            same.id
+          end
+        end
+        return selected_id
+      end
+      check = IsA.new(ctx.next_id, source_id, target_type, exact: true)
+      ctx.emit(check)
+      ctx.register_type(check.id, TypeRef::BOOL)
+      check.id
+    end
+
+    # `x.class == T` where `x.class` is a runtime class (virtual or union
+    # receiver) and T a type literal. The runtime class is always one concrete
+    # class: equal only when it is T itself, never a subclass of T, and never a
+    # union or module T. A static `.class` keeps the compile-time comparison.
+    private def lower_runtime_class_equality(
+      ctx : LoweringContext,
+      left_id : ValueId,
+      right_id : ValueId,
+      op_str : String,
+    ) : ValueId?
+      return nil unless op_str == "==" || op_str == "!="
+      source_id = ctx.dot_class_source?(left_id)
+      target_id = right_id
+      unless source_id
+        source_id = ctx.dot_class_source?(right_id)
+        target_id = left_id
+      end
+      return nil unless source_id
+      return nil if ctx.dot_class_source?(target_id)
+      target_type = ctx.type_of(target_id)
+      return nil unless ctx.type_literal?(target_id) || module_type_ref?(target_type)
+
+      target_desc = @module.get_type_descriptor(target_type)
+      never_runtime_class = module_type_ref?(target_type) ||
+                            (target_desc && target_desc.kind == TypeKind::Union)
+      equal_id = if never_runtime_class
+                   never = Literal.new(ctx.next_id, TypeRef::BOOL, 0_i64)
+                   ctx.emit(never)
+                   ctx.register_type(never.id, TypeRef::BOOL)
+                   never.id
+                 else
+                   emit_runtime_class_is(ctx, source_id, target_type)
+                 end
+      return equal_id if op_str == "=="
+
+      negated = UnaryOperation.new(ctx.next_id, TypeRef::BOOL, UnaryOp::Not, equal_id)
+      ctx.emit(negated)
+      ctx.register_type(negated.id, TypeRef::BOOL)
+      negated.id
+    end
+
     # A reference class with subclasses: `.class` is only known at runtime.
     private def virtual_class_receiver_type?(type : TypeRef) : Bool
       info = class_info_for_type(type)
@@ -101767,6 +101832,10 @@ module Adamas::HIR
       # operator selection, just like an ordinary call on an empty local.
       return left_id if runtime_noreturn_value?(ctx, left_id)
       return right_id if runtime_noreturn_value?(ctx, right_id)
+
+      if runtime_class_cmp = lower_runtime_class_equality(ctx, left_id, right_id, op_str)
+        return runtime_class_cmp
+      end
 
       # Cast enum-typed operands to their base integer type.
       # Enum values from getters have a user-defined TypeRef (e.g., Color) that is
@@ -123445,6 +123514,9 @@ module Adamas::HIR
         arg_type = prepack_arg_types[0]
         receiver_type_literal = ctx.type_literal?(receiver_id) || module_type_ref?(receiver_type)
         arg_type_literal = prepack_arg_literals[0] || module_type_ref?(arg_type)
+        if runtime_class_cmp = lower_runtime_class_equality(ctx, receiver_id, args[0], method_name)
+          return runtime_class_cmp
+        end
         if receiver_type_literal && arg_type_literal
           same_type = receiver_type == arg_type
           result = method_name == "!=" ? !same_type : same_type

@@ -1561,17 +1561,19 @@ module Adamas::HIR
     end
   end
 
-  # Type check (is_a?)
+  # Type check (is_a?). An exact check asks whether the runtime class is the
+  # check type itself rather than one of its subclasses (`x.class == T`).
   class IsA < Value
     getter value : ValueId
     getter check_type : TypeRef
+    getter? exact : Bool
 
-    def initialize(id : ValueId, @value : ValueId, @check_type : TypeRef)
+    def initialize(id : ValueId, @value : ValueId, @check_type : TypeRef, @exact : Bool = false)
       super(id, TypeRef::BOOL)
     end
 
     def to_s(io : IO) : Nil
-      io << "%" << @id << " = is_a %" << @value << ", " << @check_type.id
+      io << "%" << @id << (@exact ? " = is_exactly %" : " = is_a %") << @value << ", " << @check_type.id
     end
   end
 

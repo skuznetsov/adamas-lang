@@ -10507,6 +10507,14 @@ module Adamas
         nil
       end
 
+      private def check_type_has_subclasses?(check_type : TypeRef) : Bool
+        if check_desc = @mir_module.type_registry.get(check_type)
+          !subclasses_for(check_desc.name).empty?
+        else
+          false
+        end
+      end
+
       private def lower_is_a(isa : HIR::IsA) : ValueId
         builder = @builder.not_nil!
         mir_check_type = convert_type(isa.check_type)
@@ -10537,7 +10545,7 @@ module Adamas
             # Collect matching type_ids (check_type + subclasses)
             matching_type_ids = ::Set(UInt32).new
             matching_type_ids << mir_check_type.id
-            if check_mir_type = @mir_module.type_registry.get(mir_check_type)
+            if !isa.exact? && (check_mir_type = @mir_module.type_registry.get(mir_check_type))
               subclasses_for(check_mir_type.name).each do |sub_name|
                 if sub_mir_type = @mir_module.type_registry.get_by_name(sub_name)
                   matching_type_ids << sub_mir_type.id
@@ -10574,7 +10582,10 @@ module Adamas
           # ptr != null is ONLY valid when the static type matches the check type
           # (i.e., simple nilable checks like `x : Foo?` → is_a?(Foo)).
           # For class hierarchies (Base → is_a?(SubClass)), need runtime type_id check.
-          if mir_val_type && mir_val_type.id == mir_check_type.id
+          # An exact check excludes the subclasses, so a virtual value still
+          # reads its header.
+          if mir_val_type && mir_val_type.id == mir_check_type.id &&
+             !(isa.exact? && check_type_has_subclasses?(mir_check_type))
             null_val = builder.const_int(0_i64, TypeRef::POINTER)
             return builder.ne(obj, null_val)
           end
@@ -10587,7 +10598,7 @@ module Adamas
         matching_type_ids << mir_check_type.id
 
         # Find check type name and add subclass type_ids
-        if check_mir_type = @mir_module.type_registry.get(mir_check_type)
+        if !isa.exact? && (check_mir_type = @mir_module.type_registry.get(mir_check_type))
           check_name = check_mir_type.name
           subclasses_for(check_name).each do |sub_name|
             if sub_mir_type = @mir_module.type_registry.get_by_name(sub_name)
