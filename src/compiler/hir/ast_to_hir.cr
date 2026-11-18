@@ -5161,6 +5161,42 @@ module Adamas::HIR
       inferred
     end
 
+    private def generic_family_return_contract(ctx : LoweringContext) : SourceBlockResultPattern?
+      contract = ctx.source_declared_return_contract
+      return unless contract && contract.kind.concrete?
+      family = contract.type_ref
+      return unless family && @generic_templates.has_key?(get_type_name_from_ref(family))
+      contract
+    end
+
+    # The declared family admits concrete applications, but does not identify a
+    # runtime layout. Choose that layout from every reachable exit of this body.
+    private def finalize_generic_family_return(ctx : LoweringContext, last_value : ValueId?) : TypeRef?
+      contract = generic_family_return_contract(ctx) || return
+      exits = [] of ValueId?
+      reachable_blocks(ctx.function).each do |block|
+        if ret = block.terminator.as?(Return)
+          exits << ret.value
+        elsif block.id == ctx.current_block && !should_stop_sequential_lowering?(ctx)
+          exits << last_value
+        end
+      end
+      types = [] of TypeRef
+      exits.each do |value|
+        type = value.try { |id| ctx.type_of(id) } || TypeRef::NIL
+        next if value && runtime_noreturn_value?(ctx, value)
+        return if type == TypeRef::VOID || unresolved_generic_return_type?(type)
+        literal = value ? ctx.type_literal?(value) : false
+        return unless source_block_result_pattern_matches_value?(type, literal, contract)
+        types << type
+      end
+      inferred = merge_return_types(types) || return
+      return if unresolved_generic_return_type?(inferred)
+      ctx.function.return_type = inferred
+      register_function_type(ctx.function.name, inferred, allow_explicit_replacement: true)
+      inferred
+    end
+
     private record InlineCalleeLocalScanScopeSnapshot,
       arena : Adamas::Compiler::Frontend::ArenaLike,
       inline_yield_block_stack : Array(Adamas::Compiler::Frontend::BlockNode),
@@ -42284,6 +42320,9 @@ module Adamas::HIR
       unless node.is_abstract || should_stop_sequential_lowering?(ctx)
         validate_source_declared_return!(ctx, last_value, node)
       end
+      if physical_result = finalize_generic_family_return(ctx, last_value)
+        return_type = physical_result
+      end
       # Coerce return value to match declared return type if needed.
       if return_type != TypeRef::VOID
         if (lv = last_value)
@@ -52740,6 +52779,9 @@ module Adamas::HIR
       unless should_stop_sequential_lowering?(ctx)
         validate_source_self_return!(ctx, last_value)
         validate_source_declared_return!(ctx, last_value, node)
+      end
+      if physical_result = finalize_generic_family_return(ctx, last_value)
+        return_type = physical_result
       end
       # Coerce return value to match declared return type if needed.
       # This handles cases like returning {nil, 0} (Tuple(Nil, Int32))
@@ -87677,6 +87719,9 @@ module Adamas::HIR
         validate_source_declared_return!(ctx, last_value, node)
       end
 
+      if physical_result = finalize_generic_family_return(ctx, last_value)
+        return_type = physical_result
+      end
       # Coerce return value to match declared return type if needed.
       # This handles cases like returning {nil, 1} (Tuple(Nil, Int32))
       # from a function with return type {Int32?, Int32?} (Tuple(Int32|Nil, Int32|Nil)).
@@ -110735,7 +110780,7 @@ module Adamas::HIR
       if value_id.nil?
         value_id = nil_return_value_for(ctx, ret_type)
       end
-      if ret_type != TypeRef::VOID && (vid = value_id)
+      if ret_type != TypeRef::VOID && (vid = value_id) && !generic_family_return_contract(ctx)
         val_type = ctx.type_of(vid)
         if val_type != ret_type && val_type != TypeRef::VOID
           value_id = coerce_value_to_type(ctx, vid, ret_type)
@@ -119740,6 +119785,12 @@ module Adamas::HIR
       return nil unless selected_arena &&
                         @function_defs[target_name]?.try(&.same?(selected_def)) &&
                         @function_def_arenas[target_name]?.try(&.same?(selected_arena))
+      # A bare generic restriction does not identify the result layout. Let
+      # the normal call path demand the selected body and propagate suspension.
+      if selected_def.return_type
+        registered_return = get_function_return_type(target_name, args.size, selected_def)
+        return nil if @generic_templates.has_key?(get_type_name_from_ref(registered_return))
+      end
       # Rest packing changes the physical signature. The ordinary path owns
       # deriving and binding that target from this exact source declaration.
       return nil if missing_positional_splat_index(selected.symbol_name, selected_def, args.size)

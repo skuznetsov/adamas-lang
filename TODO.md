@@ -27410,12 +27410,18 @@ One fix per commit, each with an oracle-qualified regression
   when the previously recorded kinds, ABI slots and call shape prove each
   fact. Tuple and metaclass facts remain distinct. The bundled self-build
   passes `Int32#tdiv(Int32)`; all 21 queue and initializer checks pass.
-- [ ] The bundled self-build next suspends the nilary `Regex#match_data`
-  inside its three-argument overload. Installed 1.22.3 reaches
-  `String#unsafe_byte_slice(Int32)`: its body owns `Slice(UInt8)` but its
-  emitted result advertises the bare `Slice` restriction.
 - [x] Publish a generated class-variable initializer after its whole body has
   lowered. Suspension restores the caller context and retires only the
   initializer's own partial function. The retry, recursive entry and foreign
   same-name symbol cases pass. The installed prelude smoke now reaches
   Thread initialization; both compiler self-builds still stop earlier.
+
+- [x] Keep the exact result of reachable returns under a bare generic
+  annotation, including explicit returns and top-level overload selection.
+  The native Crystal and Adamas controls print `AB` and `ABCD` and reject
+  unrelated values and type objects. The installed 1.22.3 self-build
+  now passes `String::Builder#write(Slice(UInt8))`.
+- [ ] The bundled self-build suspends the nilary `Regex#match_data` inside its
+  three-argument overload. The installed self-build reaches
+  `Lexer#lex_number_suffix`, where constructing a NumberKind from an integer
+  produces an Int32 return at a nilable enum boundary.
