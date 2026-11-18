@@ -115968,10 +115968,24 @@ module Adamas::HIR
       end
     end
 
+    # Relayed suspensions retain the original producer chain. A completed
+    # descendant need not keep an otherwise current physical return pending.
+    # Each descendant must still be current and satisfy its own result/body
+    # demand before its parent can admit the exact return.
+    private def nested_recursive_result_demands_settled?(pending : ExactResultPending) : Bool
+      parent = pending
+      while child = parent.producer_pending
+        return false unless force_lower_pending_producer_current?(parent) &&
+                            force_lower_pending_producer_current?(child) && settled_force_lower_producer?(child)
+        parent = child
+      end
+      true
+    end
+
     private def exact_final_struct_result(pending : ExactResultPending) : TypeRef?
       name = pending.producer
       source = pending.producer_source
-      return unless pending.producer_requires_result && !pending.producer_pending &&
+      return unless pending.producer_requires_result && nested_recursive_result_demands_settled?(pending) &&
                     force_lower_exact_source_matches?(name, source)
       return if source.inherited_nilary_member_alias || raw_callback_abi_for(name) || raw_callback_source_binding_for(name)
       return unless function_state(name).completed? && @module.has_function_with_body?(name)
@@ -116061,7 +116075,7 @@ module Adamas::HIR
       return unless anchor
       name = pending.producer
       source = pending.producer_source
-      return unless pending.producer_requires_result && !pending.producer_pending && force_lower_exact_source_matches?(name, source)
+      return unless pending.producer_requires_result && nested_recursive_result_demands_settled?(pending) && force_lower_exact_source_matches?(name, source)
       return if source.inherited_nilary_member_alias || raw_callback_abi_for(name) || raw_callback_source_binding_for(name)
       body = anchor.body
       replay = anchor.replay

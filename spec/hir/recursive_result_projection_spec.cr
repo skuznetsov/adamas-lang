@@ -32,6 +32,40 @@ class Adamas::HIR::AstToHir
     !index.nil?
   end
 
+  private def __test_nested_projection_pending(change : Symbol)
+    producer = "RecFactory.value"
+    middle = "RecFactory.reference"
+    leaf = "RecFactory.inferred"
+    producer_replay = __test_projection_replay(producer)
+    middle_replay = __test_projection_replay(middle)
+    leaf_source = __test_projection_source(change == :foreign_leaf ? "RecFactory.object_type" : leaf)
+    inner = ExactResultPending.new(middle, leaf, leaf_source,
+      producer_requires_result: change != :body_leaf)
+    middle_capture = ForceLowerReplayCapture.new(middle, nil)
+    middle_capture.binding = change == :foreign_relay ? producer_replay : middle_replay
+    inner.consumer_capture = middle_capture
+    outer = ExactResultPending.new(producer, middle, __test_projection_source(middle),
+      middle_replay, producer_pending: inner)
+    producer_capture = ForceLowerReplayCapture.new(producer, nil)
+    producer_capture.binding = producer_replay
+    outer.consumer_capture = producer_capture
+    if change == :pending_leaf
+      @force_lower_provisional_dependencies[leaf] = Set{producer}
+    elsif change == :pending_middle
+      @force_lower_provisional_dependencies[middle] = Set{producer}
+    end
+    ExactResultPending.new("RecFactory.consumer", producer, __test_projection_source(producer),
+      producer_replay, producer_requires_result: change != :outer_body_only, producer_pending: outer)
+  end
+
+  def __test_nested_published_projection(change : Symbol) : String?
+    pending = __test_nested_projection_pending(change)
+    if change == :missing_return
+      @module.function_by_name(pending.producer).not_nil!.source_return_result_receipt = nil
+    end
+    exact_final_struct_result(pending).try { |type| get_type_name_from_ref(type) }
+  end
+
   private def __test_projection_source(name : String)
     ForceLowerExactSourceBinding.new(@function_defs[name], @function_def_arenas[name], name)
   end
@@ -322,7 +356,7 @@ class Adamas::HIR::AstToHir
     !live_force_lower_callsite_for(name, source).nil?
   end
 
-  def __test_suspended_constant_return?(change : Symbol) : Bool
+  def __test_suspended_constant_return?(change : Symbol, *, nested : Bool = false) : Bool
     name = "RecFactory.value"
     source = __test_projection_source(name)
     replay = __test_projection_replay(name)
@@ -346,7 +380,7 @@ class Adamas::HIR::AstToHir
     body = ForceLowerActiveBody.new(partial, source.source_def, source.source_arena,
       [] of TypeRef, [] of String, type)
     anchor = PartialStructReturn.new(replay, ctx, block, returned, read, body)
-    pending = ExactResultPending.new("RecFactory.consumer", name, source)
+    pending = nested ? __test_nested_projection_pending(change) : ExactResultPending.new("RecFactory.consumer", name, source)
 
     case change
     when :replaced_read
@@ -508,6 +542,22 @@ describe "source result projection inside a recursive specialization" do
     recursive_projection_converter.__test_queue_projection(close_cycle: false).should be_false
     recursive_projection_converter.__test_queue_projection(need_result: false).should be_false
     recursive_projection_converter.__test_queue_projection(change_source: true).should be_false
+  end
+
+  it "consumes a published result only after each relayed source demand is current and settled" do
+    recursive_projection_converter.__test_nested_published_projection(:valid).should eq("RecToken")
+    recursive_projection_converter.__test_nested_published_projection(:body_leaf).should eq("RecToken")
+    [:pending_leaf, :pending_middle, :foreign_relay, :foreign_leaf, :missing_return, :outer_body_only].each do |change|
+      recursive_projection_converter.__test_nested_published_projection(change).should be_nil
+    end
+  end
+
+  it "checks every descendant before reusing a suspended physical return" do
+    recursive_projection_converter.__test_suspended_constant_return?(:valid, nested: true).should be_true
+    recursive_projection_converter.__test_suspended_constant_return?(:body_leaf, nested: true).should be_true
+    [:pending_leaf, :pending_middle, :foreign_relay, :foreign_leaf, :replaced_return, :outer_body_only].each do |change|
+      recursive_projection_converter.__test_suspended_constant_return?(change, nested: true).should be_false
+    end
   end
 
   it "requires both the exact body receipt and a final instance restriction" do

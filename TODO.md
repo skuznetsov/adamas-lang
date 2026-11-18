@@ -27695,3 +27695,9 @@ One fix per commit, each with an oracle-qualified regression
   suites pass 40 examples, and both native recursive regressions pass.
   Uncached S1 self-builds with 1.18.2 and 1.22.3 still stop on
   Parser#parse_statement_in_scope in CLI#run.
+- [x] Reuse the enclosing recursive return after all relayed producers
+  satisfy their original body or result requests. A different source arena,
+  a replaced return or an outstanding descendant keeps the caller waiting.
+  The two HIR suites pass 30 cases. Both native recursion regressions match
+  Crystal. Fresh S1 self-builds with 1.18.2 and 1.22.3 still stop on
+  Parser#parse_statement_in_scope in CLI#run.
