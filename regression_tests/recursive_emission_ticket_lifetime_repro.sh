@@ -16,6 +16,9 @@ if [[ "$(uname -s)" == Darwin ]]; then
 fi
 sed 's/RecCode.new(66)/66/' "$fixture" > "$work/invalid.cr"
 printf 'A\n' > "$work/expected"
+graph="$root/regression_tests/fixtures/recursive_callsite_replay.cr"
+sed 's/return STOP_2 if @remaining == 0/return Ticket if @remaining == 0/' "$graph" > "$work/invalid-graph.cr"
+printf 'CD\n' > "$work/expected-graph"
 
 for mode in stock candidate; do
   if [[ "$mode" == stock ]]; then
@@ -43,6 +46,23 @@ for mode in stock candidate; do
   fi
   grep -Fq "$expected_error" "$work/$mode.invalid.log" || {
     cat "$work/$mode.invalid.log" >&2
+    exit 1
+  }
+  "${build[@]}" "$graph" -o "$work/$mode.graph" > "$work/$mode.graph.build.log" 2>&1 || {
+    cat "$work/$mode.graph.build.log" >&2
+    exit 1
+  }
+  "$safe" "$work/$mode.graph" 8 512 > "$work/$mode.graph.stdout" 2> "$work/$mode.graph.run.log" || {
+    cat "$work/$mode.graph.run.log" >&2
+    exit 1
+  }
+  cmp "$work/expected-graph" "$work/$mode.graph.stdout"
+  if "${build[@]}" "$work/invalid-graph.cr" -o "$work/$mode.invalid-graph" > "$work/$mode.invalid-graph.log" 2>&1; then
+    echo "$mode accepted a class object as the result of Mini::Parser#read2" >&2
+    exit 1
+  fi
+  grep -E 'method Mini::Parser#read2 must return Ticket.*Ticket\.class' "$work/$mode.invalid-graph.log" > /dev/null || {
+    cat "$work/$mode.invalid-graph.log" >&2
     exit 1
   }
   echo "$mode passed physical recursive result and strict return controls"

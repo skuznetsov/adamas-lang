@@ -27716,3 +27716,13 @@ One fix per commit, each with an oracle-qualified regression
   typed-rest cases still lose their tuple on both parent and candidate.
   Uncached S2 stops at Parser#parse_statement_in_scope on stdlib 1.18.2
   and DWARF::Backtraces#lookup_line_number on stdlib 1.22.3.
+- [x] Keep the selected invocation's arguments across nested lowering. A
+  suspended ordinary specialization can recover its replay when live
+  observations agree on its source, arena, environment and actual kinds.
+  Explicit instance facts and equivalent per-slot kind flags agree. A
+  missing kind or a different type, source or namespace remains pending.
+  All 40 focused HIR examples and three native regressions pass. The
+  two-branch recursive program prints CD, and returning its type object is
+  rejected. On fresh S1 self-builds, bundled 1.18.2 now stops at
+  Parser#parse_percent_macro_control in Parser#parse_program_roots_impl.
+  Installed 1.22.3 still stops at DWARF::Backtraces#lookup_line_number.

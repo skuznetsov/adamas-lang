@@ -99969,7 +99969,9 @@ module Adamas::HIR
         # A bare source call owns an explicit callshape too, including zero
         # arguments. Retain it before demand can consume the pending entry so
         # a depth-refused result can replay this exact source generation.
-        remember_callsite_arg_types(full_name, arg_types)
+        bare_actuals = remember_callsite_arg_types(full_name, arg_types)
+        bare_call_observation = observed_force_lower_source_call(ctx, full_name, bare_actuals,
+          selected_def, selected_arena, selected_registry_name)
         lower_function_if_needed(full_name)
         refused_before_call_force = @force_lower_depth_refused.size
         if return_type == TypeRef::VOID
@@ -99982,7 +99984,8 @@ module Adamas::HIR
         record_force_lower_result_dependency(ctx, full_name, selected_def,
           refused_before_call_force, selected_def, selected_arena, selected_registry_name)
         suspend_depth_refused_source_result(ctx, full_name, return_type, selected_def,
-          selected_def, selected_arena, refused_before_call_force, selected_registry_name)
+          selected_def, selected_arena, refused_before_call_force, selected_registry_name,
+          observed_call: bare_call_observation)
         call = Call.without_receiver(ctx.next_id, return_type, full_name, call_args)
         ctx.emit(call)
         ctx.register_type(call.id, return_type)
@@ -112930,7 +112933,7 @@ module Adamas::HIR
       *,
       record_exact_target : Bool = true,
       source_binding : SourceCallBinding? = nil,
-    ) : Nil
+    ) : CallsiteArgs?
       return if name.empty?
       return if name.to_unsafe[0] == '$'.ord
       return if backend_owned_runtime_intrinsic_call?(name)
@@ -112961,7 +112964,7 @@ module Adamas::HIR
           @pending_arg_types[name] = callsite
         end
       end
-      return if base_key.empty?
+      return callsite if base_key.empty?
       callsite_key = callsite_args_fingerprint(callsite)
       seen_by_arity = @pending_arg_types_seen_by_arity[base_key]? || begin
         new_map = {} of Int32 => Set(UInt64)
@@ -112973,7 +112976,7 @@ module Adamas::HIR
         seen_by_arity[arg_types.size] = new_set
         new_set
       end
-      return if seen_bucket.includes?(callsite_key)
+      return callsite if seen_bucket.includes?(callsite_key)
       seen_bucket.add(callsite_key)
       by_arity = @pending_arg_types_by_arity[base_key]? || begin
         new_map = {} of Int32 => Array(CallsiteArgs)
@@ -113011,6 +113014,7 @@ module Adamas::HIR
           @recorded_arg_types_by_signature[signature] = recorded_bucket
         end
       end
+      callsite
     end
 
     # Missing-demand discovery sees a typed HIR Call after its source actuals
@@ -115464,14 +115468,27 @@ module Adamas::HIR
     ) : Bool
       return right.nil? unless left
       return false unless right
+      same_force_lower_replay_context?(left, right) && same_force_lower_callsite?(left.callsite, right.callsite)
+    end
+
+    private def same_force_lower_replay_context?(left : ForceLowerReplayCallsite, right : ForceLowerReplayCallsite) : Bool
       left.source_def.same?(right.source_def) && left.source_arena.same?(right.source_arena) &&
-        same_force_lower_callsite?(left.callsite, right.callsite) &&
         left.entry_type_param_map == right.entry_type_param_map &&
         left.entry_namespace_override == right.entry_namespace_override &&
         left.source_registry_name == right.source_registry_name &&
         initializer_callback_abi_matches?(left.callback_abi, right.callback_abi) &&
         same_force_lower_callback_source?(left.callback_source, right.callback_source) &&
         same_optional_force_lower_exact_source_binding?(left.exact_source_binding, right.exact_source_binding)
+    end
+
+    # Two independent paths can carry the same typed instance operands: one
+    # records the source facts and the other a complete positional kind vector.
+    # Preserve the richer input only when every other part of the recipe agrees.
+    private def reconcile_recursive_producer_replays(left : ForceLowerReplayCallsite, right : ForceLowerReplayCallsite) : ForceLowerReplayCallsite?
+      return unless same_force_lower_replay_context?(left, right)
+      return left if same_force_lower_callsite?(left.callsite, right.callsite)
+      arguments = reconciled_force_lower_callsite(left.callsite, right.callsite) || return
+      arguments == right.callsite ? right : left
     end
 
     private def same_force_lower_callback_source?(
@@ -116094,7 +116111,7 @@ module Adamas::HIR
         tail = queued.pending.as(ExactResultPending?)
         while tail
           if tail.consumer == pending.producer && (anchor = tail.checked_return) &&
-             same_force_lower_replay_callsite?(replay, anchor.replay) && checked_partial_struct_result(pending, anchor)
+             reconcile_recursive_producer_replays(replay, anchor.replay) && checked_partial_struct_result(pending, anchor)
             return anchor
           end
           tail = tail.producer_pending
@@ -116214,8 +116231,11 @@ module Adamas::HIR
                       active_force_lower_source_current?(name, replay) && force_lower_replay_callsite_current?(name, replay) &&
                       !replay.callsite.has_block && !replay.callsite.has_named_args &&
                       replay.entry_type_param_map == @type_param_map && replay.entry_namespace_override == @current_namespace_override
-        return if retained && !same_force_lower_replay_callsite?(retained, replay)
-        retained ||= replay
+        if prior = retained
+          retained = reconcile_recursive_producer_replays(prior, replay) || return
+        else
+          retained = replay
+        end
       end
       retained
     end
@@ -116242,7 +116262,9 @@ module Adamas::HIR
       end
       return nil if current.empty? || current.size != candidates.size
       selected = current.first
-      return nil unless current.all? { |replay| same_force_lower_replay_callsite?(selected, replay) }
+      current.each do |replay|
+        selected = reconcile_recursive_producer_replays(selected, replay) || return nil
+      end
       copy_force_lower_replay_callsite(selected)
     end
 
@@ -116846,6 +116868,35 @@ module Adamas::HIR
         !@force_lower_provisional_dependencies.has_key?(name)
     end
 
+    private def ordinary_recursive_source_callsite?(
+      name : String, source : ForceLowerExactSourceBinding, callsite : CallsiteArgs,
+    ) : Bool
+      definition = source.source_def
+      return false if source.inherited_nilary_member_alias || raw_callback_source_binding_for(name) || raw_callback_abi_for(name)
+      return false unless !definition.is_abstract && definition.body && definition.forall_type_params.empty? &&
+                          ordinary_active_body_callsite?(callsite) && recursive_struct_result_callsite_argument_facts(callsite)
+      params = function_param_infos(definition, source.source_arena)
+      params.size == callsite.types.size && params.all? do |param|
+        !param.default_value && !param.is_block && !param.is_splat && !param.is_double_splat && !named_only_separator?(param)
+      end
+    end
+
+    # Preserve this invocation before a nested force can consume its pending
+    # argument entry. Other calls sharing the target name cannot supply its
+    # actuals, source owner or entry environment.
+    private def observed_force_lower_source_call(
+      ctx : LoweringContext, name : String, callsite : CallsiteArgs?,
+      definition : Adamas::Compiler::Frontend::DefNode?,
+      arena : Adamas::Compiler::Frontend::ArenaLike?, source_key : String?,
+    ) : {String, ForceLowerReplayCallsite}?
+      return unless (capture = @force_lower_current_replay_capture) && capture.name == ctx.function.name &&
+                    capture.binding && definition && arena && callsite
+      source = force_lower_exact_source_binding(name, definition, definition, arena, source_key) || return
+      return unless ordinary_recursive_source_callsite?(name, source, callsite)
+      {name, ForceLowerReplayCallsite.new(definition, arena, copy_force_lower_callsite(callsite),
+        @type_param_map.dup, @current_namespace_override, source.source_registry_name, exact_source_binding: source)}
+    end
+
     private def suspend_depth_refused_source_result(
       ctx : LoweringContext,
       name : String,
@@ -116856,6 +116907,7 @@ module Adamas::HIR
       refused_mark : Int32,
       selected_registry_name : String? = nil,
       selected_source_binding : ForceLowerExactSourceBinding? = nil,
+      *, observed_call : Tuple(String, ForceLowerReplayCallsite)? = nil,
     ) : Nil
       # A depth-refused result is pending in ordinary method bodies too.
       # Suspend its exact consumer before narrowing or a declared-return check
@@ -116880,7 +116932,16 @@ module Adamas::HIR
         STDERR.puts "[FORCE_LOWER_SUSPENDED] consumer=#{consumer} context=#{ctx.function.name} producer=#{name}"
       end
       checked_return = suspended_struct_return(ctx) if ctx.function.name == consumer
-      raise ExactResultPending.new(consumer, name, source, checked_return: checked_return)
+      producer_replay = if observed_call && observed_call[0] == name
+                          held = observed_call[1]
+                          if held_source = held.exact_source_binding
+                            if same_force_lower_exact_source_binding?(held_source, source) &&
+                               force_lower_replay_callsite_current?(name, held)
+                              held
+                            end
+                          end
+                        end
+      raise ExactResultPending.new(consumer, name, source, producer_replay, checked_return: checked_return)
     end
 
     # A producer that suspended on its own unsettled dependency is just as
@@ -119179,9 +119240,20 @@ module Adamas::HIR
       if callsite_args.nil? && resolved_func_def
         callsite_args = pending_callsite_args_for_def(resolved_func_def, name, target_name)
       end
-      if !callsite_args && @force_lower_retry_driver_active && exact_replay_source &&
-         (replay = live_force_lower_callsite_for(name, exact_replay_source))
-        callsite_args = copy_force_lower_callsite(replay.callsite)
+      if !callsite_args && @force_lower_retry_driver_active
+        replay_source = exact_replay_source
+        if !replay_source && replay_capture && name == target_name && selected_replay_registry_name == name
+          candidate = ForceLowerExactSourceBinding.new(resolved_func_def, arena, selected_replay_registry_name)
+          replay_source = candidate if force_lower_exact_source_matches?(name, candidate)
+        end
+        if replay_source && (retained = live_force_lower_callsite_for(name, replay_source))
+          # An ordinary lowering has no explicit right to an older call's
+          # arguments. Only a complete positional invocation on this exact
+          # registry entry can restore them in the same entry environment.
+          if exact_replay_source || ordinary_recursive_source_callsite?(name, replay_source, retained.callsite)
+            callsite_args = copy_force_lower_callsite(retained.callsite)
+          end
+        end
       end
       call_arg_types = callsite_args ? callsite_args.types : nil
       if env_has?("DEBUG_JOIN_LOWER_ARGS") && name.includes?("Path#join$Enumerable")
@@ -131411,18 +131483,22 @@ module Adamas::HIR
         end
       end
 
-      remember_callsite_arg_types(
+      actual_callsite = remember_callsite_arg_types(
         primary_mangled_name, callsite_arg_types, callsite_arg_literals, callsite_arg_enum_names,
         has_block_call, has_named_args, call_named_arg_names,
         source_binding: callsite_source_binding,
       )
       if mangled_method_name != primary_mangled_name
-        remember_callsite_arg_types(
+        actual_callsite = remember_callsite_arg_types(
           mangled_method_name, callsite_arg_types, callsite_arg_literals, callsite_arg_enum_names,
           has_block_call, has_named_args, call_named_arg_names,
           source_binding: callsite_source_binding,
         )
       end
+      source_call_observation = unless call_virtual || has_block_call || has_named_args || has_splat || source_has_splat
+                                  observed_force_lower_source_call(ctx, mangled_method_name, actual_callsite,
+                                    selected_call_entry_def, selected_call_entry_arena, selected_call_entry_name)
+                                end
       if receiver_id
         receiver_type = ctx.type_of(receiver_id)
         pending_map = type_param_map_for_receiver_type(receiver_type)
@@ -131835,7 +131911,7 @@ module Adamas::HIR
         suspend_depth_refused_source_result(
           ctx, mangled_method_name, return_type, selected_return_def,
           selected_call_entry_def, selected_call_entry_arena, refused_before_call_force,
-          selected_call_entry_name,
+          selected_call_entry_name, observed_call: source_call_observation,
         )
       end
 
@@ -151923,6 +151999,7 @@ module Adamas::HIR
       # specialization and wrapper re-owning have settled the emitted key.
       # The late binding below remains as an idempotent guard for a distinct
       # primary name selected by later dispatch normalization.
+      member_call_observation = nil.as(Tuple(String, ForceLowerReplayCallsite)?)
       if default_source = source_default_entry
         bind_exact_source_call_target(
           actual_name, default_source[0], default_source[1], default_source[2], node,
@@ -151932,7 +152009,10 @@ module Adamas::HIR
         # An actual nilary member call still owns an empty source callshape.
         # Publish it before result inference can force or suspend the target;
         # Def/Arena alone cannot replay an annotated provisional body.
-        remember_callsite_arg_types(actual_name, arg_types)
+        actual_callsite = remember_callsite_arg_types(actual_name, arg_types)
+        member_call_observation = observed_force_lower_source_call(ctx, actual_name, actual_callsite,
+          selected_member_def || @function_defs[actual_name]?,
+          selected_member_arena || @function_def_arenas[actual_name]?, selected_member_registry_name)
         if source_name = selected_member_registry_name
           if source_def = selected_member_def
             if source_arena = selected_member_arena
@@ -152494,7 +152574,7 @@ module Adamas::HIR
       suspend_depth_refused_source_result(
         ctx, actual_name, return_type, member_return_def, member_return_def,
         member_return_arena, refused_before_member_force,
-        member_exact_source.try(&.source_registry_name), member_exact_source,
+        member_exact_source.try(&.source_registry_name), member_exact_source, observed_call: call_virtual ? nil : member_call_observation,
       )
 
       if return_type == TypeRef::VOID

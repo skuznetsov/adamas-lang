@@ -356,6 +356,121 @@ class Adamas::HIR::AstToHir
     !live_force_lower_callsite_for(name, source).nil?
   end
 
+  def __test_ordinary_queued_owner_recovery?(change : Symbol = :unchanged) : Bool
+    name = __test_projection_method_name("value_for")
+    source = __test_projection_source(name)
+    callsite = __test_ordinary_projection_callsite
+    replay = ForceLowerReplayCallsite.new(
+      source.source_def,
+      source.source_arena,
+      callsite,
+      @type_param_map.dup,
+      @current_namespace_override,
+      source.source_registry_name,
+      exact_source_binding: source,
+    )
+    @force_lower_retry_work.clear
+    @force_lower_retry_work << ForceLowerRetryRequest.new(name, [] of String, false, replay, source, true)
+
+    case change
+    when :registered_definition
+      original = @function_defs[name]
+      replacement = @function_defs.values.find { |candidate| !candidate.same?(original) } || return false
+      @function_defs[name] = replacement
+      begin
+        return live_force_lower_callsite_for(name, source).nil?
+      ensure
+        @function_defs[name] = original
+      end
+    when :registered_arena
+      original = @function_def_arenas[name]
+      replacement = Adamas::Compiler::Frontend::AstArena.new
+      @function_def_arenas[name] = replacement
+      begin
+        return live_force_lower_callsite_for(name, source).nil?
+      ensure
+        @function_def_arenas[name] = original
+      end
+    when :entry_namespace
+      return with_namespace_override_or_clear("RecClass") do
+        live_force_lower_callsite_for(name, source).nil?
+      end
+    when :entry_type_param_map
+      prior = @type_param_map.dup
+      @type_param_map.clear
+      @type_param_map["OwnerProbe"] = "RecToken"
+      begin
+        return live_force_lower_callsite_for(name, source).nil?
+      ensure
+        @type_param_map.clear
+        prior.each { |key, value| @type_param_map[key] = value }
+      end
+    else
+      live_force_lower_callsite_for(name, source).try do |retained|
+        same_force_lower_replay_callsite?(retained, replay)
+      end || false
+    end
+  ensure
+    @force_lower_retry_work.clear
+  end
+
+  def __test_ordinary_recovery_callsite_kinds : Tuple(Bool, Bool, Bool, Bool)
+    name = __test_projection_method_name("value_for")
+    source = __test_projection_source(name)
+    type = TypeRef::BOOL
+    instance_fact = SourceCallArgument.new(type, false)
+    class_fact = SourceCallArgument.new(type, true)
+    instance = CallsiteArgs.new(
+      [type], [false], nil,
+      source_argument_facts: [instance_fact.as(SourceCallArgument?)],
+    )
+    class_object = CallsiteArgs.new(
+      [type], [true], nil,
+      source_argument_facts: [class_fact.as(SourceCallArgument?)],
+    )
+    unknown_kind = CallsiteArgs.new([type], nil, nil)
+    callback = CallsiteArgs.new(
+      [type], [false], nil, has_block: true,
+      source_argument_facts: [instance_fact.as(SourceCallArgument?)],
+    )
+    {
+      ordinary_recursive_source_callsite?(name, source, instance),
+      ordinary_recursive_source_callsite?(name, source, class_object),
+      ordinary_recursive_source_callsite?(name, source, unknown_kind),
+      ordinary_recursive_source_callsite?(name, source, callback),
+    }
+  end
+
+  def __test_recursive_producer_callsite_consensus(change : Symbol = :unchanged) : Bool
+    name = __test_projection_method_name("value_for")
+    source = __test_projection_source(name)
+    flags = change == :absent_kind ? nil : [false]
+    plain = CallsiteArgs.new([TypeRef::BOOL], flags, nil)
+    kind = change == :class_object
+    evidence_type = change == :other_type ? TypeRef::INT32 : TypeRef::BOOL
+    fact = SourceCallArgument.new(evidence_type, kind)
+    rich = CallsiteArgs.new([TypeRef::BOOL], [kind], nil,
+      source_argument_facts: [fact.as(SourceCallArgument?)])
+    first = __test_projection_replay(name, plain)
+    second = if change == :other_namespace
+               with_namespace_override_or_clear("RecClass") { __test_projection_replay(name, rich) }
+             else
+               __test_projection_replay(name, rich)
+             end
+    first, second = second, first if change == :reverse
+    pending = ExactResultPending.new("RecFactory.consumer", name, source, first)
+    @force_lower_retry_work.clear
+    @force_lower_retry_work << ForceLowerRetryRequest.new(name, [] of String, false, second, source, true)
+    chosen = recursive_struct_result_producer_replay(pending)
+    if change == :unchanged || change == :reverse
+      chosen.try(&.callsite.source_argument_facts) == rich.source_argument_facts
+    else
+      chosen.nil?
+    end
+  ensure
+    @force_lower_retry_work.clear
+  end
+
   def __test_suspended_constant_return?(change : Symbol, *, nested : Bool = false) : Bool
     name = "RecFactory.value"
     source = __test_projection_source(name)
@@ -437,6 +552,12 @@ class Adamas::HIR::AstToHir
   private def __test_projection_bool_callsite(name : String, literal : Bool) : CallsiteArgs
     fact = SourceCallArgument.new(TypeRef::BOOL, literal)
     CallsiteArgs.new([TypeRef::BOOL], [literal], nil, selected_target: name,
+      source_argument_facts: [fact.as(SourceCallArgument?)])
+  end
+
+  private def __test_ordinary_projection_callsite : CallsiteArgs
+    fact = SourceCallArgument.new(TypeRef::BOOL, false)
+    CallsiteArgs.new([TypeRef::BOOL], [false], nil,
       source_argument_facts: [fact.as(SourceCallArgument?)])
   end
 end
@@ -602,6 +723,29 @@ describe "source result projection inside a recursive specialization" do
     converter.__test_queued_struct_input?(:unchanged).should be_true
     [:missing, :conflicting_argument, :source, :entry_namespace].each do |change|
       converter.__test_queued_struct_input?(change).should be_false
+    end
+  end
+
+  it "restores ordinary queued work only for the same live owner and entry context" do
+    converter = recursive_projection_converter
+    converter.__test_ordinary_queued_owner_recovery?.should be_true
+    [:registered_definition, :registered_arena, :entry_namespace, :entry_type_param_map].each do |change|
+      converter.__test_ordinary_queued_owner_recovery?(change).should be_true
+    end
+  end
+
+  it "admits a nonempty instance recipe but rejects a class object, unknown kind, or callback" do
+    instance, class_object, unknown_kind, callback = recursive_projection_converter.__test_ordinary_recovery_callsite_kinds
+    instance.should be_true
+    class_object.should be_false
+    unknown_kind.should be_false
+    callback.should be_false
+  end
+
+  it "keeps the richer equivalent instance recipe and rejects missing or crossed evidence" do
+    converter = recursive_projection_converter
+    [:unchanged, :reverse, :absent_kind, :class_object, :other_type, :other_namespace].each do |change|
+      converter.__test_recursive_producer_callsite_consensus(change).should be_true
     end
   end
 
