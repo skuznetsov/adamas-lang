@@ -116941,26 +116941,26 @@ module Adamas::HIR
       selected_registry_name : String? = nil,
       selected_source_binding : ForceLowerExactSourceBinding? = nil,
       *, observed_call : Tuple(String, ForceLowerReplayCallsite)? = nil,
+      allow_queued_result_demand : Bool = false,
     ) : Nil
       # A depth-refused result is pending in ordinary method bodies too.
       # Suspend its exact consumer before narrowing or a declared-return check
       # consumes Void; the replay recipe and source identity checks below own
       # the continuation independently of the active inline context.
       consumer = ctx.source_result_replay_consumer || ctx.function.name
-      # A known ABI type does not settle the source value kind. An annotated
-      # producer refused at the depth cap needs the same exact-source replay
-      # before a consumer narrows it or admits it to a restriction.
-      return unless (@force_lower_depth_refused[refused_mark...].includes?(name) ||
-                    suspended_source_result_producer?(name, consumer)) &&
-                    @force_lower_provisional_dependencies[consumer]?.try(&.includes?(name)) &&
-                    force_lower_replay_recipe_available?(consumer)
       source = selected_source_binding ||
                force_lower_exact_source_binding(name, selected_def, selected_call_def, selected_call_arena, selected_registry_name)
       return unless source
       return unless source.source_def.same?(selected_def.not_nil!) &&
                     (selected_registry_name.nil? || source.source_registry_name == selected_registry_name) &&
                     force_lower_exact_source_matches?(name, source)
-
+      # A known ABI type does not settle the source value kind. An annotated
+      # producer refused at the depth cap needs the same exact-source replay
+      # before a consumer narrows it or admits it to a restriction.
+      return unless (@force_lower_depth_refused[refused_mark...].includes?(name) ||
+                    suspended_source_result_producer?(name, consumer, source, allow_queued_result_demand)) &&
+                    @force_lower_provisional_dependencies[consumer]?.try(&.includes?(name)) &&
+                    force_lower_replay_recipe_available?(consumer)
       if env_has?("DEBUG_FORCE_LOWER_DEPTH")
         STDERR.puts "[FORCE_LOWER_SUSPENDED] consumer=#{consumer} context=#{ctx.function.name} producer=#{name}"
       end
@@ -116985,14 +116985,49 @@ module Adamas::HIR
     # reading `char_at { raise }` while `char_at` waits on `byte_at?`).
     # Exclude self-recursion and producers still lowering on the stack; their
     # provisional dependencies belong to the live body, not to a suspension.
-    private def suspended_source_result_producer?(name : String, consumer : String) : Bool
+    private def suspended_source_result_producer?(
+      name : String,
+      consumer : String,
+      source : ForceLowerExactSourceBinding,
+      allow_queued_result_demand : Bool = false,
+    ) : Bool
       return false if name == consumer
       state = function_state(name)
       return false if state.in_progress?
+      return true if allow_queued_result_demand && queued_exact_force_lower_result_demand?(name, source)
       if @module.has_function_with_body?(name) || state.completed?
         return queued_provisional_source_result_producer?(name)
       end
       !!@force_lower_provisional_dependencies[name]?.try { |dependencies| !dependencies.empty? }
+    end
+
+    # A retry request can retain the only current evidence that this exact
+    # source body is still suspended on a child. A nested driver may consume
+    # the body's provisional-dependency entry before an outer lower_call
+    # publishes its own result dependency. Accept the queued request only when
+    # its recipe remains current and its physical Def/Arena is the source
+    # selected by the caller.
+    private def queued_exact_force_lower_result_demand?(
+      name : String,
+      source : ForceLowerExactSourceBinding,
+    ) : Bool
+      return false unless @force_lower_retry_driver_active
+      return false if settled_force_lower_result?(name)
+      @force_lower_retry_work.any? do |request|
+        next false unless request.name == name && force_lower_retry_requires_result?(request) &&
+                          force_lower_retry_source_current?(request)
+        request_source = if request.is_a?(ForceLowerRetryRequest)
+                           request.exact_source || request.replay_callsite.try do |replay|
+                             replay.exact_source_binding ||
+                               ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name)
+                           end
+                         else
+                           replay = request.replay_callsite
+                           replay.exact_source_binding ||
+                             ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name)
+                         end
+        !!request_source.try { |candidate| same_force_lower_exact_source_binding?(candidate, source) }
+      end
     end
 
     # When the driver is already active, a suspended producer's force hands
@@ -121445,16 +121480,19 @@ module Adamas::HIR
       selected_call_def : Adamas::Compiler::Frontend::DefNode? = nil,
       selected_call_arena : Adamas::Compiler::Frontend::ArenaLike? = nil,
       selected_registry_name : String? = nil,
+      *, allow_queued_result_demand : Bool = false,
     ) : Nil
       return unless source
       binding = force_lower_exact_source_binding(target, source, selected_call_def, selected_call_arena, selected_registry_name)
       return unless binding
       return if source_owned_bodyless_primitive?(binding.source_def, binding.source_arena)
+      consumer = ctx.source_result_replay_consumer || ctx.function.name
       return unless (!@module.has_function_with_body?(target) &&
                      @force_lower_depth_refused[refused_before_force...].includes?(target)) ||
-                    @force_lower_provisional_dependencies.has_key?(target)
+                    @force_lower_provisional_dependencies.has_key?(target) ||
+                    (allow_queued_result_demand && consumer != target &&
+                     queued_exact_force_lower_result_demand?(target, binding))
 
-      consumer = ctx.source_result_replay_consumer || ctx.function.name
       if consumer == target && ctx.function.name == target
         if active = current_active_force_lower_body(target)
           if active.function.same?(ctx.function) && active.source_def.same?(binding.source_def) &&
@@ -131942,14 +131980,17 @@ module Adamas::HIR
 
       # The yield-free retry above can be the first force to reach the depth cap.
       unless cycle_result
+        queued_source_result_required = needs_source_result && !noreturn_type?(return_type)
         record_force_lower_result_dependency(
           ctx, mangled_method_name, selected_return_def, refused_before_call_force,
           selected_call_entry_def, selected_call_entry_arena, selected_call_entry_name,
+          allow_queued_result_demand: queued_source_result_required,
         )
         suspend_depth_refused_source_result(
           ctx, mangled_method_name, return_type, selected_return_def,
           selected_call_entry_def, selected_call_entry_arena, refused_before_call_force,
           selected_call_entry_name, observed_call: source_call_observation,
+          allow_queued_result_demand: queued_source_result_required,
         )
       end
 
