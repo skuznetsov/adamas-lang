@@ -12672,6 +12672,18 @@ module Adamas::HIR
         preserve_requested_runtime_reference_wrapper_owner?(candidate, resolved_name, resolved_def)
     end
 
+    # The demanded body and the emitted union arm must name the same source
+    # overload, including its self specialization and class-object arguments.
+    private def resolved_virtual_target_name(
+      candidate : String, base_name : String, selected_name : String,
+      definition : Adamas::Compiler::Frontend::DefNode,
+      call_types : Array(TypeRef), has_block : Bool,
+      source_arguments : Array(SourceCallArgument?)?, named_block_call : Bool = false,
+    ) : String
+      return candidate if virtual_target_preserves_requested_owner?(candidate, base_name, selected_name, definition)
+      virtual_replay_specialized_name(selected_name, call_types, has_block, source_arguments, named_block_call)
+    end
+
     private def broad_virtual_replay_declaring_owner(
       owner_name : String,
       replay_parent : String,
@@ -13079,15 +13091,13 @@ module Adamas::HIR
         selected_def = resolved[1]
         selected_arena = @function_def_arenas[resolved_name]?
         selected_source_path = selected_arena.try { |arena| source_path_for(arena) }
-        if virtual_target_preserves_requested_owner?(candidate, base_name, resolved_name, resolved[1])
-          # Use the same receiver owner as class-target replay.
-          lower_demanded_virtual_target_function(candidate)
-        else
-          target_name = virtual_replay_specialized_name(resolved_name, call_types, has_block_call, source_argument_facts, named_block_call: has_named_args)
+        target_name = resolved_virtual_target_name(candidate, base_name, resolved_name, resolved[1],
+          call_types, has_block_call, source_argument_facts, named_block_call: has_named_args)
+        if target_name != candidate
           remember_callsite_arg_types(target_name, call_types, call_literals, has_block: has_block_call,
             has_named_args: has_named_args, named_arg_names: named_arg_names, source_argument_facts: source_argument_facts)
-          lower_demanded_virtual_target_function(target_name)
         end
+        lower_demanded_virtual_target_function(target_name)
       else
         # An incompatible overload family has no selected bare body. Only the
         # exact requested shape may be queued for a later source resolution.
@@ -13499,6 +13509,7 @@ module Adamas::HIR
     # the inline union dispatcher also wraps each branch into that join.
     private def concrete_union_arm_source_results(
       variants : Array(String), method_name : String, arg_types : Array(TypeRef),
+      source_arguments : Array(SourceCallArgument?)? = nil,
     ) : Array(TypeRef)?
       owners = variants.map { |name| resolve_type_alias_chain(name).lchop("::") }
       has_struct_arm = false
@@ -13529,7 +13540,7 @@ module Adamas::HIR
           inherited_arms[owner_index] = true
         end
         return nil if unknown_args && overloads.size > 1
-        lookup_function_def_for_call(base, arg_types.size, false, arg_types)
+        lookup_function_def_for_call(base, arg_types.size, false, arg_types, source_argument_facts: source_arguments)
       end
       results = [] of TypeRef
       targets.each_with_index do |target, index|
@@ -13617,7 +13628,9 @@ module Adamas::HIR
       has_block_call : Bool,
       has_splat : Bool,
       call_has_named_args : Bool = false,
+      source_arguments : Array(SourceCallArgument?)? = nil,
     ) : TypeRef
+      arg_types = virtual_target_callsite_types(arg_types, source_arguments)
       variants = split_union_type_name(union_name)
       debug_generic_union_contract = !!env_get("DEBUG_GENERIC_UNION_CONTRACT")
       if debug_generic_union_contract
@@ -13633,7 +13646,7 @@ module Adamas::HIR
       return TypeRef::VOID if variants.size < 2
 
       if !has_block_call && !has_splat && !call_has_named_args
-        if arm_results = concrete_union_arm_source_results(variants, method_name, arg_types)
+        if arm_results = concrete_union_arm_source_results(variants, method_name, arg_types, source_arguments)
           if result = union_type_for_value_set(arm_results)
             return result
           end
@@ -13745,6 +13758,7 @@ module Adamas::HIR
             has_block_call,
             arg_types,
             has_splat,
+            source_argument_facts: source_arguments,
           )
           # Inherited module lookup intentionally returns a synthetic concrete
           # owner name for later specialization. Recover the authoritative
@@ -117882,7 +117896,10 @@ module Adamas::HIR
                exact_arg_types,
                false,
                lookup_has_named_args,
-               lookup_callsite.try(&.named_arg_names)
+               lookup_callsite.try(&.named_arg_names),
+               source_argument_facts: explicit_lookup_callsite.try { |site|
+                 site.source_argument_facts if site.types == exact_arg_types
+               },
              ))
             resolved_entry_name, resolved_entry_def = entry
             func_def = resolved_entry_def
@@ -131393,7 +131410,9 @@ module Adamas::HIR
       # Keep target reachability policy out of this already-large call resolver.
       # The helper owns the existing fanout registries and does not alter call
       # selection or return-type inference.
+      virtual_source_arguments : Array(SourceCallArgument?)? = nil
       if call_virtual && (virtual_receiver_id = receiver_id)
+        virtual_source_arguments = call_resolution_source_argument_facts(ctx, args, arg_types, has_splat, has_named_args)
         ensure_virtual_call_targets_lowered(
           ctx,
           virtual_receiver_id,
@@ -131405,7 +131424,7 @@ module Adamas::HIR
           splat_packed,
           call_named_arg_names,
           raw_call_positional_count,
-          source_argument_facts: call_resolution_source_argument_facts(ctx, args, arg_types, has_splat, has_named_args),
+          source_argument_facts: virtual_source_arguments,
         )
       end
 
@@ -132087,6 +132106,7 @@ module Adamas::HIR
               has_block_call,
               has_splat,
               has_named_args,
+              virtual_source_arguments,
             )
             return_type = inferred_union_return unless inferred_union_return == TypeRef::VOID
           end
@@ -132609,7 +132629,7 @@ module Adamas::HIR
           end
           if urd = try_emit_union_receiver_dispatch(ctx, receiver_id, rt, rd,
                base_method_name, mangled_method_name, args, arg_types,
-               return_type, has_block_call, block_id)
+               return_type, has_block_call, block_id, virtual_source_arguments)
             return urd
           end
         end
@@ -134919,8 +134939,10 @@ module Adamas::HIR
       ctx : LoweringContext, receiver_id : ValueId, recv_type : TypeRef, recv_desc,
       base_method_name : String, mangled_method_name : String?, args : Array(ValueId),
       arg_types : Array(TypeRef), return_type : TypeRef, has_block_call : Bool,
-      block_id : ValueId?,
+      block_id : ValueId?, source_arguments : Array(SourceCallArgument?)? = nil,
     ) : ValueId?
+      # A block converted to a trailing proc no longer has the original slot vector.
+      source_arguments = nil unless source_arguments.try(&.size) == args.size && args.size == arg_types.size
       effective_mangled_method_name = mangled_method_name || base_method_name
       variants = split_union_type_name(recv_desc.name)
       return nil if variants.size < 2
@@ -135086,6 +135108,7 @@ module Adamas::HIR
         end
       end
 
+      call_types = virtual_target_callsite_types(arg_types, source_arguments)
       vms = [] of {String, TypeRef, Int32}
       strict_hash_dispatch = mb == "hash" && !has_block_call &&
                              variants.any? { |variant| built_in_value_hash_owner?(variant) }
@@ -135095,16 +135118,24 @@ module Adamas::HIR
         vid = get_union_variant_id(recv_type, vr)
         next if vid < 0
         vb = "#{vn}##{mb}"
-        vm = mangle_function_name(vb, arg_types, has_block_call)
-        requested_vm = vm
-        unless @function_types.has_key?(vm) || @function_defs.has_key?(vm) || @module.has_function?(vm)
+        requested_vm = virtual_target_mangled_name(vb, call_types, has_block_call, source_arguments)
+        vm = requested_vm
+        input = if source_arguments
+                  CallResolutionInput.new(vb, call_types.size, call_types, has_block_call, false, false, nil,
+                    source_argument_facts: source_arguments)
+                end
+        selected = input.try { |shape| resolve_call_target(shape) }
+        if selected
+          vm = resolved_virtual_target_name(requested_vm, vb, selected.symbol_name, selected.def_node,
+            call_types, has_block_call, source_arguments)
+        elsif !(@function_types.has_key?(vm) || @function_defs.has_key?(vm) || @module.has_function?(vm))
           # Pass the concrete argument types: an arity-only pick binds a
           # sibling overload (Array(S)#[]?(Range) for an Int32 index).
           if res = resolve_untyped_overload(vb, arg_types.size, has_block_call, false, arg_types)
             vm = res
           else
             if inh = resolve_method_with_inheritance(vn, mb)
-              im = mangle_function_name(inh, arg_types, has_block_call)
+              im = virtual_target_mangled_name(inh, call_types, has_block_call, source_arguments)
               if @function_types.has_key?(im) || @function_defs.has_key?(im) || @module.has_function?(im)
                 vm = im
               elsif ir = resolve_untyped_overload(inh, arg_types.size, has_block_call, false, arg_types)
@@ -135133,6 +135164,15 @@ module Adamas::HIR
             vm = resolve_ancestor_overload(vn, mb, arg_types.size, has_block_call) ||
                  effective_mangled_method_name
           end
+        end
+        # A legacy target can supply an intrinsic or an inherited implementation.
+        # If it names a source Def, a rejected value kind cannot call that body.
+        if !selected && input && (fallback = @function_defs[vm]?) &&
+           !call_source_argument_kinds_match?(input, fallback, vm)
+          kinds = source_arguments.not_nil!.map_with_index do |fact, i|
+            fact ? proc_source_type_name(fact) : get_type_name_from_ref(call_types[i])
+          end
+          raise LoweringError.new("no overload matches #{vb} for argument types (#{kinds.join(", ")})")
         end
         exact_inherited_hash_demand = false
         # A cached zero-argument return contract does not prove that the owner
@@ -135278,7 +135318,7 @@ module Adamas::HIR
       # join instead of claiming the join as its call ABI.
       if explicit_branch_return_types.nil? && !has_block_call && block_id.nil? &&
          @module.get_type_descriptor(dispatch_return_type).try(&.kind) == TypeKind::Union
-        if arm_results = concrete_union_arm_source_results(variants, mb, arg_types)
+        if arm_results = concrete_union_arm_source_results(variants, mb, call_types, source_arguments)
           if union_type_for_value_set(arm_results) == dispatch_return_type
             arm_refs = variants.map { |variant| type_ref_for_name(resolve_type_alias_chain(variant).lchop("::")) }
             branch_types = [] of TypeRef
@@ -152737,7 +152777,7 @@ module Adamas::HIR
           _bmn = actual_name.includes?('#') ? actual_name : (base_method_name || actual_name)
           if _urd = try_emit_union_receiver_dispatch(ctx, object_id, _rt, _rd,
                _bmn, actual_name, args, arg_types,
-               return_type, false, nil)
+               return_type, false, nil, call_resolution_source_argument_facts(ctx, args, arg_types))
             return _urd
           end
         end
