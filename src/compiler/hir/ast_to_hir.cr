@@ -111500,7 +111500,9 @@ module Adamas::HIR
           rescue_done_block = ctx.create_block # also updates outer variable
 
           # Build chain: for each typed clause → IsA check → branch to body or next check
-          # Untyped clause → catch-all (no check)
+          # Untyped clause → catch-all (no check). When the last clause is
+          # typed and no clause matched, the exception continues to the
+          # enclosing frame (this frame was already popped above).
           next_check_block : BlockId? = nil
           rescue_clause_exits = [] of {BlockId, ValueId} # {exit_block, value} for PHI
           rescue_clauses.each_with_index do |clause, idx|
@@ -111512,23 +111514,37 @@ module Adamas::HIR
 
             has_type_check = !exc_type_name.empty?
 
-            if has_type_check && idx < rescue_clauses.size - 1
-              # Typed clause with more clauses after — need conditional branch
+            if has_type_check
+              # Typed clause — conditional branch to its body or the next check
               check_type_ref = type_ref_for_name(exc_type_name)
               if check_type_ref == TypeRef::VOID
                 check_type_ref = type_ref_for_name("Exception")
               end
 
-              is_a = IsA.new(ctx.next_id, exc_ptr.id, check_type_ref)
-              ctx.emit(is_a)
-              ctx.register_type(is_a.id, TypeRef::BOOL)
+              # `rescue e : A | B` matches when the exception is any listed
+              # type. A union has no runtime type id of its own, so test
+              # each variant against the exception's header.
+              check_types = [check_type_ref]
+              if is_union_type?(check_type_ref)
+                ensure_union_descriptor_for_type_ref(check_type_ref)
+                if descriptor = @union_descriptors[hir_to_mir_type_ref(check_type_ref)]?
+                  check_types = descriptor.variants.map { |variant| mir_to_hir_type_ref(variant.type_ref) }
+                end
+              end
+              checks = check_types.map do |variant_type|
+                is_a = IsA.new(ctx.next_id, exc_ptr.id, variant_type)
+                ctx.emit(is_a)
+                ctx.register_type(is_a.id, TypeRef::BOOL)
+                is_a.id
+              end
+              matched = combine_boolean_checks(ctx, checks)
 
               body_block_clause = ctx.create_block
               next_check_block = ctx.create_block
-              ctx.terminate(Branch.new(is_a.id, body_block_clause, next_check_block))
+              ctx.terminate(Branch.new(matched, body_block_clause, next_check_block))
               ctx.switch_to_block(body_block_clause)
             end
-            # If untyped or last typed clause, continue in current block (catch-all)
+            # An untyped clause continues in the current block (catch-all)
 
             # Bind exception variable
             var_name = clause.variable_name
@@ -111580,11 +111596,17 @@ module Adamas::HIR
               ctx.terminate(Jump.new(rescue_done_block))
             end
 
-            if has_type_check && idx < rescue_clauses.size - 1
+            if has_type_check
               # Switch to the next check block for the next iteration
               ctx.switch_to_block(next_check_block.not_nil!)
+              if idx == rescue_clauses.size - 1
+                # No clause matched: re-raise the same exception object.
+                reraise = Raise.new(ctx.next_id, exc_ptr.id)
+                ctx.emit(reraise)
+                ctx.terminate(Unreachable.new)
+              end
             else
-              # Last clause or untyped — no more checking
+              # Untyped clause — catch-all, no more checking
               break
             end
           end
