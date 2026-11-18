@@ -1,0 +1,114 @@
+{
+  "artifact_kind": "landmark_evidence_packet",
+  "schema_version": 1,
+  "id": "lep-20260716-llvm-function-census",
+  "created_at": "2026-07-16T15:10:04Z",
+  "canonical_status": "canonical_summary",
+  "source": {
+    "task": "Compare original Crystal and Adamas LLVM function demand and localize unnecessary generation",
+    "producer": "codex",
+    "bounded_context": "Adamas HIR to MIR to LLVM bootstrap compiler"
+  },
+  "claim": {
+    "text": "An inherited virtual demand with no override causes Adamas to materialize one identical HIR body per live empty subclass and then emit a MIR vdispatch wrapper, while original Crystal retains one implementation and a direct call.",
+    "level": "VERIFIED",
+    "scope": "empty non-overriding reference subclasses, one Int32 instance method, and reusable LLVM inventory/reachability diagnostics",
+    "decay_trigger": "Changes to HIR virtual-target replay, inherited-body reuse, MIR class candidate enumeration, LLVM linkage policy, or a contradictory fresh same-source pair"
+  },
+  "evidence": [
+    {
+      "kind": "command",
+      "ref": "crystal spec spec/llvm_function_census_spec.cr && crystal spec spec/llvm_function_reachability_spec.cr",
+      "signal": "5 comparator examples and 3 reachability examples pass with zero failures or errors",
+      "result": "passed"
+    },
+    {
+      "kind": "same_source_census",
+      "ref": "/private/tmp/adamas_ll_census_c394_20260716/host_1_20_3/basic_sanity_pair",
+      "signal": "Original 3026 define and 105 declare; Adamas 2458 define and 178 declare; 680 authoritative matches and 50 provisional shape hints",
+      "result": "passed"
+    },
+    {
+      "kind": "static_reference_census",
+      "ref": "/private/tmp/adamas_ll_reach_root_dod_original and /private/tmp/adamas_ll_reach_root_dod_adamas",
+      "signal": "Original reaches 2977 of 3026 definitions and has 3008 internal symbols; Adamas reaches 1433 of 2458 definitions and all 2636 symbols are external",
+      "result": "passed"
+    },
+    {
+      "kind": "no_prelude_scaling_falsifier",
+      "ref": "/private/tmp/adamas_inherited_fanout8_hir.hir and paired LLVM files",
+      "signal": "Zero subclasses yields one body and no dispatcher; eight empty subclasses yield original one body versus Adamas nine HIR bodies plus one vdispatch wrapper",
+      "result": "passed"
+    },
+    {
+      "kind": "adversary_review",
+      "ref": "ll_oracle_audit plus census_script_conventions",
+      "signal": "ROBUST for semantic identity census, provisional separation, textual ABI diagnostics, and conservative static reachability triage",
+      "result": "passed"
+    }
+  ],
+  "verification": {
+    "dod_commands": [
+      "CRYSTAL_CACHE_DIR=/private/tmp/adamas_ll_census_root_dod crystal spec spec/llvm_function_census_spec.cr",
+      "CRYSTAL_CACHE_DIR=/private/tmp/adamas_ll_reach_root_dod crystal spec spec/llvm_function_reachability_spec.cr",
+      "PYTHONPYCACHEPREFIX=/private/tmp/adamas_ll_tools_root_dod python3 -m py_compile scripts/compare_llvm_functions.py scripts/llvm_function_reachability.py",
+      "python3 scripts/compare_llvm_functions.py --original-ll <original.ll> --adamas-ll <adamas.ll> --out-dir <reports>",
+      "python3 scripts/llvm_function_reachability.py --ll <input.ll> --out-dir <reports>"
+    ],
+    "dod_signal": "Focused specs and syntax checks pass; repeated real-pair reports are deterministic; the empty-subclass function slope is present in HIR and LLVM.",
+    "adversary_verdict": "ROBUST",
+    "trust": {
+      "F": 0.95,
+      "G": 0.58,
+      "R": 0.91
+    }
+  },
+  "boundaries": {
+    "allowed_paths": [
+      "scripts/compare_llvm_functions.py",
+      "scripts/llvm_function_reachability.py",
+      "spec/llvm_function_census_spec.cr",
+      "spec/llvm_function_reachability_spec.cr",
+      "docs/llvm_function_census.md",
+      "TODO.md",
+      "LANDMARKS.md",
+      ".landmark/evidence/**"
+    ],
+    "changed_paths": [
+      "scripts/compare_llvm_functions.py",
+      "scripts/llvm_function_reachability.py",
+      "spec/llvm_function_census_spec.cr",
+      "spec/llvm_function_reachability_spec.cr",
+      "docs/llvm_function_census.md",
+      "TODO.md",
+      "LANDMARKS.md",
+      ".landmark/evidence/lep-20260716-llvm-function-census.json"
+    ],
+    "raw_artifacts": [
+      {
+        "availability": "ephemeral",
+        "ref": "/private/tmp/adamas_ll_census_c394_20260716/host_1_20_3/basic_sanity_pair/original_basic_o0.ll",
+        "digest": "sha256:633f32575d668c14c3540bbaa8af59e50719a8b863aa06bf78440d4d2a7c5ddb"
+      },
+      {
+        "availability": "ephemeral",
+        "ref": "/private/tmp/adamas_ll_census_c394_20260716/host_1_20_3/basic_sanity_pair/s1_basic_raw.ll",
+        "digest": "sha256:699f8df6209fcf46f718d93cf14293d1d3d22e3b9ffe72c1eb1cf601a06f79c0"
+      },
+      {
+        "availability": "ephemeral",
+        "ref": "/private/tmp/adamas_inherited_fanout8_hir.hir",
+        "digest": "sha256:9a15aec9ddfa89cc0ccc085a03a7f9806a062d46325da0f8edf64f2258a9fd87"
+      }
+    ]
+  },
+  "residual_risk": "This packet proves one multiplier, not complete attribution of the historical full-selfhost excess. ABI fingerprints compare textual LLVM type shapes rather than named-type layouts. Static reachability does not model every indirect call, alias, ifunc, inline-assembly, linker, or plugin behavior and is never deletion authority. Fresh full Adamas LLVM emission is blocked earlier by an HIR OverflowError, so the old 88504-definition artifact is not a current pair.",
+  "links": {
+    "problem_card": "",
+    "frontier_sdd": "",
+    "protocol_proposal": "",
+    "related_packets": [
+      "lep-20260716-mir-abstract-dispatch-demand"
+    ]
+  }
+}

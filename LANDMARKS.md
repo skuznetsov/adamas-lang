@@ -27773,3 +27773,7 @@ and performs foreground parse/analysis work. It is not a key-to-render SLA,
 incremental parser, or bounded server-memory claim. Refresh this certificate
 when coordinate conversion, line-offset ownership, `didChange` ordering, or
 sync capability changes. Rollback is the isolated incremental-sync commit.
+
+### LLVM function census and abstract dispatch demand
+
+The July branch introduced streaming function comparison and root-based reachability analysis. Its evidence packets retain the original source revisions. The associated MIR pass limits synthetic ancestor dispatchers to canonical targets demanded by HIR. Typed-only and descendant-only targets have separate regression cases in `spec/mir/hir_to_mir_spec.cr`. Recheck emitted behavior and reachability when either target discovery or MIR synthesis changes.

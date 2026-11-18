@@ -1,0 +1,88 @@
+{
+  "artifact_kind": "landmark_evidence_packet",
+  "schema_version": 1,
+  "id": "lep-20260716-mir-abstract-dispatch-demand",
+  "created_at": "2026-07-16T08:15:48Z",
+  "canonical_status": "canonical_summary",
+  "source": {
+    "task": "Bound MIR abstract-dispatch synthesis by exact HIR demand",
+    "producer": "codex",
+    "bounded_context": "Adamas HIR to MIR bootstrap compiler"
+  },
+  "claim": {
+    "text": "MIR synthesizes canonical missing-ancestor dispatchers only for exact canonical HIR virtual-target demands.",
+    "level": "VERIFIED",
+    "scope": "synthesize_abstract_method_dispatchers and its canonical class-method admission boundary",
+    "decay_trigger": "Changes to HIR virtual-target naming, demand recording, MIR function naming, or abstract-dispatch synthesis"
+  },
+  "evidence": [
+    {
+      "kind": "command",
+      "ref": "crystal spec spec/mir/hir_to_mir_spec.cr --example 'abstract dispatcher demand gate' --order random",
+      "signal": "4 examples, 0 failures after two independently captured RED states",
+      "result": "passed"
+    },
+    {
+      "kind": "command",
+      "ref": "crystal spec spec/mir/hir_to_mir_spec.cr --order random",
+      "signal": "38 examples, 0 failures",
+      "result": "passed"
+    },
+    {
+      "kind": "production_probe",
+      "ref": "/private/tmp/adamas_abs_dispatch_prod_20260715",
+      "signal": "Concrete, abstract, Object/Reference-static, and typed-overload compile/link/runtime probes exited 0",
+      "result": "passed"
+    },
+    {
+      "kind": "same_source_census",
+      "ref": "sha256:f3d0b5256cd842000c070af5a94f621f6bec679dbdaa42b2184aa8a0d6558f75",
+      "signal": "88,504 definitions; Pass 3 synthesized 62; direct Object+Reference methods 2,085 to 50; root arena/type_registry absent",
+      "result": "passed"
+    }
+  ],
+  "verification": {
+    "dod_commands": [
+      "crystal spec spec/mir/hir_to_mir_spec.cr --order random",
+      "regression_tests/p2_root_self_replay_no_prelude.sh <fresh-s1>",
+      "regression_tests/p2_pending_budget_no_prelude.sh <fresh-s1>"
+    ],
+    "dod_signal": "MIR specs and production dispatch probes pass; the same-source census removes undemanded root wrappers.",
+    "adversary_verdict": "ROBUST",
+    "trust": {
+      "F": 0.97,
+      "G": 0.62,
+      "R": 0.95
+    }
+  },
+  "boundaries": {
+    "allowed_paths": [
+      "src/compiler/mir/hir_to_mir.cr",
+      "spec/mir/hir_to_mir_spec.cr",
+      "TODO.md",
+      "LANDMARKS.md",
+      ".landmark/evidence/**"
+    ],
+    "changed_paths": [
+      "src/compiler/mir/hir_to_mir.cr",
+      "spec/mir/hir_to_mir_spec.cr",
+      "TODO.md",
+      "LANDMARKS.md",
+      ".landmark/evidence/lep-20260716-mir-abstract-dispatch-demand.json"
+    ],
+    "raw_artifacts": [
+      {
+        "availability": "ephemeral",
+        "ref": "/private/tmp/adamas_abs_dispatch_final_20260715/adamas_selfhost.ll",
+        "digest": "sha256:f3d0b5256cd842000c070af5a94f621f6bec679dbdaa42b2184aa8a0d6558f75"
+      }
+    ]
+  },
+  "residual_risk": "Generic and module alias edges are not exhaustively covered. The total function count remains 51,463 above original Crystal; nested generic HIR demand is the next hypothesis. No s2b or later stage is claimed.",
+  "links": {
+    "problem_card": "",
+    "frontier_sdd": "",
+    "protocol_proposal": "",
+    "related_packets": []
+  }
+}

@@ -27756,3 +27756,7 @@ transport from ordinary edits; full-string splice, parse and semantic analysis
 inside the server remain separate performance frontiers. Rollback the isolated
 incremental-sync commit. Refresh on coordinate, line-offset or didChange
 changes. No stdlib edits.
+
+## Cross-compiler LLVM function census
+
+- Use the streaming comparison and reachability tools in `docs/llvm_function_census.md` to localize emitted function-count differences after fresh bootstrap output becomes available. The July measurements belong to their source revisions.
