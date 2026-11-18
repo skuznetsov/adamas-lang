@@ -12,6 +12,20 @@ def operator_symbol_tokens(source : String) : Array(Adamas::Compiler::Frontend::
 end
 
 describe "Lexer operator-symbol longest match" do
+  it "leaves a proc arrow intact after the block-pass ampersand" do
+    tokens = operator_symbol_tokens("&->{} &- &-= &- > & ->")
+    tokens.map(&.kind).should eq([
+      OperatorSymbolTokenKind::Amp, OperatorSymbolTokenKind::ThinArrow,
+      OperatorSymbolTokenKind::LBrace, OperatorSymbolTokenKind::RBrace,
+      OperatorSymbolTokenKind::AmpMinus, OperatorSymbolTokenKind::AmpMinusEq,
+      OperatorSymbolTokenKind::AmpMinus, OperatorSymbolTokenKind::Greater,
+      OperatorSymbolTokenKind::Amp, OperatorSymbolTokenKind::ThinArrow, OperatorSymbolTokenKind::EOF,
+    ])
+    tokens[0, 2].map { |token| {token.lexeme, token.span.start_offset, token.span.end_offset} }.should eq([
+      {"&", 0, 1}, {"->", 1, 3},
+    ])
+  end
+
   it "distinguishes adjacent operators from named argument suffixes" do
     operator_symbol_tokens(%q(!:"x"))[0, 2].map(&.kind).should eq([
       OperatorSymbolTokenKind::Not, OperatorSymbolTokenKind::Symbol,

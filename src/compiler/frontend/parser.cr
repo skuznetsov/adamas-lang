@@ -5054,7 +5054,7 @@ module Adamas
             # Parse arguments (positional, block captures, splats, and tolerate named args)
             loop do
               # Block capture or shorthand: super(&block) / super(&.call)
-              if current_token.kind == Token::Kind::Amp
+              if block_argument_amp?
                 amp_token = current_token
                 advance
                 skip_trivia
@@ -5159,7 +5159,7 @@ module Adamas
 
             unless current_token.kind.in?(Token::Kind::Newline, Token::Kind::EOF, Token::Kind::Semicolon, Token::Kind::End, Token::Kind::Rescue, Token::Kind::Ensure) || !arg_starter
               loop do
-                if current_token.kind == Token::Kind::Amp
+                if block_argument_amp?
                   amp_token = current_token
                   advance
                   skip_trivia
@@ -9420,32 +9420,13 @@ module Adamas
                Token::Kind::In,                           # Phase 79: in operator
                Token::Kind::NilCoalesce,                  # Phase 81: ?? operator
           # Phase 89: Wrapping arithmetic operators
-               Token::Kind::AmpPlus,
+               Token::Kind::AmpPlus, Token::Kind::AmpMinus,
                Token::Kind::AmpStar, Token::Kind::AmpStarStar
             return PREFIX_ERROR
-            # Phase 103K: AmpMinus needs special handling - it could be &-> (proc pointer as block)
-          when Token::Kind::AmpMinus
-            # Check if this is &-> (proc pointer passed as block argument)
-            # Lexer tokenizes &-> as AmpMinus (&-) + Greater (>)
-            next_tok = peek_token(1)
-            if next_tok.kind != Token::Kind::Greater
-              # Just &- operator, not &->
-              return PREFIX_ERROR
-            end
-            # Otherwise, fall through to allow parsing as &-> proc pointer
-            # Phase 103L: Amp needs special handling - it could be block shorthand OR binary operator
           when Token::Kind::Amp
-            # Block shorthand: &.method (AmpDot) or &block (no space)
-            # Binary operator: x & y (space after &) OR x &~y (unary operator after &)
-            # Check for gap between & and next token using span positions
-            amp_tok = current_token
+            # A separated ampersand belongs to the surrounding binary expression.
+            return PREFIX_ERROR unless block_argument_amp?
             next_tok = peek_token(1)
-            # If there's a gap (space) after &, it's binary bitwise AND
-            # Block args are &block (adjacent), not & block (with space)
-            if amp_tok.span.end_column < next_tok.span.start_column
-              # Space after & means binary bitwise AND, not block argument
-              return PREFIX_ERROR
-            end
             # Phase 103M: If next token is a unary operator prefix, treat as binary &
             # Example: x & ~15 - the ~ is unary NOT, not part of block shorthand
             # Block shorthand can only be &.method, &block, or &[idx]
@@ -9508,7 +9489,7 @@ module Adamas
               advance
               skip_trivia
               arg = parse_block_shorthand(amp_token)
-            elsif current_token.kind == Token::Kind::Amp
+            elsif block_argument_amp?
               amp_token = current_token
               advance
               skip_trivia
@@ -9523,13 +9504,15 @@ module Adamas
                 ident_node = @arena.add_typed(IdentifierNode.new(ident_span, @string_pool.intern(ident_token.slice)))
                 arg_span = amp_token.span.cover(ident_span)
                 arg = @arena.add_typed(UnaryNode.new(arg_span, amp_token.slice, ident_node))
+              elsif current_token.kind == Token::Kind::ThinArrow
+                target = without_postfix_modifiers { parse_expression(UNARY_PRECEDENCE) }
+                return PREFIX_ERROR if target.invalid?
+                arg = @arena.add_typed(UnaryNode.new(amp_token.span.cover(@arena[target].span), amp_token.slice, target))
               else
                 # Not a block shorthand/capture, rewind amp and parse normally
                 unadvance
                 arg = without_postfix_modifiers { parse_op_assign }
               end
-            elsif proc_pointer_block_argument_start?
-              arg = parse_proc_pointer_block_argument
             elsif current_token.kind == Token::Kind::Star || current_token.kind == Token::Kind::StarStar
               # Splat arguments
               star_token = current_token
@@ -12559,7 +12542,7 @@ module Adamas
               arg_expr = PREFIX_ERROR
               have_arg_expr = false
               pushed = false
-              if current_token.kind == Token::Kind::Amp
+              if block_argument_amp?
                 amp_token = current_token
                 advance
                 skip_whitespace_and_optional_newlines
@@ -12584,24 +12567,6 @@ module Adamas
                   # Create block argument node (UnaryNode with & operator)
                   arg_span = amp_token.span.cover(identifier_span)
                   arg_expr = @arena.add_typed(UnaryNode.new(arg_span, amp_token.slice, identifier_node))
-                  have_arg_expr = true
-                elsif current_token.kind == Token::Kind::ThinArrow
-                  # Phase 103J: Proc pointer as block argument: foo(&->bar) or foo(&->Type.method)
-                  # Parse the proc pointer (->target) and wrap with &
-                  arrow_token = current_token
-                  advance
-                  skip_trivia
-                  target = parse_expression(UNARY_PRECEDENCE)
-                  if target.invalid?
-                    emit_unexpected(current_token)
-                    return PREFIX_ERROR
-                  end
-                  # Create proc pointer node: ->target
-                  proc_span = arrow_token.span.cover(@arena[target].span)
-                  proc_pointer = @arena.add_typed(UnaryNode.new(proc_span, arrow_token.slice, target))
-                  # Wrap with &: &(->target)
-                  arg_span = amp_token.span.cover(proc_span)
-                  arg_expr = @arena.add_typed(UnaryNode.new(arg_span, amp_token.slice, proc_pointer))
                   have_arg_expr = true
                 else
                   target_expr = with_pointer_suffix { parse_expression(UNARY_PRECEDENCE) }
@@ -12628,18 +12593,6 @@ module Adamas
                 end
                 args_b << arg_expr
                 pushed = true
-              elsif current_token.kind == Token::Kind::AmpMinus
-                if proc_pointer_block_argument_start?
-                  arg_expr = parse_proc_pointer_block_argument
-                  return PREFIX_ERROR if arg_expr.invalid?
-                  have_arg_expr = true
-                  args_b << arg_expr
-                  pushed = true
-                else
-                  arg_expr = with_pointer_suffix { parse_expression(0) }
-                  have_arg_expr = true
-                  return PREFIX_ERROR if arg_expr.invalid?
-                end
               else
                 # Phase 68: Splat arguments (*args, **kwargs)
                 if current_token.kind == Token::Kind::Star || current_token.kind == Token::Kind::StarStar
@@ -13470,10 +13423,6 @@ current_token.kind == Token::Kind::Identifier &&
             end
             return false
           end
-          if token.kind == Token::Kind::AmpMinus
-            next_tok = peek_token(1)
-            return next_tok.kind != Token::Kind::Greater
-          end
           return false if keyword_type_declaration_argument_start?(token)
           case token.kind
           when Token::Kind::Newline, Token::Kind::EOF,
@@ -13512,7 +13461,7 @@ current_token.kind == Token::Kind::Identifier &&
                Token::Kind::Match, Token::Kind::NotMatch,
                Token::Kind::In,
                Token::Kind::As, Token::Kind::AsQuestion,
-               Token::Kind::AmpPlus, Token::Kind::AmpStar, Token::Kind::AmpStarStar,
+               Token::Kind::AmpPlus, Token::Kind::AmpMinus, Token::Kind::AmpStar, Token::Kind::AmpStarStar,
                Token::Kind::LParen
             true
           else
@@ -14473,6 +14422,11 @@ current_token.kind == Token::Kind::Identifier &&
                                 token.kind == Token::Kind::Comment
             offset += 1
           end
+        end
+
+        private def block_argument_amp? : Bool
+          token = current_token
+          token.kind == Token::Kind::Amp && token.span.end_offset == peek_next_non_trivia.span.start_offset
         end
 
         private def standalone_amp_capture_target? : Bool
@@ -16715,34 +16669,6 @@ current_token.kind == Token::Kind::Identifier &&
           else
             nil
           end
-        end
-
-        private def proc_pointer_block_argument_start? : Bool
-          current_token.kind == Token::Kind::AmpMinus && peek_token(1).kind == Token::Kind::Greater
-        end
-
-        # The lexer splits &-> into &- and >. All call argument forms must
-        # produce the same capture of a proc pointer, including receiver calls.
-        private def parse_proc_pointer_block_argument : ExprId
-          amp_minus_token = current_token
-          advance
-          advance
-          skip_trivia
-          target = parse_expression(UNARY_PRECEDENCE)
-          return PREFIX_ERROR if target.invalid?
-
-          target_span = @arena[target].span
-          proc_span = Span.new(
-            amp_minus_token.span.start_offset + 1,
-            target_span.end_offset,
-            amp_minus_token.span.start_line,
-            target_span.end_line,
-            amp_minus_token.span.start_column + 1,
-            target_span.end_column
-          )
-          proc_pointer = @arena.add_typed(UnaryNode.new(proc_span, "->".to_slice, target))
-          arg_span = amp_minus_token.span.cover(target_span)
-          @arena.add_typed(UnaryNode.new(arg_span, "&".to_slice, proc_pointer))
         end
 
         private def terminal_call_block_argument?(expr_id : ExprId) : Bool

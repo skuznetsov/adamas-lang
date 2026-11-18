@@ -2365,7 +2365,9 @@ module Adamas
               else
                 Token::Kind::AmpPlus # &+
               end
-            elsif @offset < @rope.size && current_byte == '-'.ord.to_u8
+            # In a block pass such as invoke(&->{}), the minus starts the
+            # proc arrow. Leave it for the next token after the ampersand.
+            elsif @offset < @rope.size && current_byte == '-'.ord.to_u8 && peek_byte != '>'.ord.to_u8
               @offset += 1
               @column += 1
               # Check for &-=

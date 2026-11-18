@@ -27388,6 +27388,8 @@ One fix per commit, each with an oracle-qualified regression
 
 ## Source ownership and self-hosting (November 2026)
 
+- [x] Parse a forwarded Proc literal through the ordinary arrow expression in both call forms. Match the original compiler on adjacent `&->`, grouped and typed literals, method pointers, and rejection of a separated block-pass ampersand. The semantic bootstrap corpus now emits HIR, MIR and LLVM on this topic.
+
 - [x] A speculative body carries its AST arena through type-position `typeof`,
   nested assignment walks and local-inference cache keys. Equal indices in
   two files and a same-shaped overload with a different result are covered by
