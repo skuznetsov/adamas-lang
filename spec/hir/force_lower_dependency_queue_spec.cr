@@ -55,6 +55,56 @@ class Adamas::HIR::AstToHir
     ForceLowerRetryRequest.new(name, dependencies.dup, false, replay, exact_source, requires_result)
   end
 
+  def __test_force_lower_exact_source_binding(
+    name : String,
+    selected_registry_name : String? = nil,
+    source_name : String? = nil,
+    foreign_arena : Bool = false,
+  ) : ForceLowerExactSourceBinding?
+    selected_name = source_name || name
+    source_def = @function_defs[selected_name]?
+    source_arena = if foreign_arena
+                     __test_foreign_source_arena
+                   else
+                     @function_def_arenas[selected_name]?
+                   end
+    force_lower_exact_source_binding(name, source_def, source_def, source_arena, selected_registry_name)
+  end
+
+  def __test_register_source_alias(name : String, source_name : String) : Nil
+    @function_defs[name] = @function_defs[source_name]
+    @function_def_arenas[name] = @function_def_arenas[source_name]
+  end
+
+  def __test_lower_and_capture_replay(
+    name : String,
+    callsite : CallsiteArgs,
+    exact_source : ForceLowerExactSourceBinding? = nil,
+  ) : ForceLowerReplayCallsite?
+    @pending_arg_types[name] = callsite
+    @force_lower_replay_source_bindings[name] = exact_source if exact_source
+    capture = ForceLowerReplayCapture.new(name, @force_lower_current_replay_capture)
+    prior_capture = @force_lower_active_replay_captures[name]?
+    prior_current_capture = @force_lower_current_replay_capture
+    @force_lower_active_replay_captures[name] = capture
+    @force_lower_current_replay_capture = capture
+    begin
+      lower_function_if_needed_impl(name, __LINE__, capture)
+    ensure
+      @force_lower_current_replay_capture = prior_current_capture
+      if prior_capture
+        @force_lower_active_replay_captures[name] = prior_capture.not_nil!
+      else
+        @force_lower_active_replay_captures.delete(name)
+      end
+    end
+    capture.binding
+  end
+
+  def __test_empty_callsite : CallsiteArgs
+    CallsiteArgs.new([] of TypeRef, nil, nil)
+  end
+
   def __test_stale_queue_request(request : ForceLowerRetryRequest, foreign_name : String) : ForceLowerRetryRequest
     foreign_def = @function_defs[foreign_name]
     foreign_arena = @function_def_arenas[foreign_name]
@@ -360,7 +410,74 @@ private def force_lower_dependency_queue_fixture : Adamas::HIR::AstToHir
   converter
 end
 
+private def force_lower_registry_capture_fixture(name : String) : Adamas::HIR::AstToHir
+  source = "def #{name} : Int32\n  65\nend\n"
+  parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
+  program = parser.parse_program
+  parser.diagnostics.should be_empty
+  arena = program.arena
+  converter = Adamas::HIR::AstToHir.new(
+    arena,
+    sources_by_arena: {arena.object_id.to_u64 => source},
+    paths_by_arena: {arena.object_id.to_u64 => "/tmp/force_lower_registry_capture_spec.cr"},
+  )
+  converter.no_prelude = true
+  program.roots.each do |id|
+    node = arena[id]
+    converter.register_function(node) if node.is_a?(Adamas::Compiler::Frontend::DefNode)
+  end
+  converter
+end
+
 describe "dependency-aware exact source retry scheduling" do
+  it "uses the physical registry key for ordinary replay capture" do
+    ordinary = force_lower_registry_capture_fixture("registry_capture_target")
+    ordinary_replay = ordinary.__test_lower_and_capture_replay(
+      "registry_capture_target", ordinary.__test_empty_callsite,
+    )
+    ordinary_replay.should_not be_nil
+    ordinary_replay.not_nil!.source_registry_name.should eq("registry_capture_target")
+  end
+
+  it "preserves the lexical registry key for an aliased replay capture" do
+    alias_converter = force_lower_registry_capture_fixture("registry_capture_source")
+    alias_converter.__test_register_source_alias("registry_capture_lexical", "registry_capture_source")
+    alias_source = alias_converter.__test_force_lower_exact_source_binding(
+      "registry_capture_source", selected_registry_name: "registry_capture_lexical",
+      source_name: "registry_capture_source",
+    )
+    alias_source.should_not be_nil
+    alias_source.not_nil!.source_registry_name.should eq("registry_capture_lexical")
+    alias_replay = alias_converter.__test_lower_and_capture_replay(
+      "registry_capture_source", alias_converter.__test_empty_callsite,
+      alias_source.not_nil!,
+    )
+    alias_replay.should_not be_nil
+    alias_replay.not_nil!.source_registry_name.should eq("registry_capture_lexical")
+  end
+
+  it "retains the registered source name when the exact source is selected by its physical name" do
+    converter = force_lower_dependency_queue_fixture
+
+    exact = converter.__test_force_lower_exact_source_binding("retry_queue_shared")
+    exact.should_not be_nil
+    exact.not_nil!.source_registry_name.should eq("retry_queue_shared")
+  end
+
+  it "rejects mismatched registry names, foreign arenas, and foreign Defs" do
+    converter = force_lower_dependency_queue_fixture
+
+    converter.__test_force_lower_exact_source_binding(
+      "retry_queue_shared", selected_registry_name: "retry_queue_leaf",
+    ).should be_nil
+    converter.__test_force_lower_exact_source_binding(
+      "retry_queue_shared", foreign_arena: true,
+    ).should be_nil
+    converter.__test_force_lower_exact_source_binding(
+      "retry_queue_shared", source_name: "retry_queue_leaf",
+    ).should be_nil
+  end
+
   it "settles a shared producer before either queued ancestor consumes it" do
     converter = force_lower_dependency_queue_fixture
     shared = converter.__test_seed_queue_retry("retry_queue_shared", ["retry_queue_leaf"])

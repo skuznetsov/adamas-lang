@@ -27682,3 +27682,9 @@ One fix per commit, each with an oracle-qualified regression
   Included includes Marker. The same allocator ABI error occurs on 8a10de64.
   Its non-null and generic-module controls print A before and after the
   formal-kind change. Verify the nullable module carrier at the call.
+- [x] Retain the selected registry key on ordinary recursive specialization
+  and exact-source replay. The physical definition, arena and registry key
+  must agree on both sides of a suspended call, including an explicit alias.
+  The queue suite passes 12 examples. Two native recursion controls agree
+  with Crystal on valid calls and rejected arguments/returns. The uncached
+  S1 self-builds with 1.18.2 and 1.22.3 still stop on parse_statement_in_scope.

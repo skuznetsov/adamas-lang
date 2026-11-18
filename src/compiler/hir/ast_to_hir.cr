@@ -116888,7 +116888,7 @@ module Adamas::HIR
       if retained_arena = registered_arena_for_def(source_def)
         return nil unless retained_arena.same?(source_arena)
       end
-      source = ForceLowerExactSourceBinding.new(source_def, source_arena, selected_registry_name)
+      source = ForceLowerExactSourceBinding.new(source_def, source_arena, registered_name)
       force_lower_exact_source_matches?(name, source) ? source : nil
     end
 
@@ -117287,7 +117287,7 @@ module Adamas::HIR
       target_name = name
       callback_source_binding = raw_callback_source_binding_for(name)
       exact_replay_source = @force_lower_replay_source_bindings[name]?
-      selected_replay_registry_name = exact_replay_source.try(&.source_registry_name)
+      selected_replay_registry_name = exact_replay_source ? exact_replay_source.source_registry_name : name
       func_def = callback_source_binding.try(&.source_def) || exact_replay_source.try(&.source_def) || @function_defs[name]?
       arena = callback_source_binding.try(&.source_arena) || exact_replay_source.try(&.source_arena) || @function_def_arenas[name]?
       if replay_source = exact_replay_source
