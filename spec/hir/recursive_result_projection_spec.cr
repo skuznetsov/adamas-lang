@@ -17,14 +17,17 @@ class Adamas::HIR::AstToHir
     @force_lower_retry_work << selected
     @force_lower_retry_work << ForceLowerRetryRequest.new(producer, [dep], false,
       __test_projection_replay(producer), __test_projection_source(producer), true)
+    force_lower_retry_waits_for_queued_producer?(selected).should be_true if close_cycle && !change_source
     index = open_recursive_struct_result
     if index
       index.should eq(0)
       settled_force_lower_result?(producer).should be_false
       @force_lower_provisional_dependencies[consumer].should eq(Set{producer})
       recursive_struct_result_available?(selected).should be_true
+      force_lower_retry_waits_for_queued_producer?(selected).should be_false
       @module.function_by_name(producer).not_nil!.source_return_result_receipt = nil
       recursive_struct_result_available?(selected).should be_false
+      force_lower_retry_waits_for_queued_producer?(selected).should be_true
     end
     !index.nil?
   end

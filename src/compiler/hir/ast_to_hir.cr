@@ -115565,12 +115565,31 @@ module Adamas::HIR
     # `find_entry_with_index_linear_scan$Signal`). Forcing a function that has
     # a body is a no-op, so only that queued work can settle the dependency.
     # The consumer waits behind it instead of failing the edge.
-    private def force_lower_consumer_waits_for_queued_dependency?(consumer : String) : Bool
+    private def force_lower_consumer_waits_for_queued_dependency?(request : ForceLowerSuspendedRequest) : Bool
+      consumer = request.name
       dependencies = @force_lower_provisional_dependencies[consumer]?
       return false unless dependencies
       dependencies.any? do |producer|
         producer != consumer && !settled_force_lower_result?(producer) &&
-          force_lower_retry_has_queued_producer?(producer, false)
+          !queued_dependency_has_checked_result?(request, producer) && force_lower_retry_has_queued_producer?(producer, false)
+      end
+    end
+
+    # A checked result releases only the consumer's result wait. The producer
+    # still owns its body and every projected Call is checked before emission.
+    private def queued_dependency_has_checked_result?(request : ForceLowerWorkRequest, producer : String) : Bool
+      case request
+      when ForceLowerRetryRequest
+        recursive_struct_result_for_body_retry?(request, producer)
+      when ForceLowerSuspendedRequest
+        if request.pending.producer == producer
+          return request.pending.producer_requires_result && recursive_struct_result_available?(request)
+        end
+        use = @deferred_struct_result_uses[{request.name, producer}]? || return false
+        same_force_lower_replay_callsite?(request.replay_callsite, use.request.replay_callsite) &&
+          force_lower_retry_source_current?(request) && recursive_struct_result_available?(use.request)
+      else
+        false
       end
     end
 
@@ -115586,13 +115605,14 @@ module Adamas::HIR
       when ForceLowerRetryRequest
         dependencies = @force_lower_provisional_dependencies[request.name]? || request.refused
         dependencies.any? do |producer|
-          !settled_force_lower_result?(producer) && force_lower_retry_has_queued_producer?(producer, true) && yield producer
+          !settled_force_lower_result?(producer) && !queued_dependency_has_checked_result?(request, producer) &&
+            force_lower_retry_has_queued_producer?(producer, true) && yield producer
         end
       when ForceLowerSuspendedRequest
         if dependencies = @force_lower_provisional_dependencies[request.pending.consumer]?
           found = dependencies.any? do |producer|
             producer != request.pending.consumer && !settled_force_lower_result?(producer) &&
-              force_lower_retry_has_queued_producer?(producer, false) && yield producer
+              !queued_dependency_has_checked_result?(request, producer) && force_lower_retry_has_queued_producer?(producer, false) && yield producer
           end
           return true if found
         end
@@ -115601,6 +115621,7 @@ module Adamas::HIR
           producer = pending.producer
           return false unless force_lower_exact_source_matches?(producer, pending.producer_source)
           return true if !settled_force_lower_producer?(pending) &&
+                         !(pending.same?(request.pending) && queued_dependency_has_checked_result?(request, producer)) &&
                          force_lower_retry_has_queued_producer?(producer, pending.producer_requires_result) && yield producer
           pending = pending.producer_pending
         end
@@ -115919,7 +115940,7 @@ module Adamas::HIR
         end
         if @force_lower_retry_work.size > work_mark ||
            (!settled_force_lower_demand?(consumer, pending.consumer_requires_result) &&
-           force_lower_consumer_waits_for_queued_dependency?(consumer))
+           force_lower_consumer_waits_for_queued_dependency?(request))
           enqueue_force_lower_retry_work(request, work_mark)
           return false
         end
@@ -131534,9 +131555,13 @@ module Adamas::HIR
       # paths can return early. A successful sibling call cannot discharge a
       # later invocation that exits before producing its direct Call.
       cycle_result_ticket = begin_recursive_struct_result_emission!(ctx, mangled_method_name, cycle_result)
+      # A checked recursive call already has both a result type and a source
+      # value kind. Its emission ticket and the final producer body still have
+      # to agree. Both eager result queries must honor that same evidence.
+      needs_source_result = exact_source_discard_result_type.nil? && cycle_result_ticket.nil?
       force_return_type_needed = !!dependent_callback_return_pending ||
                                  (allocator_explicit_new_call && !has_block_call) ||
-                                 (exact_source_discard_result_type.nil? && !cycle_result &&
+                                 (needs_source_result &&
                                   (selected_source_result_pending?(mangled_method_name, selected_return_def) ||
                                    return_type == TypeRef::VOID ||
                                    is_union_type?(return_type) ||
@@ -131620,7 +131645,7 @@ module Adamas::HIR
       # carrier can also represent a mixed instance/metaclass result. Inline
       # lowering suppresses the ordinary force pass before consumers see that
       # contract. Demand the exact selected source with the yield-free guard.
-      if exact_source_discard_result_type.nil? && !@module.has_function_with_body?(mangled_method_name)
+      if needs_source_result && !@module.has_function_with_body?(mangled_method_name)
         if source = force_lower_exact_source_binding(
              mangled_method_name, selected_return_def,
              selected_call_entry_def, selected_call_entry_arena,

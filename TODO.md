@@ -27689,3 +27689,9 @@ One fix per commit, each with an oracle-qualified regression
   The queue suite passes 12 examples. Two native recursion controls agree
   with Crystal on valid calls and rejected arguments/returns. The uncached
   S1 self-builds with 1.18.2 and 1.22.3 still stop on parse_statement_in_scope.
+- [x] Release a recursive caller's result wait only with live, checked
+  evidence for its own call. Retiring the producer or changing the replay
+  makes the caller wait again. The target body remains due. The three HIR
+  suites pass 40 examples, and both native recursive regressions pass.
+  Uncached S1 self-builds with 1.18.2 and 1.22.3 still stop on
+  Parser#parse_statement_in_scope in CLI#run.
