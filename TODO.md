@@ -27385,3 +27385,14 @@ One fix per commit, each with an oracle-qualified regression
 - [ ] Short-circuit RHS assignment leak; subjectless multi-condition `when`;
   `H.new(func)` "generated allocator callback has no concrete Proc
   signature"; printf `arg_index` with case + is_a? + yield in while.
+
+## Source ownership and self-hosting (November 2026)
+
+- [x] A speculative body carries its AST arena through type-position `typeof`,
+  nested assignment walks and local-inference cache keys. Equal indices in
+  two files and a same-shaped overload with a different result are covered by
+  `source_body_inference_arena_owner_spec.cr`. Stock Crystal and S1 both print
+  55 for the source `Int#downto` case.
+- [ ] On this slice, building the compiler with S1 advances to the suspended
+  `String::Builder#initialize(Int32)` result on the bundled stdlib (1.18.2).
+  The installed stdlib (1.22.3) reaches the `LibC.faccessat` argument mismatch.
