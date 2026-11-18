@@ -27586,3 +27586,30 @@ One fix per commit, each with an oracle-qualified regression
   reproducer compares native output and exit status with stock Crystal.
   The real compiler source now reaches CLI#run_check on both stdlib
   profiles. A separate cyclic parser result demand remains there.
+- [x] Preserve a published, exact struct result while retrying a cycle of
+  specializations. A direct call can use the selected producer's reachable
+  instance result inside the cycle. Each use must match the live source
+  definition, arena, arguments and final HIR call. Rebuilding a consumer
+  retires that body's uses. Keep checking every producer body, including
+  invalid returns on a branch absent from the execution sample. When a
+  replay carries more source argument facts than the pending call, or the
+  converse, retain the richer one only when the original strict comparison
+  proves it compatible. The native cycle prints `AB` with stock and Adamas.
+  Both reject a reachable `Int32` for the declared struct. With bundled
+  1.18.2 and installed 1.22.3 the self-build reaches the shortened call to
+  `Frontend::Parameter#initialize`. A rebuilt callee must also retain the
+  same receiver and the full ordered ABI, including ordinary vs block
+  parameters. Changing a `Bool` formal into a block slot while retaining
+  its type reproduced stale acceptance in the final HIR check. All 28
+  retry and result checks now pass, including this mutation and a
+  same-ID receiver replacement.
+- [ ] Resolve cycles in which no exact producer has completed its first
+  body. In a standalone build of the real parser, the live wait graph ends
+  inside `parse_expression -> parse_prefix -> parse_typeof -> parse_op_assign
+  -> parse_expression`. Replaying each member on an empty force stack
+  still leaves every result pending. At suspension, the partial HIR for
+  `parse_typeof` already contains a reachable return of the exact `ExprId`
+  instance from `PREFIX_ERROR`. Determine whether such independent returns
+  can anchor the whole cycle while checking full bodies, callee identity
+  and actual emitted calls. Cover an all-bottom cycle and an incompatible
+  returning branch before accepting any result based on a partial body.

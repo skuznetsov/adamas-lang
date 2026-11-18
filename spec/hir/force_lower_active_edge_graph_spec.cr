@@ -169,6 +169,25 @@ class Adamas::HIR::AstToHir
     pending_callsite_compatible_with_replay?(explicit, bound).should be_false
   end
 
+  def __test_reconciled_force_lower_argument_facts : Nil
+    types = [TypeRef::BOOL]
+    kinds = [false]
+    plain = CallsiteArgs.new(types, kinds, nil)
+    facts = [SourceCallArgument.new(TypeRef::BOOL, false).as(SourceCallArgument?)]
+    enriched = CallsiteArgs.new(types, kinds, nil, source_argument_facts: facts)
+    reconciled_force_lower_callsite(nil, plain).should eq(plain)
+    reconciled_force_lower_callsite(plain, enriched).should eq(enriched)
+    reconciled_force_lower_callsite(enriched, plain).should eq(enriched)
+
+    object_facts = [SourceCallArgument.new(TypeRef::BOOL, true).as(SourceCallArgument?)]
+    object_kind = CallsiteArgs.new(types, kinds, nil, source_argument_facts: object_facts)
+    unknown = CallsiteArgs.new(types, nil, nil)
+    [object_kind, unknown].each do |other|
+      reconciled_force_lower_callsite(enriched, other).should be_nil
+      reconciled_force_lower_callsite(other, enriched).should be_nil
+    end
+  end
+
   def __test_pending_replay_callsite_compatible?(change : Symbol) : Bool
     types = [TypeRef::INT32, TypeRef::BOOL]
     facts = [
@@ -685,6 +704,10 @@ describe "exact source retry graph admission" do
       converter.__test_pending_replay_callsite_compatible?(change).should be_false
     end
     converter.__test_pending_replay_callsite_compatible?(:source_binding_exact).should be_true
+  end
+
+  it "replays with the complete positional evidence in either discovery order" do
+    force_lower_active_edge_graph_fixture.__test_reconciled_force_lower_argument_facts
   end
 
   it "preserves tuple source facts through replay copies and fingerprints" do

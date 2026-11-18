@@ -2240,6 +2240,78 @@ module Adamas::HIR
 
     private alias ForceLowerWorkRequest = ForceLowerRetryRequest | ForceLowerSuspendedRequest
 
+    # A source result admitted while lowering a recursive consumer is not
+    # complete until the direct call actually appears in that consumer's HIR.
+    # Keep the object identities and ABI shape so later HIR repairs cannot
+    # silently retarget the projected use.
+    private record RecursiveStructResultEmissionWitness,
+      function : Function,
+      context : LoweringContext,
+      block : Block,
+      call : Call,
+      target : String,
+      result_type : TypeRef,
+      argument_ids : Array(ValueId),
+      argument_values : Array(RecursiveStructResultOperandWitness),
+      argument_types : Array(TypeRef),
+      argument_facts : Array(SourceCallArgument?),
+      result_facts : Array({TypeRef, Bool}),
+      receiver_value : ValueId,
+      receiver_operand : RecursiveStructResultOperandWitness?,
+      has_receiver : Bool,
+      block_value : BlockId,
+      virtual : Bool
+
+    private record RecursiveStructResultOperandWitness,
+      id : ValueId,
+      type : TypeRef,
+      parameter : Bool,
+      parameter_index : Int32,
+      parameter_name : String,
+      parameter_is_block : Bool,
+      instruction : Value?
+
+    private class DeferredStructResultUse
+      getter request : ForceLowerSuspendedRequest
+      getter expected : TypeRef
+      getter producer_replay : ForceLowerReplayCallsite
+      getter emissions = {} of UInt64 => RecursiveStructResultEmissionWitness?
+      @next_emission_ticket : UInt64 = 0_u64
+
+      def initialize(
+        @request : ForceLowerSuspendedRequest,
+        @expected : TypeRef,
+        @producer_replay : ForceLowerReplayCallsite,
+      )
+      end
+
+      def begin_emission_ticket : UInt64
+        ticket = @next_emission_ticket
+        @next_emission_ticket += 1_u64
+        @emissions[ticket] = nil
+        ticket
+      end
+
+      def discharge_emission_ticket(ticket : UInt64, witness : RecursiveStructResultEmissionWitness) : Bool
+        return false unless @emissions.has_key?(ticket)
+        return false unless @emissions[ticket].nil?
+        @emissions[ticket] = witness
+        true
+      end
+
+      def emission_obligations_complete? : Bool
+        !@emissions.empty? && @emissions.each_value.all? { |witness| !witness.nil? }
+      end
+
+      def emission_witnesses : Array(RecursiveStructResultEmissionWitness)
+        @emissions.values.compact
+      end
+
+      def clear_body_emissions : Nil
+        @emissions.clear
+      end
+    end
+
     # The retry driver clears its transient queue when an exact result remains
     # pending. Preserve the still-current work on that pending's identity so a
     # shallower retry can resume it without making the queue compiler-global.
@@ -7143,6 +7215,7 @@ module Adamas::HIR
     @force_lower_result_suspensions = [] of {String, String}
     @force_lower_retry_driver_active = false
     @force_lower_retry_work = [] of ForceLowerWorkRequest
+    @deferred_struct_result_uses = {} of Tuple(String, String) => DeferredStructResultUse
     # When true, skip expensive infer_concrete_return_type_from_body during
     # monomorphization triggered by ensure_monomorphized_type (lowering path).
     # Return types will be inferred lazily when the method is actually called.
@@ -9855,6 +9928,7 @@ module Adamas::HIR
       @force_lower_depth_refused.clear
       @force_lower_discharged_edges.clear
       @force_lower_provisional_dependencies.clear
+      @deferred_struct_result_uses.clear
       @force_lower_retry_driver_active = false
       @force_lower_retry_work.clear
       @defer_body_return_inference = false
@@ -89056,6 +89130,7 @@ module Adamas::HIR
       # once lowering settles, so fix it here over the finalized HIR.
       repair_named_tuple_call_arguments
       sanitize_scalar_pointer_nil_checks
+      validate_recursive_struct_results
 
       if phase_stats
         after3 = @module.function_count
@@ -112583,6 +112658,16 @@ module Adamas::HIR
       end
     end
 
+    # The live callsite may have gained plain argument facts since the force
+    # suspended. Keep the richer recipe whichever observation came first.
+    # Each direction still requires the other recipe to prove the same kinds.
+    private def reconciled_force_lower_callsite(pending : CallsiteArgs?, replay : CallsiteArgs) : CallsiteArgs?
+      return replay unless pending
+      return replay if pending_callsite_compatible_with_replay?(pending, replay)
+      return pending if pending_callsite_compatible_with_replay?(replay, pending)
+      nil
+    end
+
     # Exact source bindings and unresolved replay facts have different owners.
     # Keep both when they arrive in either order; never replace a richer exact
     # binding with an ABI-only replay or silently merge conflicting bindings.
@@ -115039,7 +115124,8 @@ module Adamas::HIR
           ready_index = @force_lower_retry_work.rindex do |queued|
             !force_lower_retry_waits_for_queued_producer?(queued)
           end
-          break unless ready_index # A queued dependency cycle cannot settle.
+          ready_index ||= open_recursive_struct_result
+          break unless ready_index
           current_request = @force_lower_retry_work.delete_at(ready_index)
           active = current_request
           if current_request.is_a?(ForceLowerSuspendedRequest) && force_lower_retry_source_current?(current_request)
@@ -115366,26 +115452,33 @@ module Adamas::HIR
     end
 
     private def force_lower_retry_waits_for_queued_producer?(request : ForceLowerWorkRequest) : Bool
-      # Stale or weaker queued work cannot satisfy another request's demand.
-      # Let the existing handler reject it instead of creating a false cycle.
+      any_queued_force_lower_dependency?(request) { true }
+    end
+
+    # Readiness and cycle discovery must use the same live edges. A stale
+    # request or a body-only obligation cannot certify a queued result.
+    private def any_queued_force_lower_dependency?(request : ForceLowerWorkRequest, &matches : String -> Bool) : Bool
       return false unless force_lower_retry_source_current?(request)
       case request
       when ForceLowerRetryRequest
-        dependencies = @force_lower_provisional_dependencies[request.name]?
-        (dependencies || request.refused).any? do |producer|
-          !settled_force_lower_result?(producer) &&
-            force_lower_retry_has_queued_producer?(producer, true)
+        dependencies = @force_lower_provisional_dependencies[request.name]? || request.refused
+        dependencies.any? do |producer|
+          !settled_force_lower_result?(producer) && force_lower_retry_has_queued_producer?(producer, true) && yield producer
         end
       when ForceLowerSuspendedRequest
-        return true if force_lower_consumer_waits_for_queued_dependency?(request.pending.consumer)
+        if dependencies = @force_lower_provisional_dependencies[request.pending.consumer]?
+          found = dependencies.any? do |producer|
+            producer != request.pending.consumer && !settled_force_lower_result?(producer) &&
+              force_lower_retry_has_queued_producer?(producer, false) && yield producer
+          end
+          return true if found
+        end
         pending = request.pending.as(ExactResultPending?)
         while pending
           producer = pending.producer
           return false unless force_lower_exact_source_matches?(producer, pending.producer_source)
-          if !settled_force_lower_producer?(pending) &&
-             force_lower_retry_has_queued_producer?(producer, pending.producer_requires_result)
-            return true
-          end
+          return true if !settled_force_lower_producer?(pending) &&
+                         force_lower_retry_has_queued_producer?(producer, pending.producer_requires_result) && yield producer
           pending = pending.producer_pending
         end
         false
@@ -115416,7 +115509,9 @@ module Adamas::HIR
 
       work_mark = @force_lower_retry_work.size
       candidates = refused.reject { |callee| callee == name || (provisional && !dependencies.not_nil!.includes?(callee)) }
+      projected = candidates.select { |callee| recursive_struct_result_for_body_retry?(request, callee) }
       candidates.each do |callee|
+        next if projected.includes?(callee)
         force_lower_function_for_return_type(callee, bypass_inline_yield: bypass_inline_yield)
       end
       if @force_lower_retry_work.size > work_mark
@@ -115425,19 +115520,22 @@ module Adamas::HIR
         return false
       end
       if provisional
-        return false unless dependencies.not_nil!.all? { |callee| settled_force_lower_result?(callee) }
+        return false unless dependencies.not_nil!.all? { |callee| settled_force_lower_result?(callee) || projected.includes?(callee) }
       end
 
       discharged = candidates.select do |callee|
         !@force_lower_discharged_edges.includes?({name, callee}) && settled_force_lower_result?(callee)
       end
-      return false if discharged.empty?
+      return false if discharged.empty? && projected.empty?
       if replay = request.replay_callsite
         return false unless force_lower_replay_callsite_current?(name, replay)
         pending = @pending_arg_types[name]?
-        return false if pending && !pending_callsite_compatible_with_replay?(pending, replay.callsite)
+        return false unless reconciled_force_lower_callsite(pending, replay.callsite)
       end
       return false unless remove_hir_function(name)
+      projected.each do |producer|
+        @deferred_struct_result_uses[{name, producer}]?.try(&.clear_body_emissions)
+      end
       discharged.each { |callee| @force_lower_discharged_edges.add({name, callee}) }
       if env_has?("DEBUG_FORCE_LOWER_DEPTH")
         STDERR.puts "[FORCE_LOWER_DISCHARGED] consumer=#{name} producers=#{discharged.join(",")}"
@@ -115639,7 +115737,8 @@ module Adamas::HIR
       replay = request.replay_callsite
       raise pending unless force_lower_pending_producer_current?(pending) && force_lower_replay_callsite_current?(consumer, replay)
       producer_replay = pending.producer_replay
-      unless settled_force_lower_producer?(pending)
+      projected_result = recursive_struct_result_available?(request)
+      unless settled_force_lower_producer?(pending) || projected_result
         work_mark = @force_lower_retry_work.size
         producer_bypass = pending.producer_bypass_inline_yield.nil? ? bypass_inline_yield : pending.producer_bypass_inline_yield.not_nil!
         producer_settled = with_force_lower_exact_source(producer, pending.producer_source) do
@@ -115689,6 +115788,12 @@ module Adamas::HIR
             retry_force_lower_depth_request(retry_request)
           end
         else
+          if projected_result && !@module.has_function_with_body?(consumer) && dependencies
+            # This dependency belonged to the aborted generation. The fresh
+            # consumer records every demand again at its own source callsite.
+            dependencies.delete(producer)
+            @force_lower_provisional_dependencies.delete(consumer) if dependencies.empty?
+          end
           replay_force_lower_callsite(consumer, replay, bypass_inline_yield,
             requires_result: pending.consumer_requires_result)
         end
@@ -115705,6 +115810,452 @@ module Adamas::HIR
         STDERR.puts "[FORCE_LOWER_RESUMED] consumer=#{consumer} producer=#{producer}"
       end
       true
+    end
+
+    private def validate_recursive_struct_results : Nil
+      @deferred_struct_result_uses.each_value do |use|
+        request = use.request
+        producer = request.pending.producer
+        unless settled_force_lower_result?(producer) && exact_final_struct_result(request.pending) == use.expected &&
+               settled_force_lower_demand?(request.name, request.pending.consumer_requires_result) &&
+               force_lower_retry_source_current?(request) &&
+               force_lower_replay_callsite_current?(producer, use.producer_replay) &&
+               use.emission_obligations_complete? &&
+               use.emission_witnesses.all? { |witness| recursive_struct_result_emission_witness_current?(use, witness) }
+          raise request.pending
+        end
+      end
+    end
+
+    private def exact_final_struct_result(pending : ExactResultPending) : TypeRef?
+      name = pending.producer
+      source = pending.producer_source
+      return unless pending.producer_requires_result && !pending.producer_pending &&
+                    force_lower_exact_source_matches?(name, source)
+      return if source.inherited_nilary_member_alias || raw_callback_abi_for(name) || raw_callback_source_binding_for(name)
+      return unless function_state(name).completed? && @module.has_function_with_body?(name)
+      function = @module.function_by_name(name) || return
+      definition = source.source_def
+      arena = source.source_arena
+      return unless definition.body && definition.forall_type_params.empty? && !definition.is_abstract
+      return unless function.source_return_definition_id == definition.object_id.to_u64 &&
+                    function.source_return_arena_key == arena_map_key(arena)
+      return if materialized_function_noreturn?(name, Set(String).new)
+      type = function.return_type
+      name_of_type = get_type_name_from_ref(type)
+      info = @class_info[name_of_type]? || return
+      return unless info.is_struct && info.type_ref == type && !primitive_template_owner(name_of_type) &&
+                    !registered_abstract_class_name?(name_of_type) && !class_has_subclasses?(name_of_type) &&
+                    !@generic_templates.has_key?(name_of_type) && !name_of_type.includes?('(') &&
+                    !@enum_info.try(&.has_key?(name_of_type))
+      owner = exact_source_declaration_owner(name, source) || return
+      spelling = definition.return_type.try { |slice| safe_slice_to_string(slice) } || return
+      return unless spelling.matches?(/\A(?:::)?[A-Z]\w*(?:::[A-Z]\w*)*\z/)
+      previous_class = @current_class
+      @current_class = owner
+      begin
+        formals = type_param_map_for_generic_type_name(owner)
+        restriction = with_arena(arena) do
+          with_namespace_override_or_clear(owner) do
+            with_isolated_type_param_map(formals) { source_declared_return_contract_for(spelling, owner, formals) }
+          end
+        end
+      ensure
+        @current_class = previous_class
+      end
+      return unless restriction && restriction.valid && !restriction.has_unbound_formal? &&
+                    restriction.kind == SourceBlockResultPattern::Kind::Concrete &&
+                    restriction.type_ref == type && !source_declared_return_contract_guarantees_type_literal_kind?(restriction)
+      facts = function.source_return_value_facts
+      receipt = function.source_return_result_receipt
+      return unless facts == [{type, false}] && receipt && receipt.discard_type.nil? &&
+                    function.source_return_discard_type.nil? && receipt.definition_id == definition.object_id.to_u64 &&
+                    receipt.arena_key == arena_map_key(arena) && receipt.body_revision == function.body_revision &&
+                    receipt.result_facts_match?(facts.not_nil!) && receipt.body_objects_match?(function.scopes, function.blocks) &&
+                    receipt.body_seal == source_return_function_body_seal(function)
+      type
+    end
+
+    private def cycle_work_reaches?(producer : String, consumer : String) : Bool
+      search = [producer]
+      visited = Set(String).new
+      until search.empty?
+        target = search.pop
+        return true if target == consumer
+        next unless visited.add?(target)
+        @force_lower_retry_work.each do |entry|
+          next unless entry.name == target
+          any_queued_force_lower_dependency?(entry) do |dependency|
+            search << dependency unless visited.includes?(dependency)
+            false
+          end
+        end
+      end
+      false
+    end
+
+    private def open_recursive_struct_result : Int32?
+      @force_lower_retry_work.each_with_index do |entry, index|
+        next unless entry.is_a?(ForceLowerSuspendedRequest) && force_lower_retry_source_current?(entry)
+        pending = entry.pending
+        edge = {pending.consumer, pending.producer}
+        next if pending.consumer == pending.producer || @deferred_struct_result_uses.has_key?(edge)
+        next unless @force_lower_provisional_dependencies.has_key?(pending.producer) &&
+                    force_lower_retry_has_queued_producer?(pending.producer, true) &&
+                    cycle_work_reaches?(pending.producer, pending.consumer)
+        type = exact_final_struct_result(pending) || next
+        producer_replay = recursive_struct_result_producer_replay(pending) || next
+        next unless recursive_struct_result_callsite_argument_facts(producer_replay.callsite)
+        @deferred_struct_result_uses[edge] = DeferredStructResultUse.new(entry, type, producer_replay)
+        return index
+      end
+      nil
+    end
+
+    private def recursive_struct_result_producer_replay(pending : ExactResultPending) : ForceLowerReplayCallsite?
+      return nil unless pending.producer_requires_result
+      candidates = [] of ForceLowerReplayCallsite
+      if replay = pending.producer_replay
+        candidates << replay
+      end
+      @force_lower_retry_work.each do |queued|
+        next unless queued.name == pending.producer && force_lower_retry_requires_result?(queued) &&
+                    force_lower_retry_source_current?(queued)
+        replay = queued.replay_callsite || next
+        candidates << replay
+      end
+      return nil if candidates.empty?
+
+      current = candidates.select do |replay|
+        next false unless force_lower_replay_callsite_current?(pending.producer, replay)
+        replay_source = replay.exact_source_binding ||
+                        ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name)
+        same_force_lower_exact_source_binding?(replay_source, pending.producer_source)
+      end
+      return nil if current.empty? || current.size != candidates.size
+      selected = current.first
+      return nil unless current.all? { |replay| same_force_lower_replay_callsite?(selected, replay) }
+      copy_force_lower_replay_callsite(selected)
+    end
+
+    private def copy_force_lower_replay_callsite(replay : ForceLowerReplayCallsite) : ForceLowerReplayCallsite
+      ForceLowerReplayCallsite.new(
+        replay.source_def,
+        replay.source_arena,
+        copy_force_lower_callsite(replay.callsite),
+        replay.entry_type_param_map.dup,
+        replay.entry_namespace_override,
+        replay.source_registry_name,
+        copy_initializer_callback_abi(replay.callback_abi),
+        copy_initializer_callback_source(replay.callback_source),
+        replay.exact_source_binding,
+      )
+    end
+
+    # A recursive projection is only usable when the producer's queued source
+    # callsite carries a complete per-argument kind witness. ABI TypeRefs alone
+    # cannot distinguish an instance from its metaclass.
+    private def recursive_struct_result_callsite_argument_facts(
+      callsite : CallsiteArgs,
+    ) : Array(SourceCallArgument?)?
+      return nil if callsite.has_block || callsite.has_named_args
+      return [] of SourceCallArgument? if callsite.types.empty? &&
+        (callsite.source_argument_facts.nil? || callsite.source_argument_facts.try(&.empty?)) &&
+        (callsite.source_binding.nil? || callsite.source_binding.try(&.supplied_types.empty?)) &&
+        (callsite.literals.nil? || callsite.literals.try(&.empty?))
+
+      facts = callsite.source_argument_facts || callsite.source_binding.try(&.supplied_types)
+      unless facts
+        literals = callsite.literals || return nil
+        return nil unless literals.size == callsite.types.size
+        facts = callsite.types.map_with_index do |type, index|
+          SourceCallArgument.new(type, literals[index]).as(SourceCallArgument?)
+        end
+      end
+      return nil unless facts.size == callsite.types.size
+      return nil if facts.each_with_index.any? do |fact, index|
+        fact.nil? || fact.type_ref != callsite.types[index] || fact.rest_values || fact.tuple_values ||
+          (callsite.literals && callsite.literals.not_nil!.size != facts.size) ||
+          (callsite.literals && callsite.literals.not_nil![index] != fact.type_literal)
+      end
+      copy_source_call_argument_facts(facts)
+    end
+
+    private def recursive_struct_result_argument_facts_match?(
+      callsite : CallsiteArgs,
+      arg_types : Array(TypeRef),
+      source_facts : Array(SourceCallArgument?)?,
+    ) : Bool
+      return false unless callsite.types == arg_types
+      expected = recursive_struct_result_callsite_argument_facts(callsite) || return false
+      actual = if arg_types.empty?
+                 [] of SourceCallArgument?
+               else
+                 source_facts || return false
+               end
+      actual.size == expected.size && actual == expected
+    end
+
+    private def recursive_struct_result_abi_matches?(
+      ctx : LoweringContext, function : Function, receiver_id : ValueId?, arg_types : Array(TypeRef),
+    ) : Bool
+      params = function.params
+      has_self = params.first?.try(&.name) == "self"
+      return false unless has_self == !receiver_id.nil?
+      if receiver = receiver_id
+        self_param = params.first
+        return false if self_param.is_block || ctx.type_of(receiver) != self_param.type || ctx.type_literal?(receiver)
+        facts = source_block_result_value_facts(ctx, receiver)
+        return false if facts.empty? || !facts.all? { |type, literal| type == self_param.type && !literal }
+      end
+      offset = has_self ? 1 : 0
+      return false unless params.size == arg_types.size + offset
+      arg_types.each_with_index.all? do |type, index|
+        param = params[index + offset]
+        !param.is_block && type == param.type
+      end
+    end
+
+    private def recursive_struct_result_available?(request : ForceLowerSuspendedRequest) : Bool
+      pending = request.pending
+      use = @deferred_struct_result_uses[{pending.consumer, pending.producer}]? || return false
+      same_force_lower_replay_callsite?(request.replay_callsite, use.request.replay_callsite) &&
+        same_force_lower_exact_source_binding?(pending.producer_source, use.request.pending.producer_source) &&
+        force_lower_replay_callsite_current?(pending.producer, use.producer_replay) &&
+        recursive_struct_result_callsite_argument_facts(use.producer_replay.callsite) != nil &&
+        exact_final_struct_result(pending) == use.expected
+    end
+
+    # A usable result lets us rebuild this provisional body. The body is
+    # removed and replayed even when this was its last unsatisfied edge.
+    private def recursive_struct_result_for_body_retry?(request : ForceLowerRetryRequest, producer : String) : Bool
+      use = @deferred_struct_result_uses[{request.name, producer}]? || return false
+      same_force_lower_replay_callsite?(request.replay_callsite, use.request.replay_callsite) &&
+        force_lower_retry_source_current?(request) && recursive_struct_result_available?(use.request)
+    end
+
+    private def recursive_struct_result_at_source_call?(
+      ctx : LoweringContext, producer : String, result : TypeRef, arg_types : Array(TypeRef),
+      arg_facts : Array(SourceCallArgument?)?, receiver_id : ValueId?,
+      selected : Adamas::Compiler::Frontend::DefNode?,
+      called : Adamas::Compiler::Frontend::DefNode?,
+      arena : Adamas::Compiler::Frontend::ArenaLike?, registry : String?,
+    ) : Bool
+      return false if @deferred_struct_result_uses.empty?
+      consumer = ctx.source_result_replay_consumer || ctx.function.name
+      return false unless ctx.function.name == consumer
+      use = @deferred_struct_result_uses[{consumer, producer}]? || return false
+      return false unless use.expected == result
+      callsite = use.producer_replay.callsite
+      return false unless recursive_struct_result_argument_facts_match?(callsite, arg_types, arg_facts)
+      function = @module.function_by_name(producer) || return false
+      return false unless recursive_struct_result_abi_matches?(ctx, function, receiver_id, arg_types)
+      request = use.request
+      source = force_lower_exact_source_binding(producer, selected, called, arena, registry) || return false
+      body_source = @force_lower_replay_source_bindings[consumer]? || return false
+      replay = use.request.replay_callsite
+      return false unless body_source.source_def.same?(replay.source_def) && body_source.source_arena.same?(replay.source_arena)
+      return false unless same_force_lower_exact_source_binding?(source, request.pending.producer_source) &&
+                          recursive_struct_result_available?(use.request)
+      true
+    end
+
+    private def recursive_struct_result_emission_witness(
+      ctx : LoweringContext,
+      producer : String,
+      call : Call,
+      arg_types : Array(TypeRef),
+      receiver_id : ValueId?,
+    ) : RecursiveStructResultEmissionWitness?
+      consumer = ctx.source_result_replay_consumer || ctx.function.name
+      return nil unless ctx.function.name == consumer
+      use = @deferred_struct_result_uses[{consumer, producer}]? || return nil
+      callsite = use.producer_replay.callsite
+      return nil unless call.method_name == producer && call.type == use.expected && !call.virtual &&
+                        !call.has_block? && call.block_value == Call::NO_BLOCK &&
+                        call.args.size == arg_types.size &&
+                        recursive_struct_result_argument_facts_match?(callsite, arg_types,
+                          call_resolution_source_argument_facts(ctx, call.args, arg_types))
+      function = @module.function_by_name(producer) || return nil
+      return nil unless recursive_struct_result_abi_matches?(ctx, function, receiver_id, arg_types) &&
+                        call.has_receiver? == !receiver_id.nil?
+      if receiver = receiver_id
+        return nil unless call.receiver_value == receiver
+      end
+      return nil unless ctx.source_value_facts(call.id) == [{use.expected, false}] && !ctx.type_literal?(call.id)
+      block = ctx.function.get_block(ctx.current_block_id)
+      return nil unless block.instructions.any? { |instruction| instruction.same?(call) }
+      argument_values = recursive_struct_result_operand_witnesses(ctx.function, call.args) || return nil
+      receiver_operand = if receiver = receiver_id
+                           receiver_values = recursive_struct_result_operand_witnesses(ctx.function, [receiver]) || return nil
+                           receiver_values.first? || return nil
+                         else
+                           nil
+                         end
+      RecursiveStructResultEmissionWitness.new(
+        ctx.function,
+        ctx,
+        block,
+        call,
+        call.method_name,
+        call.type,
+        call.args.dup,
+        argument_values,
+        arg_types.dup,
+        copy_source_call_argument_facts(call_resolution_source_argument_facts(ctx, call.args, arg_types)) ||
+          ([] of SourceCallArgument?),
+        ctx.source_value_facts(call.id).not_nil!.dup,
+        call.receiver_value,
+        receiver_operand,
+        call.has_receiver?,
+        call.block_value,
+        call.virtual,
+      )
+    end
+
+    private def record_recursive_struct_result_emission!(
+      ctx : LoweringContext,
+      producer : String,
+      ticket : UInt64?,
+      call : Call,
+      arg_types : Array(TypeRef),
+      receiver_id : ValueId?,
+    ) : Nil
+      return unless ticket
+      consumer = ctx.source_result_replay_consumer || ctx.function.name
+      use = @deferred_struct_result_uses[{consumer, producer}]? || raise "missing deferred recursive result use"
+      witness = recursive_struct_result_emission_witness(ctx, producer, call, arg_types, receiver_id)
+      raise use.request.pending unless witness
+      raise use.request.pending unless use.discharge_emission_ticket(ticket.not_nil!, witness)
+    end
+
+    private def begin_recursive_struct_result_emission!(
+      ctx : LoweringContext,
+      producer : String,
+      cycle_result : Bool,
+    ) : UInt64?
+      return nil unless cycle_result
+      consumer = ctx.source_result_replay_consumer || ctx.function.name
+      raise "recursive result emission escaped its consumer" unless ctx.function.name == consumer
+      use = @deferred_struct_result_uses[{consumer, producer}]? || raise "missing deferred recursive result use"
+      use.begin_emission_ticket
+    end
+
+    private def recursive_struct_result_operand_witnesses(
+      function : Function,
+      ids : Array(ValueId),
+    ) : Array(RecursiveStructResultOperandWitness)?
+      ids.map do |id|
+        if parameter = function.params.find { |candidate| candidate.id == id }
+          RecursiveStructResultOperandWitness.new(
+            id, parameter.type, true, parameter.index, parameter.name, parameter.is_block, nil,
+          )
+        else
+          instruction = nil.as(Value?)
+          function.blocks.each do |block|
+            block.instructions.each do |candidate|
+              next unless candidate.id == id
+              return nil if instruction
+              instruction = candidate
+            end
+          end
+          value = instruction || return nil
+          RecursiveStructResultOperandWitness.new(
+            id, value.type, false, -1, "", false, value,
+          )
+        end
+      end
+    end
+
+    private def recursive_struct_result_operand_witnesses_current?(
+      context : LoweringContext,
+      function : Function,
+      operands : Array(RecursiveStructResultOperandWitness),
+    ) : Bool
+      operands.all? do |operand|
+        if operand.parameter
+          matches = function.params.select { |candidate| candidate.id == operand.id }
+          matches.size == 1 && matches[0].type == operand.type &&
+            matches[0].index == operand.parameter_index && matches[0].name == operand.parameter_name &&
+            matches[0].is_block == operand.parameter_is_block && context.value_for(operand.id).nil?
+        else
+          matches = [] of Value
+          function.blocks.each do |block|
+            block.instructions.each do |candidate|
+              matches << candidate if candidate.id == operand.id
+            end
+          end
+          instruction = operand.instruction
+          context_value = context.value_for(operand.id)
+          matches.size == 1 && instruction && matches[0].same?(instruction) &&
+            matches[0].type == operand.type && context_value.try(&.same?(instruction)) == true
+        end
+      end
+    end
+
+    private def recursive_struct_result_emission_witness_current?(
+      use : DeferredStructResultUse,
+      witness : RecursiveStructResultEmissionWitness,
+    ) : Bool
+      request = use.request
+      consumer = request.name
+      producer = request.pending.producer
+      return false unless force_lower_retry_source_current?(request) &&
+                          force_lower_replay_callsite_current?(producer, use.producer_replay) &&
+                          @module.function_by_name(consumer).try(&.same?(witness.function)) == true &&
+                          witness.function.name == consumer &&
+                          witness.function.blocks.any? { |block| block.same?(witness.block) } &&
+                          witness.block.instructions.count { |instruction| instruction.same?(witness.call) } == 1
+      call = witness.call
+      return false unless recursive_struct_result_emission_abi_current?(witness, producer)
+      return false unless call.method_name == witness.target && witness.target == producer &&
+                          call.type == witness.result_type && witness.result_type == use.expected &&
+                          call.args == witness.argument_ids && call.args.size == witness.argument_types.size &&
+                          call.block_value == witness.block_value && call.block_value == Call::NO_BLOCK &&
+                          call.has_receiver? == witness.has_receiver && call.receiver_value == witness.receiver_value &&
+                          !call.virtual && !witness.virtual &&
+                          witness.result_facts == [{use.expected, false}] &&
+                          recursive_struct_result_operand_witnesses_current?(witness.context, witness.function, witness.argument_values) &&
+                          recursive_struct_result_live_argument_facts_current?(use, witness) &&
+                          source_block_result_value_facts(witness.context, call.id) == witness.result_facts &&
+                          !witness.context.type_literal?(call.id)
+      true
+    end
+
+    private def recursive_struct_result_emission_abi_current?(
+      witness : RecursiveStructResultEmissionWitness,
+      producer : String,
+    ) : Bool
+      receiver_id = if witness.has_receiver
+                      witness.receiver_value
+                    else
+                      nil
+                    end
+      operand = witness.receiver_operand
+      if receiver = receiver_id
+        return false unless operand && operand.id == receiver &&
+                            recursive_struct_result_operand_witnesses_current?(witness.context, witness.function, [operand])
+      else
+        return false if operand
+      end
+      current_producer = @module.function_by_name(producer) || return false
+      recursive_struct_result_abi_matches?(witness.context, current_producer, receiver_id, witness.argument_types)
+    end
+
+    private def recursive_struct_result_live_argument_facts_current?(
+      use : DeferredStructResultUse,
+      witness : RecursiveStructResultEmissionWitness,
+    ) : Bool
+      return false unless witness.argument_ids.each_with_index.all? do |id, index|
+        witness.context.type_of(id) == witness.argument_types[index] &&
+          witness.argument_values[index].type == witness.argument_types[index]
+      end
+      live_facts = call_resolution_source_argument_facts(
+        witness.context, witness.call.args, witness.argument_types,
+      )
+      live_facts == witness.argument_facts &&
+        recursive_struct_result_argument_facts_match?(use.producer_replay.callsite,
+          witness.argument_types, live_facts)
     end
 
     private def settled_force_lower_producer?(pending : ExactResultPending) : Bool
@@ -115737,12 +116288,12 @@ module Adamas::HIR
       requires_result : Bool = true,
     ) : Bool
       existing_callsite = @pending_arg_types[name]?
-      return false if existing_callsite && !pending_callsite_compatible_with_replay?(existing_callsite, replay.callsite)
+      callsite = reconciled_force_lower_callsite(existing_callsite, replay.callsite) || return false
       return false unless force_lower_replay_callsite_current?(name, replay)
       source = replay.exact_source_binding ||
                ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name)
       with_force_lower_exact_source(name, source) do
-        @pending_arg_types[name] = replay.callsite
+        @pending_arg_types[name] = callsite
         begin
           with_namespace_override_or_clear(replay.entry_namespace_override) do
             with_isolated_type_param_map(replay.entry_type_param_map) do
@@ -115753,7 +116304,7 @@ module Adamas::HIR
         ensure
           # A force that declines to lower must not leave our reinserted
           # request visible to a later sibling lookup.
-          if existing_callsite.nil? && @pending_arg_types[name]? == replay.callsite
+          if existing_callsite.nil? && @pending_arg_types[name]? == callsite
             @pending_arg_types.delete(name)
           end
         end
@@ -120309,8 +120860,7 @@ module Adamas::HIR
       return false unless replay && replay.source_def.same?(definition) && replay.source_arena.same?(arena)
       return false unless active_force_lower_source_current?(target, replay)
       observed = CallsiteArgs.new(types, literals, enum_names, source_argument_facts: facts, source_binding: source_binding)
-      pending_callsite_compatible_with_replay?(replay.callsite, observed) ||
-        pending_callsite_compatible_with_replay?(observed, replay.callsite)
+      !reconciled_force_lower_callsite(replay.callsite, observed).nil?
     end
 
     # An untyped regular parameter is specialized from the concrete callsite.
@@ -130675,9 +131225,18 @@ module Adamas::HIR
           return_type_pinned = true
         end
       end
+      cycle_result = !call_virtual && !has_block_call && block_id.nil? && !has_named_args && !has_splat &&
+                     generated_allocator_call_target.nil? && !allocator_explicit_new_call && method_name != "new" &&
+                     recursive_struct_result_at_source_call?(ctx, mangled_method_name, return_type, arg_types,
+                       call_resolution_source_argument_facts(ctx, args, arg_types), receiver_id,
+                       selected_return_def, selected_call_entry_def, selected_call_entry_arena, selected_call_entry_name)
+      # Admit a distinct emission obligation before the remaining lower_call
+      # paths can return early. A successful sibling call cannot discharge a
+      # later invocation that exits before producing its direct Call.
+      cycle_result_ticket = begin_recursive_struct_result_emission!(ctx, mangled_method_name, cycle_result)
       force_return_type_needed = !!dependent_callback_return_pending ||
                                  (allocator_explicit_new_call && !has_block_call) ||
-                                 (exact_source_discard_result_type.nil? &&
+                                 (exact_source_discard_result_type.nil? && !cycle_result &&
                                   (selected_source_result_pending?(mangled_method_name, selected_return_def) ||
                                    return_type == TypeRef::VOID ||
                                    is_union_type?(return_type) ||
@@ -130872,15 +131431,17 @@ module Adamas::HIR
       end
 
       # The yield-free retry above can be the first force to reach the depth cap.
-      record_force_lower_result_dependency(
-        ctx, mangled_method_name, selected_return_def, refused_before_call_force,
-        selected_call_entry_def, selected_call_entry_arena, selected_call_entry_name,
-      )
-      suspend_depth_refused_source_result(
-        ctx, mangled_method_name, return_type, selected_return_def,
-        selected_call_entry_def, selected_call_entry_arena, refused_before_call_force,
-        selected_call_entry_name,
-      )
+      unless cycle_result
+        record_force_lower_result_dependency(
+          ctx, mangled_method_name, selected_return_def, refused_before_call_force,
+          selected_call_entry_def, selected_call_entry_arena, selected_call_entry_name,
+        )
+        suspend_depth_refused_source_result(
+          ctx, mangled_method_name, return_type, selected_return_def,
+          selected_call_entry_def, selected_call_entry_arena, refused_before_call_force,
+          selected_call_entry_name,
+        )
+      end
 
       if unresolved_generic_return_type?(return_type) && exact_source_discard_result_type.nil?
         [primary_mangled_name, mangled_method_name, base_method_name].uniq.each do |name|
@@ -132085,6 +132646,8 @@ module Adamas::HIR
         # once it has materialized.
         ctx.mark_type_literal(call.id)
       end
+      record_recursive_struct_result_emission!(ctx, mangled_method_name, cycle_result_ticket,
+        call, arg_types, receiver_id)
       if source_return_flow_trace_match?(lookup_name, base_method_name, mangled_method_name, emit_method_name)
         location = source_location_for_node(call_arena, node).try(&.to_s) || "unknown"
         arg_text = arg_types.map { |type| get_type_name_from_ref(type) }.join(",")
