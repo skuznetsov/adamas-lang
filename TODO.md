@@ -27385,3 +27385,46 @@ One fix per commit, each with an oracle-qualified regression
 - [ ] Short-circuit RHS assignment leak; subjectless multi-condition `when`;
   `H.new(func)` "generated allocator callback has no concrete Proc
   signature"; printf `arg_index` with case + is_a? + yield in while.
+
+
+### 2026-11-18 — Wrong results on the GPT tip (chain 6)
+
+One fix per commit, each with an oracle-qualified regression.
+
+- [x] Object self-result wrappers: 00ef5716 typed by their value receiver
+  (`object_self_result_receiver_type_repro.sh`); 07df509b parenthesized
+  wrapper calls re-owned onto value receivers
+  (`object_self_result_call_parens_repro.sh`).
+- [x] 68deea2b mixed array literal element types merge like type_combine
+  (`mixed_array_literal_element_union_repro.sh`); 52e60c0b typed array
+  literal receivers index with their element type
+  (`array_literal_receiver_index_repro.sh`).
+- [x] Exceptions: 94bc9b3d the stdlib raise primitive reaches setjmp rescue
+  frames (`stdlib_raise_setjmp_rescue_repro.sh`); ca60f9c7 rescue frames live
+  in the protecting function's stack frame (`rescue_frame_depth_repro.sh`);
+  222469ff exceptions no typed clause matches are re-raised
+  (`rescue_last_typed_clause_repro.sh`); d965589c ensure bodies run when an
+  exception leaves begin (`ensure_on_raise_repro.sh`); 6a7340de early-exit
+  ensure bodies see the bindings at the exit
+  (`early_exit_ensure_bindings_repro.sh`); 4688286d owned scopes unwind on
+  error paths without masking suspensions (`owned_scope_error_unwind_repro.sh`).
+- [x] Symbols: bb7acc11 the backend emits the symbol_to_s body for missing
+  `Symbol#to_s` callees (`symbol_to_s_missing_body_repro.sh`); 0df515dd a
+  sole-overload fallback that needs more arguments is rejected
+  (`sole_overload_arity_repro.sh`); 80096086 Symbol interpolation prints the
+  name (`symbol_interpolation_repro.sh`).
+- [x] Unions: 8eb59d6f the Nil arm of nilable union receiver calls is lowered
+  (`nilable_union_nil_arm_dispatch_repro.sh`); 0ad1e566 `.class` of a union
+  value names its active variant (`union_dot_class_runtime_name_repro.sh`);
+  35c58ba1 `x.class == T` is an exact class check on the active variant or
+  the object header (`runtime_class_equality_repro.sh`). Union discriminators
+  are positional (Nil = 0) while MIR's union is_a compares global type ids,
+  so variant tests on tagged unions go through the HIR descriptor.
+- [ ] `v = [0, :key][1]; v.to_s` fails with "Ambiguous MIR call target
+  Int32#to_s$String::Builder_Int32_Int32_Bool" (only the `$IO_...` body is
+  lowered).
+- [ ] A ternary in `Crystal::System.to_int_slice_impl` fails with "pending
+  source result Int32#tdiv$Int32".
+- [ ] `a.class == b.class` with both sides runtime still folds statically.
+- Full sweep after 35c58ba1: 323 pass / 83 fail vs 321/85 before chain 6
+  (2 fixed, 0 new; 3 environmental FAILs pass on rerun).
