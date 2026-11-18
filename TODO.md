@@ -27463,3 +27463,8 @@ One fix per commit, each with an oracle-qualified regression
 - [ ] Track class-object versus instance results across unannotated recursive
   specializations. Both the parent and this revision reject the valid
   `Letter.class` result after an earlier `Letter` result.
+- [x] Recover the concrete field type of a registered source getter after
+  speculative lowering rolls back its cached result. A private field with no
+  getter stays unresolved. The bundled-prelude `10.downto` program prints
+  55 again, and the HIR rollback regression changes from Void to Char.
+  Both self-builds still stop at the parser and backtrace dependencies above.

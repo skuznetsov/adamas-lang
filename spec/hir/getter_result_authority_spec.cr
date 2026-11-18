@@ -7,6 +7,13 @@ class Adamas::HIR::AstToHir
   def __test_result_before_body(symbol : String, arity : Int32) : Adamas::HIR::TypeRef
     get_function_return_type(symbol, arity)
   end
+
+  def __test_after_getter_signature_rollback(symbol : String) : Adamas::HIR::TypeRef
+    clear_function_type_entry(symbol)
+    clear_function_base_return_type(symbol)
+    remove_hir_function(symbol)
+    get_function_return_type(symbol, 0)
+  end
 end
 
 private def register_result_authority_fixture
@@ -62,5 +69,11 @@ describe "return facts of unmaterialized methods" do
     converter = register_result_authority_fixture
     converter.__test_result_before_body("ColdResult#mark", 0).should eq(Adamas::HIR::TypeRef::CHAR)
     converter.__test_result_before_body("ColdResult#ready?", 0).should eq(Adamas::HIR::TypeRef::BOOL)
+  end
+
+  it "retains a source getter after its speculative return entry is rolled back" do
+    converter = register_result_authority_fixture
+    converter.__test_after_getter_signature_rollback("ColdResult#mark").should eq(Adamas::HIR::TypeRef::CHAR)
+    converter.__test_after_getter_signature_rollback("ColdResult#secret").should eq(Adamas::HIR::TypeRef::VOID)
   end
 end

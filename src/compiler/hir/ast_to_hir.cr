@@ -71894,11 +71894,15 @@ module Adamas::HIR
       selected_def : Adamas::Compiler::Frontend::DefNode?,
     ) : TypeRef?
       return nil if name != base_name || selected_def || (call_arg_count && call_arg_count != 0)
-      return nil unless @accessor_visibilities.has_key?({name, 0}) &&
-                        registered_generated_accessor_request?(name, base_name)
+      return nil unless @accessor_visibilities.has_key?({name, 0})
       parts = parse_method_name_compact(name)
       return nil unless parts.separator == '#'
       method_name = parts.method || return nil
+      if winner = direct_accessor_winner(parts.owner, method_name)
+        return nil unless winner == :getter
+      else
+        return nil unless registered_generated_accessor_request?(name, base_name)
+      end
       return nil unless class_info = @class_info[parts.owner]?
       storage_name = method_name.rchop('?')
       if ivar = find_ivar_info(class_info.ivars, "@#{storage_name}")
