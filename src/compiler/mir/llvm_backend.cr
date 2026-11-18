@@ -10514,35 +10514,41 @@ module Adamas::MIR
       emit_raw "declare void @longjmp(ptr, i32) noreturn nounwind\n"
       emit_raw "\n"
 
-      # Global exception state — stack of jmp_bufs for nested begin/rescue
-      emit_raw "; Global exception handling state (stack-based for nesting)\n"
-      emit_raw "@__crystal_exc_jmpbufs = global [64 x %jmp_buf] zeroinitializer\n"
-      emit_raw "@__crystal_exc_depth = global i32 0\n"
+      # Rescue frames are records in the stack frame of the function that
+      # protects a region: `{ jmp_buf, ptr prev }`, linked innermost-first
+      # through @__crystal_exc_top. Every active frame owns storage, so frame
+      # nesting is bounded by the native stack, like the calls that create it.
+      # The jmp_buf leads the record, so a frame pointer is its jmp_buf pointer.
+      emit_raw "; Exception handling state: linked stack-allocated rescue frames\n"
+      emit_raw "%exc_frame = type { %jmp_buf, ptr }\n"
+      emit_raw "@__crystal_exc_top = global ptr null\n"
       emit_raw "@__crystal_exc_ptr = global ptr null\n"
       emit_raw "\n"
 
-      # Helper: get pointer to current jmp_buf (at depth-1)
+      # Helper: the innermost active frame's jmp_buf
       emit_raw "define ptr @__crystal_exc_current_jmpbuf() {\n"
-      emit_raw "  %depth = load i32, ptr @__crystal_exc_depth\n"
-      emit_raw "  %idx = sub i32 %depth, 1\n"
-      emit_raw "  %ptr = getelementptr [64 x %jmp_buf], ptr @__crystal_exc_jmpbufs, i32 0, i32 %idx\n"
-      emit_raw "  ret ptr %ptr\n"
+      emit_raw "  %top = load ptr, ptr @__crystal_exc_top\n"
+      emit_raw "  ret ptr %top\n"
       emit_raw "}\n\n"
 
-      # End exception handler scope — decrement depth
+      # End exception handler scope — unlink the innermost frame
       emit_raw "define void @__adamas_try_end() {\n"
-      emit_raw "  %depth = load i32, ptr @__crystal_exc_depth\n"
-      emit_raw "  %new_depth = sub i32 %depth, 1\n"
-      emit_raw "  %clamped = call i32 @llvm.smax.i32(i32 %new_depth, i32 0)\n"
-      emit_raw "  store i32 %clamped, ptr @__crystal_exc_depth\n"
+      emit_raw "  %top = load ptr, ptr @__crystal_exc_top\n"
+      emit_raw "  %active = icmp ne ptr %top, null\n"
+      emit_raw "  br i1 %active, label %unlink, label %done\n"
+      emit_raw "unlink:\n"
+      emit_raw "  %prev_slot = getelementptr %exc_frame, ptr %top, i32 0, i32 1\n"
+      emit_raw "  %prev = load ptr, ptr %prev_slot\n"
+      emit_raw "  store ptr %prev, ptr @__crystal_exc_top\n"
+      emit_raw "  br label %done\n"
+      emit_raw "done:\n"
       emit_raw "  ret void\n"
-      emit_raw "}\n"
-      emit_raw "declare i32 @llvm.smax.i32(i32, i32)\n\n"
+      emit_raw "}\n\n"
 
       emit_raw "define void @__adamas_raise(ptr %exc) noinline {\n"
       emit_raw "  store ptr %exc, ptr @__crystal_exc_ptr\n"
-      emit_raw "  %depth = load i32, ptr @__crystal_exc_depth\n"
-      emit_raw "  %has_handler = icmp sgt i32 %depth, 0\n"
+      emit_raw "  %top = load ptr, ptr @__crystal_exc_top\n"
+      emit_raw "  %has_handler = icmp ne ptr %top, null\n"
       emit_raw "  br i1 %has_handler, label %do_longjmp, label %no_handler\n"
       emit_raw "do_longjmp:\n"
       emit_raw "  %jmpbuf = call ptr @__crystal_exc_current_jmpbuf()\n"
@@ -10571,8 +10577,8 @@ module Adamas::MIR
       emit_raw "  %msg_field = getelementptr i8, ptr %exc, i64 8\n"
       emit_raw "  store ptr %msg, ptr %msg_field\n"
       emit_raw "  store ptr %exc, ptr @__crystal_exc_ptr\n"
-      emit_raw "  %depth = load i32, ptr @__crystal_exc_depth\n"
-      emit_raw "  %has_handler = icmp sgt i32 %depth, 0\n"
+      emit_raw "  %top = load ptr, ptr @__crystal_exc_top\n"
+      emit_raw "  %has_handler = icmp ne ptr %top, null\n"
       emit_raw "  br i1 %has_handler, label %do_longjmp, label %no_handler\n"
       emit_raw "do_longjmp:\n"
       emit_raw "  %jmpbuf = call ptr @__crystal_exc_current_jmpbuf()\n"
@@ -10588,8 +10594,8 @@ module Adamas::MIR
 
       emit_raw "define void @__adamas_reraise() noinline {\n"
       emit_raw "  %exc = load ptr, ptr @__crystal_exc_ptr\n"
-      emit_raw "  %depth = load i32, ptr @__crystal_exc_depth\n"
-      emit_raw "  %has_handler = icmp sgt i32 %depth, 0\n"
+      emit_raw "  %top = load ptr, ptr @__crystal_exc_top\n"
+      emit_raw "  %has_handler = icmp ne ptr %top, null\n"
       emit_raw "  br i1 %has_handler, label %do_longjmp, label %no_handler\n"
       emit_raw "do_longjmp:\n"
       emit_raw "  %jmpbuf = call ptr @__crystal_exc_current_jmpbuf()\n"
@@ -28504,19 +28510,22 @@ module Adamas::MIR
       emit "call void @__adamas_channel_close(ptr #{channel})"
     end
 
-    # Exception handling - push jmp_buf and inline setjmp
+    # Exception handling - link this region's rescue frame and inline setjmp
     private def emit_try_begin(inst : TryBegin, name : String)
       base = name.lstrip('%')
-      # Push: increment depth, compute jmpbuf pointer, setjmp
-      emit "%#{base}.depth = load i32, ptr @__crystal_exc_depth"
-      emit "%#{base}.new_depth = add i32 %#{base}.depth, 1"
-      emit "store i32 %#{base}.new_depth, ptr @__crystal_exc_depth"
-      emit "%#{base}.jmpbuf = getelementptr [64 x %jmp_buf], ptr @__crystal_exc_jmpbufs, i32 0, i32 %#{base}.depth"
+      # The frame lives in this function's stack frame (the block-IR pass hoists
+      # the alloca to the entry block), so each activation of a recursive
+      # function owns its own record.
+      emit "%#{base}.frame = alloca %exc_frame, align 16"
+      emit "%#{base}.prev = load ptr, ptr @__crystal_exc_top"
+      emit "%#{base}.prev_slot = getelementptr %exc_frame, ptr %#{base}.frame, i32 0, i32 1"
+      emit "store ptr %#{base}.prev, ptr %#{base}.prev_slot"
+      emit "store ptr %#{base}.frame, ptr @__crystal_exc_top"
       # Call setjmp inline (critical: must be inline, not in a wrapper function)
-      emit "#{name} = call i32 @setjmp(ptr %#{base}.jmpbuf)"
+      emit "#{name} = call i32 @setjmp(ptr %#{base}.frame)"
     end
 
-    # Exception handling - pop jmp_buf (decrement depth)
+    # Exception handling - unlink the innermost rescue frame
     private def emit_try_end(inst : TryEnd, name : String)
       emit "call void @__adamas_try_end()"
     end
