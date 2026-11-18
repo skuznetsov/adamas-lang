@@ -79338,6 +79338,35 @@ module Adamas::HIR
         actual_types.map { |type| SourceCallArgument.new(type, false) })
     end
 
+    # A single callback for a union receiver can reuse an included declaration's
+    # bindings when every possible receiver selects the same source application.
+    private def shared_union_block_include_origin(
+      receiver : TypeRef,
+      method_name : String,
+      definition : Adamas::Compiler::Frontend::DefNode,
+      declaration_arena : Adamas::Compiler::Frontend::ArenaLike,
+      arg_count : Int32,
+      arg_types : Array(TypeRef)?,
+      input : CallResolutionInput?,
+    ) : IncludedModuleDefOrigin?
+      descriptor = union_descriptor_from_sidecar(receiver)
+      return nil unless descriptor && !descriptor.variants.empty?
+      shared = nil.as(IncludedModuleDefOrigin?)
+      descriptor.variants.each do |variant|
+        origin = find_included_module_def_origin_for_owner(
+          variant.full_name, method_name, arg_count, true,
+          compatible_arg_types: arg_types, selection_input: input,
+        )
+        return nil unless origin && origin[0].same?(definition) && origin[1].same?(declaration_arena)
+        if prior = shared
+          return nil unless prior[2] == origin[2] && prior[3] == origin[3]
+        else
+          shared = origin
+        end
+      end
+      shared
+    end
+
     private def block_param_types_for_call(
       mangled_method_name : String,
       base_method_name : String,
@@ -79472,8 +79501,20 @@ module Adamas::HIR
       end
       if exact_included_origin.nil? && func_def && receiver_type_value != TypeRef::VOID
         if receiver_desc = @module.get_type_descriptor(receiver_type_value)
-          if receiver_desc.kind != TypeKind::Union && receiver_desc.kind != TypeKind::Module &&
-             receiver_desc.kind != TypeKind::Generic
+          if receiver_desc.kind == TypeKind::Union
+            if candidate_method = method_part(resolved_base)
+              selected_arena = selected_source_target.try(&.source_arena) ||
+                               registered_arena_for_def(func_def) ||
+                               @function_def_arenas[resolved_mangled]? ||
+                               @function_def_arenas[resolved_base]?
+              if selected_arena && module_instance_def_owner(func_def, selected_arena)
+                exact_included_origin = shared_union_block_include_origin(
+                  receiver_type_value, candidate_method, func_def, selected_arena,
+                  arg_count_for_infer, call_arg_types_for_infer, selection_input,
+                )
+              end
+            end
+          elsif receiver_desc.kind != TypeKind::Module && receiver_desc.kind != TypeKind::Generic
             if candidate_method = method_part(resolved_base)
               candidate = find_included_module_def_origin_for_owner(
                 receiver_desc.name,

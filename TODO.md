@@ -27402,6 +27402,11 @@ One fix per commit, each with an oracle-qualified regression
   a nested suspension. A duplicate edge must also establish its own current
   declaration and arena. The bundled self-build resumes the String::Builder
   initializer; the four initializer and queue specs pass (19 examples).
-- [ ] The bundled self-build now stops at a pending `Int32#tdiv(Int32)` in
-  `Crystal::System.to_int_slice_impl`. The installed self-build stops at a
-  callback inferred as `T` at `String#starts_with?`.
+- [x] Resolve a block-taking included method on each union receiver arm. The
+  common source declaration, arena and applied generic module supply its
+  callback parameters. Distinct applications and direct overrides stay
+  distinct. The installed self-build passes the Path separator callback.
+- [ ] The bundled self-build stops at a pending `Int32#tdiv(Int32)` in
+  `Crystal::System.to_int_slice_impl`. Installed 1.22.3 reaches
+  `String#unsafe_byte_slice(Int32)`: its body owns `Slice(UInt8)` but its
+  emitted result advertises the bare `Slice` restriction.

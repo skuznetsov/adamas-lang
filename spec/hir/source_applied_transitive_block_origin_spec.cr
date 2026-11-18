@@ -8,18 +8,22 @@ class Adamas::HIR::AstToHir
     owner : String,
     value_type_name : String,
     module_suffix : String,
+    supply_source_facts : Bool = true,
   ) : Tuple(String?, Hash(String, String)?, Bool, Bool, Bool, Bool)
     type_ref_for_name(owner)
+    argument_types = [type_ref_for_name(value_type_name), TypeRef::INT32]
+    facts = argument_types.map { |type| SourceCallArgument.new(type, false).as(SourceCallArgument?) } if supply_source_facts
     input = CallResolutionInput.new(
       func_name: "#{owner}#marker",
       arg_count: 2,
-      arg_types: [type_ref_for_name(value_type_name), type_ref_for_name("Int32")],
+      arg_types: argument_types,
       has_block: true,
       has_splat: false,
       has_named: true,
       named_names: ["current"],
       raw_positional_count: 1,
       source_named_types: true,
+      source_argument_facts: facts,
     )
     found = find_included_module_def_origin_for_owner(
       owner,
@@ -183,32 +187,39 @@ private def source_applied_nested_transitive_block_converter : Adamas::HIR::AstT
 end
 
 describe "source-applied transitive generic block includes" do
+  it "requires source value kinds for named-call admission" do
+    converter = source_applied_transitive_block_converter
+    converter.__test_transitive_marker_origin_contract(
+      "HostInt32ThenInt64", "Int64", "TransitiveBlockLeaf", supply_source_facts: false,
+    ).should eq({nil, nil, false, false, false, false})
+  end
+
   it "projects the selected nested application to its exact generic binding" do
     converter = source_applied_transitive_block_converter
     converter.__test_transitive_marker_origin_contract(
       "HostInt32ThenInt64",
       "Int64",
       "TransitiveBlockLeaf",
-    ).should eq({"TransitiveBlockLeaf(Int64)", {"T" => "Int64"}, true, true, true, true})
+    ).should eq({"TransitiveBlockLeaf(::Int64)", {"T" => "::Int64"}, true, true, true, true})
 
     converter = source_applied_transitive_block_converter
     converter.__test_transitive_marker_origin_contract(
       "HostInt64ThenInt32",
       "Int32",
       "TransitiveBlockLeaf",
-    ).should eq({"TransitiveBlockLeaf(Int32)", {"T" => "Int32"}, true, true, true, true})
+    ).should eq({"TransitiveBlockLeaf(::Int32)", {"T" => "::Int32"}, true, true, true, true})
   end
 
   it "selects the exact source body and arena for block-shaped named calls" do
     converter = source_applied_transitive_block_converter
     converter.__test_transitive_marker_origin_contract("HostInt32ThenInt64", "Int32", "TransitiveBlockLeaf")
-      .should eq({"TransitiveBlockLeaf(Int32)", {"T" => "Int32"}, true, true, true, true})
+      .should eq({"TransitiveBlockLeaf(::Int32)", {"T" => "::Int32"}, true, true, true, true})
     converter.__test_transitive_marker_origin_contract("HostInt32ThenInt64", "Int64", "TransitiveBlockLeaf")
-      .should eq({"TransitiveBlockLeaf(Int64)", {"T" => "Int64"}, true, true, true, true})
+      .should eq({"TransitiveBlockLeaf(::Int64)", {"T" => "::Int64"}, true, true, true, true})
     converter.__test_transitive_marker_origin_contract("HostInt64ThenInt32", "Int32", "TransitiveBlockLeaf")
-      .should eq({"TransitiveBlockLeaf(Int32)", {"T" => "Int32"}, true, true, true, true})
+      .should eq({"TransitiveBlockLeaf(::Int32)", {"T" => "::Int32"}, true, true, true, true})
     converter.__test_transitive_marker_origin_contract("HostInt64ThenInt32", "Int64", "TransitiveBlockLeaf")
-      .should eq({"TransitiveBlockLeaf(Int64)", {"T" => "Int64"}, true, true, true, true})
+      .should eq({"TransitiveBlockLeaf(::Int64)", {"T" => "::Int64"}, true, true, true, true})
   end
 
   it "selects the compatible nested application within one outer module in both orders" do
