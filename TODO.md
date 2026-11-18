@@ -27402,6 +27402,8 @@ One fix per commit, each with an oracle-qualified regression
 
 ## Source ownership and self-hosting (November 2026)
 
+- [x] Parse a forwarded Proc literal through the ordinary arrow expression in both call forms. Match the original compiler on adjacent `&->`, grouped and typed literals, method pointers, and rejection of a separated block-pass ampersand. The semantic bootstrap corpus now emits HIR, MIR and LLVM on this topic.
+
 - [x] A speculative body carries its AST arena through type-position `typeof`,
   nested assignment walks and local-inference cache keys. Equal indices in
   two files and a same-shaped overload with a different result are covered by
@@ -27780,7 +27782,7 @@ changes. No stdlib edits.
 ## Nominal enum operands at ordinary calls
 
 - [x] Emit the selected enum type on a physical call operand when its integer carrier has an exact, matching source enum witness. This keeps replay independent of the previous body's value map. The HIR regression covers positional and defaulted named calls. The native regression checks both valid calls and rejection of a plain integer and a second enum with the same value.
-- [ ] Re-run the two-profile bootstrap after queue and operand changes are integrated. On the isolated operand change the bundled compiler still stopped in the parser and the installed compiler still stopped at the DWARF tuple return.
+- [x] Repeat uncached S1 to S2 builds with queue ownership and nominal enum operands integrated. Bundled stops in `parse_block_shorthand` waiting for `parse_op_assign`. Installed stops in `parse_op_assign` waiting for `parse_expression` (Q470).
 
 ## Cross-compiler LLVM function census
 
@@ -27789,4 +27791,4 @@ changes. No stdlib edits.
 ## Bootstrap IR emission
 
 - [x] Require three fresh, nonempty HIR, MIR, and LLVM artifacts from the same invocation of `scripts/emit_bootstrap_ir.sh`. The regression seeds stale outputs, interrupts emission after HIR, and checks the compiler arguments and prefix lock.
-- [ ] Restore Adamas compilation of `regression_tests/bootstrap_semantic_corpus.cr`. Stock Crystal accepts the empty Proc and explicit block at line 33 with an empty prelude. Adamas diagnoses `Hash(Void, Void)#call` there before emitting HIR.
+- [x] Compile `regression_tests/bootstrap_semantic_corpus.cr` with its original empty Proc and explicit block. The forwarded Proc regression checks stock Crystal syntax and native output. The corpus now emits all three IR files.
