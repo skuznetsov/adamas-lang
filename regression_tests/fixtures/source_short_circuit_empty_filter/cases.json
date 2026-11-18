@@ -1,6 +1,6 @@
 {
   "suite": "source_short_circuit_empty_filter",
-  "case_count": 28,
+  "case_count": 30,
   "cases": [
     {
       "name": "basename_nested_default_nil",
@@ -261,6 +261,22 @@
       "contract": "An independent RHS contributes its result type even when the Boolean left operand is constant.",
       "original_diagnostic_regex": "expected argument.*only_bool.*(Bool.*Int32|Int32.*Bool)",
       "candidate_diagnostic_regex": "no overload matches only_bool.*(Bool.*Int32|Int32.*Bool)"
+    },
+    {
+      "name": "or_nil_instance_returns_rhs",
+      "source": "or_nil_instance_returns_rhs.cr",
+      "ok": true,
+      "expected": "ABXCXD\n",
+      "source_sha256": "31988faba6aad34b6717301a4c4eb15fbf2fe3a0a5fbec1fd5ef32499e6bb9ad",
+      "contract": "A Nil instance has no truthy result. The RHS supplies the result type and each effectful left operand executes once."
+    },
+    {
+      "name": "or_nil_class_retains_truthy_value",
+      "source": "or_nil_class_retains_truthy_value.cr",
+      "ok": true,
+      "expected": "E\n",
+      "source_sha256": "e171b8e0b5db083332c3204528fbbd56e6558aca7df7b663f58838714742c8fb",
+      "contract": "The Nil class object can flow through the truthy return edge and select its class-object overload."
     }
   ],
   "oracle": "Each run checks stock Crystal before the candidate compiler."

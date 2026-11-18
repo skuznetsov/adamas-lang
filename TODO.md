@@ -27630,3 +27630,14 @@ One fix per commit, each with an oracle-qualified regression
   `CallNode` fixture runs through both receiver forms, including a method
   returning the class object. Both uncached stdlib self-builds now reach an
   exact-result suspension in `Parser#parse_statement_in_scope`.
+- [x] Exclude an impossible truthy result of a Nil instance from `||`
+  while preserving the result of a Nil class object and type-checking the
+  right operand. The source-first short-circuit suite passes all 30 cases.
+  The effectful default-method program now prints 36, 46, 13 and 23 with
+  both compilers. Both uncached self-builds still reach the exact-result
+  suspension in `Parser#parse_statement_in_scope`.
+- [ ] Follow up on two original-Crystal differences in condition lowering.
+  A Nil.class parameter in a ternary and an if produces BD instead of AC.
+  A method restricted to Int32 whose sole expression is `nil_value || stop`
+  is rejected as returning Nil when `stop` returns NoReturn. Both failures
+  also reproduce on the parent of the short-circuit fix.

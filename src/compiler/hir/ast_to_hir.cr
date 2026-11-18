@@ -103053,6 +103053,15 @@ module Adamas::HIR
       then_flows_to_merge = then_block_data.terminator.is_a?(Unreachable) &&
                             !then_has_noreturn &&
                             !control_flow_dead_block?(ctx, then_exit)
+      # Crystal expands lhs || rhs to a truthy-filtered read of lhs on the
+      # first edge. A Nil instance has no value on that edge. Its class
+      # object can flow there, and the RHS still needs full source checking.
+      if then_flows_to_merge && op_str == "||" && left_type == TypeRef::NIL
+        facts, unknown_leaf = collect_non_nil_source_leaf_facts(ctx, left_id)
+        if !unknown_leaf && facts == [{TypeRef::NIL, false}]
+          then_flows_to_merge = false
+        end
+      end
       if then_flows_to_merge
         ctx.terminate(Jump.new(merge_block))
       end
@@ -105176,6 +105185,16 @@ module Adamas::HIR
     private def lower_truthy_check(ctx : LoweringContext, value_id : ValueId, value_type : TypeRef) : ValueId
       if env_has?("ADAMAS_TRACE_NILABLE_BRANCH_REPRO")
         STDERR.puts "[NILABLE_BRANCH] truthy entry func=#{ctx.function.name} value=#{value_id} type=#{get_type_name_from_ref(value_type)}(#{value_type.id})"
+      end
+      # A type object is truthy even when its carrier represents Nil, Bool
+      # or a pointer. Only a unanimous source kind can establish that fact.
+      if ctx.type_literal?(value_id)
+        source_facts, unknown_leaf = collect_non_nil_source_leaf_facts(ctx, value_id)
+        if !unknown_leaf && !source_facts.empty? && source_facts.all?(&.[1])
+          truth = Literal.new(ctx.next_id, TypeRef::BOOL, true)
+          ctx.emit(truth)
+          return truth.id
+        end
       end
       if value_type == TypeRef::BOOL
         STDERR.puts "[NILABLE_BRANCH] truthy bool passthrough" if env_has?("ADAMAS_TRACE_NILABLE_BRANCH_REPRO")
