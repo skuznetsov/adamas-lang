@@ -27450,3 +27450,7 @@ One fix per commit, each with an oracle-qualified regression
 - [ ] Track the independent bitwise enum assertion in
   `enum_carrier_branch_merge_spec.cr` and the missing no-prelude `exit`
   in the adjacent native script. Both reproduce at the parent revision.
+- [x] Preserve the source enum and choose its union tag on every incoming
+  loop edge, including `next` and `break`. Stock Crystal and Adamas print
+  `ABEIIEBR` and both reject a mixed integer/enum return declared as an enum.
+  The two self-builds still reach the pending parser and backtrace dependencies.

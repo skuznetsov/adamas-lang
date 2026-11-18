@@ -107144,7 +107144,7 @@ module Adamas::HIR
       phi_nodes = {} of String => Phi
       assigned_vars.each do |var_name|
         if initial_val = initial_values[var_name]?
-          var_type = ctx.type_of(initial_val)
+          var_type = typeof_local_type_for_value(ctx, initial_val, ctx.type_of(initial_val))
           if var_type == TypeRef::VOID
             if value = ctx.value_for(initial_val)
               var_type = value.type unless value.type == TypeRef::VOID
@@ -107179,16 +107179,8 @@ module Adamas::HIR
             # Avoid widening pointer or struct/class phis to unrelated primitive types.
             var_desc = @module.get_type_descriptor(var_type)
             struct_or_class = var_desc && (var_desc.kind == TypeKind::Struct || var_desc.kind == TypeKind::Class)
-            var_type_name = get_type_name_from_ref(var_type)
-            inferred_type_name = get_type_name_from_ref(inferred)
-            enum_var = @enum_info.try(&.has_key?(var_type_name))
-            enum_inferred = @enum_info.try(&.has_key?(inferred_type_name))
-            # Enum + numeric or numeric + enum should not widen to union — keep Int32
-            enum_numeric_mismatch = (enum_var && numeric_primitive?(inferred)) || (enum_inferred && numeric_primitive?(var_type))
-            if ((pointer_type || struct_or_class) && numeric_primitive?(inferred)) || enum_numeric_mismatch
-              # Avoid widening pointer/struct/enum phis to numeric types based on brittle inference.
-              # Keep the Int32 type (enums are Int32 at runtime)
-            else
+            enum_type = enum_name_for_type_ref(var_type)
+            unless (pointer_type || (struct_or_class && !enum_type)) && numeric_primitive?(inferred)
               merged = union_type_for_values(var_type, inferred)
               if merged == TypeRef::VOID && env_get("DEBUG_LOOP_PHI")
                 scope = "#{@current_class || ""}##{@current_method || ""}"
@@ -107199,23 +107191,8 @@ module Adamas::HIR
           end
           phi = Phi.new(ctx.next_id, var_type)
           # Add incoming from pre-loop block
-          incoming = {pre_loop_block, initial_val}
-          if var_type != ctx.type_of(initial_val)
-            val_type = ctx.type_of(initial_val)
-            if is_union_type?(var_type)
-              if variant_id = get_union_variant_id(var_type, val_type)
-                variant_id >= 0
-                wrap = UnionWrap.new(ctx.next_id, var_type, initial_val, variant_id)
-                ctx.emit_to_block(pre_loop_block, wrap)
-                incoming = {pre_loop_block, wrap.id}
-              end
-            elsif numeric_primitive?(val_type) && numeric_primitive?(var_type)
-              cast = Cast.new(ctx.next_id, var_type, initial_val, var_type, safe: false)
-              ctx.emit_to_block(pre_loop_block, cast)
-              incoming = {pre_loop_block, cast.id}
-            end
-          end
-          phi.add_incoming(incoming[0], incoming[1])
+          incoming = coerce_branch_local_for_phi(ctx, pre_loop_block, initial_val, var_type)
+          phi.add_incoming(pre_loop_block, incoming)
           ctx.emit(phi)
           phi_nodes[var_name] = phi
           # Update local to point to phi
@@ -107286,23 +107263,8 @@ module Adamas::HIR
           end
           if updated_val
             # Add incoming from body block (the updated value)
-            incoming_val = updated_val
             phi_type = ctx.type_of(phi.id)
-            if updated_val != phi.id && phi_type != ctx.type_of(updated_val)
-              val_type = ctx.type_of(updated_val)
-              if is_union_type?(phi_type)
-                if variant_id = get_union_variant_id(phi_type, val_type)
-                  variant_id >= 0
-                  wrap = UnionWrap.new(ctx.next_id, phi_type, updated_val, variant_id)
-                  ctx.emit_to_block(body_exit_block, wrap)
-                  incoming_val = wrap.id
-                end
-              elsif numeric_primitive?(val_type) && numeric_primitive?(phi_type)
-                cast = Cast.new(ctx.next_id, phi_type, updated_val, phi_type, safe: false)
-                ctx.emit_to_block(body_exit_block, cast)
-                incoming_val = cast.id
-              end
-            end
+            incoming_val = coerce_branch_local_for_phi(ctx, body_exit_block, updated_val, phi_type)
             if env_get("DEBUG_LOOP_PHI")
               STDERR.puts "[LOOP_PHI_BACKEDGE] var=#{var_name} phi=#{phi.id} updated_val=#{updated_val} incoming_val=#{incoming_val} body_exit=#{body_exit_block} phi_type=#{phi_type.id} val_type=#{ctx.type_of(updated_val).id} same_as_phi=#{updated_val == phi.id}"
             end
@@ -107397,7 +107359,7 @@ module Adamas::HIR
           # Break paths: use the variable value at each break point
           break_info.each do |break_block, break_locals|
             if break_val = break_locals[var_name]?
-              exit_phi.add_incoming(break_block, break_val)
+              exit_phi.add_incoming(break_block, coerce_branch_local_for_phi(ctx, break_block, break_val, cond_phi.type))
             else
               exit_phi.add_incoming(break_block, cond_phi.id)
             end
@@ -111553,22 +111515,7 @@ module Adamas::HIR
                             ctx.lookup_local(var_name)
                           end
             if updated_val
-              incoming_val = updated_val
-              phi_type = ctx.type_of(phi.id)
-              val_type = ctx.type_of(updated_val)
-              if phi_type != val_type
-                if is_union_type?(phi_type)
-                  if variant_id = get_union_variant_id(phi_type, val_type)
-                    wrap = UnionWrap.new(ctx.next_id, phi_type, updated_val, variant_id)
-                    ctx.emit(wrap)
-                    incoming_val = wrap.id
-                  end
-                elsif numeric_primitive?(val_type) && numeric_primitive?(phi_type)
-                  cast = Cast.new(ctx.next_id, phi_type, updated_val, phi_type, safe: false)
-                  ctx.emit(cast)
-                  incoming_val = cast.id
-                end
-              end
+              incoming_val = coerce_branch_local_for_phi(ctx, current_block, updated_val, phi.type)
               phi.add_incoming(current_block, incoming_val)
             end
           end
