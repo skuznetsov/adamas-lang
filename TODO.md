@@ -27662,3 +27662,11 @@ One fix per commit, each with an oracle-qualified regression
   recursive body, a returning recursive body and a bare C.exit, Crystal
   1.22.3 classifies the four static results as NTTN. Adamas at d41e7c33 gives
   TTTN. Never use a declared restriction alone as a completed result.
+- [x] Tie each recursive call emission to the physical HIR function that
+  issued it. Retiring a partial body drops only its own call obligations.
+  The rebuilt body must provide its own call, operands and checked result.
+  Stock Crystal and Adamas print A for the seven-method recursive source
+  graph and reject its incompatible return. The 15 projection examples
+  pass, including replacement under the same name and numeric value ID.
+  The uncached S1 self-build on bundled 1.18.2 and installed 1.22.3 still
+  needs the result of Parser#parse_statement_in_scope while lowering CLI#run.

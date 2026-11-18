@@ -2284,12 +2284,19 @@ module Adamas::HIR
       parameter_is_block : Bool,
       instruction : Value?
 
+    # An emission obligation belongs to one physical HIR body generation.
+    # Numeric ValueIds and function names can both be reused after retirement,
+    # so the ticket carries the exact Function that issued it.
+    private record RecursiveStructResultEmissionTicket,
+      id : UInt64,
+      owner : Function
+
     private class DeferredStructResultUse
       getter request : ForceLowerSuspendedRequest
       getter expected : TypeRef
       getter producer_replay : ForceLowerReplayCallsite
       getter checked_return : PartialStructReturn?
-      getter emissions = {} of UInt64 => RecursiveStructResultEmissionWitness?
+      getter emissions = {} of UInt64 => {Function, RecursiveStructResultEmissionWitness?}
       @next_emission_ticket : UInt64 = 0_u64
 
       def initialize(
@@ -2300,30 +2307,46 @@ module Adamas::HIR
       )
       end
 
-      def begin_emission_ticket : UInt64
+      def begin_emission_ticket(owner : Function) : RecursiveStructResultEmissionTicket
         ticket = @next_emission_ticket
         @next_emission_ticket += 1_u64
-        @emissions[ticket] = nil
-        ticket
+        @emissions[ticket] = {owner, nil}
+        RecursiveStructResultEmissionTicket.new(ticket, owner)
       end
 
-      def discharge_emission_ticket(ticket : UInt64, witness : RecursiveStructResultEmissionWitness) : Bool
-        return false unless @emissions.has_key?(ticket)
-        return false unless @emissions[ticket].nil?
-        @emissions[ticket] = witness
+      def discharge_emission_ticket(
+        ticket : RecursiveStructResultEmissionTicket,
+        witness : RecursiveStructResultEmissionWitness,
+      ) : Bool
+        entry = @emissions[ticket.id]?
+        return false unless entry
+        owner, current_witness = entry
+        return false unless owner.same?(ticket.owner) && owner.same?(witness.function)
+        return false unless current_witness.nil?
+        @emissions[ticket.id] = {owner, witness}
         true
       end
 
       def emission_obligations_complete? : Bool
-        !@emissions.empty? && @emissions.each_value.all? { |witness| !witness.nil? }
+        !@emissions.empty? && @emissions.each_value.all? do |entry|
+          witness = entry[1]
+          witness && entry[0].same?(witness.not_nil!.function)
+        end
       end
 
       def emission_witnesses : Array(RecursiveStructResultEmissionWitness)
-        @emissions.values.compact
+        @emissions.values.compact_map do |entry|
+          witness = entry[1]
+          witness if witness && entry[0].same?(witness.not_nil!.function)
+        end
       end
 
-      def clear_body_emissions : Nil
-        @emissions.clear
+      def retire_function_body(owner : Function) : Nil
+        @emissions.keys.each do |ticket|
+          if entry = @emissions[ticket]?
+            @emissions.delete(ticket) if entry[0].same?(owner)
+          end
+        end
       end
     end
 
@@ -42778,6 +42801,7 @@ module Adamas::HIR
         # A suspended module method must not leave a body or InProgress state
         # behind; only retire the exact Function created by this generation.
         if partial = materializing_function
+          retire_recursive_struct_result_emissions(partial)
           if @module.function_by_name(partial.name).try(&.same?(partial)) == true
             remove_hir_function(partial.name)
             clear_function_state(partial.name)
@@ -53429,6 +53453,7 @@ module Adamas::HIR
         # Retire only the body generation begun by this frame. A replacement
         # under the same name belongs to its own lowering attempt.
         if partial = materializing_function
+          retire_recursive_struct_result_emissions(partial)
           if @module.function_by_name(partial.name).try(&.same?(partial)) == true
             remove_hir_function(partial.name)
             clear_function_state(partial.name)
@@ -77178,6 +77203,7 @@ module Adamas::HIR
       retired_function = @module.function_by_name(name)
       removed = @module.remove_function(name)
       if removed
+        retire_recursive_struct_result_emissions(retired_function) if retired_function
         # The exact initializer source remains valid across body retirement,
         # but its previously inferred output no longer describes a live body.
         # Mark that output stale only when the retired Function is the exact
@@ -77196,6 +77222,12 @@ module Adamas::HIR
         @named_call_shapes_by_function.delete(name)
       end
       removed
+    end
+
+    private def retire_recursive_struct_result_emissions(function : Function) : Nil
+      @deferred_struct_result_uses.each_value do |use|
+        use.retire_function_body(function)
+      end
     end
 
     private def retry_module_virtual_fanout_pending_targets(fanout_key : String) : Int32
@@ -88337,6 +88369,7 @@ module Adamas::HIR
       func
       rescue error
         if partial = materializing_function
+          retire_recursive_struct_result_emissions(partial)
           if @module.function_by_name(partial.name).try(&.same?(partial)) == true
             remove_hir_function(partial.name)
             clear_function_state(partial.name)
@@ -100330,7 +100363,9 @@ module Adamas::HIR
 
           # The exact handle is ours, but it no longer has a complete receipt.
           # Remove only this owned partial/stale body before retrying.
-          @module.remove_function(func_name)
+          if @module.remove_function(func_name)
+            retire_recursive_struct_result_emissions(existing_function)
+          end
           @classvar_init_function_handles.delete(func_name)
           clear_function_state(func_name)
           existing_function = nil
@@ -100446,7 +100481,9 @@ module Adamas::HIR
           end
           if created = function
             if current = @module.function_by_name(func_name)
-              @module.remove_function(func_name) if current.same?(created)
+              if current.same?(created) && @module.remove_function(func_name)
+                retire_recursive_struct_result_emissions(created)
+              end
             end
           end
           if state = previous_function_state
@@ -115664,9 +115701,6 @@ module Adamas::HIR
         return false unless reconciled_force_lower_callsite(pending, replay.callsite)
       end
       return false unless remove_hir_function(name)
-      projected.each do |producer|
-        @deferred_struct_result_uses[{name, producer}]?.try(&.clear_body_emissions)
-      end
       discharged.each { |callee| @force_lower_discharged_edges.add({name, callee}) }
       if env_has?("DEBUG_FORCE_LOWER_DEPTH")
         STDERR.puts "[FORCE_LOWER_DISCHARGED] consumer=#{name} producers=#{discharged.join(",")}"
@@ -116364,7 +116398,7 @@ module Adamas::HIR
     private def record_recursive_struct_result_emission!(
       ctx : LoweringContext,
       producer : String,
-      ticket : UInt64?,
+      ticket : RecursiveStructResultEmissionTicket?,
       call : Call,
       arg_types : Array(TypeRef),
       receiver_id : ValueId?,
@@ -116381,12 +116415,12 @@ module Adamas::HIR
       ctx : LoweringContext,
       producer : String,
       cycle_result : Bool,
-    ) : UInt64?
+    ) : RecursiveStructResultEmissionTicket?
       return nil unless cycle_result
       consumer = ctx.source_result_replay_consumer || ctx.function.name
       raise "recursive result emission escaped its consumer" unless ctx.function.name == consumer
       use = @deferred_struct_result_uses[{consumer, producer}]? || raise "missing deferred recursive result use"
-      use.begin_emission_ticket
+      use.begin_emission_ticket(ctx.function)
     end
 
     private def recursive_struct_result_operand_witnesses(

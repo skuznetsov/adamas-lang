@@ -84,7 +84,7 @@ class Adamas::HIR::AstToHir
     return false unless admitted
 
     use = @deferred_struct_result_uses[{consumer, producer}].not_nil!
-    ticket = use.begin_emission_ticket
+    ticket = use.begin_emission_ticket(ctx.function)
     emitted_target = wrong_target ? __test_projection_method_name("sibling_value") : producer
     emitted_result = wrong_result ? TypeRef::INT32 : result
     call = Call.new(ctx.next_id, emitted_result, "")
@@ -122,7 +122,7 @@ class Adamas::HIR::AstToHir
     producer, consumer, _request, ctx, _producer_source, _consumer_source = __test_open_projection_use
     use = @deferred_struct_result_uses[{consumer, producer}].not_nil!
     2.times do |index|
-      ticket = use.begin_emission_ticket
+      ticket = use.begin_emission_ticket(ctx.function)
       next if omit_second && index == 1
 
       value = Literal.new(ctx.next_id, TypeRef::BOOL, false)
@@ -140,9 +140,9 @@ class Adamas::HIR::AstToHir
   def __test_projection_ticket_reset? : Bool
     producer, consumer, _request, ctx, _producer_source, _consumer_source = __test_open_projection_use
     use = @deferred_struct_result_uses[{consumer, producer}].not_nil!
-    obsolete_ticket = use.begin_emission_ticket
-    use.clear_body_emissions
-    current_ticket = use.begin_emission_ticket
+    obsolete_ticket = use.begin_emission_ticket(ctx.function)
+    use.retire_function_body(ctx.function)
+    current_ticket = use.begin_emission_ticket(ctx.function)
     value = Literal.new(ctx.next_id, TypeRef::BOOL, false)
     ctx.emit(value)
     call = Call.new(ctx.next_id, @module.function_by_name(producer).not_nil!.return_type, "")
@@ -152,6 +152,100 @@ class Adamas::HIR::AstToHir
     witness = recursive_struct_result_emission_witness(ctx, producer, call, [TypeRef::BOOL], nil) || return false
     use.discharge_emission_ticket(obsolete_ticket, witness).should be_false
     use.discharge_emission_ticket(current_ticket, witness) && use.emission_obligations_complete?
+  end
+
+  def __test_retired_physical_ticket_rejects_replacement? : Bool
+    producer, consumer, _request, old_ctx, _producer_source, _consumer_source = __test_open_projection_use
+    use = @deferred_struct_result_uses[{consumer, producer}].not_nil!
+    old_function = old_ctx.function
+    old_ticket = use.begin_emission_ticket(old_function)
+    foreign_ticket = use.begin_emission_ticket(old_function)
+
+    old_value = Literal.new(old_ctx.next_id, TypeRef::BOOL, false)
+    old_ctx.emit(old_value)
+    old_call = Call.new(old_ctx.next_id, use.expected, "")
+    old_call.configure_without_receiver(producer, [old_value.id])
+    old_ctx.emit(old_call)
+    old_ctx.register_source_value_facts(old_call.id, [{use.expected, false}])
+    old_witness = recursive_struct_result_emission_witness(old_ctx, producer, old_call, [TypeRef::BOOL], nil) || return false
+
+    foreign = Function.new(old_function.id + 1_u32, consumer, old_function.return_type)
+    old_function.params.each do |parameter|
+      foreign.add_param(parameter.name, parameter.type, parameter.is_block)
+    end
+    foreign_ctx = LoweringContext.new(foreign, @module, @arena)
+    foreign_ctx.source_result_replay_consumer = consumer
+    foreign_value_id = foreign_ctx.next_id
+    while foreign_value_id < old_value.id
+      foreign_value_id = foreign_ctx.next_id
+    end
+    return false unless foreign_value_id == old_value.id
+    foreign_value = Literal.new(foreign_value_id, TypeRef::BOOL, false)
+    foreign_ctx.emit(foreign_value)
+    foreign_call = Call.new(foreign_ctx.next_id, use.expected, "")
+    foreign_call.configure_without_receiver(producer, [foreign_value.id])
+    foreign_ctx.emit(foreign_call)
+    foreign_ctx.register_source_value_facts(foreign_call.id, [{use.expected, false}])
+    foreign_witness = recursive_struct_result_emission_witness(foreign_ctx, producer, foreign_call, [TypeRef::BOOL], nil) || return false
+
+    old_function.same?(foreign).should be_false
+    old_call.id.should eq(foreign_call.id)
+    old_value.id.should eq(foreign_value.id)
+    old_witness.function.same?(old_function).should be_true
+    foreign_witness.function.same?(foreign).should be_true
+    use.discharge_emission_ticket(foreign_ticket, foreign_witness).should be_false
+    use.discharge_emission_ticket(old_ticket, old_witness).should be_true
+
+    return false unless remove_hir_function(consumer)
+    use.emissions.empty?.should be_true
+    replacement = @module.create_function(consumer, old_function.return_type)
+    old_function.params.each do |parameter|
+      replacement.add_param(parameter.name, parameter.type, parameter.is_block)
+    end
+    new_ctx = LoweringContext.new(replacement, @module, @arena)
+    new_ctx.source_result_replay_consumer = consumer
+    new_value_id = new_ctx.next_id
+    while new_value_id < old_value.id
+      new_value_id = new_ctx.next_id
+    end
+    return false unless new_value_id == old_value.id
+    new_value = Literal.new(new_value_id, TypeRef::BOOL, false)
+    new_ctx.emit(new_value)
+    new_call = Call.new(new_ctx.next_id, use.expected, "")
+    new_call.configure_without_receiver(producer, [new_value.id])
+    new_ctx.emit(new_call)
+    new_ctx.register_source_value_facts(new_call.id, [{use.expected, false}])
+    new_witness = recursive_struct_result_emission_witness(new_ctx, producer, new_call, [TypeRef::BOOL], nil) || return false
+
+    old_function.same?(replacement).should be_false
+    old_call.id.should eq(new_call.id)
+    old_value.id.should eq(new_value.id)
+    new_witness.function.same?(replacement).should be_true
+    use.discharge_emission_ticket(old_ticket, new_witness).should be_false
+
+    new_ticket = use.begin_emission_ticket(replacement)
+    return false unless use.discharge_emission_ticket(new_ticket, new_witness)
+    use.emission_obligations_complete? && recursive_struct_result_emission_witness_current?(use, new_witness)
+  end
+
+  def __test_unrelated_retirement_preserves_physical_ticket? : Bool
+    producer, consumer, _request, ctx, _producer_source, _consumer_source = __test_open_projection_use
+    use = @deferred_struct_result_uses[{consumer, producer}].not_nil!
+    ticket = use.begin_emission_ticket(ctx.function)
+    unrelated_name = "RecFactory.unrelated_retirement_probe"
+    unrelated = @module.create_function(unrelated_name, TypeRef::VOID)
+    return false unless remove_hir_function(unrelated_name)
+    return false unless use.emissions.size == 1
+
+    value = Literal.new(ctx.next_id, TypeRef::BOOL, false)
+    ctx.emit(value)
+    call = Call.new(ctx.next_id, use.expected, "")
+    call.configure_without_receiver(producer, [value.id])
+    ctx.emit(call)
+    ctx.register_source_value_facts(call.id, [{use.expected, false}])
+    witness = recursive_struct_result_emission_witness(ctx, producer, call, [TypeRef::BOOL], nil) || return false
+    unrelated.same?(ctx.function).should be_false
+    use.discharge_emission_ticket(ticket, witness) && use.emission_obligations_complete?
   end
 
   def __test_instance_projection_emission_current?(
@@ -168,7 +262,7 @@ class Adamas::HIR::AstToHir
     ctx.emit(value)
     result = @module.function_by_name(producer).not_nil!.return_type
     use = @deferred_struct_result_uses[{consumer, producer}].not_nil!
-    ticket = use.begin_emission_ticket
+    ticket = use.begin_emission_ticket(ctx.function)
     call = Call.with_receiver(ctx.next_id, result, receiver.id, producer, [value.id])
     call.args.should eq([value.id])
     call.args.includes?(receiver.id).should be_false
@@ -483,5 +577,13 @@ describe "source result projection inside a recursive specialization" do
 
   it "retires tickets with an obsolete consumer body" do
     recursive_projection_converter.__test_projection_ticket_reset?.should be_true
+  end
+
+  it "rejects a delayed ticket from a retired same-named physical consumer" do
+    recursive_projection_converter.__test_retired_physical_ticket_rejects_replacement?.should be_true
+  end
+
+  it "preserves a ticket when an unrelated physical function is retired" do
+    recursive_projection_converter.__test_unrelated_retirement_preserves_physical_ticket?.should be_true
   end
 end
