@@ -2184,6 +2184,9 @@ module Adamas::HIR
       property consumer_capture : ForceLowerReplayCapture?
       property consumer_requires_result : Bool = true
       property consumer_bypass_inline_yield : Bool = false
+      # Retry work belongs to this exact propagated suspension. The handoff
+      # type is defined after the work-request union below.
+      property retry_work_handoff : ForceLowerRetryWorkHandoff? = nil
 
       def initialize(
         @consumer : String,
@@ -2236,6 +2239,14 @@ module Adamas::HIR
     end
 
     private alias ForceLowerWorkRequest = ForceLowerRetryRequest | ForceLowerSuspendedRequest
+
+    # The retry driver clears its transient queue when an exact result remains
+    # pending. Preserve the still-current work on that pending's identity so a
+    # shallower retry can resume it without making the queue compiler-global.
+    private class ForceLowerRetryWorkHandoff
+      getter pending_requests = [] of ForceLowerWorkRequest
+      getter attempts = [] of {ForceLowerWorkRequest, Int32}
+    end
 
     private record ModuleVirtualFanoutPendingTarget,
       name : String,
@@ -115008,10 +115019,19 @@ module Adamas::HIR
       # A child forced during replay can itself hit the nesting limit. Drain
       # those obligations before rebuilding its caller, without nesting retry
       # drivers on the native stack.
+      handoff = ForceLowerRetryWorkHandoff.new
+      if request.is_a?(ForceLowerSuspendedRequest) && force_lower_retry_source_current?(request)
+        if existing = force_lower_retry_handoff_for_pending(request.pending)
+          merge_force_lower_retry_work_handoffs!(handoff, existing)
+        end
+        request.pending.retry_work_handoff = handoff
+      end
       @force_lower_retry_driver_active = true
-      enqueue_force_lower_retry_work(request)
       progress = false
+      active = nil.as(ForceLowerWorkRequest?)
       begin
+        enqueue_force_lower_retry_work(request)
+        restore_force_lower_retry_work_from_handoff(handoff)
         until @force_lower_retry_work.empty?
           # A dependency can already be below this continuation in the queue.
           # New-work counts alone cannot distinguish that case from a failed
@@ -115021,6 +115041,15 @@ module Adamas::HIR
           end
           break unless ready_index # A queued dependency cycle cannot settle.
           current_request = @force_lower_retry_work.delete_at(ready_index)
+          active = current_request
+          if current_request.is_a?(ForceLowerSuspendedRequest) && force_lower_retry_source_current?(current_request)
+            if existing = force_lower_retry_handoff_for_pending(current_request.pending)
+              merge_force_lower_retry_work_handoffs!(handoff, existing)
+            end
+            current_request.pending.retry_work_handoff = handoff
+            restore_force_lower_retry_work_from_handoff(handoff)
+          end
+          record_force_lower_retry_attempt(handoff, current_request, @force_lower_return_type_depth)
           advanced = case current_request
                      when ForceLowerSuspendedRequest
                        resume_suspended_exact_result(current_request)
@@ -115033,8 +115062,28 @@ module Adamas::HIR
                          retry_force_lower_depth_request(current_request)
                        end
                      end
-          progress = true if advanced
+          if advanced
+            progress = true
+            handoff.attempts.clear
+          end
         end
+        if !@force_lower_retry_work.empty? && request.is_a?(ForceLowerSuspendedRequest) &&
+           force_lower_retry_source_current?(request)
+          preserve_force_lower_retry_work_for_pending(request.pending, handoff)
+        end
+      rescue pending : ExactResultPending
+        # A queued sibling may run under this driver's native parent. Its
+        # exception cannot replace the root continuation that the caller is
+        # unwinding. Keep the exact unfinished dispatch alongside its siblings.
+        if request.is_a?(ForceLowerSuspendedRequest) && (current = active.as?(ForceLowerSuspendedRequest)) &&
+           current.pending.same?(pending) && !request.pending.same?(pending) &&
+           force_lower_retry_source_current?(request) && force_lower_retry_source_current?(current)
+          enqueue_force_lower_retry_work(current)
+          preserve_force_lower_retry_work_for_pending(request.pending, handoff)
+          raise request.pending
+        end
+        preserve_force_lower_retry_work_for_pending(pending, handoff)
+        raise pending
       ensure
         @force_lower_retry_driver_active = false
         @force_lower_retry_work.clear
@@ -115043,6 +115092,82 @@ module Adamas::HIR
       end
       progress && force_lower_retry_source_current?(request) &&
         settled_force_lower_demand?(name, force_lower_retry_requires_result?(request))
+    end
+
+    private def force_lower_retry_handoff_for_pending(pending : ExactResultPending) : ForceLowerRetryWorkHandoff?
+      current = pending.as(ExactResultPending?)
+      handoff = nil.as(ForceLowerRetryWorkHandoff?)
+      while current
+        return unless force_lower_pending_producer_current?(current)
+        handoff ||= current.retry_work_handoff
+        current = current.producer_pending
+      end
+      handoff
+    end
+
+    private def merge_force_lower_retry_work_handoffs!(
+      target : ForceLowerRetryWorkHandoff,
+      source : ForceLowerRetryWorkHandoff,
+    ) : Nil
+      return if target.same?(source)
+      source.pending_requests.each { |request| retain_force_lower_retry_work(target, request) }
+      source.attempts.each { |(request, depth)| record_force_lower_retry_attempt(target, request, depth) }
+      source.pending_requests.clear
+      source.attempts.clear
+    end
+
+    private def retain_force_lower_retry_work(
+      handoff : ForceLowerRetryWorkHandoff,
+      request : ForceLowerWorkRequest,
+    ) : Nil
+      return unless force_lower_retry_source_current?(request)
+      unless handoff.pending_requests.any? { |other| same_force_lower_work_request?(other, request) }
+        handoff.pending_requests << request
+      end
+    end
+
+    private def record_force_lower_retry_attempt(
+      handoff : ForceLowerRetryWorkHandoff,
+      request : ForceLowerWorkRequest,
+      depth : Int32,
+    ) : Nil
+      return unless force_lower_retry_source_current?(request)
+      index = handoff.attempts.index { |(other, _)| same_force_lower_work_request?(other, request) }
+      if index
+        handoff.attempts[index] = {request, depth} if depth < handoff.attempts[index][1]
+      else
+        handoff.attempts << {request, depth}
+      end
+    end
+
+    private def restore_force_lower_retry_work_from_handoff(
+      handoff : ForceLowerRetryWorkHandoff,
+    ) : Nil
+      handoff.pending_requests.reject! do |request|
+        if !force_lower_retry_source_current?(request)
+          true
+        elsif handoff.attempts.any? { |(other, depth)| depth <= @force_lower_return_type_depth && same_force_lower_work_request?(other, request) }
+          false
+        else
+          # Import transfers ownership to the queue. Only dispatch counts as an
+          # attempt: another request can suspend before this one is visited.
+          enqueue_force_lower_retry_work(request)
+          true
+        end
+      end
+    end
+
+    private def preserve_force_lower_retry_work_for_pending(
+      pending : ExactResultPending,
+      handoff : ForceLowerRetryWorkHandoff,
+    ) : Nil
+      if existing = force_lower_retry_handoff_for_pending(pending)
+        merge_force_lower_retry_work_handoffs!(handoff, existing)
+      end
+      pending.retry_work_handoff = handoff
+      @force_lower_retry_work.each do |request|
+        retain_force_lower_retry_work(handoff, request)
+      end
     end
 
     # Nested replay may discover the same source-bound continuation before the
@@ -115190,12 +115315,30 @@ module Adamas::HIR
       if request.is_a?(ForceLowerSuspendedRequest)
         pending = request.pending.as(ExactResultPending?)
         while pending
-          return false unless force_lower_exact_source_matches?(pending.producer, pending.producer_source)
-          if producer_replay = pending.producer_replay
-            return false unless force_lower_replay_callsite_current?(pending.producer, producer_replay)
-          end
+          return false unless force_lower_pending_producer_current?(pending)
           pending = pending.producer_pending
         end
+      end
+      true
+    end
+
+    # A relayed suspension carries a second request whose consumer must be the
+    # very producer captured by its parent. Two individually current sources
+    # do not establish that they belong to the same continuation.
+    private def force_lower_pending_producer_current?(pending : ExactResultPending) : Bool
+      source = pending.producer_source
+      return false unless force_lower_exact_source_matches?(pending.producer, source)
+      replay = pending.producer_replay
+      if replay
+        replay_source = replay.exact_source_binding ||
+                        ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name)
+        return false unless force_lower_replay_callsite_current?(pending.producer, replay) &&
+                            same_force_lower_exact_source_binding?(replay_source, source)
+      end
+      if child = pending.producer_pending
+        capture = child.consumer_capture
+        return false unless replay && child.consumer == pending.producer &&
+                            capture && capture.name == child.consumer && capture.binding == replay
       end
       true
     end
@@ -115494,26 +115637,14 @@ module Adamas::HIR
       producer = pending.producer
       bypass_inline_yield = request.bypass_inline_yield
       replay = request.replay_callsite
-      raise pending unless force_lower_exact_source_matches?(producer, pending.producer_source) &&
-                           force_lower_replay_callsite_current?(consumer, replay)
+      raise pending unless force_lower_pending_producer_current?(pending) && force_lower_replay_callsite_current?(consumer, replay)
       producer_replay = pending.producer_replay
-      if producer_replay
-        replay_source = producer_replay.exact_source_binding ||
-                        ForceLowerExactSourceBinding.new(producer_replay.source_def, producer_replay.source_arena,
-                          producer_replay.source_registry_name)
-        raise pending unless producer_replay.source_def.same?(pending.producer_source.source_def) &&
-                             producer_replay.source_arena.same?(pending.producer_source.source_arena) &&
-                             producer_replay.source_registry_name == pending.producer_source.source_registry_name &&
-                             same_force_lower_exact_source_binding?(replay_source, pending.producer_source) &&
-                             force_lower_replay_callsite_current?(producer, producer_replay)
-      end
       unless settled_force_lower_producer?(pending)
         work_mark = @force_lower_retry_work.size
         producer_bypass = pending.producer_bypass_inline_yield.nil? ? bypass_inline_yield : pending.producer_bypass_inline_yield.not_nil!
         producer_settled = with_force_lower_exact_source(producer, pending.producer_source) do
           if child_pending = pending.producer_pending
-            raise pending unless producer_replay && child_pending.consumer == producer &&
-                                 child_pending.consumer_capture.try(&.binding) == producer_replay
+            raise pending unless producer_replay
             begin
               resume_suspended_exact_result(ForceLowerSuspendedRequest.new(child_pending, producer_replay, producer_bypass))
             rescue blocked : ExactResultPending

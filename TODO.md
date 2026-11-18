@@ -27579,3 +27579,10 @@ One fix per commit, each with an oracle-qualified regression
   block syntax. Native stock and candidate controls cover a field access,
   assignment, free and receiver calls, both block forms, and an incompatible
   String argument. The parser spec checks the actual identifier node.
+- [x] Preserve unvisited source-bound lowering work when a nested retry
+  unwinds. Dispatch owns an attempt, and the original suspension owns the
+  queue carried back to its caller. A changed Def/arena or a transplanted
+  child invalidates the corresponding handoff. The installed CallStack
+  reproducer compares native output and exit status with stock Crystal.
+  The real compiler source now reaches CLI#run_check on both stdlib
+  profiles. A separate cyclic parser result demand remains there.
