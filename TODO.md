@@ -27545,3 +27545,12 @@ One fix per commit, each with an oracle-qualified regression
   five native comparisons. Installed-prelude `puts 42` now links, then
   traps at runtime in Parallel#stack_pool. Both full S2 builds still stop
   in HIR at CLI#run_check and Exception#backtrace?, respectively.
+- [x] Emit a read-only getter for an instance field initialized in the type
+  body. Only a getter block supplies an on-read expression. Clearing a field
+  now leaves it nil for an ordinary getter and invokes the block again for a
+  lazy getter. Stock Crystal and S1 agree on twelve native fixtures and a
+  rejected missing constant, with S1 in both lazy and eager lowering modes.
+  Two accessor HIR examples pass. The installed-prelude hello now passes
+  Parallel#stack_pool and aborts in the abstract Scheduler#spawn target.
+  Full self-builds still suspend on CLI#run_check with bundled 1.18.2 and on
+  CallStack#printable_backtrace with installed 1.22.3.

@@ -86,7 +86,7 @@ run_positive() {
   fi
 }
 
-for name in allocator_local_isolation class_body_self constant_once generic_module \
+for name in getter_default_evaluation allocator_local_isolation class_body_self constant_once generic_module \
     inline_caller_local_isolation module_self nested_owner overloaded_allocator \
     union_shadow module_constant_shadow inherited_constant_shadow; do
   original="$(compile_original "$name" "$FIXTURES/$name.cr")"

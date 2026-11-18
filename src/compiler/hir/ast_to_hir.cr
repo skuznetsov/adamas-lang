@@ -50596,14 +50596,7 @@ module Adamas::HIR
       if env_get("DEBUG_LAZY_GETTER")
         STDERR.puts "[LAZY_GETTER_CHECK] class=#{class_name} getter=#{getter_name} has_default=#{!spec.default_value.nil?}"
       end
-      if default_expr = spec.default_value
-        if env_get("DEBUG_LAZY_GETTER")
-          STDERR.puts "[LAZY_GETTER] class=#{class_name} getter=#{getter_name} ivar=#{ivar_name} default_expr=#{default_expr}"
-        end
-        generate_lazy_getter_method(class_name, class_info, ivar_info, getter_name, default_expr)
-      else
-        generate_getter_method_for_ivar(class_name, class_info, ivar_info, getter_name)
-      end
+      generate_getter_method_for_ivar(class_name, class_info, ivar_info, getter_name)
     end
 
     # Generate a lazy getter: def name; if @ivar.nil?; @ivar = default; end; @ivar; end
@@ -50724,11 +50717,15 @@ module Adamas::HIR
       register_function_type(func_name, ivar_type)
       return if @module.has_function_with_body?(func_name)
 
-      # If this ivar has a default expression (lazy getter), generate lazy init
-      if (default_expr = ivar_info.default_expr_id) && (default_arena = ivar_info.default_arena)
-        saved_arena = @arena
-        with_arena(default_arena) do
-          generate_lazy_getter_method(class_name, class_info, ivar_info, accessor_name || ivar_info.name.lstrip('@'), default_expr)
+      # Only a source getter block runs on a read. An ordinary field default
+      # already ran in the allocator, including when it initialized a nilable
+      # field which user code later cleared.
+      if (source = ivar_info.default_source) && source.execution_scope.instance_getter?
+        if env_get("DEBUG_LAZY_GETTER")
+          STDERR.puts "[LAZY_GETTER] class=#{class_name} getter=#{accessor_name} ivar=#{ivar_info.name} default_expr=#{source.expr_id}"
+        end
+        with_arena(source.arena) do
+          generate_lazy_getter_method(class_name, class_info, ivar_info, accessor_name, source.expr_id)
         end
         return
       end
