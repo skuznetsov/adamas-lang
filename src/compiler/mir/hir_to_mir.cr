@@ -7293,10 +7293,19 @@ module Adamas
               # A sole family member is an unambiguous legacy fallback. With
               # multiple members, choosing the first one makes call identity
               # depend on HIR insertion order and can bind the wrong overload.
+              # The sole member must still accept the call's arguments: a callee
+              # that needs more parameters than the call supplies would read
+              # the missing ones as null. A bodyless primitive such as
+              # `Symbol#to_s` otherwise binds to its only materialized sibling
+              # `Symbol#to_s$IO`, whose body calls `to_s` and so recurses into
+              # itself forever. Leave such calls unresolved; the missing-body
+              # path owns them.
               unless func
                 if all_overloads.size == 1
-                  func = all_overloads.first
-                  strict_resolve_note("sole", method_name_str, func.name)
+                  if all_overloads.first.params.size <= args.size
+                    func = all_overloads.first
+                    strict_resolve_note("sole", method_name_str, func.name)
+                  end
                 elsif all_overloads.size > 1
                   candidate_names = all_overloads.map(&.name).sort.join(", ")
                   raise "Ambiguous MIR call target #{method_name_str}: candidates #{candidate_names}"
