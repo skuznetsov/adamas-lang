@@ -35,6 +35,20 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-18 — Preserve queued exact source-result demand
+- [x] A nested retry driver can consume a producer's provisional dependency
+  while its current retry request still carries the exact source-bound result
+  obligation. `lower_call` now republishes the dependency and suspends only for
+  a current result-required request with matching Def, arena and registry
+  identity. The production-calling HIR regression is red on the parent and
+  passes 7 examples on the candidate; body-only, stale-source, inactive-driver,
+  wrong tuple element and wrong declared result controls remain checked.
+- [ ] Fresh S2 stops at `Parser#parse_op_assign$Nil` with both stdlibs: bundled
+  reports it in `Parser#parse_block_shorthand$Token`, and installed reports it
+  in `Parser#parse_expression$Int32`. This moves the first frontier from the
+  parent's bundled `parse_percent_macro_control` and installed DWARF tuple
+  failures; it does not establish full bootstrap or DWARF closure.
+
 ### Prelude hello blockers, second batch (2026-10-26)
 Each fix has its own commit and regression (original Crystal 1.22.1 first).
 - [x] 653c8a09 included-module overloads selected by argument types for
