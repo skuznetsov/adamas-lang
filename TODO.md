@@ -27473,6 +27473,9 @@ One fix per commit, each with an oracle-qualified regression
   for the user method, nominal enum and pointer cases, and both reject an
   undeclared integer method. The native enum argument regression passes.
   Both full S1-to-S2 attempts still reach the dependencies above.
-- [ ] Reject plain integers passed to source constructor parameters restricted
-  to `Pointer(T)`. Both literal and computed integers currently compile
-  before code generation inserts an integer-to-pointer conversion.
+- [x] Reject primitive scalar arguments at a source `Pointer(T)` restriction.
+  Constructor recovery used to accept literal and computed integers and emit
+  an integer-to-pointer conversion. The parent fails the new native regression.
+  Stock Crystal and the fixed S1 both print `AAAIP` for real pointers,
+  nested pointers, an alias and competing overloads, and reject four invalid
+  constructions. Both self-builds still stop at the dependencies above.

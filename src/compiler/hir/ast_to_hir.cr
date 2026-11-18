@@ -65569,6 +65569,9 @@ module Adamas::HIR
         return undecided ? nil : false
       end
       return actual_name == declared_name if primitive_self_type(declared_name)
+      # A primitive scalar cannot satisfy the source type Pointer(T). An
+      # explicit pointer constructor or an FFI conversion is a different call.
+      return false if declared_name.starts_with?("Pointer(") && declared_name.ends_with?(')')
       case declared_name
       when "Int", "Int::Primitive", "Int::Signed", "Int::Unsigned",
            "Float", "Float::Primitive", "Number", "Number::Primitive"
