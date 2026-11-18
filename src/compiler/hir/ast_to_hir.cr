@@ -2716,6 +2716,17 @@ module Adamas::HIR
       strip_generic_args_from_namespace_path(owner)
     end
 
+    # A union receiver's Nil arm dispatches to Nil's own method: an all-ref
+    # nilable union keeps Nil as null and the MIR null guard calls the Nil
+    # target, which must therefore be lowered with its siblings. Without it the
+    # guard returned null (`(Nil | String)#inspect` handed puts a null String).
+    # A Nil arm whose method Nil does not define belongs to a path flow typing
+    # rules out, so it queues no target.
+    private def union_variant_dispatch_owner?(variant : String, method_name : String) : Bool
+      return true unless variant == "Nil"
+      @method_index[method_index_owner_key(variant)]?.try(&.has_key?(method_name)) || false
+    end
+
     private class MethodIndexBucket
       getter all_candidates : Array(String)
 
@@ -131457,7 +131468,7 @@ module Adamas::HIR
             # branch above and union_vdispatch_variant_enum_repro.sh).
             rta_record_union_receiver_targets(union_name, method_name)
             split_union_type_name(union_name).each do |variant|
-              next if variant == "Nil"
+              next unless union_variant_dispatch_owner?(variant, method_name)
               resolved_variant = resolve_type_alias_chain(variant)
               expanded = [] of String
               [resolved_variant, variant].uniq.each do |owner|
@@ -148066,7 +148077,7 @@ module Adamas::HIR
       # MemberAccess branches and union_vdispatch_variant_enum_repro.sh).
       rta_record_union_receiver_targets(union_name, method_name)
       split_union_type_name(union_name).each do |variant|
-        next if variant == "Nil"
+        next unless union_variant_dispatch_owner?(variant, method_name)
         resolved_variant = resolve_type_alias_chain(variant)
         [resolved_variant, variant].uniq.each do |owner|
           base_name = "#{owner}##{method_name}"
@@ -150571,7 +150582,7 @@ module Adamas::HIR
               # See regression_tests/union_vdispatch_variant_enum_repro.sh.
               rta_record_union_receiver_targets(union_name, member_name)
               split_union_type_name(union_name).each do |variant|
-                next if variant == "Nil"
+                next unless union_variant_dispatch_owner?(variant, member_name)
                 resolved_variant = resolve_type_alias_chain(variant)
                 expanded = [] of String
                 [resolved_variant, variant].uniq.each do |owner|
