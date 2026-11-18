@@ -27670,3 +27670,15 @@ One fix per commit, each with an oracle-qualified regression
   pass, including replacement under the same name and numeric value ID.
   The uncached S1 self-build on bundled 1.18.2 and installed 1.22.3 still
   needs the result of Parser#parse_statement_in_scope while lowering CLI#run.
+- [x] Preserve a formal parameter's class-object or instance kind from its
+  actual argument throughout specialization. Names such as `is_class` carry
+  no type information. Share the source-kind rule across top-level, module
+  and class methods and check a proved instance against metaclass-only
+  initializers. Crystal and Adamas print FTFTCIICCI for the ten positive
+  calls and reject both reversed constructor arguments. Both uncached S1
+  self-builds (1.18.2 and 1.22.3) still stop on `parse_statement_in_scope`.
+- [ ] The existing `bounded_nullable_module_field` case still rejects
+  `Holder.new(Included.new)` when its initializer accepts `Marker?` and
+  Included includes Marker. The same allocator ABI error occurs on 8a10de64.
+  Its non-null and generic-module controls print A before and after the
+  formal-kind change. Verify the nullable module carrier at the call.

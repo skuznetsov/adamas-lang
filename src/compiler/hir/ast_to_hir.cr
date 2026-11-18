@@ -42309,7 +42309,8 @@ module Adamas::HIR
                 param_type = inferred if inferred && inferred != TypeRef::VOID
               end
             end
-            if param_name.ends_with?("_class") && call_type_for_param != TypeRef::VOID
+            param_literal = parameter_type_literal_from_call?(param, source_argument_facts, call_literal_flags, call_index, raw_type_ann_str || type_ann_str)
+            if param_literal && call_type_for_param != TypeRef::VOID && !preserve_shared_arity_union
               param_type = call_type_for_param
             end
             exact_runtime_param_type = if preserve_shared_arity_union
@@ -42346,21 +42347,6 @@ module Adamas::HIR
                 update_typeof_local_name(param_name, (safe_slice_to_string(ta) || ""))
               else
                 update_typeof_local_name(param_name, concrete_name)
-              end
-            end
-            # Explicit source facts decide whether every value is a type
-            # literal. `_class` naming is only a fallback when facts are absent.
-            param_literal = if source_argument_facts
-                              !source_argument_facts.empty? && source_argument_facts.all?(&.[1])
-                            else
-                              !param.is_block && !param.is_splat && !param.is_double_splat &&
-                                call_index < call_literal_flags.size && call_literal_flags[call_index]
-                            end
-            if !source_argument_facts && param_name.ends_with?("_class")
-              chosen_type = call_type_for_param == TypeRef::VOID ? param_type : call_type_for_param
-              type_name = get_type_name_from_ref(chosen_type)
-              if !type_name.empty? && type_name != "Void" && type_name != "Unknown"
-                param_literal = true
               end
             end
             if param_literal
@@ -42652,22 +42638,10 @@ module Adamas::HIR
         if env_get("DEBUG_SPLAT_PARAM") && param_name == "args"
           STDERR.puts "[SPLAT_PARAM] func=#{full_name} param=#{param_name} type=#{get_type_name_from_ref(param_type)}"
         end
-        source_literal = if source_facts = param_source_value_facts[idx]?
-                           ctx.register_source_value_facts(hir_param.id, source_facts)
-                           !source_facts.empty? && source_facts.all?(&.[1])
-                         else
-                           (param_literal_flags[idx]? || param_name.ends_with?("_class"))
-                         end
-        if source_literal && param_type != TypeRef::VOID
-          call_type_for_param = idx < call_types.size ? call_types[idx] : TypeRef::VOID
-          module_param = module_type_ref?(param_type)
-          if !module_param && call_type_for_param != TypeRef::VOID
-            module_param = module_type_ref?(call_type_for_param)
-          end
-          # A module-typed formal can carry a class object. Preserve that kind
-          # only when the callsite supplied an explicit literal witness.
-          ctx.mark_type_literal(hir_param.id) if !module_param || (param_literal_flags[idx]? || false)
+        if source_facts = param_source_value_facts[idx]?
+          ctx.register_source_value_facts(hir_param.id, source_facts)
         end
+        ctx.mark_type_literal(hir_param.id) if param_type != TypeRef::VOID && param_literal_flags[idx]?
         # Track enum types for predicate method resolution
         if type_name = param_type_names[idx]?
           track_enum_value(hir_param.id, type_name)
@@ -49442,7 +49416,6 @@ module Adamas::HIR
       source_argument_facts : Array(SourceCallArgument?)?,
     ) : Bool
       facts = source_argument_facts || return false
-      return false unless source_call_facts_include_type_literal?(facts)
       return false unless facts.size == call_arg_types.size
       return false if call_arg_types.empty? || call_arg_types.any? { |type| type == TypeRef::VOID }
       return false unless init_base = resolve_method_with_inheritance(class_name, "initialize")
@@ -52358,21 +52331,9 @@ module Adamas::HIR
               default_kind = param.default_value ? @arena[param.default_value.not_nil!].class.name.split("::").last : "none"
               STDERR.puts "[PARAM_TYPE] class=#{class_name} param=#{param_name} type=#{get_type_name_from_ref(param_type)} default=#{default_kind}"
             end
-            if param_name.ends_with?("_class") && call_type_for_param != TypeRef::VOID
+            param_literal = parameter_type_literal_from_call?(param, source_argument_facts, call_literal_flags, call_index, raw_type_ann_str || type_ann_str)
+            if param_literal && call_type_for_param != TypeRef::VOID && !preserve_shared_arity_union
               param_type = call_type_for_param
-            end
-            param_literal = if source_argument_facts
-                              !source_argument_facts.not_nil!.empty? && source_argument_facts.not_nil!.all?(&.[1])
-                            else
-                              !param.is_block && !param.is_splat && !param.is_double_splat &&
-                                call_index < call_literal_flags.size && call_literal_flags[call_index]
-                            end
-            if source_argument_facts.nil? && param_name.ends_with?("_class")
-              chosen_type = call_type_for_param == TypeRef::VOID ? param_type : call_type_for_param
-              type_name = get_type_name_from_ref(chosen_type)
-              if !type_name.empty? && type_name != "Void" && type_name != "Unknown"
-                param_literal = true
-              end
             end
             if param_literal
               chosen_type = call_type_for_param == TypeRef::VOID ? param_type : call_type_for_param
@@ -52993,15 +52954,10 @@ module Adamas::HIR
           type_name = get_type_name_from_ref(param_type)
           STDERR.puts "[PARAM_TYPES] func=#{full_name} param=#{param_name} id=#{hir_param.id} type=#{type_name}(id=#{param_type.id})"
         end
-        source_literal_facts = false
         if source_facts = param_source_value_facts[idx]?
           ctx.register_source_value_facts(hir_param.id, source_facts)
-          source_literal_facts = !source_facts.empty? && source_facts.all?(&.[1])
         end
-        source_literal = source_literal_facts || param_literal_flags[idx]? || param_name.ends_with?("_class")
-        if source_literal && param_type != TypeRef::VOID
-          ctx.mark_type_literal(hir_param.id)
-        end
+        ctx.mark_type_literal(hir_param.id) if param_type != TypeRef::VOID && param_literal_flags[idx]?
         if type_name = param_type_names[idx]?
           track_enum_value(hir_param.id, type_name)
         end
@@ -82418,6 +82374,20 @@ module Adamas::HIR
         (preserve_value_facts || kinds.size > 1) && !facts.empty? ? facts : nil)
     end
 
+    # Class objects and instances can share a carrier. Use the selected
+    # source argument or callsite witness before consulting the formal.
+    private def parameter_type_literal_from_call?(
+      param : Adamas::Compiler::Frontend::Parameter,
+      facts : Array({TypeRef, Bool})?, literals : Array(Bool), index : Int32,
+      annotation_name : String?,
+    ) : Bool
+      return !facts.empty? && facts.all?(&.[1]) if facts
+      return false if param.is_block || param.is_splat || param.is_double_splat
+      return literals[index] if index < literals.size
+      return false unless annotation_name
+      proc_annotation_type_literal?(annotation_name)
+    end
+
     private def source_call_argument_value_facts(argument : SourceCallArgument) : Array({TypeRef, Bool})?
       facts = argument.value_facts || [{argument.type_ref, argument.type_literal}]
       return nil if facts.empty? || facts.any? { |(type, _)| type == TypeRef::VOID }
@@ -87854,10 +87824,10 @@ module Adamas::HIR
               end
             end
 
-            if param_name.ends_with?("_class") && call_type_for_param != TypeRef::VOID
+            param_literal = parameter_type_literal_from_call?(param, source_argument_facts, call_literal_flags, call_index, has_type_ann_str ? type_ann_str : nil)
+            if param_literal && call_type_for_param != TypeRef::VOID
               param_type = call_type_for_param
             end
-
             exact_runtime_param_type = if use_specialized_runtime_param_types &&
                                           !param.is_block && !param.is_splat && !param.is_double_splat &&
                                           (should_use_exact_call_type_for_local_inference?(param_type, call_type_for_param) ||
@@ -87888,15 +87858,6 @@ module Adamas::HIR
                 update_typeof_local_name(param_name, type_ann_str)
               else
                 update_typeof_local_name(param_name, concrete_name)
-              end
-            end
-            param_literal = !param.is_block && !param.is_splat && !param.is_double_splat &&
-                            call_index < call_literal_flags.size && call_literal_flags[call_index]
-            if source_argument_facts.nil? && param_name.ends_with?("_class")
-              chosen_type = call_type_for_param == TypeRef::VOID ? param_type : call_type_for_param
-              type_name = get_type_name_from_ref(chosen_type)
-              if !type_name.empty? && type_name != "Void" && type_name != "Unknown"
-                param_literal = true
               end
             end
             if param_literal
@@ -88199,15 +88160,10 @@ module Adamas::HIR
         if splat_param_name && param_name == splat_param_name
           bind_splat_param_tuple_local(ctx, param_name, hir_param.id, param_type)
         end
-        source_literal_facts = false
         if source_facts = param_source_value_facts[idx]?
           ctx.register_source_value_facts(hir_param.id, source_facts)
-          source_literal_facts = !source_facts.empty? && source_facts.all?(&.[1])
         end
-        source_literal = source_literal_facts || param_literal_flags[idx]? || param_name.ends_with?("_class")
-        if source_literal && param_type != TypeRef::VOID
-          ctx.mark_type_literal(hir_param.id)
-        end
+        ctx.mark_type_literal(hir_param.id) if param_type != TypeRef::VOID && param_literal_flags[idx]?
         # Track enum type for predicate method inlining
         if type_name = param_type_names[idx]?
           track_enum_value(hir_param.id, type_name)
@@ -129709,7 +129665,7 @@ module Adamas::HIR
             break if param_index >= callsite_arg_types.size
             param_name = param.name || ""
             literal_param = callsite_arg_literals && callsite_arg_literals[param_index]?
-            if literal_param || param_name.ends_with?("_class") || param_name.ends_with?("int_class")
+            if literal_param
               type_name = get_type_name_from_ref(callsite_arg_types[param_index])
               if !param_name.empty? && !type_name.empty? && type_name != "Void" && type_name != "Unknown"
                 param_map[param_name] = type_name
