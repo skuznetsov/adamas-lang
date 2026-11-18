@@ -114879,6 +114879,42 @@ module Adamas::HIR
         pending.consumer_requires_result, pending.consumer_bypass_inline_yield, pending)
     end
 
+    # A nested retry driver queues work instead of raising the child's pending
+    # result through the native lowering stack. Preserve the same exact
+    # parent-to-child dependency that the ordinary rescue path records, but
+    # only while both captures still belong to the live source generations.
+    private def retain_suspended_exact_parent_dependency(
+      pending : ExactResultPending,
+      replay : ForceLowerReplayCallsite,
+    ) : Bool
+      consumer = pending.consumer
+      child = pending.consumer_capture
+      return false unless child && child.name == consumer &&
+                          (child_replay = child.binding) &&
+                          same_force_lower_replay_callsite?(child_replay, replay) &&
+                          force_lower_replay_callsite_current?(consumer, child_replay)
+
+      parent = child.parent
+      return false unless parent && parent.name != consumer &&
+                          @force_lower_current_replay_capture.try(&.same?(parent)) == true &&
+                          @force_lower_active_replay_captures[parent.name]?.try(&.same?(parent)) == true &&
+                          (parent_replay = parent.binding) &&
+                          force_lower_replay_callsite_current?(parent.name, parent_replay)
+
+      return false unless force_lower_exact_source_matches?(pending.producer, pending.producer_source)
+
+      if producer_replay = pending.producer_replay
+        producer_replay_source = producer_replay.exact_source_binding ||
+                                 ForceLowerExactSourceBinding.new(producer_replay.source_def, producer_replay.source_arena,
+                                   producer_replay.source_registry_name)
+        return false unless force_lower_replay_callsite_current?(pending.producer, producer_replay) &&
+                            same_force_lower_exact_source_binding?(producer_replay_source, pending.producer_source)
+      end
+
+      (@force_lower_provisional_dependencies[parent.name] ||= Set(String).new) << consumer
+      true
+    end
+
     private def retry_suspended_exact_result(
       pending : ExactResultPending,
       replay : ForceLowerReplayCallsite,
@@ -114892,7 +114928,13 @@ module Adamas::HIR
       # The driver still owns an equivalent queued continuation. Hand this
       # recursive discovery back to that request instead of treating the same
       # consumer/producer pair as an unresolvable active cycle.
-      return false if @force_lower_retry_driver_active && has_queued_force_lower_edge_continuation?(consumer, producer)
+      if @force_lower_retry_driver_active && has_queued_force_lower_edge_continuation?(consumer, producer)
+        # A live queued request cannot certify a new discovery carrying a
+        # foreign Def or arena, even when both describe the same named edge.
+        raise pending unless force_lower_retry_source_current?(request)
+        retain_suspended_exact_parent_dependency(pending, replay)
+        return false
+      end
 
       raise pending if consumer == producer || @force_lower_result_suspensions.includes?(edge) ||
                        force_lower_result_suspension_would_cycle?(consumer, producer)
@@ -114905,6 +114947,7 @@ module Adamas::HIR
       @force_lower_result_suspensions << edge
       already_driving = @force_lower_retry_driver_active
       progress = run_force_lower_retry_driver(request)
+      retain_suspended_exact_parent_dependency(pending, replay) if already_driving
       raise pending unless already_driving || settled_force_lower_demand?(consumer, pending.consumer_requires_result)
       progress
     end

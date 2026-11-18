@@ -20,6 +20,99 @@ class Adamas::HIR::AstToHir
     @force_lower_result_suspensions.clear
   end
 
+  def __test_start_nested_pending_capture(
+    parent_name : String,
+    child_name : String,
+  ) : {ForceLowerReplayCapture, ForceLowerReplayCapture, ForceLowerReplayCallsite}
+    parent_source = __test_exact_source(parent_name)
+    parent = ForceLowerReplayCapture.new(parent_name, nil)
+    parent.source = parent_source
+    parent.binding = __test_replay_callsite(parent_name)
+    @force_lower_current_replay_capture = parent
+    @force_lower_active_replay_captures[parent_name] = parent
+    child, replay = __test_add_nested_pending_child(parent, child_name)
+    {parent, child, replay}
+  end
+
+  def __test_add_nested_pending_child(
+    parent : ForceLowerReplayCapture,
+    child_name : String,
+  ) : {ForceLowerReplayCapture, ForceLowerReplayCallsite}
+    child = ForceLowerReplayCapture.new(child_name, parent)
+    child.source = __test_exact_source(child_name)
+    child.binding = __test_replay_callsite(child_name)
+    {child, child.binding.not_nil!}
+  end
+
+  def __test_nested_pending(child : ForceLowerReplayCapture) : ExactResultPending
+    producer = "edge_leaf"
+    pending = ExactResultPending.new(
+      child.name,
+      producer,
+      __test_exact_source(producer),
+      __test_replay_callsite(producer),
+      producer_requires_result: false,
+      producer_bypass_inline_yield: true,
+    )
+    pending.consumer_capture = child
+    pending
+  end
+
+  def __test_retry_nested_pending(
+    pending : ExactResultPending,
+    replay : ForceLowerReplayCallsite,
+  ) : Bool
+    retry_suspended_exact_result(pending, replay, 0, false)
+  rescue blocked : ExactResultPending
+    false
+  end
+
+  def __test_provisional_dependency_names(name : String) : Array(String)
+    (@force_lower_provisional_dependencies[name]? || Set(String).new).to_a.sort
+  end
+
+  def __test_relay_preserves_nested_pending?(
+    parent : ForceLowerReplayCapture,
+    pending : ExactResultPending,
+  ) : Bool
+    relayed = relay_suspended_exact_result(parent.name, parent, pending)
+    return false unless relayed && (child = pending.consumer_capture)
+    relayed.consumer == parent.name && relayed.producer == pending.consumer &&
+      relayed.producer_pending.try(&.same?(pending)) == true &&
+      relayed.producer_replay.try { |replay| same_force_lower_replay_callsite?(replay, child.binding) } == true &&
+      same_force_lower_exact_source_binding?(relayed.producer_source, child.source.not_nil!)
+  end
+
+  def __test_replace_active_nested_parent(parent : ForceLowerReplayCapture) : Nil
+    replacement = ForceLowerReplayCapture.new(parent.name, nil)
+    replacement.source = __test_exact_source(parent.name)
+    replacement.binding = __test_replay_callsite(parent.name)
+    @force_lower_current_replay_capture = replacement
+    @force_lower_active_replay_captures[parent.name] = replacement
+  end
+
+  def __test_retry_with_stale_nested_parent_source(
+    parent_name : String,
+    pending : ExactResultPending,
+    replay : ForceLowerReplayCallsite,
+  ) : Bool
+    original = @function_defs[parent_name]? || raise "missing parent Def for #{parent_name}"
+    stale, _ = __test_foreign_source_pair(parent_name)
+    @function_defs[parent_name] = stale
+    begin
+      __test_retry_nested_pending(pending, replay)
+    ensure
+      @function_defs[parent_name] = original
+    end
+  end
+
+  def __test_stop_nested_pending_capture(parent_name : String) : Nil
+    __test_stop_active_edge_graph
+    @force_lower_provisional_dependencies.delete(parent_name)
+    @force_lower_current_replay_capture = nil
+    @force_lower_active_replay_captures.delete(parent_name)
+  end
+
   def __test_exact_source(name : String) : ForceLowerExactSourceBinding
     source_def = @function_defs[name]? || raise "missing registered Def for #{name}"
     source_arena = @function_def_arenas[name]? || raise "missing registered arena for #{name}"
@@ -321,6 +414,15 @@ private def force_lower_active_edge_graph_fixture : Adamas::HIR::AstToHir
       edge_left
       edge_right
     end
+    def edge_pending_parent
+      1
+    end
+    def edge_pending_child
+      2
+    end
+    def edge_pending_sibling
+      3
+    end
   CRYSTAL
   parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
   program = parser.parse_program
@@ -449,5 +551,72 @@ describe "exact source retry graph admission" do
     converter.__test_first_queued_edge_source_current?.should be_false
     converter.__test_first_queued_edge_waits_for_producer?.should be_false
     converter.__test_stop_active_edge_graph
+  end
+
+  it "relays multiple driver-owned nested pending edges through their exact live parent" do
+    converter = force_lower_active_edge_graph_fixture
+    converter.__test_start_active_edge_graph
+    parent, child, child_replay = converter.__test_start_nested_pending_capture(
+      "edge_pending_parent", "edge_pending_child",
+    )
+    sibling_capture, sibling_replay = converter.__test_add_nested_pending_child(
+      parent, "edge_pending_sibling",
+    )
+    sibling_capture.parent.try(&.same?(parent)).should be_true
+
+    pending = converter.__test_nested_pending(child)
+    sibling_pending = converter.__test_nested_pending(sibling_capture)
+    converter.__test_retry_nested_pending(pending, child_replay).should be_false
+    converter.__test_retry_nested_pending(sibling_pending, sibling_replay).should be_false
+
+    converter.__test_provisional_dependency_names(parent.name).should eq([
+      "edge_pending_child", "edge_pending_sibling",
+    ])
+    converter.__test_queued_suspended_edge_count("edge_pending_child", "edge_leaf").should eq(1)
+    converter.__test_queued_suspended_edge_count("edge_pending_sibling", "edge_leaf").should eq(1)
+    converter.__test_relay_preserves_nested_pending?(parent, pending).should be_true
+    converter.__test_relay_preserves_nested_pending?(parent, sibling_pending).should be_true
+    converter.__test_stop_nested_pending_capture(parent.name)
+  end
+
+  it "rejects replaced or stale parents and a different child replay generation" do
+    replaced = force_lower_active_edge_graph_fixture
+    replaced.__test_start_active_edge_graph
+    parent, child, replay = replaced.__test_start_nested_pending_capture(
+      "edge_pending_parent", "edge_pending_child",
+    )
+    pending = replaced.__test_nested_pending(child)
+    replaced.__test_replace_active_nested_parent(parent)
+    replaced.__test_retry_nested_pending(pending, replay).should be_false
+    replaced.__test_provisional_dependency_names(parent.name).should be_empty
+    replaced.__test_relay_preserves_nested_pending?(parent, pending).should be_false
+    replaced.__test_stop_nested_pending_capture(parent.name)
+
+    stale = force_lower_active_edge_graph_fixture
+    stale.__test_start_active_edge_graph
+    stale_parent, stale_child, stale_replay = stale.__test_start_nested_pending_capture(
+      "edge_pending_parent", "edge_pending_child",
+    )
+    stale_pending = stale.__test_nested_pending(stale_child)
+    stale.__test_retry_with_stale_nested_parent_source(
+      stale_parent.name, stale_pending, stale_replay,
+    ).should be_false
+    stale.__test_provisional_dependency_names(stale_parent.name).should be_empty
+    stale.__test_relay_preserves_nested_pending?(stale_parent, stale_pending).should be_false
+    stale.__test_stop_nested_pending_capture(stale_parent.name)
+
+    other_generation = force_lower_active_edge_graph_fixture
+    other_generation.__test_start_active_edge_graph
+    generation_parent, generation_child, generation_replay = other_generation.__test_start_nested_pending_capture(
+      "edge_pending_parent", "edge_pending_child",
+    )
+    generation_pending = other_generation.__test_nested_pending(generation_child)
+    changed_replay = other_generation.__test_replay_callsite_variant(
+      generation_child.name, :source_facts,
+    )
+    other_generation.__test_retry_nested_pending(generation_pending, changed_replay).should be_false
+    other_generation.__test_provisional_dependency_names(generation_parent.name).should be_empty
+    other_generation.__test_relay_preserves_nested_pending?(generation_parent, generation_pending).should be_false
+    other_generation.__test_stop_nested_pending_capture(generation_parent.name)
   end
 end

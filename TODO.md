@@ -27398,6 +27398,10 @@ One fix per commit, each with an oracle-qualified regression
   and re-specialization. The native oracle prints `ABCK` with reordered and
   keyword-only arguments and rejects an integer passed to a C pointer formal.
   The installed stdlib (1.22.3) now passes the `LibC.faccessat` call.
-- [ ] S1 compiling the compiler currently stops at a suspended
-  `String::Builder#initialize(Int32)` result on the bundled stdlib (1.18.2)
-  and a callback inferred as `T` at `String#starts_with?` on the installed one.
+- [x] Retain the live parent-to-child dependency when the retry driver queues
+  a nested suspension. A duplicate edge must also establish its own current
+  declaration and arena. The bundled self-build resumes the String::Builder
+  initializer; the four initializer and queue specs pass (19 examples).
+- [ ] The bundled self-build now stops at a pending `Int32#tdiv(Int32)` in
+  `Crystal::System.to_int_slice_impl`. The installed self-build stops at a
+  callback inferred as `T` at `String#starts_with?`.
