@@ -5624,6 +5624,11 @@ module Adamas
           @mir_module.uses_gc = true
         end
 
+        # The allocation address is raw while its fields are initialized. Expose
+        # the completed tuple as its registered value type at the MIR boundary.
+        if @mir_module.type_registry.get(mir_type_ref).try(&.kind.tuple?)
+          return builder.bitcast(ptr, mir_type_ref)
+        end
         ptr
       end
 

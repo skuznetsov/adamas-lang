@@ -152,6 +152,7 @@ private def build_heap_yield_guard_case(
   actual_types : Array(Adamas::HIR::TypeRef),
   callback_arg_types : Array(Adamas::HIR::TypeRef)?,
   union_registrations : Array(Adamas::HIR::UnionDescriptorRegistration) = [] of Adamas::HIR::UnionDescriptorRegistration,
+  tuple_to_allocate : Adamas::HIR::TypeRef? = nil,
 ) : Adamas::MIR::HIRToMIRLowering
   block_type = if callback_types = callback_arg_types
                  proc_types = callback_types.dup
@@ -174,16 +175,23 @@ private def build_heap_yield_guard_case(
   block_param = target.add_param("block", block_type, true)
 
   body = target.get_block(target.entry_block)
+  args = actual_params.map(&.id)
+  if tuple_type = tuple_to_allocate
+    tuple = Adamas::HIR::Allocate.new(target.next_value_id, tuple_type, args, true)
+    body.add(tuple)
+    args = [tuple.id]
+  end
   yielded = Adamas::HIR::Yield.new(
     target.next_value_id,
     Adamas::HIR::TypeRef::INT32,
-    actual_params.map(&.id),
+    args,
     block_param.id
   )
   body.add(yielded)
   body.terminator = Adamas::HIR::Return.new(yielded.id)
 
   lowering = Adamas::MIR::HIRToMIRLowering.new(hir_mod)
+  lowering.register_tuple_types(hir_mod.types)
   lowering.register_union_types(union_registrations)
   lowering
 end
@@ -303,6 +311,42 @@ describe Adamas::MIR::HIRToMIRLowering do
     )
 
     expect_heap_yield_abi_rejection(lowering, "HeapYieldDistinctUnion#invoke")
+  end
+
+  it "retains a constructed tuple's exact type on both heap callback arms" do
+    hir_mod = Adamas::HIR::Module.new("ConstructedTuple")
+    elements = [Adamas::HIR::TypeRef::INT32, Adamas::HIR::TypeRef::INT32]
+    tuple = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+      Adamas::HIR::TypeKind::Tuple, "Tuple(Int32, Int32)", elements
+    ))
+    lowering = build_heap_yield_guard_case(hir_mod, "ConstructedTuple", elements, [tuple], tuple_to_allocate: tuple)
+    ir = lowering.lower.functions.find { |fn| fn.name == "ConstructedTuple#invoke" }.not_nil!
+    instructions = ir.blocks.flat_map(&.instructions)
+    calls = instructions.select(Adamas::MIR::IndirectCall)
+    calls.size.should eq(2)
+    yielded = calls.map(&.args.last).uniq
+    yielded.size.should eq(1)
+    instructions.find { |inst| inst.id == yielded.first }.not_nil!.type.should eq(Adamas::MIR::TypeRef.from_hir(tuple))
+  end
+
+  it "rejects a raw pointer and a same-size tuple with different elements as a tuple argument" do
+    hir_mod = Adamas::HIR::Module.new("DistinctTuples")
+    elements = [Adamas::HIR::TypeRef::INT32, Adamas::HIR::TypeRef::INT32]
+    pair = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+      Adamas::HIR::TypeKind::Tuple, "Tuple(Int32, Int32)", elements
+    ))
+    different = hir_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+      Adamas::HIR::TypeKind::Tuple, "Tuple(Int32, UInt32)", [elements.first, Adamas::HIR::TypeRef::UINT32]
+    ))
+    mismatch = build_heap_yield_guard_case(hir_mod, "DistinctTuples", elements, [different], tuple_to_allocate: pair)
+    expect_heap_yield_abi_rejection(mismatch, "DistinctTuples#invoke")
+
+    raw_mod = Adamas::HIR::Module.new("RawAddress")
+    pair = raw_mod.intern_type(Adamas::HIR::TypeDescriptor.new(
+      Adamas::HIR::TypeKind::Tuple, "Tuple(Int32, Int32)", elements
+    ))
+    raw = build_heap_yield_guard_case(raw_mod, "RawAddress", [Adamas::HIR::TypeRef::POINTER], [pair])
+    expect_heap_yield_abi_rejection(raw, "RawAddress#invoke")
   end
 
   it "rejects a scalar actual whose MIR ABI differs from the callback formal" do

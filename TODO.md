@@ -27479,3 +27479,10 @@ One fix per commit, each with an oracle-qualified regression
   Stock Crystal and the fixed S1 both print `AAAIP` for real pointers,
   nested pointers, an alias and competing overloads, and reject four invalid
   constructions. Both self-builds still stop at the dependencies above.
+- [x] Preserve a constructed tuple's concrete MIR value type when its storage
+  address leaves allocation lowering. The previous S1 rejects the bundled
+  `ENV.keys` callback even though its HIR actual and formal are both
+  `Tuple(String, String)`. Original Crystal and the corrected S1 recover
+  both keys from a controlled environment. Seven MIR examples cover both
+  heap callback arms and reject raw addresses and distinct same-size tuples.
+  Both full self-builds still stop at the parser and backtrace dependencies.
