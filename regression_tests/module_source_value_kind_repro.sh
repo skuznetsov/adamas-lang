@@ -43,6 +43,7 @@ cases=(
   nested_class_namespace qualified_class_namespace nested_module_namespace
   nested_class_generic_module
   bounded_module_field bounded_nullable_module_field bounded_generic_module_field
+  nullable_module_constructor_values
   bounded_wrong_generic_module_field bounded_unrelated_module_field
   bounded_module_value_is_not_instance bounded_include_class_is_not_instance
   bounded_returned_module_value_negative
@@ -105,6 +106,7 @@ for phase in original candidate; do
       module_reopen_positive) expected_stdout=$'R\n' ;;
       macro_selected_extend_positive) expected_stdout=$'X\n' ;;
       extend_self_include_projection) expected_stdout=$'F\n' ;;
+      nullable_module_constructor_values) expected_stdout=$'ABC\n' ;;
       nested_byte_format_extend) expected_stdout=$'B\n' ;;
       generic_extend_positive|extend_self_identity|named_alias_class|\
       named_extended_class|named_included_instance|positional_alias_class|\

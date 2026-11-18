@@ -27677,11 +27677,12 @@ One fix per commit, each with an oracle-qualified regression
   initializers. Crystal and Adamas print FTFTCIICCI for the ten positive
   calls and reject both reversed constructor arguments. Both uncached S1
   self-builds (1.18.2 and 1.22.3) still stop on `parse_statement_in_scope`.
-- [ ] The existing `bounded_nullable_module_field` case still rejects
-  `Holder.new(Included.new)` when its initializer accepts `Marker?` and
-  Included includes Marker. The same allocator ABI error occurs on 8a10de64.
-  Its non-null and generic-module controls print A before and after the
-  formal-kind change. Verify the nullable module carrier at the call.
+- [x] Use the same selected union-argument rule for a constructor wrapper and
+  its initializer. A concrete instance that includes a nullable module must
+  have the same formal type in both HIR bodies. Both Crystal and Adamas print
+  ABC for two includers and nil, and reject an unrelated instance, an
+  extend-only instance and a class object. All 41 module argument cases pass.
+  Both uncached S1 self-builds still stop on parse_statement_in_scope.
 - [x] Retain the selected registry key on ordinary recursive specialization
   and exact-source replay. The physical definition, arena and registry key
   must agree on both sides of a suspended call, including an explicit alias.

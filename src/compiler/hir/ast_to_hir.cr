@@ -49867,8 +49867,7 @@ module Adamas::HIR
             allocator_params[idx] = {param_name, call_type}
           elsif is_union_or_nilable_type?(param_type) &&
                 call_type != param_type &&
-                (get_union_member_variant_id(param_type, call_type) >= 0 ||
-                 (matched_init_def && allocator_union_template_admits_call_variant?(param_type, call_type)))
+                allocator_union_param_admits_call_variant?(param_type, call_type, source_selected: !matched_init_def.nil?)
             # This overload is named from the concrete call shape. Keep its HIR
             # parameters equally concrete; otherwise a `$String` allocator can
             # silently forward a `Nil | String` value and bootstrap lowering may
@@ -50596,10 +50595,10 @@ module Adamas::HIR
     # Original Crystal types the param as the argument type, never as the
     # restriction; regular defs apply the same rule through
     # `union_module_arm_admits_concrete_call?`.
-    private def allocator_union_param_admits_call_variant?(decl_type : TypeRef, call_type : TypeRef) : Bool
-      get_union_member_variant_id(decl_type, call_type) >= 0 ||
-        allocator_union_template_admits_call_variant?(decl_type, call_type) ||
-        union_module_arm_admits_concrete_call?(decl_type, call_type)
+    private def allocator_union_param_admits_call_variant?(decl_type : TypeRef, call_type : TypeRef, *, source_selected : Bool = true) : Bool
+      return true if get_union_member_variant_id(decl_type, call_type) >= 0
+      source_selected && (allocator_union_template_admits_call_variant?(decl_type, call_type) ||
+        union_module_arm_admits_concrete_call?(decl_type, call_type))
     end
 
     private def allocator_initializer_param_types(
