@@ -27760,3 +27760,8 @@ changes. No stdlib edits.
 ## Cross-compiler LLVM function census
 
 - Use the streaming comparison and reachability tools in `docs/llvm_function_census.md` to localize emitted function-count differences after fresh bootstrap output becomes available. The July measurements belong to their source revisions.
+
+## Bootstrap IR emission
+
+- [x] Require three fresh, nonempty HIR, MIR, and LLVM artifacts from the same invocation of `scripts/emit_bootstrap_ir.sh`. The regression seeds stale outputs, interrupts emission after HIR, and checks the compiler arguments and prefix lock.
+- [ ] Restore Adamas compilation of `regression_tests/bootstrap_semantic_corpus.cr`. Stock Crystal accepts the empty Proc and explicit block at line 33 with an empty prelude. Adamas diagnoses `Hash(Void, Void)#call` there before emitting HIR.

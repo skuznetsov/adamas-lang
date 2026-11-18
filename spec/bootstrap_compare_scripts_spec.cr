@@ -1,4 +1,5 @@
 require "spec"
+require "file_utils"
 
 describe "bootstrap stage comparison scripts" do
   it "admits the early s1_bootstrap-to-s2b semantic gate" do
@@ -64,5 +65,83 @@ describe "bootstrap stage comparison scripts" do
     normalized.should contain("__crystal_block_proc_51")
     normalized.should contain("__crystal_block_proc_52")
     normalized.should contain("0x10")
+  end
+
+  it "rejects stale IR artifacts when a compiler reports success without emitting" do
+    root = File.expand_path("..", __DIR__)
+    emitter = File.join(root, "scripts", "emit_bootstrap_ir.sh")
+    workdir = File.join(Dir.tempdir, "adamas_stale_bootstrap_ir_#{Process.pid}_#{Random.rand(1_000_000)}")
+    compiler = File.join(workdir, "success-without-output")
+    source = File.join(workdir, "probe.cr")
+    prefix = File.join(workdir, "stage")
+    FileUtils.mkdir_p(workdir)
+
+    begin
+      File.write(compiler, "#!/bin/sh\nexit 0\n")
+      File.chmod(compiler, 0o755)
+      File.write(source, "1\n")
+
+      %w[hir mir ll].each do |step|
+        File.write("#{prefix}.#{step}.out.#{step}", "stale internal #{step}\n")
+        File.write("#{prefix}.#{step}", "stale public #{step}\n")
+      end
+
+      stdout = IO::Memory.new
+      stderr = IO::Memory.new
+      status = Process.run(emitter, [compiler, source, prefix], output: stdout, error: stderr)
+
+      status.success?.should be_false
+      "#{stdout}#{stderr}".should contain("expected hir artifact missing")
+      %w[hir mir ll].each do |kind|
+        File.exists?("#{prefix}.#{kind}").should be_false
+      end
+    ensure
+      FileUtils.rm_rf(workdir)
+    end
+  end
+
+  it "publishes three fresh artifacts and passes the requested flags exactly once" do
+    emitter = File.expand_path("../scripts/emit_bootstrap_ir.sh", __DIR__)
+    work = File.join(Dir.tempdir, "adamas_emit_fresh_#{Process.pid}_#{Random.rand(1_000_000)}")
+    Dir.mkdir(work)
+    begin
+      compiler = File.join(work, "compiler")
+      source = File.join(work, "source.cr")
+      prefix = File.join(work, "stage")
+      File.write(source, "1\n")
+      File.write(compiler, <<-'SH')
+        #!/bin/sh
+        set -eu
+        [ "$#" -eq 8 ]
+        [ "$2" = "--no-prelude" ]
+        [ "$3" = "--no-link" ]
+        [ "$4" = "--emit" ]
+        [ "$6" = "-o" ]
+        [ "$8" = "--no-ast-cache" ]
+        case "$5" in
+          hir|mir) kind=$5 ;;
+          llvm-ir) kind=ll ;;
+          *) exit 1 ;;
+        esac
+        if [ -f "$1.partial" ] && [ "$kind" = "mir" ]; then exit 0; fi
+        printf "%s\n" "$kind" > "$7.$kind"
+        SH
+      File.chmod(compiler, 0o755)
+      stderr = IO::Memory.new
+      Process.run(emitter, [compiler, source, prefix, "--no-ast-cache"], error: stderr).success?.should be_true
+      %w[hir mir ll].each { |kind| File.read("#{prefix}.#{kind}").should eq("#{kind}\n") }
+
+      Dir.mkdir("#{prefix}.emit.lock")
+      Process.run(emitter, [compiler, source, prefix, "--no-ast-cache"], error: stderr).success?.should be_false
+      %w[hir mir ll].each { |kind| File.read("#{prefix}.#{kind}").should eq("#{kind}\n") }
+      Dir.delete("#{prefix}.emit.lock")
+
+      File.write("#{source}.partial", "")
+      Process.run(emitter, [compiler, source, prefix, "--no-ast-cache"], error: stderr).success?.should be_false
+      stderr.to_s.should contain("expected mir artifact missing")
+      %w[hir mir ll].each { |kind| File.exists?("#{prefix}.#{kind}").should be_false }
+    ensure
+      FileUtils.rm_rf(work)
+    end
   end
 end
