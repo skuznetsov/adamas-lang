@@ -136578,6 +136578,13 @@ module Adamas::HIR
         param_type = param.type
         param_type_name = @module.get_type_descriptor(param_type).try(&.name) || ""
 
+        # Store the proven nominal type on the operand. A later replay of
+        # this call cannot consult the emitting body's enum-value map.
+        if enum_carrier_of?(param_type, arg_type) && enum_tracked_type(ctx, arg_id) == param_type
+          result << coerce_enum_tracked_value_to_type(ctx, arg_id, param_type)
+          next
+        end
+
         # Check if we need to coerce: arg is concrete type, param is union containing that type
         if needs_union_coercion?(arg_type, param_type)
           if @module.get_type_descriptor(arg_type).try(&.kind) == TypeKind::NamedTuple
