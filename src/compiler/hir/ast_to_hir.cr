@@ -20535,10 +20535,10 @@ module Adamas::HIR
             current_type = "Slice(#{inner})"
           end
         when "value"
-          # Dereference pointer: Pointer(T).value -> T
-          if current_type.starts_with?("Pointer(") && current_type.ends_with?(')')
-            current_type = current_type[8..-2]
-          end
+          # Only a pointer establishes its element type here. A source method
+          # named value must be resolved on its actual receiver.
+          return "Pointer(Void)" unless current_type.starts_with?("Pointer(") && current_type.ends_with?(')')
+          current_type = current_type[8..-2]
         when "size", "bytesize"
           current_type = "Int32"
         else
@@ -32174,10 +32174,6 @@ module Adamas::HIR
                 ptr_ref = type_ref_for_name("Pointer(#{elem_name})")
                 return ptr_ref if ptr_ref != TypeRef::VOID
               end
-            end
-            # Enum#value — enums are stored as their base integer type, .value is identity
-            if member_name == "value" && (signed_integer_type?(obj_type) || unsigned_integer_type?(obj_type))
-              return obj_type
             end
             if member_name == "clone" || member_name == "dup"
               return obj_type
@@ -149844,14 +149840,8 @@ module Adamas::HIR
         return load_node.id
       end
 
-      # Enum-tagged carriers must go through lower_enum_value_call first: it
-      # emits an untagged base-integer cast, so `.value` is not mangled as the
-      # enum. A plain (untagged) Int32 `.value` is still an identity.
       if enum_value_id = lower_enum_value_call(ctx, object_id, member_name)
         return enum_value_id
-      end
-      if receiver_type == TypeRef::INT32 && member_name == "value"
-        return object_id
       end
 
       # Special handling for union types containing primitives (like Int32 | Nil)

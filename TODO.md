@@ -27468,3 +27468,11 @@ One fix per commit, each with an oracle-qualified regression
   getter stays unresolved. The bundled-prelude `10.downto` program prints
   55 again, and the HIR rollback regression changes from Void to Char.
   Both self-builds still stop at the parser and backtrace dependencies above.
+- [x] Resolve an integer receiver's `value` from its source declaration,
+  including inside a type-position `typeof`. Crystal and Adamas print `KAB`
+  for the user method, nominal enum and pointer cases, and both reject an
+  undeclared integer method. The native enum argument regression passes.
+  Both full S1-to-S2 attempts still reach the dependencies above.
+- [ ] Reject plain integers passed to source constructor parameters restricted
+  to `Pointer(T)`. Both literal and computed integers currently compile
+  before code generation inserts an integer-to-pointer conversion.
