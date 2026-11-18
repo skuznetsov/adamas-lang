@@ -27393,6 +27393,11 @@ One fix per commit, each with an oracle-qualified regression
   two files and a same-shaped overload with a different result are covered by
   `source_body_inference_arena_owner_spec.cr`. Stock Crystal and S1 both print
   55 for the source `Int#downto` case.
-- [ ] On this slice, building the compiler with S1 advances to the suspended
-  `String::Builder#initialize(Int32)` result on the bundled stdlib (1.18.2).
-  The installed stdlib (1.22.3) reaches the `LibC.faccessat` argument mismatch.
+- [x] Materialize an untyped required module formal only when its own source
+  slot is known. Preserve the selected binder across named-call return probes
+  and re-specialization. The native oracle prints `ABCK` with reordered and
+  keyword-only arguments and rejects an integer passed to a C pointer formal.
+  The installed stdlib (1.22.3) now passes the `LibC.faccessat` call.
+- [ ] S1 compiling the compiler currently stops at a suspended
+  `String::Builder#initialize(Int32)` result on the bundled stdlib (1.18.2)
+  and a callback inferred as `T` at `String#starts_with?` on the installed one.

@@ -41668,7 +41668,14 @@ module Adamas::HIR
       # bound its parameters to a placeholder: the unsuffixed
       # `Crystal::System::File.exists?(path)` forwarded `path` to
       # `accessible?$Int32_Int32`, which then rejected `path.check_no_null_byte`.
-      if def_params_untyped?(node) && module_method_lacks_callsite_types?(node, call_arg_types, full_name_override)
+      if module_method_lacks_callsite_types?(
+           node,
+           call_arg_types,
+           full_name_override,
+           call_has_named_args,
+           call_source_binding,
+           module_declaration_arena,
+         )
         register_pending_method_effects(base_name, 0)
         return
       end
@@ -91416,6 +91423,10 @@ module Adamas::HIR
       resolved_func_def = func_def || return
       func_arena = @function_def_arenas[name]? || @function_def_arenas[base_name]?
       owner = method_owner(base_name)
+      # Missing-demand forcing reaches this path with a physical specialized
+      # name. Reuse only the exact target's retained callsite: rebuilding its
+      # argument vector from the name suffix loses leading Void positions.
+      callsite = @pending_arg_types[name]?
       # Avoid re-lowering if already completed/in-progress in the state map.
       return if function_state(name).in_progress?
       if function_state(name).completed?
@@ -91423,7 +91434,16 @@ module Adamas::HIR
         clear_function_state(name)
       end
       with_arena(func_arena || @arena) do
-        lower_module_method(owner, resolved_func_def, nil, nil, nil, name)
+        lower_module_method(
+          owner,
+          resolved_func_def,
+          callsite.try(&.types),
+          callsite.try(&.literals),
+          callsite.try(&.enum_names),
+          name,
+          call_has_named_args: callsite.try(&.has_named_args) || false,
+          call_source_binding: callsite.try(&.source_binding),
+        )
       end
     end
 
@@ -127152,6 +127172,23 @@ module Adamas::HIR
         end
       end
 
+      callsite_source_binding = exact_forall_source_binding
+      if callsite_source_binding.nil? && has_named_args &&
+         (selected_def = selected_call_entry_def) &&
+         (source_binding = source_call_binding) &&
+         (selected_arena = selected_call_entry_arena || registered_arena_for_def(selected_def))
+        selected_owner = method_owner(selected_call_entry_name || mangled_method_name)
+        module_owner = strip_generic_args(selected_owner)
+        if (@module_defs.has_key?(selected_owner) || @module_defs.has_key?(module_owner)) &&
+           source_call_binding_matches?(source_binding, selected_def, selected_arena) &&
+           module_method_lacks_callsite_types?(selected_def, nil, nil, has_named_args, nil, selected_arena)
+          # Named module calls need the formal-slot binding during replay.
+          # Retaining only their suffix types discards which required source
+          # formals were supplied before defaults and keyword-only slots.
+          callsite_source_binding = source_binding
+        end
+      end
+
       # Record the callsite before any return-type probing. `get_function_return_type`
       # can force-lower the callee, and without an early pending signature that eager
       # lower would see only the broad def name (e.g. `tuple_size$Tuple`) instead of
@@ -127163,7 +127200,7 @@ module Adamas::HIR
           source_argument_facts: if !has_block_call && !has_splat && !source_has_splat && !has_named_args
                                   m3e_input.try(&.source_argument_facts)
                                 end,
-          source_binding: exact_forall_source_binding,
+          source_binding: callsite_source_binding,
         )
       end
       has_typed_args = arg_types.any? { |t| t != TypeRef::VOID }
@@ -127250,7 +127287,7 @@ module Adamas::HIR
           remember_callsite_arg_types(
             mangled_method_name, callsite_arg_types, callsite_arg_literals, callsite_arg_enum_names,
             has_block_call, has_named_args, call_named_arg_names,
-            source_binding: exact_forall_source_binding,
+            source_binding: callsite_source_binding,
           )
         end
         record_block_return_type_for_call(mangled_method_name, base_method_name, block_return_name)
@@ -129758,13 +129795,13 @@ module Adamas::HIR
       remember_callsite_arg_types(
         primary_mangled_name, callsite_arg_types, callsite_arg_literals, callsite_arg_enum_names,
         has_block_call, has_named_args, call_named_arg_names,
-        source_binding: exact_forall_source_binding,
+        source_binding: callsite_source_binding,
       )
       if mangled_method_name != primary_mangled_name
         remember_callsite_arg_types(
           mangled_method_name, callsite_arg_types, callsite_arg_literals, callsite_arg_enum_names,
           has_block_call, has_named_args, call_named_arg_names,
-          source_binding: exact_forall_source_binding,
+          source_binding: callsite_source_binding,
         )
       end
       if receiver_id
@@ -161587,23 +161624,98 @@ module Adamas::HIR
       end
     end
 
-    # True when nothing supplies a type for any regular parameter of an untyped
-    # module def: no callsite types, no positional mangled suffix, and no
-    # default value to infer from.
+    # A module def with an untyped required formal cannot be materialized from
+    # whichever later arguments happen to be known. Mangled suffixes omit Void
+    # entries, so they do not retain the positions needed to reconstruct that
+    # formal. Prefer an exact source binding; otherwise accept only a complete,
+    # unambiguous positional prefix. Optional parameters can still be inferred
+    # from defaults as before.
     private def module_method_lacks_callsite_types?(
       node : Adamas::Compiler::Frontend::DefNode,
       call_arg_types : Array(TypeRef)?,
       full_name_override : String?,
+      call_has_named_args : Bool = false,
+      call_source_binding : SourceCallBinding? = nil,
+      declaration_arena : Adamas::Compiler::Frontend::ArenaLike = @arena,
     ) : Bool
+      params = function_param_infos(node, declaration_arena)
+      formal_index = 0
+      saw_rest = false
+      required_untyped_after_rest = false
+      named_only_mode = false
+      required_untyped_after_named_only = false
+      has_required_untyped = false
+      bound_required_slot_missing = false
+      callsite_required_slot_missing = false
+      has_untyped_regular = false
+      has_defaulted_regular = false
+      matching_binding = call_source_binding.try do |binding|
+        source_arena = source_method_declaration_arena(node, declaration_arena)
+        binding if source_call_binding_matches?(binding, node, source_arena)
+      end
+      params.each do |param|
+        if named_only_separator?(param)
+          named_only_mode = true
+          next
+        end
+        next if param.is_block
+        param_untyped = module_method_untyped_param?(param)
+        has_untyped_regular ||= !param.is_double_splat && param_untyped
+        has_defaulted_regular ||= !param.is_double_splat && !param.default_value.nil?
+        if !param.is_splat && !param.is_double_splat &&
+           param.default_value.nil? && param_untyped
+          has_required_untyped = true
+          if binding = matching_binding
+            actual = binding.supplied_types[formal_index]?
+            bound_required_slot_missing ||= actual.nil? || actual.type_ref == TypeRef::VOID
+          elsif types = call_arg_types
+            callsite_required_slot_missing ||= formal_index >= types.size || types[formal_index] == TypeRef::VOID
+          end
+          required_untyped_after_rest ||= saw_rest
+          required_untyped_after_named_only ||= named_only_mode
+        end
+        saw_rest ||= param.is_splat || param.is_double_splat
+        formal_index += 1
+      end
+
+      unless has_required_untyped
+        return false unless has_untyped_regular
+        if types = call_arg_types
+          return false if types.any? { |type| type != TypeRef::VOID }
+        end
+        if (override = full_name_override) && (suffix = method_suffix(override)) && !suffix.empty?
+          return false
+        end
+        # Retain the pre-existing default-only and rest-only behavior: defaults
+        # can seed optional-only methods, while a rest formal still waits for
+        # the call's concrete packed argument vector.
+        return !has_defaulted_regular
+      end
+
+      if matching_binding
+        # A matching source binder is authoritative. If it is incomplete,
+        # do not let a different positional vector guess these slots.
+        return bound_required_slot_missing
+      end
+
       if types = call_arg_types
-        return false if types.any? { |type| type != TypeRef::VOID }
+        # Named calls, keyword-only slots and positions after a rest formal
+        # need the source binder. The ABI vector alone cannot establish which
+        # formal supplied those values.
+        return true if call_has_named_args || required_untyped_after_rest || required_untyped_after_named_only
+        return callsite_required_slot_missing
       end
-      if (override = full_name_override) && (suffix = method_suffix(override)) && !suffix.empty?
-        return false
-      end
-      function_param_infos(node).none? do |param|
-        !named_only_separator?(param) && !param.is_block && !param.is_double_splat && param.default_value
-      end
+
+      # A mangled suffix can omit Void entries and cannot recover a required
+      # untyped formal's source position.
+      true
+    end
+
+    private def module_method_untyped_param?(param : DefParamInfo) : Bool
+      type_name = param.type_annotation
+      return true unless type_name
+      return true if type_name == "_"
+      type_param_like?(type_name) && !@type_param_map.has_key?(type_name) && short_type_param_name?(type_name)
     end
 
     private def def_params_untyped?(func_def : Adamas::Compiler::Frontend::DefNode) : Bool
