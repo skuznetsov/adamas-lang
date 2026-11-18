@@ -8767,16 +8767,18 @@ module Adamas::HIR
       getter owner_inline_def_frame : InlineDefFrame?
       # Re-entrancy guard while this scope's body is being emitted.
       property emitting : Bool
-      # True only while lowering the protected body of a begin/rescue scope.
-      # Rescue clauses and ensure bodies execute after their own handler pop.
-      property rescue_active : Bool
+      # Handler frames this scope has pushed and an early exit must pop:
+      # the rescue frame while the protected body runs, plus the ensure
+      # frame while the body and rescue clauses run. Else and ensure bodies
+      # run after both pops.
+      property active_frames : Int32
 
       def initialize(@ensure_body : Array(Adamas::Compiler::Frontend::ExprId),
                      @arena : Adamas::Compiler::Frontend::ArenaLike,
                      @function_id : FunctionId,
                      @inline_marker : Int32,
                      @locals : Hash(String, ValueId),
-                     @rescue_active : Bool,
+                     @active_frames : Int32,
                      @block_mark : BlockId,
                      @owner_class : String?,
                      @owner_method : String?,
@@ -110137,7 +110139,7 @@ module Adamas::HIR
           next if @early_exit_cleanup_path.includes?(ectx)
 
           @early_exit_cleanup_path << ectx
-          ctx.emit(TryEnd.new(ctx.next_id)) if ectx.rescue_active
+          ectx.active_frames.times { ctx.emit(TryEnd.new(ctx.next_id)) }
           emit_ensure_body_for_early_exit(ctx, ectx) unless ensure_ret_emission_skipped?(ctx)
         end
       ensure
@@ -110164,7 +110166,7 @@ module Adamas::HIR
           next if @early_exit_cleanup_path.includes?(ectx)
 
           @early_exit_cleanup_path << ectx
-          ctx.emit(TryEnd.new(ctx.next_id)) if ectx.rescue_active
+          ectx.active_frames.times { ctx.emit(TryEnd.new(ctx.next_id)) }
           emit_ensure_body_for_early_exit(ctx, ectx) unless ensure_ret_emission_skipped?(ctx)
         end
       ensure
@@ -111380,7 +111382,10 @@ module Adamas::HIR
       # 2. Branch based on result
       # 3. Body path: execute body, call TryEnd
       # 4. Rescue path: execute rescue handlers, call TryEnd
-      # 5. Ensure path: always executed
+      # 5. Ensure path: always executed. An outer ensure frame covers the
+      #    body and rescue clauses; its landing runs the ensure body and
+      #    re-raises the same exception. As in Crystal, the else body runs
+      #    outside both frames.
 
       has_rescue = !node.rescue_clauses.nil? && !node.rescue_clauses.not_nil!.empty?
       has_else = !node.else_body.nil? && !node.else_body.not_nil!.empty?
@@ -111403,6 +111408,31 @@ module Adamas::HIR
       body_value_block : BlockId? = nil        # actual block before jump to exit (body path)
       rescue_value_block : BlockId? = nil      # actual block before jump to exit (rescue path)
       rescue_result : ValueId = ValueId.new(0) # rescue block's return value
+
+      # An ensure body also runs when an exception leaves the body or a
+      # rescue clause. Its own handler frame encloses both, so it is pushed
+      # first and popped on each edge that leaves them normally; the landing
+      # block pops it, runs a copy of the ensure body and re-raises the same
+      # exception.
+      ensure_landing_block : BlockId? = nil
+      ensure_landing_locals : LoweringContext::LocalsSnapshot? = nil
+      if has_ensure
+        landing = ctx.create_block
+        ensure_landing_block = landing
+        protected_entry = ctx.create_block
+
+        ensure_try = TryBegin.new(ctx.next_id)
+        ctx.emit(ensure_try)
+        ctx.register_type(ensure_try.id, TypeRef::INT32)
+        ensure_zero = Literal.new(ctx.next_id, TypeRef::INT32, 0_i64)
+        ctx.emit(ensure_zero)
+        ctx.register_type(ensure_zero.id, TypeRef::INT32)
+        ensure_cmp = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Eq, ensure_try.id, ensure_zero.id)
+        ctx.emit(ensure_cmp)
+        ctx.register_type(ensure_cmp.id, TypeRef::BOOL)
+        ctx.terminate(Branch.new(ensure_cmp.id, protected_entry, landing))
+        ctx.switch_to_block(protected_entry)
+      end
 
       # If we have rescue clauses, set up exception handling
       if has_rescue
@@ -111434,7 +111464,8 @@ module Adamas::HIR
         ensure_body = has_ensure ? node.ensure_body.not_nil! : [] of ExprId
         early_exit_ctx = EarlyExitLoweringContext.new(
           ensure_body, @arena, ctx.function.id,
-          @inline_yield_return_stack.size, ctx.save_locals.locals, has_rescue,
+          @inline_yield_return_stack.size, ctx.save_locals.locals,
+          (has_rescue ? 1 : 0) + (has_ensure ? 1 : 0),
           ctx.function.blocks.size.to_u32,
           @current_class, @current_method, @current_method_is_class,
           @current_namespace_override, @type_param_map, @current_inline_def_frame)
@@ -111457,16 +111488,21 @@ module Adamas::HIR
         body_flows = body_block_data.terminator.is_a?(Unreachable) &&
                      !block_has_raise_instruction?(body_block_data) &&
                      !control_flow_dead_block?(ctx, ctx.current_block)
-        early_exit_ctx.not_nil!.rescue_active = false if early_exit_ctx && has_rescue
+        # Only the ensure frame stays installed past the protected body.
+        early_exit_ctx.not_nil!.active_frames = has_ensure ? 1 : 0 if early_exit_ctx
         if has_rescue && body_flows
           try_end = TryEnd.new(ctx.next_id)
           ctx.emit(try_end)
         end
+        ctx.emit(TryEnd.new(ctx.next_id)) if has_ensure && body_flows
 
         # Snapshot locals after body for rescue-merge.
         if has_rescue
           body_locals = ctx.save_locals.locals
         end
+        # The exceptional ensure copy reads the same body-end bindings the
+        # rescue landing reads.
+        ensure_landing_locals = ctx.save_locals if has_ensure
 
         # Capture actual current block (may differ from body_block due to nested control flow)
         body_value_block = ctx.current_block
@@ -111637,6 +111673,7 @@ module Adamas::HIR
           # Only set if at least one clause flows to rescue_done_block
           if rescue_clause_exits.size > 0
             rescue_value_block = rescue_done_block
+            ctx.emit(TryEnd.new(ctx.next_id)) if has_ensure
             ctx.terminate(Jump.new(after_rescue_target))
             rescue_exit_block = after_rescue_target
           end
@@ -111646,6 +111683,8 @@ module Adamas::HIR
         if has_else
           else_body = node.else_body.not_nil!
           ctx.switch_to_block(else_block.not_nil!)
+          # Both frames are already popped; a return here still runs ensure.
+          early_exit_ctx.not_nil!.active_frames = 0 if early_exit_ctx
           else_body.each do |expr_id|
             result_id = lower_expr(ctx, expr_id)
           end
@@ -111685,6 +111724,31 @@ module Adamas::HIR
              !block_has_raise_instruction?(ensure_block_data) &&
              !control_flow_dead_block?(ctx, ctx.current_block)
             ctx.terminate(Jump.new(exit_block))
+          end
+
+          # Exceptional completion: pop the ensure frame, run the ensure body,
+          # then continue unwinding with the same exception object.
+          if landing = ensure_landing_block
+            normal_locals = ctx.save_locals
+            ctx.switch_to_block(landing)
+            ctx.emit(TryEnd.new(ctx.next_id))
+            landing_exc = GetException.new(ctx.next_id, TypeRef::POINTER)
+            ctx.emit(landing_exc)
+            ctx.register_type(landing_exc.id, TypeRef::POINTER)
+            if landing_locals = ensure_landing_locals
+              ctx.restore_locals(landing_locals)
+            end
+            ensure_body.each do |expr_id|
+              lower_expr(ctx, expr_id)
+            end
+            landing_data = ctx.get_block(ctx.current_block)
+            if landing_data.terminator.is_a?(Unreachable) &&
+               !block_has_raise_instruction?(landing_data) &&
+               !control_flow_dead_block?(ctx, ctx.current_block)
+              ctx.emit(Raise.new(ctx.next_id, landing_exc.id))
+              ctx.terminate(Unreachable.new)
+            end
+            ctx.restore_locals(normal_locals)
           end
         end
 
