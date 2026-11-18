@@ -27738,5 +27738,11 @@ One fix per commit, each with an oracle-qualified regression
   replayed. The uncached prelude iterator now builds and prints 55 with both
   bundled 1.18.2 and installed 1.22.3, matching stock Crystal. Unknown
   argument kinds still require evidence at replay.
+- [x] Carry original positional argument kinds through union arm selection,
+  inherited body materialization and result projection. The source and
+  inherited-self controls in `union_receiver_argument_kind_repro.sh` match
+  Crystal 1.22.3. Both compilers reject an unrelated type and an arm missing
+  the requested kind. Unevaluated AST argument queries remain a separate
+  frontier, including forwarded class objects and shadowing locals.
 - [ ] Check the separate module-includer fanout cache and its retry records
   with opposite-kind arguments sharing an ABI type and with named blocks.
