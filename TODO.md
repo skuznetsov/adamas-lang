@@ -27425,10 +27425,11 @@ One fix per commit, each with an oracle-qualified regression
   from a generic constructor in an included module. The direct pointer,
   pointer wrapper, and pointer-to-nilable controls all pass. The bundled
   self-build now completes nilary `Regex#match_data`.
-- [ ] Trace the return of bundled `Regex#match_data` to the PCRE2 argument.
-  The FFI consumer currently sees the thread-local wrapper in place of the
-  pointer it contains. Installed 1.22.3 still reaches the nilable enum result
-  in `Lexer#lex_number_suffix`.
+- [x] Restrict field-based return inference to the registered zero-argument
+  getter. A cold specialized method has no right to its namesake field's
+  type. The bundled self-build passes `LibPCRE2.get_ovector_count`; the
+  getter, predicate, missing method and same-name overload controls pass.
+  Both stdlibs now stop at the same `Token.new` in `scan_percent_literal`.
 - [x] Give enum construction its own HIR value while keeping the ordinal
   and the result of `.value` integers. Conditional and early returns,
   two enums with the same representation, and reuse of the original ordinal

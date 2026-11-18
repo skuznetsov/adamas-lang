@@ -71765,9 +71765,6 @@ module Adamas::HIR
           if type != TypeRef::VOID
             return type
           end
-          if ivar_type = ivar_return_type_for_method(base_name)
-            return ivar_type
-          end
           # Do not fall back to unspecialized base signatures for typed overloads
           # (name$T1_T2...). Base-level caches are not specialization-safe and can
           # leak return types across overloads (e.g. Float64 -> Int32 Math.min).
@@ -71830,14 +71827,9 @@ module Adamas::HIR
         if (type == TypeRef::VOID || type == TypeRef::NIL) && name.ends_with?("#to_s")
           return TypeRef::STRING
         end
-        if type == TypeRef::VOID
-          if ivar_type = ivar_return_type_for_method(name)
-            return ivar_type
-          end
-        end
         return type unless type == TypeRef::VOID
       end
-      if ivar_type = ivar_return_type_for_method(base_name)
+      if ivar_type = generated_getter_field_return_type(name, base_name, call_arg_count, return_source_def || selected_def)
         return ivar_type
       end
       if name.ends_with?("#value")
@@ -71891,19 +71883,23 @@ module Adamas::HIR
       TypeRef::VOID
     end
 
-    private def ivar_return_type_for_method(name : String) : TypeRef?
-      return nil unless hash_idx = name.rindex('#')
-      receiver_name = name[0, hash_idx]
-      method_name = name[(hash_idx + 1)..]
-      if method_name.includes?('$')
-        method_name = strip_type_suffix(method_name)
-      end
-      return nil if method_name.empty?
-      return nil unless class_info = @class_info[receiver_name]?
-
-      ivar_method = method_name.ends_with?('?') ? method_name[0, method_name.size - 1] : method_name
-      ivar_name = "@#{ivar_method}"
-      if ivar = find_ivar_info(class_info.ivars, ivar_name)
+    # A same-named field proves a return only for the generated getter.
+    # Explicit methods and other call shapes must use their own result.
+    private def generated_getter_field_return_type(
+      name : String,
+      base_name : String,
+      call_arg_count : Int32?,
+      selected_def : Adamas::Compiler::Frontend::DefNode?,
+    ) : TypeRef?
+      return nil if name != base_name || selected_def || (call_arg_count && call_arg_count != 0)
+      return nil unless @accessor_visibilities.has_key?({name, 0}) &&
+                        registered_generated_accessor_request?(name, base_name)
+      parts = parse_method_name_compact(name)
+      return nil unless parts.separator == '#'
+      method_name = parts.method || return nil
+      return nil unless class_info = @class_info[parts.owner]?
+      storage_name = method_name.rchop('?')
+      if ivar = find_ivar_info(class_info.ivars, "@#{storage_name}")
         return ivar.type unless ivar.type == TypeRef::VOID
       end
       nil
