@@ -70434,6 +70434,40 @@ module Adamas::HIR
       @function_types.has_key?(base_name) || has_function_base?(base_name)
     end
 
+    # Whether a mangled-prefix lookup candidate can take `arity` positional
+    # arguments with the requested block shape. Named-only parameters count
+    # toward the upper bound, as the mangled request encodes them positionally.
+    private def mangled_prefix_candidate_admits?(
+      def_node : Adamas::Compiler::Frontend::DefNode,
+      arity : Int32,
+      requested_block : Bool,
+    ) : Bool
+      if params = def_node.params
+        candidate_arity = count_params(params) { |p| !p.is_block && !named_only_separator?(p) }
+        required_arity = params.count do |p|
+          !p.is_block && !named_only_separator?(p) && p.default_value.nil? && !p.is_splat && !p.is_double_splat
+        end
+        has_splat_param = any_param?(params) { |p| p.is_splat && !named_only_separator?(p) }
+        has_double_splat_param = any_param?(params) { |p| p.is_double_splat }
+        return false if arity < required_arity
+        return false if arity > candidate_arity && !has_splat_param && !has_double_splat_param
+      elsif arity != 0
+        return false
+      end
+      return false if !requested_block && def_node.params.try { |params| any_param?(params, &.is_block) }
+      true
+    end
+
+    # True when some overload declared under `base_name` accepts a bare
+    # blockless call with no arguments (every parameter defaulted or splat).
+    private def overload_family_accepts_bare_call?(base_name : String) : Bool
+      function_def_overloads(base_name).any? do |overload_name|
+        next false unless overload_def = @function_defs[overload_name]?
+        stats = function_param_stats(overload_name, overload_def)
+        stats.required == 0 && !stats.has_block
+      end
+    end
+
     # Whether `def_node` can accept `argc` positional args. Return-type lookup
     # guard: a bare base-name hit must not serve a different-arity overload
     # (e.g. zero-arg `def rand : Float64` shadowing `def rand(max : Int) : Int`
@@ -116189,21 +116223,35 @@ module Adamas::HIR
         method = name_parts.method
         if method && !owner.empty?
           get_ancestor_chain(owner).each_with_index do |ancestor, idx|
-            next if idx == 0
             inherited_base = "#{ancestor}##{method}"
+            if idx == 0
+              # The receiver's own overloads come first; see the ancestor
+              # check below.
+              break if overload_family_accepts_bare_call?(inherited_base)
+              next
+            end
             inherited_def = @function_defs[inherited_base]?
             STDERR.puts "[BIE_O] name=#{name} anc=#{ancestor} def=#{inherited_def ? 1 : 0} expl=#{explicit_lookup_callsite ? explicit_lookup_callsite.types.size.to_s + "/" + (explicit_lookup_callsite.has_block ? "b" : "-") : "nil"} fdef=#{func_def ? 1 : 0}" if debug_lower_func
-            next unless inherited_def
-            # The nearest ancestor declaration is abstract: it is a contract,
-            # not an inherited implementation (the child implements it, e.g.
-            # via a `getter` accessor). Binding the child to it would emit the
-            # abstract stub and bypass virtual dispatch.
-            break if inherited_def.is_abstract
-            stats = function_param_stats(inherited_base, inherited_def)
-            next unless stats.param_count == 0 && stats.required == 0 && !stats.has_block
-            bare_inherited_exact_name = inherited_base
-            bare_inherited_exact_def = inherited_def
-            break
+            if inherited_def
+              # The nearest ancestor declaration is abstract: it is a contract,
+              # not an inherited implementation (the child implements it, e.g.
+              # via a `getter` accessor). Binding the child to it would emit the
+              # abstract stub and bypass virtual dispatch.
+              break if inherited_def.is_abstract
+              stats = function_param_stats(inherited_base, inherited_def)
+              if stats.param_count == 0 && stats.required == 0 && !stats.has_block
+                bare_inherited_exact_name = inherited_base
+                bare_inherited_exact_def = inherited_def
+                break
+              end
+            end
+            # Typed or defaulted overloads are registered only under mangled
+            # keys (`Int#to_s$Int_Int_Bool_named_9_precision_6_upcase`). When
+            # one of them accepts the bare request, this ancestor is the
+            # nearest owner of the call: stop so the overload scorer below
+            # binds it. Walking on would select a farther nilary def such as
+            # `Object#to_s`, whose `to_s(io)` call then recurses forever.
+            break if overload_family_accepts_bare_call?(inherited_base)
           end
         end
       end
@@ -116998,19 +117046,7 @@ module Adamas::HIR
               end
               def_node = @function_defs[key]?
               next unless def_node
-              if params = def_node.params
-                candidate_arity = count_params(params) { |p| !p.is_block && !named_only_separator?(p) }
-                required_arity = params.count do |p|
-                  !p.is_block && !named_only_separator?(p) && p.default_value.nil? && !p.is_splat && !p.is_double_splat
-                end
-                has_splat_param = any_param?(params) { |p| p.is_splat && !named_only_separator?(p) }
-                has_double_splat_param = any_param?(params) { |p| p.is_double_splat }
-                next if expected_arity < required_arity
-                next if expected_arity > candidate_arity && !has_splat_param && !has_double_splat_param
-              elsif expected_arity != 0
-                next
-              end
-              next if !requested_block && def_node.params.try { |params| any_param?(params, &.is_block) }
+              next unless mangled_prefix_candidate_admits?(def_node, expected_arity, requested_block)
               unless first_key
                 first_key = key
                 first_def = def_node
@@ -117073,9 +117109,20 @@ module Adamas::HIR
           # If no mangled overload found but base name exists and is the only overload,
           # use it directly. This handles methods with single overload where call-site
           # type inference adds a $ suffix (e.g., String#byte_at?$Int32 -> String#byte_at?).
+          # The arity/block admission still applies: after the bare `Int32#to_s`
+          # bound `to_s(base = 10, *, ...)`, an unchecked fallback lowered
+          # `Int32#to_s$IO_Int32_Int32_Bool` from that body instead of letting the
+          # parent lookup find `Int#to_s(io, ...)`.
           if !func_def
+            fallback_block = name_parts.suffix.try { |suffix| suffix == "block" || suffix.ends_with?("_block") } || false
+            # Underscore counting overstates the arity of generic suffix types
+            # (`Hash(String,_Int32)`); trust only the callsite count there.
+            fallback_arity = observed_requested_arity ||
+                             name_parts.suffix.try { |suffix| suffix.includes?('(') ? nil : suffix_param_count(suffix) }
             if overload_keys.size == 1 && overload_keys.first == base_name
-              if candidate = @function_defs[base_name]?
+              if (candidate = @function_defs[base_name]?) &&
+                 (fallback_arity.nil? ||
+                 mangled_prefix_candidate_admits?(candidate, fallback_arity, fallback_block))
                 func_def = candidate
                 arena = @function_def_arenas[base_name]
                 target_name = name # Keep the mangled name as target
