@@ -25,6 +25,12 @@ original worktree. After each compiler fix, attempt an uncached `stage1 -> s2b`
 build on both the bundled stdlib and the installed Crystal stdlib. Record the
 first diagnostic for each build that stops.
 
+After integration, retire a topic worktree once its HEAD is reachable from
+`dev` and no build or contributor is using the checkout. Check its index,
+working tree, untracked files, and ignored files for unique work. Keep any
+checkout that still holds such work. Remove its local topic branch once the
+integrated history is reachable from `dev` and the branch is no longer in use.
+
 Promote the tested `dev` revision to `main` once clean builds on both stdlibs
 reproducibly reach `s3b`, the generated compiler runs the ordinary prelude
 smoke program, and the `s3b` and `s4b` compiler LLVM IR converge under the
