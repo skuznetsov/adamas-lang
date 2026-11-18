@@ -115252,7 +115252,13 @@ module Adamas::HIR
           record_force_lower_retry_attempt(handoff, current_request, @force_lower_return_type_depth)
           advanced = case current_request
                      when ForceLowerSuspendedRequest
-                       resume_suspended_exact_result(current_request)
+                       begin
+                         resume_suspended_exact_result(current_request)
+                       rescue pending : ExactResultPending
+                         raise pending unless current_request.pending.same?(pending) && force_lower_retry_source_current?(current_request)
+                         raise pending unless schedule_settled_retry_sibling(current_request, handoff)
+                         false
+                       end
                      when ForceLowerRetryRequest
                        if source = current_request.exact_source
                          with_force_lower_exact_source(current_request.name, source) do
@@ -115292,6 +115298,29 @@ module Adamas::HIR
       end
       progress && force_lower_retry_source_current?(request) &&
         settled_force_lower_demand?(name, force_lower_retry_requires_result?(request))
+    end
+
+    # Preserve the blocked continuation while an independent consumer can use
+    # an already completed producer. At the same depth each candidate gets one
+    # attempt until the driver observes progress and clears its attempt record.
+    private def schedule_settled_retry_sibling(
+      blocked : ForceLowerSuspendedRequest, handoff : ForceLowerRetryWorkHandoff,
+    ) : Bool
+      index = @force_lower_retry_work.rindex do |candidate|
+        next false unless candidate.is_a?(ForceLowerSuspendedRequest) &&
+                          candidate.name != blocked.name && candidate.name != blocked.pending.producer &&
+                          force_lower_retry_source_current?(candidate) && settled_force_lower_producer?(candidate.pending) &&
+                          !settled_force_lower_demand?(candidate.name, candidate.pending.consumer_requires_result) &&
+                          !function_state(candidate.name).in_progress? && !force_lower_retry_waits_for_queued_producer?(candidate)
+        handoff.attempts.none? do |(other, depth)|
+          depth <= @force_lower_return_type_depth && same_force_lower_work_request?(other, candidate)
+        end
+      end
+      return false unless index
+      ready = @force_lower_retry_work.delete_at(index)
+      enqueue_force_lower_retry_work(blocked, 0)
+      @force_lower_retry_work << ready
+      true
     end
 
     private def force_lower_retry_handoff_for_pending(pending : ExactResultPending) : ForceLowerRetryWorkHandoff?

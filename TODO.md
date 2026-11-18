@@ -27701,3 +27701,10 @@ One fix per commit, each with an oracle-qualified regression
   The two HIR suites pass 30 cases. Both native recursion regressions match
   Crystal. Fresh S1 self-builds with 1.18.2 and 1.22.3 still stop on
   Parser#parse_statement_in_scope in CLI#run.
+- [x] When a suspended caller still needs an active producer, let an
+  independent queued caller consume its own already settled producer. Keep
+  the original request and the same-depth attempt history. Three HIR suites
+  pass 32 examples, both recursive native regressions pass, and the stock
+  String#to_u32 control prints 17 with both standard libraries. The uncached
+  S2 attempts still fail on parse_statement_in_scope with bundled 1.18.2
+  and the tuple returned by DWARF::Backtraces#lookup_line_number with 1.22.3.

@@ -8,6 +8,33 @@ class Adamas::HIR::AstToHir
     @function_def_arenas.has_key?(name).should be_true
   end
 
+  def __test_blocked_retry_drains_independent_sibling : Nil
+    blocked = "edge_pending_child"
+    consumer = "edge_pending_parent"
+    sibling = "edge_pending_sibling"
+    leaf = "edge_leaf"
+    @module.has_function_with_body?(sibling).should be_false
+    settled_force_lower_result?(leaf).should be_true
+
+    root = ExactResultPending.new(consumer, blocked, __test_exact_source(blocked))
+    other = ExactResultPending.new(sibling, leaf, __test_exact_source(leaf))
+    enqueue_force_lower_retry_work(ForceLowerSuspendedRequest.new(other, __test_replay_callsite(sibling), false))
+    set_function_state(blocked, FunctionLoweringState::InProgress)
+    begin
+      begin
+        result = run_force_lower_retry_driver(ForceLowerSuspendedRequest.new(root, __test_replay_callsite(consumer), false))
+        result.should be_false
+      rescue pending : ExactResultPending
+        pending.should be(root)
+      end
+      settled_force_lower_result?(sibling).should be_true
+      settled_force_lower_result?(consumer).should be_false
+      settled_force_lower_result?(blocked).should be_false
+    ensure
+      clear_function_state(blocked)
+    end
+  end
+
   def __test_start_active_edge_graph : Nil
     @force_lower_retry_work.clear
     @force_lower_result_suspensions.clear
@@ -661,6 +688,10 @@ describe "exact source retry graph admission" do
     ).each do |change|
       converter.__test_retry_request_pair_matches?(change).should be_false
     end
+  end
+
+  it "runs a ready sibling while the suspended root still needs an active producer" do
+    force_lower_active_edge_graph_fixture.__test_blocked_retry_drains_independent_sibling
   end
 
   it "retains callback ABI and callback source in replay identity" do
