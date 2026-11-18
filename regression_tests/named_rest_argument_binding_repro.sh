@@ -6,7 +6,7 @@ SAFE_RUNNER="$ROOT_DIR/scripts/run_safe.sh"
 COMPILER="${1:-${ADAMAS_BIN:-$ROOT_DIR/bin/adamas}}"
 ORIGINAL_CRYSTAL_BIN="${ORIGINAL_CRYSTAL_BIN:-${ORIGINAL_CRYSTAL:-/opt/homebrew/bin/crystal}}"
 if [[ -z "${CRYSTAL_PATH:-}" ]]; then
-  export CRYSTAL_PATH="$ROOT_DIR/../crystal/src"
+  export CRYSTAL_PATH="$("$ORIGINAL_CRYSTAL_BIN" env CRYSTAL_PATH)"
 fi
 [[ -x "$SAFE_RUNNER" && -x "$COMPILER" && -x "$ORIGINAL_CRYSTAL_BIN" ]] || exit 2
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/named-rest-argument-binding.XXXXXX")"
@@ -201,8 +201,9 @@ class ChildNamedRest < ParentNamedRest
 end
 
 ChildNamedRest.new.probe("source", 65, tail: "tail")
+ChildNamedRest.new.probe(65, 67, tail: "tail")
 CRYSTAL
-printf 'AB' >"$WORK_DIR/inherited_named_rest.expected"
+printf 'ABX' >"$WORK_DIR/inherited_named_rest.expected"
 
 cat >"$WORK_DIR/named_separator.cr" <<'CRYSTAL'
 @[Link("c")]
@@ -321,7 +322,57 @@ ChildFixedSibling.new.probe("source", 65, tail: "tail")
 CRYSTAL
 printf 'AB' >"$WORK_DIR/inherited_fixed_sibling.expected"
 
-TEST_CASES="${2:-typed_rest_body typed_overload_order mixed_overloads named_rest_forwarding evaluation_order default_rest_scope inherited_named_rest named_separator fixed_first_rest_sibling recursive_named_rest nested_default_scope inherited_fixed_sibling}"
+cat >"$WORK_DIR/inherited_rest_arity_controls.cr" <<'CRYSTAL'
+@[Link("c")]
+lib Probe
+  fun putchar(value : Int32) : Int32
+end
+
+class ParentMinimumRest
+  def probe(prefix : String, *items : Int32, tail : Int32 = 68) : Nil
+    Probe.putchar(tail)
+  end
+end
+
+class ChildMinimumRest < ParentMinimumRest
+end
+
+class ParentPureRest
+  def probe(*items : Int32) : Nil
+    Probe.putchar(69)
+  end
+end
+
+class ChildPureRest < ParentPureRest
+end
+
+# One fixed required argument and one rest value meet the minimum arity; the
+# trailing keyword has a default, and pure rest still accepts multiple values.
+ChildMinimumRest.new.probe("source", 64)
+ChildPureRest.new.probe(65, 66)
+CRYSTAL
+printf 'DE' >"$WORK_DIR/inherited_rest_arity_controls.expected"
+
+cat >"$WORK_DIR/inherited_rest_wrong_prefix.cr" <<'CRYSTAL'
+@[Link("c")]
+lib Probe
+  fun putchar(value : Int32) : Int32
+end
+
+class ParentStrictRest
+  def probe(prefix : String, *items : Int32, tail : String) : Nil
+    Probe.putchar(65)
+  end
+end
+
+class ChildStrictRest < ParentStrictRest
+end
+
+# The parent's fixed prefix and required named-only tail remain strict.
+ChildStrictRest.new.probe(65, 66, tail: "tail")
+CRYSTAL
+
+TEST_CASES="${2:-typed_rest_body typed_overload_order mixed_overloads named_rest_forwarding evaluation_order default_rest_scope inherited_named_rest named_separator fixed_first_rest_sibling recursive_named_rest nested_default_scope inherited_fixed_sibling inherited_rest_arity_controls}"
 for name in $TEST_CASES; do
   for mode in original candidate; do
     binary="$WORK_DIR/$name.$mode.bin"
@@ -357,3 +408,31 @@ for name in $TEST_CASES; do
   done
   printf 'PASS[named-rest-argument-binding:%s]: exact original-first stdout, stderr empty\n' "$name"
 done
+
+for mode in original candidate; do
+  binary="$WORK_DIR/inherited_rest_wrong_prefix.$mode.bin"
+  log="$WORK_DIR/inherited_rest_wrong_prefix.$mode.compile.log"
+  if [[ "$mode" == original ]]; then
+    if env CRYSTAL_CACHE_DIR="$WORK_DIR/original.cache" \
+      "$SAFE_RUNNER" "$ORIGINAL_CRYSTAL_BIN" 180 8192 build "$WORK_DIR/inherited_rest_wrong_prefix.cr" \
+      --prelude=empty --no-debug --link-flags="${CRYSTAL_LINK_FLAGS:--fuse-ld=/usr/bin/ld}" \
+      -o "$binary" >"$log" 2>&1; then
+      printf 'expected original Crystal to reject inherited_rest_wrong_prefix\n' >&2
+      exit 1
+    fi
+  else
+    if env CRYSTAL_CACHE_DIR="$WORK_DIR/candidate.cache" ADAMAS_LLVM_CACHE=0 \
+      ADAMAS_EXTRA_LINK_FLAGS="${ADAMAS_EXTRA_LINK_FLAGS:--fuse-ld=/usr/bin/ld}" \
+      "$SAFE_RUNNER" "$COMPILER" 180 8192 "$WORK_DIR/inherited_rest_wrong_prefix.cr" --no-prelude \
+      --no-ast-cache --no-llvm-cache --no-debug -o "$binary" >"$log" 2>&1; then
+      printf 'expected Adamas to reject inherited_rest_wrong_prefix\n' >&2
+      exit 1
+    fi
+  fi
+  if ! grep -Eq 'no overload matches|missing argument: items' "$log"; then
+    tail -30 "$log" >&2
+    printf 'expected strict no-overload diagnostic for inherited_rest_wrong_prefix (%s)\n' "$mode" >&2
+    exit 1
+  fi
+done
+printf 'PASS[named-rest-argument-binding:inherited_rest_wrong_prefix]: both compilers reject the incompatible prefix\n'

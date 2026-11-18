@@ -2388,7 +2388,8 @@ module Adamas::HIR
       named_arg_names : Array(String)? = nil
 
     private record NamedCallShape,
-      names : Array(String)
+      names : Array(String),
+      source_binding : SourceCallBinding? = nil
 
     private struct DeferredConstantInit
       getter owner : String
@@ -61824,6 +61825,7 @@ module Adamas::HIR
       function_name : String,
       value_id : ValueId,
       named_arg_names : Array(String)?,
+      source_binding : SourceCallBinding? = nil,
     ) : Nil
       names = canonical_named_arg_names(named_arg_names) || [] of String
       function_shapes = @named_call_shapes_by_function[function_name]? || begin
@@ -61831,7 +61833,18 @@ module Adamas::HIR
         @named_call_shapes_by_function[function_name] = created
         created
       end
-      function_shapes[value_id] = NamedCallShape.new(names.dup)
+      retained_binding = if binding = source_binding
+                           source_def = @function_defs[binding.selected_name]?
+                           source_arena = @function_def_arenas[binding.selected_name]?
+                           registered_arena = registered_arena_for_def(binding.definition)
+                           if source_def && source_def.same?(binding.definition) &&
+                              source_arena && source_arena.same?(binding.declaration_arena) &&
+                              registered_arena && registered_arena.same?(binding.declaration_arena) &&
+                              arena_fits_def?(binding.declaration_arena, binding.definition)
+                             copy_source_call_binding(binding)
+                           end
+                         end
+      function_shapes[value_id] = NamedCallShape.new(names.dup, retained_binding)
     end
 
     private def named_call_shape_for(
@@ -61839,6 +61852,87 @@ module Adamas::HIR
       value_id : ValueId,
     ) : NamedCallShape?
       @named_call_shapes_by_function[function_name]?.try(&.[value_id]?)
+    end
+
+    # Receiver repair sometimes needs to materialize the exact source overload
+    # that produced a packed named/rest call under a more specific receiver.
+    # The call-id keyed binding is authoritative only while its Def, Arena,
+    # selected registration, source labels, and already-packed ABI all agree.
+    private def receiver_repair_inherited_named_rest_target(
+      call : Call,
+      call_name : String,
+      method_name : String,
+      receiver_name : String,
+      receiver_type : TypeRef,
+      arg_types : Array(TypeRef),
+      has_block_call : Bool,
+      named_shape : NamedCallShape?,
+    ) : String?
+      return if call.virtual || has_block_call
+      return unless shape = named_shape
+      return unless binding = shape.source_binding
+      return if binding.source_receiver_name || binding.block_result
+
+      request_parts = parse_method_name(call_name)
+      source_parts = parse_method_name(binding.selected_name)
+      return unless request_parts.is_instance && source_parts.is_instance
+      return unless request_parts.method == method_name && source_parts.method == method_name
+
+      source_owner = normalize_method_owner_name(source_parts.owner)
+      request_owner = normalize_method_owner_name(request_parts.owner)
+      receiver_owner = normalize_method_owner_name(receiver_name)
+      return if source_owner.empty? || request_owner.empty? || receiver_owner.empty?
+      # This path transports a selected ancestor overload to the receiver's
+      # specialized body. Same-owner calls and aliases already owned by the
+      # receiver keep the ordinary repair path.
+      return unless request_owner == source_owner && source_owner != receiver_owner
+      return unless class_inherits_from?(receiver_owner, source_owner)
+      receiver_desc = @module.get_type_descriptor(receiver_type)
+      return unless receiver_desc && receiver_desc.kind == TypeKind::Class
+
+      definition = @function_defs[binding.selected_name]?
+      declaration_arena = @function_def_arenas[binding.selected_name]?
+      registered_arena = registered_arena_for_def(binding.definition)
+      return unless definition && definition.same?(binding.definition)
+      return unless declaration_arena && declaration_arena.same?(binding.declaration_arena)
+      return unless registered_arena && registered_arena.same?(binding.declaration_arena)
+      return unless source_call_binding_matches?(binding, definition, declaration_arena)
+      return unless arena_fits_def?(declaration_arena, definition)
+
+      stats = function_param_stats(binding.selected_name, definition)
+      return unless stats.has_splat && stats.has_named_only && !stats.has_double_splat
+      return unless named_args_compatible_with_def?(definition, shape.names)
+
+      bound_actuals = source_call_binding_actual_arguments(binding)
+      return unless bound_actuals.size == arg_types.size
+      return unless bound_actuals.each_with_index.all? do |actual, index|
+        actual && actual.type_ref != TypeRef::VOID && actual.type_ref == arg_types[index]
+      end
+
+      suffix = request_parts.suffix
+      return unless suffix && suffix.ends_with?("_splat")
+      target_name = "#{receiver_owner}##{method_name}$#{suffix}"
+      return if target_name == call_name
+
+      bind_exact_source_call_target(
+        target_name,
+        binding.selected_name,
+        binding.definition,
+        binding.declaration_arena,
+        binding_context: "inherited named/rest receiver repair",
+      )
+      facts = bound_actuals
+      literals = facts.map { |fact| fact.not_nil!.type_literal }
+      remember_callsite_arg_types(
+        target_name,
+        arg_types,
+        literals,
+        has_named_args: true,
+        named_arg_names: shape.names,
+        source_argument_facts: facts,
+        source_binding: binding,
+      )
+      target_name
     end
 
     private def register_receiver_repair_source_shape?(
@@ -62893,6 +62987,47 @@ module Adamas::HIR
             receiver_template_owner = primitive_template_owner(receiver_name)
             current_owner_is_primitive_template = receiver_template_owner &&
                                                   raw_current_owner.lchop("::") == receiver_template_owner
+
+            if !receiver_is_type_literal
+              if source_bound_target = receiver_repair_inherited_named_rest_target(
+                   inst,
+                   method_name_text,
+                   method_name,
+                   receiver_name,
+                   receiver_type,
+                   arg_types,
+                   has_block_call,
+                   named_call_shape,
+                 )
+                return_type = get_function_return_type(source_bound_target, arg_types.size)
+                if return_type == TypeRef::VOID
+                  if inferred = resolve_return_type_from_def(
+                       source_bound_target,
+                       strip_type_suffix(source_bound_target),
+                       receiver_type,
+                       arg_types.size,
+                     )
+                    return_type = inferred unless inferred == TypeRef::VOID
+                  end
+                end
+                return_type = inst.type if return_type == TypeRef::VOID
+                replacement = Call.with_receiver_virtual(
+                  inst.id,
+                  return_type,
+                  recv,
+                  source_bound_target,
+                  inst.args,
+                  inst.virtual,
+                )
+                block.replace(idx, replacement)
+                value_types[inst.id] = return_type
+                repaired_value_types[inst.id] = return_type
+                targets_to_lower << source_bound_target unless @module.has_function_with_body?(source_bound_target)
+                repaired += 1
+                next
+              end
+            end
+
             same_owner_shape_target = nil.as(String?)
             preserve_receiver_call_type = false
             preserved_receiver_return_type = inst.type
@@ -133098,7 +133233,12 @@ module Adamas::HIR
       # it keyed by the emitted ValueId avoids an unsound "try named on miss"
       # fallback for genuine positional calls.
       if has_named_args
-        remember_named_call_shape(ctx.function.name, call.id, call_named_arg_names)
+        remember_named_call_shape(
+          ctx.function.name,
+          call.id,
+          call_named_arg_names,
+          source_call_binding,
+        )
       end
       if authority = exact_atomic_primitive_authority_for_call(
            selected_call_entry_name,
