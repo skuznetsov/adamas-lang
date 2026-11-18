@@ -116439,6 +116439,17 @@ module Adamas::HIR
       )
     end
 
+    private def register_recursive_struct_result_facts(
+      ctx : LoweringContext, producer : String, ticket : RecursiveStructResultEmissionTicket?, call : Call,
+    ) : Bool
+      return false unless ticket && !call.virtual && call.method_name == producer
+      use = @deferred_struct_result_uses[{ctx.function.name, producer}]? || return false
+      anchor = checked_partial_struct_result(use.request.pending, use.checked_return) || return false
+      return false unless anchor.value.type == call.type
+      ctx.register_source_value_facts(call.id, [{anchor.value.type, false}])
+      true
+    end
+
     private def record_recursive_struct_result_emission!(
       ctx : LoweringContext,
       producer : String,
@@ -133073,10 +133084,8 @@ module Adamas::HIR
              exact_source_discard_result_type == TypeRef::VOID)
         # The exact selected source declaration proves a Nil expression.
         ctx.register_source_value_facts(result_id, [{TypeRef::NIL, false}])
-      elsif cycle_result_ticket && !call.virtual && call.method_name == mangled_method_name &&
-            (cycle_use = @deferred_struct_result_uses[{ctx.function.name, mangled_method_name}]?) &&
-            (anchor = checked_partial_struct_result(cycle_use.request.pending, cycle_use.checked_return)) && anchor.value.type == call.type
-        ctx.register_source_value_facts(call.id, [{anchor.value.type, false}])
+      elsif register_recursive_struct_result_facts(ctx, mangled_method_name, cycle_result_ticket, call)
+        # A suspended producer owns the checked return used by this call.
       elsif !call.virtual && register_materialized_source_return_value_facts(ctx, result_id, call.method_name)
         # The emitted call owns the actual dispatch mode and target. A module
         # owner can leave the provisional classifier virtual even though its
@@ -152539,17 +152548,24 @@ module Adamas::HIR
       end
       member_return_def = member_exact_source.try(&.source_def) || @function_defs[actual_name]?
       member_return_arena = member_exact_source.try(&.source_arena) || @function_def_arenas[actual_name]?
+      member_result_ticket = if !call_virtual && member_name != "new" && actual_name == primary_name &&
+                                  args.empty? && arg_types.empty? &&
+                                  recursive_struct_result_at_source_call?(ctx, actual_name, return_type, arg_types,
+                                    nil, object_id, member_return_def, member_return_def, member_return_arena,
+                                    member_exact_source.try(&.source_registry_name) || selected_member_registry_name)
+                               begin_recursive_struct_result_emission!(ctx, actual_name, true)
+                             end
       refused_before_member_force = @force_lower_depth_refused.size
       unresolved_included_result = included_noarg_source_result && included_noarg_source_result[0].nil?
       # A registered or declared ABI does not publish body-owned source facts.
       # Nilary member syntax must demand the same exact result as value().
-      if !call_virtual && resolved_method_name && actual_name == primary_name &&
+      if !member_result_ticket && !call_virtual && resolved_method_name && actual_name == primary_name &&
          selected_source_result_pending?(actual_name, member_return_def, include_annotated: true)
         if force_lower_function_for_return_type(actual_name, bypass_inline_yield: true, pending_call_target_context: "member_access_exact")
           return_type = get_function_return_type(actual_name, 0, member_return_def)
         end
       end
-      if (return_type == TypeRef::VOID || is_union_type?(return_type) ||
+      if !member_result_ticket && (return_type == TypeRef::VOID || is_union_type?(return_type) ||
           unresolved_generic_return_type?(return_type) ||
           !abstract_numeric_return_constraint_for_function(actual_name).nil?) &&
          force_pending_call_targets_for_return_type(actual_name, primary_name, base_method_name, context: "member_access")
@@ -152562,7 +152578,7 @@ module Adamas::HIR
         end
       end
 
-      record_force_lower_result_dependency(ctx, actual_name, member_return_def, refused_before_member_force)
+      record_force_lower_result_dependency(ctx, actual_name, member_return_def, refused_before_member_force) unless member_result_ticket
       # A selected include with an unresolved syntactic result still owns the
       # call. Its exact completed body can prove NoReturn before a tuple or an
       # enclosing return embeds the old Void hint as Unknown.
@@ -152575,7 +152591,7 @@ module Adamas::HIR
         ctx, actual_name, return_type, member_return_def, member_return_def,
         member_return_arena, refused_before_member_force,
         member_exact_source.try(&.source_registry_name), member_exact_source, observed_call: call_virtual ? nil : member_call_observation,
-      )
+      ) unless member_result_ticket
 
       if return_type == TypeRef::VOID
         return_type = get_function_return_type(actual_name, 0)
@@ -152725,7 +152741,10 @@ module Adamas::HIR
       ctx.register_type(call.id, return_type)
       # The exact completed member body owns the same source result facts as
       # an ordinary call. A virtual target cannot borrow one body's proof.
-      register_materialized_source_return_value_facts(ctx, call.id, actual_name) unless call_virtual
+      unless call_virtual || register_recursive_struct_result_facts(ctx, actual_name, member_result_ticket, call)
+        register_materialized_source_return_value_facts(ctx, call.id, actual_name)
+      end
+      record_recursive_struct_result_emission!(ctx, actual_name, member_result_ticket, call, arg_types, object_id)
       # As in lower_call: an exact bottom target ends the block, so an
       # enclosing call does not resolve against the NoReturn value.
       unless call_virtual

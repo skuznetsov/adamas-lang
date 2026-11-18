@@ -27726,3 +27726,9 @@ One fix per commit, each with an oracle-qualified regression
   rejected. On fresh S1 self-builds, bundled 1.18.2 now stops at
   Parser#parse_percent_macro_control in Parser#parse_program_roots_impl.
   Installed 1.22.3 still stops at DWARF::Backtraces#lookup_line_number.
+- [x] Use a checked recursive result for an explicit nilary member call.
+  The member-access path now validates the physical receiver and records
+  the emitted call in the owning HIR body. Three regressions and 40 focused
+  HIR examples pass. Both spellings print CD and both reject returning
+  Ticket.class. Both uncached S2 builds repeat the parser and DWARF
+  diagnostics above.
