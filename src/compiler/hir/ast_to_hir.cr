@@ -8541,6 +8541,10 @@ module Adamas::HIR
     # plus the frame of the def currently being inlined.
     @inline_caller_def_frame_stack : Array(InlineDefFrame?) = [] of InlineDefFrame?
     @current_inline_def_frame : InlineDefFrame? = nil
+    # While a yielded caller block is lowered: the inline def frame that
+    # yielded and its locals at the yield. An ensure scope of that def left
+    # early from inside the block reads its def's bindings from here.
+    @yielding_frame_locals_stack : Array({InlineDefFrame?, Hash(String, ValueId)}) = [] of {InlineDefFrame?, Hash(String, ValueId)}
     # Preserve caller type-parameter bindings for block bodies during yield inlining.
     @inline_caller_type_param_map_stack : Array(Hash(String, String)) = [] of Hash(String, String)
     # Names assigned/declared inside currently inlined callee functions.
@@ -9471,6 +9475,7 @@ module Adamas::HIR
       @inline_caller_method_is_class_stack = [] of Bool
       @inline_caller_def_frame_stack = [] of InlineDefFrame?
       @current_inline_def_frame = nil
+      @yielding_frame_locals_stack = [] of {InlineDefFrame?, Hash(String, ValueId)}
       @inline_caller_type_param_map_stack = [] of Hash(String, String)
       @inline_callee_local_names_stack = [] of Set(String)
       @inline_callee_local_names_frame_stack = [] of Int32
@@ -110078,19 +110083,42 @@ module Adamas::HIR
       pats.any? { |p| fname.includes?(p) }
     end
 
+    # Locals of `frame` at its innermost active yield, if a block it yielded
+    # to is being lowered.
+    private def yielding_frame_locals(frame : InlineDefFrame?) : Hash(String, ValueId)?
+      @yielding_frame_locals_stack.reverse_each do |entry|
+        return entry[1] if entry[0].same?(frame)
+      end
+      nil
+    end
+
     private def emit_ensure_body_for_early_exit(ctx : LoweringContext, ectx : EarlyExitLoweringContext) : Nil
       return if ectx.emitting
       @early_exit_cleanup_path << ectx unless @early_exit_cleanup_path.includes?(ectx)
       ectx.emitting = true
       saved_locals = ctx.save_locals
-      # Overlay: keep the return site's locals (covers locals first assigned
-      # inside the begin body) but let the scope's push-time snapshot win for
-      # every name it knows (covers callee-private locals and shadowing when
-      # the exit fires from a foreign locals environment, e.g. a caller
-      # block inlined inside a with_-helper).
-      merged_locals = ctx.all_locals.dup
-      ectx.locals.each { |name, value| merged_locals[name] = value }
+      # The exit fires either from the scope's own locals environment (a
+      # break/next/return lexically inside its begin) or from a foreign one:
+      # a caller block that the def owning the scope yielded to, lowered
+      # under the caller's inline def frame. In its own environment the
+      # ensure body reads the bindings current at the exit, and its writes
+      # reach the exit edge. In a foreign environment the scope's push-time
+      # snapshot wins for every name it knows, since the current names
+      # belong to another def; writes stay private to the ensure body.
+      own_environment = @current_inline_def_frame.same?(ectx.owner_inline_def_frame)
+      merged_locals = if own_environment
+                        ectx.locals.merge(ctx.all_locals)
+                      else
+                        foreign = ctx.all_locals.merge(ectx.locals)
+                        # The owning def's bindings at the yield that entered
+                        # the block are newer than the push-time snapshot.
+                        if yielded = yielding_frame_locals(ectx.owner_inline_def_frame)
+                          foreign.merge!(yielded)
+                        end
+                        foreign
+                      end
       ctx.restore_locals(merged_locals)
+      ensure_out_locals : Hash(String, ValueId)? = nil
       saved_class = @current_class
       saved_method = @current_method
       saved_method_is_class = @current_method_is_class
@@ -110109,6 +110137,7 @@ module Adamas::HIR
             end
           end
         end
+        ensure_out_locals = ctx.all_locals.dup if own_environment
       ensure
         @current_class = saved_class
         @current_method = saved_method
@@ -110116,6 +110145,14 @@ module Adamas::HIR
         @current_namespace_override = saved_namespace_override
         @current_inline_def_frame = saved_inline_def_frame
         ctx.restore_locals(saved_locals)
+        if out_locals = ensure_out_locals
+          live_locals = ctx.all_locals
+          live_locals.each_key do |name|
+            if value = out_locals[name]?
+              live_locals[name] = value
+            end
+          end
+        end
         ectx.emitting = false
       end
     end
@@ -146375,6 +146412,7 @@ module Adamas::HIR
                        @inline_callee_local_names_stack << Set(String).new
                        @inline_callee_local_names_frame_stack << (-1 - caller_locals_index)
                      end
+                     @yielding_frame_locals_stack << {old_inline_def_frame_for_block, saved_callee_locals.locals}
                      begin
                        caller_locals_before_params = ctx.save_locals.locals
                        param_names = [] of String
@@ -146618,6 +146656,7 @@ module Adamas::HIR
                        ctx.restore_locals(saved_callee_locals)
                        body_result
                      ensure
+                       @yielding_frame_locals_stack.pop?
                        if use_stack_caller_locals
                          @inline_active_caller_locals_index_stack.pop?
                          @inline_callee_local_names_stack.pop?
