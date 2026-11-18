@@ -27622,3 +27622,11 @@ One fix per commit, each with an oracle-qualified regression
   required slot, an invalid actual and an invalid default. Both uncached
   self-builds now stop at a separate overload choice for
   `Frontend::CallNode.new` with a runtime union.
+- [x] Delay physical allocator emission for a positional runtime union when
+  no single source initializer accepts its whole shape. Dispatch on the
+  evaluated argument values and admit each arm through the existing
+  constructor resolver. A source initializer that accepts the union remains
+  one call. A missing arm produces a source overload error. The real
+  `CallNode` fixture runs through both receiver forms, including a method
+  returning the class object. Both uncached stdlib self-builds now reach an
+  exact-result suspension in `Parser#parse_statement_in_scope`.

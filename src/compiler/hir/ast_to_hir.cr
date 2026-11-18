@@ -49349,6 +49349,49 @@ module Adamas::HIR
       SelectedCallTarget.new(selected[0], selected[1], selected[2])
     end
 
+    # A whole-union initialize overload can safely own the allocator shape
+    # even when `complete_positional_constructor_initializer` leaves the
+    # shared wrapper unbound because its carrier lookup selects the same Def.
+    # Distinguish that case from a union split across scalar overloads before
+    # either eager or late allocator materialization.
+    private def positional_allocator_initializer_accepts_call_shape?(
+      class_name : String,
+      call_arg_types : Array(TypeRef),
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
+    ) : Bool
+      return false if call_arg_types.empty? || call_arg_types.any? { |type| type == TypeRef::VOID }
+      return false unless init_base = resolve_method_with_inheritance(class_name, "initialize")
+
+      requested_init_name = class_name.starts_with?("::") && !init_base.starts_with?("::") ? "::#{init_base}" : init_base
+      selected = allocator_initializer_def_for(
+        init_base, requested_init_name, call_arg_types, false,
+        source_argument_facts: source_argument_facts,
+      )
+      return false unless selected
+
+      selected_name, selected_def, _ = selected
+      context = function_context_for_lookup_candidate(init_base, selected_name)
+      return false if source_generic_argument_mismatch_for_def(
+        selected_def, call_arg_types, context, source_argument_facts: source_argument_facts,
+      )
+      return false unless function_def_accepts_call_shape?(
+        selected_name, selected_def, call_arg_types, false, false, nil,
+        source_argument_facts,
+      )
+
+      input = CallResolutionInput.new(
+        func_name: init_base,
+        arg_count: call_arg_types.size,
+        arg_types: call_arg_types,
+        has_block: false,
+        has_splat: false,
+        has_named: false,
+        named_names: nil,
+        source_argument_facts: source_argument_facts,
+      )
+      call_source_argument_kinds_match?(input, selected_def, selected_name)
+    end
+
     # A physical allocator can still be synthesized from the carrier type after
     # exact initializer selection rejects a known class/instance value kind.
     # Treat that source-kind rejection as authoritative at the call boundary;
@@ -123688,14 +123731,24 @@ module Adamas::HIR
                                                     class_name_str, call_arg_types, constructor_source_facts,
                                                   )
                                                 end
-                  generate_allocator(class_name_str, class_info, call_arg_types, call_has_block: has_block_call,
-                    call_block_node: alloc_block.try(&.[0]), call_block_param_types: alloc_block.try(&.[1]),
-                    call_block_return_name: alloc_block.try(&.[2]),
-                    selected_initializer: !!selected_constructor_target,
-                    selected_init_target: selected_constructor_target,
-                    source_argument_facts: constructor_source_facts,
-                    source_result_consumer: ctx.source_result_replay_consumer || ctx.function.name,
-                    explicit_new_target: explicit_new_autocast_target)
+                  defer_split_union_allocator = selected_constructor_target.nil? &&
+                                                !call_has_splat && !has_block_call &&
+                                                call_arg_types.size == call_args.size &&
+                                                call_arg_types.all? { |type| type != TypeRef::VOID } &&
+                                                call_arg_types.any? { |type| is_union_type?(type) } &&
+                                                !positional_allocator_initializer_accepts_call_shape?(
+                                                  class_name_str, call_arg_types, constructor_source_facts,
+                                                )
+                  unless defer_split_union_allocator
+                    generate_allocator(class_name_str, class_info, call_arg_types, call_has_block: has_block_call,
+                      call_block_node: alloc_block.try(&.[0]), call_block_param_types: alloc_block.try(&.[1]),
+                      call_block_return_name: alloc_block.try(&.[2]),
+                      selected_initializer: !!selected_constructor_target,
+                      selected_init_target: selected_constructor_target,
+                      source_argument_facts: constructor_source_facts,
+                      source_result_consumer: ctx.source_result_replay_consumer || ctx.function.name,
+                      explicit_new_target: explicit_new_autocast_target)
+                  end
                 end
               end
             end
@@ -123801,11 +123854,27 @@ module Adamas::HIR
                 if resolved_type
                   if ci = @class_info[resolved_type]?
                     call_arg_types = call_args.map { |a| infer_type_from_expr(a, @current_class) || TypeRef::VOID }
+                    allocator_has_splat = call_args.any? do |arg_expr|
+                      call_arena[arg_expr].is_a?(Adamas::Compiler::Frontend::SplatNode)
+                    end
                     alloc_block = has_block_call ? allocator_call_block_contract(resolved_type, call_arg_types, false, block_expr, block_pass_expr) : nil
-                    generate_allocator(resolved_type, ci, call_arg_types, call_has_block: has_block_call,
-                      call_block_node: alloc_block.try(&.[0]), call_block_param_types: alloc_block.try(&.[1]),
-                      call_block_return_name: alloc_block.try(&.[2]),
-                      source_result_consumer: ctx.source_result_replay_consumer || ctx.function.name)
+                    allocator_source_facts = unless allocator_has_splat || has_block_call || node.named_args
+                                               source_class_arguments_before_lowering(ctx, call_args, call_arena)
+                                             end
+                    defer_split_union_allocator = !allocator_has_splat && !has_block_call && !node.named_args &&
+                                                  call_arg_types.size == call_args.size &&
+                                                  call_arg_types.all? { |type| type != TypeRef::VOID } &&
+                                                  call_arg_types.any? { |type| is_union_type?(type) } &&
+                                                  !positional_allocator_initializer_accepts_call_shape?(
+                                                    resolved_type, call_arg_types, allocator_source_facts,
+                                                  )
+                    unless defer_split_union_allocator
+                      generate_allocator(resolved_type, ci, call_arg_types, call_has_block: has_block_call,
+                        call_block_node: alloc_block.try(&.[0]), call_block_param_types: alloc_block.try(&.[1]),
+                        call_block_return_name: alloc_block.try(&.[2]),
+                        source_argument_facts: allocator_source_facts,
+                        source_result_consumer: ctx.source_result_replay_consumer || ctx.function.name)
+                    end
                     full_method_name = "#{resolved_type}.new"
                     static_class_name = resolved_type
                     receiver_is_type_literal = true
@@ -123922,10 +123991,35 @@ module Adamas::HIR
                       infer_type_from_expr(arg, @current_class) || TypeRef::VOID
                     end
                     alloc_block = has_block_call ? allocator_call_block_contract(name, call_arg_types, false, block_expr, block_pass_expr) : nil
-                    generate_allocator(name, info, call_arg_types, call_has_block: has_block_call,
-                      call_block_node: alloc_block.try(&.[0]), call_block_param_types: alloc_block.try(&.[1]),
-                      call_block_return_name: alloc_block.try(&.[2]),
-                      source_result_consumer: ctx.source_result_replay_consumer || ctx.function.name)
+                    allocator_has_splat = call_args.any? do |arg_expr|
+                      call_arena[arg_expr].is_a?(Adamas::Compiler::Frontend::SplatNode)
+                    end
+                    allocator_source_facts = unless allocator_has_splat || has_block_call || node.named_args
+                                               source_class_arguments_before_lowering(ctx, call_args, call_arena)
+                                             end
+                    selected_constructor_target = if !allocator_has_splat && !node.named_args && !has_block_call &&
+                                                      call_arg_types.size == call_args.size
+                                                    complete_positional_constructor_initializer(
+                                                      name, call_arg_types, allocator_source_facts,
+                                                    )
+                                                  end
+                    defer_split_union_allocator = selected_constructor_target.nil? &&
+                                                  !allocator_has_splat && !has_block_call && !node.named_args &&
+                                                  call_arg_types.size == call_args.size &&
+                                                  call_arg_types.all? { |type| type != TypeRef::VOID } &&
+                                                  call_arg_types.any? { |type| is_union_type?(type) } &&
+                                                  !positional_allocator_initializer_accepts_call_shape?(
+                                                    name, call_arg_types, allocator_source_facts,
+                                                  )
+                    unless defer_split_union_allocator
+                      generate_allocator(name, info, call_arg_types, call_has_block: has_block_call,
+                        call_block_node: alloc_block.try(&.[0]), call_block_param_types: alloc_block.try(&.[1]),
+                        call_block_return_name: alloc_block.try(&.[2]),
+                        selected_initializer: !!selected_constructor_target,
+                        selected_init_target: selected_constructor_target,
+                        source_argument_facts: allocator_source_facts,
+                        source_result_consumer: ctx.source_result_replay_consumer || ctx.function.name)
+                    end
                   end
                 else
                   # Use inheritance-aware method resolution
@@ -127199,7 +127293,14 @@ module Adamas::HIR
                 )
               end
               source_only_allocator = allocator_class_requires_union_shape?(class_name)
-              if source_only_allocator && !has_block_call && !has_splat && !has_named_args &&
+              positional_union_shape = !has_block_call && !has_splat && !allocator_has_named_args &&
+                                       arg_types.all? { |type| type != TypeRef::VOID } &&
+                                       arg_types.any? { |type| is_union_type?(type) }
+              split_union_initializer = positional_union_shape && source_initializer_entry.nil? &&
+                                        !positional_allocator_initializer_accepts_call_shape?(
+                                          class_name, arg_types, constructor_source_facts_after_lowering,
+                                        )
+              if (source_only_allocator || split_union_initializer) && !has_block_call && !has_splat && !has_named_args &&
                  arg_types.any? { |type| is_union_type?(type) }
                 if dispatched = try_emit_union_arg_dispatch(
                      ctx, nil, full_method_name, nil, args, arg_types, class_info.type_ref,
