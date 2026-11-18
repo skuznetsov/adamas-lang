@@ -85475,6 +85475,23 @@ module Adamas::HIR
         else
           base_name
         end
+      when Adamas::Compiler::Frontend::UnaryNode
+        # Postfix type suffixes in generic constructor arguments (for example
+        # `ThreadLocalValue(LibPCRE2::MatchData*)`) are UnaryNodes in the source
+        # AST. Preserve the complete suffix chain so registration does not
+        # mistake a generic wrapper around a pointer for a bare Pointer
+        # fallback. Keep the same narrow suffix set as stringify_type_expr.
+        op = unary_operator_text(node)
+        return nil unless {"?", "*", "**"}.includes?(op)
+        operand = node_for_expr(node.operand, @arena)
+        return nil unless operand
+        # Generic type arguments also use UnaryNode for *T/**T variadic
+        # bindings. Those prefix operators start before the operand; postfix
+        # type suffixes start at the operand's span. Do not reinterpret a
+        # splat binding as a pointer type.
+        return nil unless node.span.start_offset == operand.span.start_offset
+        base_name = extract_type_name_from_node(operand)
+        base_name ? "#{base_name}#{op}" : nil
       when Adamas::Compiler::Frontend::PathNode
         resolve_path_string_in_context(collect_path_string(node))
       when Adamas::Compiler::Frontend::MemberAccessNode

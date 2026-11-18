@@ -27421,7 +27421,11 @@ One fix per commit, each with an oracle-qualified regression
   The native Crystal and Adamas controls print `AB` and `ABCD` and reject
   unrelated values and type objects. The installed 1.22.3 self-build
   now passes `String::Builder#write(Slice(UInt8))`.
-- [ ] The bundled self-build suspends the nilary `Regex#match_data` inside its
-  three-argument overload. The installed self-build reaches
-  `Lexer#lex_number_suffix`, where constructing a NumberKind from an integer
-  produces an Int32 return at a nilable enum boundary.
+- [x] Preserve postfix pointer type arguments when registering class fields
+  from a generic constructor in an included module. The direct pointer,
+  pointer wrapper, and pointer-to-nilable controls all pass. The bundled
+  self-build now completes nilary `Regex#match_data`.
+- [ ] Trace the return of bundled `Regex#match_data` to the PCRE2 argument.
+  The FFI consumer currently sees the thread-local wrapper in place of the
+  pointer it contains. Installed 1.22.3 still reaches the nilable enum result
+  in `Lexer#lex_number_suffix`.
