@@ -10249,6 +10249,13 @@ module Adamas::HIR
       arg_shape_needed = (def_has_untyped_regular_param?(block_def) &&
                           (arity_target.includes?("$arity") || !block_def.forall_type_params.empty?)) ||
                          def_regular_param_mentions_forall?(block_def)
+      # A restricted named block can also require a narrower instantiation,
+      # for example when its body passes a module argument to a concrete def.
+      if !arg_shape_needed && named_tail && @function_defs[arity_target]?.try(&.same?(block_def))
+        arg_shape_needed = !prefer_callsite_specialization(
+          shape_base_method_name, arity_target, block_arg_types, true,
+        ).nil?
+      end
       return arity_target unless return_contract || arg_shape_needed
 
       shape_keyed = if contract = return_contract
@@ -12502,7 +12509,20 @@ module Adamas::HIR
       arg_types : Array(TypeRef),
       has_block_call : Bool,
       source_argument_facts : Array(SourceCallArgument?)? = nil,
+      named_block_call : Bool = false,
     ) : String
+      # The block call emitter resolves its ABI from the selected labeled
+      # declaration. Demand that same ABI on each virtual implementation.
+      # The selected label and the concrete argument ABI travel together.
+      if named_block_call && has_block_call && (suffix = method_suffix(resolved_name)) &&
+         named_shape_suffix_start(suffix) && (definition = @function_defs[resolved_name]?) &&
+         (arena = @function_def_arenas[resolved_name]?)
+        return shape_keyed_block_target(
+          strip_type_suffix(resolved_name), arg_types, definition, resolved_name,
+          selected_source_arena: arena,
+        )
+      end
+
       specialized = prefer_callsite_specialization(
         strip_type_suffix(resolved_name), resolved_name, arg_types, has_block_call,
       )
@@ -12934,7 +12954,7 @@ module Adamas::HIR
           # Use the same receiver owner as class-target replay.
           lower_demanded_virtual_target_function(candidate)
         else
-          target_name = virtual_replay_specialized_name(resolved_name, arg_types, has_block_call)
+          target_name = virtual_replay_specialized_name(resolved_name, arg_types, has_block_call, named_block_call: has_named_args)
           remember_callsite_arg_types(target_name, arg_types, has_block: has_block_call, has_named_args: has_named_args, named_arg_names: named_arg_names)
           lower_demanded_virtual_target_function(target_name)
         end
@@ -12944,7 +12964,7 @@ module Adamas::HIR
         lower_demanded_virtual_target_function(candidate)
       end
 
-      complete = @module.has_function_with_body?(candidate) ||
+      complete = (!(has_named_args && has_block_call) && @module.has_function_with_body?(candidate)) ||
                  repair_resolved_body_available?(
                    owner,
                    base_name,
@@ -89333,7 +89353,7 @@ module Adamas::HIR
       # call inputs. Readiness must consume that same identity; a declaration
       # or bare sibling body cannot certify another specialization's result.
       selected_target = virtual_replay_specialized_name(
-        resolved_name, arg_types, has_block, source_argument_facts,
+        resolved_name, arg_types, has_block, source_argument_facts, named_block_call: has_named_args,
       )
       return false unless @module.has_function_with_body?(selected_target)
 

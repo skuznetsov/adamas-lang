@@ -27554,3 +27554,22 @@ One fix per commit, each with an oracle-qualified regression
   Parallel#stack_pool and aborts in the abstract Scheduler#spawn target.
   Full self-builds still suspend on CLI#run_check with bundled 1.18.2 and on
   CallStack#printable_backtrace with installed 1.22.3.
+- [x] Use the selected labeled block definition and its concrete argument
+  specialization for both module dispatch and implementation demand. A
+  forwarded named block previously called the abstract abort stub when the
+  implementation lost its labels. Overloads with equal arity, reversed call
+  order and narrower module/nullable arguments match stock Crystal, including
+  rejection of an incompatible argument inside the selected method. The same
+  candidate compiles and runs `puts 42` on bundled 1.18.2 and installed
+  1.22.3. Both full self-builds still suspend at the parser/backtrace fronts.
+- [ ] Trace the literal-block callback representation for an abstract named
+  call. Calling through a forwarded Proc and passing a literal block directly
+  exercise different ABIs. The direct case with a module-restricted argument
+  and an inherited implementation fails at runtime even with labeled targets
+  present. Check the function-pointer/closure layout on both sides.
+- [ ] Carry argument value kind through named virtual calls with forwarded
+  blocks. A class including and extending the same module must print the
+  class method result for its type object and the instance result for its
+  instances. The class-only probe calls the instance method before and after
+  the labeled-body fix. Both compilers reject an instance-only module on a
+  class object. Check mixed source order and the exact callsite witness.

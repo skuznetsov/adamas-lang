@@ -39,7 +39,7 @@ if [[ "$ORIGINAL_ONLY" != "1" && ! -x "$ADAMAS_BIN" ]]; then
   exit 2
 fi
 
-ALL_CASES=(virtual_arguments descriptor_only_rejection)
+ALL_CASES=(virtual_arguments descriptor_only_rejection named_block_dispatch named_block_argument named_block_argument_rejection)
 if [[ "$ONLY_CASES" == "all" ]]; then
   SELECTED_CASES=("${ALL_CASES[@]}")
 else
@@ -65,6 +65,10 @@ fi
 write_source() {
   local name="$1"
   local path="$WORK_DIR/$name.cr"
+  if [[ "$name" == "named_block_dispatch" ]]; then
+    cp "$ROOT_DIR/regression_tests/fixtures/virtual_named_block_dispatch.cr" "$path"
+    return
+  fi
   cat >"$path" <<'CRYSTAL'
 @[Link("c")]
 lib VirtualModuleOutput
@@ -118,7 +122,39 @@ end
 
 CRYSTAL
 
+  if [[ "$name" == named_block_argument* ]]; then
+    cat >>"$path" <<'CRYSTAL'
+require "primitives"
+
+module VirtualLoop
+  abstract def read(*, io : VirtualDescriptor, enabled : Bool, &block : ->) : Int32
+end
+
+class VirtualPoller
+  def read(*, io : VirtualDescriptor, enabled : Bool, &block : ->) : Int32
+    block.call
+    enabled ? check_open(io) : 0
+  end
+end
+
+def forward(reader : VirtualLoop, io, enabled = true, &block)
+  reader.read(io: io, enabled: enabled, &block)
+end
+CRYSTAL
+  fi
   case "$name" in
+    named_block_argument)
+      cat >>"$path" <<'CRYSTAL'
+VirtualModuleOutput.putchar(forward(selected, VirtualFD.new) { nil })
+VirtualModuleOutput.putchar(forward(selected_inherited, VirtualSocket.new) { nil })
+VirtualModuleOutput.putchar(10)
+CRYSTAL
+      ;;
+    named_block_argument_rejection)
+      cat >>"$path" <<'CRYSTAL'
+VirtualModuleOutput.putchar(forward(selected, VirtualNotIO.new) { nil })
+CRYSTAL
+      ;;
     virtual_arguments)
       cat >>"$path" <<'CRYSTAL'
 VirtualModuleOutput.putchar(selected.read(VirtualFD.new))
@@ -230,7 +266,7 @@ check_descriptor_only_rejection() {
 
 for name in "${SELECTED_CASES[@]}"; do
   write_source "$name"
-  if [[ "$name" == "descriptor_only_rejection" ]]; then
+  if [[ "$name" == *_rejection ]]; then
     check_descriptor_only_rejection original "$name"
     if [[ "$ORIGINAL_ONLY" != "1" ]]; then
       check_descriptor_only_rejection candidate-lazy "$name"
@@ -239,11 +275,15 @@ for name in "${SELECTED_CASES[@]}"; do
     continue
   fi
 
-  # Original Crystal is qualified first, including its native result.
-  check_positive original "$name" "AAAA"
+  case "$name" in
+    named_block_dispatch) expected=".A.B.C.D.E.F.G.H" ;;
+    named_block_argument) expected="AA" ;;
+    *) expected="AAAA" ;;
+  esac
+  check_positive original "$name" "$expected"
   if [[ "$ORIGINAL_ONLY" != "1" ]]; then
-    check_positive candidate-lazy "$name" "AAAA"
-    check_positive candidate-eager "$name" "AAAA"
+    check_positive candidate-lazy "$name" "$expected"
+    check_positive candidate-eager "$name" "$expected"
   fi
 done
 
