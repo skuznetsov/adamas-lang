@@ -2254,7 +2254,7 @@ module Adamas::HIR
       argument_ids : Array(ValueId),
       argument_values : Array(RecursiveStructResultOperandWitness),
       argument_types : Array(TypeRef),
-      argument_facts : Array(SourceCallArgument?),
+      argument_facts : Array(SourceCallArgument?)?,
       result_facts : Array({TypeRef, Bool}),
       receiver_value : ValueId,
       receiver_operand : RecursiveStructResultOperandWitness?,
@@ -116095,12 +116095,10 @@ module Adamas::HIR
     ) : Bool
       return false unless callsite.types == arg_types
       expected = recursive_struct_result_callsite_argument_facts(callsite) || return false
-      actual = if arg_types.empty?
-                 [] of SourceCallArgument?
-               else
-                 source_facts || return false
-               end
-      actual.size == expected.size && actual == expected
+      # Resolution represents a call with no positional operands by absent
+      # facts. A nonempty signature still needs evidence for every slot.
+      return arg_types.empty? && expected.empty? unless source_facts
+      source_facts == expected
     end
 
     private def recursive_struct_result_abi_matches?(
@@ -116179,10 +116177,9 @@ module Adamas::HIR
       use = @deferred_struct_result_uses[{consumer, producer}]? || return nil
       callsite = use.producer_replay.callsite
       return nil unless call.method_name == producer && call.type == use.expected && !call.virtual &&
-                        !call.has_block? && call.block_value == Call::NO_BLOCK &&
-                        call.args.size == arg_types.size &&
-                        recursive_struct_result_argument_facts_match?(callsite, arg_types,
-                          call_resolution_source_argument_facts(ctx, call.args, arg_types))
+                        !call.has_block? && call.block_value == Call::NO_BLOCK && call.args.size == arg_types.size
+      argument_facts = call_resolution_source_argument_facts(ctx, call.args, arg_types)
+      return nil unless recursive_struct_result_argument_facts_match?(callsite, arg_types, argument_facts)
       function = @module.function_by_name(producer) || return nil
       return nil unless recursive_struct_result_abi_matches?(ctx, function, receiver_id, arg_types) &&
                         call.has_receiver? == !receiver_id.nil?
@@ -116209,8 +116206,7 @@ module Adamas::HIR
         call.args.dup,
         argument_values,
         arg_types.dup,
-        copy_source_call_argument_facts(call_resolution_source_argument_facts(ctx, call.args, arg_types)) ||
-          ([] of SourceCallArgument?),
+        copy_source_call_argument_facts(argument_facts),
         ctx.source_value_facts(call.id).not_nil!.dup,
         call.receiver_value,
         receiver_operand,

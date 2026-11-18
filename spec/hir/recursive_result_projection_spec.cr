@@ -53,7 +53,7 @@ class Adamas::HIR::AstToHir
   end
 
   def __test_projection_input_admitted?(literal : Bool = false, sibling_source : Bool = false) : Bool
-    producer, _consumer, _request, ctx, producer_source, _consumer_source = __test_open_bool_projection_use
+    producer, _consumer, _request, ctx, producer_source, _consumer_source = __test_open_projection_use
     source = sibling_source ? __test_projection_source(__test_projection_method_name("sibling_value")) : producer_source
     value = Literal.new(ctx.next_id, TypeRef::BOOL, false)
     ctx.emit(value)
@@ -73,7 +73,7 @@ class Adamas::HIR::AstToHir
     change_argument_kind : Bool = false,
     change_producer_block_slot : Bool = false,
   ) : Bool
-    producer, consumer, _request, ctx, producer_source, _consumer_source = __test_open_bool_projection_use
+    producer, consumer, _request, ctx, producer_source, _consumer_source = __test_open_projection_use
     value = Literal.new(ctx.next_id, TypeRef::BOOL, false)
     ctx.emit(value)
     ctx.mark_type_literal(value.id) if literal
@@ -119,7 +119,7 @@ class Adamas::HIR::AstToHir
   end
 
   def __test_projection_two_emission_tickets?(omit_second : Bool = false) : Bool
-    producer, consumer, _request, ctx, _producer_source, _consumer_source = __test_open_bool_projection_use
+    producer, consumer, _request, ctx, _producer_source, _consumer_source = __test_open_projection_use
     use = @deferred_struct_result_uses[{consumer, producer}].not_nil!
     2.times do |index|
       ticket = use.begin_emission_ticket
@@ -138,7 +138,7 @@ class Adamas::HIR::AstToHir
   end
 
   def __test_projection_ticket_reset? : Bool
-    producer, consumer, _request, ctx, _producer_source, _consumer_source = __test_open_bool_projection_use
+    producer, consumer, _request, ctx, _producer_source, _consumer_source = __test_open_projection_use
     use = @deferred_struct_result_uses[{consumer, producer}].not_nil!
     obsolete_ticket = use.begin_emission_ticket
     use.clear_body_emissions
@@ -158,7 +158,7 @@ class Adamas::HIR::AstToHir
     replace_receiver : Bool = false,
     change_receiver_kind : Bool = false,
   ) : Bool
-    producer, consumer, _request, ctx, _producer_source, _consumer_source = __test_open_bool_projection_use("RecClass")
+    producer, consumer, _request, ctx, _producer_source, _consumer_source = __test_open_projection_use("RecClass")
     self_param = ctx.function.params.first? || return false
     return false unless self_param.name == "self"
     ctx.register_type(self_param.id, self_param.type)
@@ -187,13 +187,30 @@ class Adamas::HIR::AstToHir
     recursive_struct_result_emission_witness_current?(use, witness)
   end
 
-  private def __test_open_bool_projection_use(owner : String = "RecFactory")
-    producer = __test_projection_method_name("value_for", owner)
-    consumer = __test_projection_method_name("consumer_for", owner)
+  def __test_nilary_projection_emission? : Bool
+    producer, consumer, _request, ctx, _producer_source, _consumer_source = __test_open_projection_use(nilary: true)
+    result = @module.function_by_name(producer).not_nil!.return_type
+    use = @deferred_struct_result_uses[{consumer, producer}]
+    call = Call.without_receiver(ctx.next_id, result, producer, [] of ValueId)
+    ctx.emit(call)
+    ctx.register_source_value_facts(call.id, [{result, false}])
+    witness = recursive_struct_result_emission_witness(ctx, producer, call, [] of TypeRef, nil) || return false
+    recursive_struct_result_emission_witness_current?(use, witness)
+  end
+
+  def __test_nilary_projection_accepts_extra_fact? : Bool
+    callsite = CallsiteArgs.new([] of TypeRef, nil, nil)
+    facts = [SourceCallArgument.new(TypeRef::BOOL, false).as(SourceCallArgument?)]
+    recursive_struct_result_argument_facts_match?(callsite, [] of TypeRef, facts)
+  end
+
+  private def __test_open_projection_use(owner : String = "RecFactory", *, nilary : Bool = false)
+    producer = nilary ? "RecFactory.value" : __test_projection_method_name("value_for", owner)
+    consumer = nilary ? "RecFactory.consumer" : __test_projection_method_name("consumer_for", owner)
     producer_source = __test_projection_source(producer)
     consumer_source = __test_projection_source(consumer)
-    producer_callsite = __test_projection_bool_callsite(producer, false)
-    consumer_callsite = __test_projection_bool_callsite(consumer, false)
+    producer_callsite = nilary ? nil : __test_projection_bool_callsite(producer, false)
+    consumer_callsite = nilary ? nil : __test_projection_bool_callsite(consumer, false)
     producer_replay = __test_projection_replay(producer, producer_callsite)
     consumer_replay = __test_projection_replay(consumer, consumer_callsite)
     pending = ExactResultPending.new(consumer, producer, producer_source)
@@ -366,6 +383,14 @@ describe "source result projection inside a recursive specialization" do
     converter.__test_instance_projection_emission_current?.should be_true
     converter.__test_instance_projection_emission_current?(replace_receiver: true).should be_false
     converter.__test_instance_projection_emission_current?(change_receiver_kind: true).should be_false
+  end
+
+  it "recognizes the recorded argument evidence of a real zero-argument call" do
+    recursive_projection_converter.__test_nilary_projection_emission?.should be_true
+  end
+
+  it "rejects an argument fact supplied to a zero-argument projection" do
+    recursive_projection_converter.__test_nilary_projection_accepts_extra_fact?.should be_false
   end
 
   it "requires one emitted HIR call for every admitted invocation" do

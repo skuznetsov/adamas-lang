@@ -27641,3 +27641,9 @@ One fix per commit, each with an oracle-qualified regression
   A method restricted to Int32 whose sole expression is `nil_value || stop`
   is rejected as returning Nil when `stop` returns NoReturn. Both failures
   also reproduce on the parent of the short-circuit fix.
+- [x] Preserve the argument evidence of a zero-argument recursive call across
+  HIR emission and final verification. Reject an extra operand fact on that
+  same call. Two new controls fail on the parent. The candidate passes all
+  25 recursive-result and retry examples and the native valid/invalid source
+  regression. Both unmodified stdlib self-builds still stop on the pending
+  result of `Parser#parse_statement_in_scope` while lowering `CLI#run`.
