@@ -112273,6 +112273,25 @@ module Adamas::HIR
         left.selected_target == right.selected_target
     end
 
+    # An ordinary caller can re-record a replayed call after the replay
+    # consumed its pending entry. The final callsite record in lower_call
+    # carries the source binding but not the per-argument source facts, so the
+    # entry has the same ABI shell and less evidence. Like
+    # merge_pending_callsite_evidence, treat that record as the same demand:
+    # replaying the richer recipe serves it. A record with its own facts or
+    # binding that the replay lacks is a competing demand.
+    private def pending_callsite_subsumed_by_replay?(pending : CallsiteArgs, replay : CallsiteArgs) : Bool
+      return true if pending == replay
+      return false unless same_callsite_args_shell?(pending, replay)
+      if pending_facts = pending.source_argument_facts
+        return false unless pending_facts == replay.source_argument_facts
+      end
+      if pending_binding = pending.source_binding
+        return false unless source_call_bindings_same?(pending_binding, replay.source_binding)
+      end
+      true
+    end
+
     # Exact source bindings and unresolved replay facts have different owners.
     # Keep both when they arrive in either order; never replace a richer exact
     # binding with an ABI-only replay or silently merge conflicting bindings.
@@ -114878,6 +114897,10 @@ module Adamas::HIR
       end
     end
 
+    private def recipe_free_force_lower_retry?(request : ForceLowerWorkRequest) : Bool
+      request.is_a?(ForceLowerRetryRequest) && request.exact_source.nil? && request.replay_callsite.nil?
+    end
+
     private def force_lower_retry_source_current?(request : ForceLowerWorkRequest) : Bool
       source = request.is_a?(ForceLowerRetryRequest) ? request.exact_source : nil
       replay = request.replay_callsite
@@ -114923,12 +114946,18 @@ module Adamas::HIR
     private def force_lower_retry_waits_for_queued_producer?(request : ForceLowerWorkRequest) : Bool
       # Stale or weaker queued work cannot satisfy another request's demand.
       # Let the existing handler reject it instead of creating a false cycle.
-      return false unless force_lower_retry_source_current?(request)
+      # A retry without any exact recipe is not stale: there is nothing to
+      # compare against, and retry_force_lower_depth_request lowers it through
+      # an ordinary force. It still needs its queued producers settled first;
+      # running it early fails the provisional check and drops it for good.
+      return false unless force_lower_retry_source_current?(request) || recipe_free_force_lower_retry?(request)
       case request
       when ForceLowerRetryRequest
         dependencies = @force_lower_provisional_dependencies[request.name]?
+        # A self edge is recursion through the provisional body. Only this
+        # request's own replay can settle it, so it never waits on itself.
         (dependencies || request.refused).any? do |producer|
-          !settled_force_lower_result?(producer) &&
+          producer != request.name && !settled_force_lower_result?(producer) &&
             force_lower_retry_has_queued_producer?(producer, true)
         end
       when ForceLowerSuspendedRequest
@@ -114980,7 +115009,10 @@ module Adamas::HIR
         return false
       end
       if provisional
-        return false unless dependencies.not_nil!.all? { |callee| settled_force_lower_result?(callee) }
+        # The candidates above already exclude the self edge: a body that
+        # recurses into itself while provisional is settled by this replay,
+        # not by forcing or waiting on itself.
+        return false unless dependencies.not_nil!.all? { |callee| callee == name || settled_force_lower_result?(callee) }
       end
 
       discharged = candidates.select do |callee|
@@ -114990,7 +115022,7 @@ module Adamas::HIR
       if replay = request.replay_callsite
         return false unless force_lower_replay_callsite_current?(name, replay)
         pending = @pending_arg_types[name]?
-        return false if pending && pending != replay.callsite
+        return false if pending && !pending_callsite_subsumed_by_replay?(pending, replay.callsite)
       end
       return false unless remove_hir_function(name)
       discharged.each { |callee| @force_lower_discharged_edges.add({name, callee}) }
@@ -115261,7 +115293,7 @@ module Adamas::HIR
       requires_result : Bool = true,
     ) : Bool
       existing_callsite = @pending_arg_types[name]?
-      return false if existing_callsite && existing_callsite != replay.callsite
+      return false if existing_callsite && !pending_callsite_subsumed_by_replay?(existing_callsite, replay.callsite)
       return false unless force_lower_replay_callsite_current?(name, replay)
       source = replay.exact_source_binding ||
                ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name)
