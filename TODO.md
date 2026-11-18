@@ -27763,6 +27763,11 @@ inside the server remain separate performance frontiers. Rollback the isolated
 incremental-sync commit. Refresh on coordinate, line-offset or didChange
 changes. No stdlib edits.
 
+## Nominal enum operands at ordinary calls
+
+- [x] Emit the selected enum type on a physical call operand when its integer carrier has an exact, matching source enum witness. This keeps replay independent of the previous body's value map. The HIR regression covers positional and defaulted named calls. The native regression checks both valid calls and rejection of a plain integer and a second enum with the same value.
+- [ ] Re-run the two-profile bootstrap after queue and operand changes are integrated. On the isolated operand change the bundled compiler still stopped in the parser and the installed compiler still stopped at the DWARF tuple return.
+
 ## Cross-compiler LLVM function census
 
 - Use the streaming comparison and reachability tools in `docs/llvm_function_census.md` to localize emitted function-count differences after fresh bootstrap output becomes available. The July measurements belong to their source revisions.

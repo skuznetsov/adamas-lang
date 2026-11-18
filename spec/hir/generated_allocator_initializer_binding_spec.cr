@@ -403,3 +403,20 @@ describe "enum initializer physical argument identity" do
     end
   end
 end
+
+describe "enum operands in ordinary method calls" do
+  it "keeps the nominal type on the physical value for positional and defaulted named calls" do
+    source = File.read(File.join(__DIR__, "../../regression_tests/enum_call_operand.cr"))
+    converter = lower_generated_allocator_initializer_fixture(source)
+    caller = converter.module.functions.find { |function| function.name == "Parser#probe" }.not_nil!
+    instructions = caller.blocks.flat_map(&.instructions)
+    calls = instructions.compact_map(&.as?(Adamas::HIR::Call)).select(&.method_name.starts_with?("Parser#"))
+    calls.map(&.method_name).sort.should eq(["Parser#accept$Bool_Visibility", "Parser#emit$Bool_Visibility"])
+    calls.each do |call|
+      target = converter.module.function_by_name(call.method_name).not_nil!
+      mode = instructions.find { |instruction| instruction.id == call.args[1] }.not_nil!
+      converter.module.get_type_descriptor(target.params[2].type).not_nil!.name.should eq("Visibility")
+      mode.type.should eq(target.params[2].type)
+    end
+  end
+end
