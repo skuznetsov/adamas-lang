@@ -76,6 +76,19 @@ describe Adamas::Compiler::LSP::Server do
       active_param.should eq(1)
     end
 
+    it "returns the opening paren in LSP UTF-16 units" do
+      server = Adamas::Compiler::LSP::Server.new
+      text = "😀; compute(10)"
+
+      result = server.find_call_context(text, 0, 14)
+      result.should_not be_nil
+
+      paren_pos, method_name, active_param = result.not_nil!
+      paren_pos.should eq(11)
+      method_name.should eq("compute")
+      active_param.should eq(0)
+    end
+
     it "returns nil when no opening paren found" do
       server = Adamas::Compiler::LSP::Server.new
       text = "result = 10 + 20"

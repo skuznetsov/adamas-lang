@@ -27732,3 +27732,19 @@ One fix per commit, each with an oracle-qualified regression
   HIR examples pass. Both spellings print CD and both reject returning
   Ticket.class. Both uncached S2 builds repeat the parser and DWARF
   diagnostics above.
+
+2026-09-20 LSP INCREMENTAL DOCUMENT SYNC (LOCAL VERIFIED; ANALYSIS LATENCY OPEN).
+Adamas already consumed ranged `didChange` notifications but advertised full
+sync, forcing Adamantine to materialize and JSON-serialize a 5.5 MiB document
+on every ordinary edit. The server now advertises incremental sync only after
+incoming positions were corrected from Unicode-scalar counting to LSP UTF-16
+units, with CRLF-safe clamping and sequential-change snapshots. The common
+single-change path reuses the document line-offset table. DoD: the focused
+red produced three capability/emoji/CRLF/ordering failures; the regression
+script passes 12 examples, the full LSP pack passes 271, the focused
+signature-help pack passes 16, Adamantine's consumer bridge passes 55, and the
+LSP binary builds. This removes full-document wire
+transport from ordinary edits; full-string splice, parse and semantic analysis
+inside the server remain separate performance frontiers. Rollback the isolated
+incremental-sync commit. Refresh on coordinate, line-offset or didChange
+changes. No stdlib edits.
