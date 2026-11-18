@@ -17068,11 +17068,21 @@ module Adamas::HIR
       ivars : Array(IVarInfo)? = nil,
       offset_ref : Pointer(Int32)? = nil,
       pending_ivar_annotations : Array(Adamas::Compiler::Semantic::AnnotationInfo)? = nil,
+      specialize_declared_ivar_type_params : Bool = false,
     ) : Nil
       return if expr_id.invalid?
       pending = pending_ivar_annotations || [] of Adamas::Compiler::Semantic::AnnotationInfo
       with_source_declaration_origin(@arena[expr_id], @arena) do
-        register_class_members_from_expansion_in_source_order(class_name, expr_id, defined_class_method_full_names, visited_extends, ivars, offset_ref, pending)
+        register_class_members_from_expansion_in_source_order(
+          class_name,
+          expr_id,
+          defined_class_method_full_names,
+          visited_extends,
+          ivars,
+          offset_ref,
+          pending,
+          specialize_declared_ivar_type_params,
+        )
       end
     end
 
@@ -17084,6 +17094,7 @@ module Adamas::HIR
       ivars : Array(IVarInfo)? = nil,
       offset_ref : Pointer(Int32)? = nil,
       pending_ivar_annotations : Array(Adamas::Compiler::Semantic::AnnotationInfo)? = nil,
+      specialize_declared_ivar_type_params : Bool = false,
     ) : Nil
       return if expr_id.invalid?
       pending = pending_ivar_annotations || [] of Adamas::Compiler::Semantic::AnnotationInfo
@@ -17294,7 +17305,12 @@ module Adamas::HIR
           ivar_name = (safe_slice_to_string(member.name) || "")
           ivar_type_text = (safe_slice_to_string(member.type) || "")
           ivar_type = annotation_type_ref(ivar_type_text, class_name)
-          mark_declared_ivar_type(class_name, ivar_name, ivar_type_text) if ivar_type != TypeRef::VOID
+          recorded_type_text = if specialize_declared_ivar_type_params
+                                 substitute_type_params_in_type_name(ivar_type_text)
+                               else
+                                 ivar_type_text
+                               end
+          mark_declared_ivar_type(class_name, ivar_name, recorded_type_text) if ivar_type != TypeRef::VOID
 
           decl_default_expr_id : Adamas::Compiler::Frontend::ExprId? = nil
           decl_default_arena : Adamas::Compiler::Frontend::ArenaLike? = nil
@@ -17330,7 +17346,12 @@ module Adamas::HIR
           ivar_name = raw_name.starts_with?('@') ? raw_name : "@#{raw_name}"
           declared_type_text = (safe_slice_to_string(member.declared_type) || "")
           ivar_type = annotation_type_ref(declared_type_text, class_name)
-          mark_declared_ivar_type(class_name, ivar_name, declared_type_text) if ivar_type != TypeRef::VOID
+          recorded_type_text = if specialize_declared_ivar_type_params
+                                 substitute_type_params_in_type_name(declared_type_text)
+                               else
+                                 declared_type_text
+                               end
+          mark_declared_ivar_type(class_name, ivar_name, recorded_type_text) if ivar_type != TypeRef::VOID
           if debug_env_filter_match?(
                "DEBUG_EXPANSION_DECL",
                class_name,
@@ -29131,6 +29152,14 @@ module Adamas::HIR
                         offset += field_storage_size(inferred)
                       end
                     end
+                  when Adamas::Compiler::Frontend::MacroIfNode
+                    register_included_module_macro_if_ivars(
+                      member,
+                      class_name,
+                      module_full_name,
+                      ivars,
+                      pointerof(offset),
+                    )
                   when Adamas::Compiler::Frontend::BeginNode, Adamas::Compiler::Frontend::BlockNode, Adamas::Compiler::Frontend::ModuleNode
                     next if @lazy_module_methods
                     register_included_module_macro_for_container_in_class(
@@ -29420,6 +29449,187 @@ module Adamas::HIR
         i += 1
       end
       offset
+    end
+
+    # A conditional in a module body may declare storage that belongs to each
+    # including class. Register only those storage declarations here: running
+    # the class-body macro expander on the entire branch would re-own module
+    # methods, constants, and nested types under the including class.
+    private def register_included_module_macro_if_ivars(
+      node : Adamas::Compiler::Frontend::MacroIfNode,
+      class_name : String,
+      module_name : String,
+      ivars : Array(IVarInfo),
+      offset_ref : Pointer(Int32),
+    ) : Nil
+      pending_annotations = [] of Adamas::Compiler::Semantic::AnnotationInfo
+      register_included_module_macro_if_ivar_branches(
+        node,
+        class_name,
+        module_name,
+        ivars,
+        offset_ref,
+        pending_annotations,
+      )
+    end
+
+    private def register_included_module_macro_if_ivar_branches(
+      node : Adamas::Compiler::Frontend::MacroIfNode,
+      class_name : String,
+      module_name : String,
+      ivars : Array(IVarInfo),
+      offset_ref : Pointer(Int32),
+      pending_annotations : Array(Adamas::Compiler::Semantic::AnnotationInfo),
+    ) : Nil
+      return unless included_module_macro_if_has_ivar_declaration?(node)
+
+      case try_evaluate_macro_condition(node.condition)
+      when true
+        register_included_module_macro_ivar_branch(
+          node.then_body, class_name, module_name, ivars, offset_ref, pending_annotations,
+        )
+      when false
+        if else_id = node.else_body
+          register_included_module_macro_ivar_branch(
+            else_id, class_name, module_name, ivars, offset_ref, pending_annotations,
+          )
+        end
+      else
+        # Guessing both branches corrupts the instance layout. A macro with no
+        # ivar declaration is outside this layout pass and needs no decision.
+        raise LoweringError.new("cannot establish exact module ivar branch", node)
+      end
+    end
+
+    private def included_module_macro_if_has_ivar_declaration?(
+      node : Adamas::Compiler::Frontend::MacroIfNode,
+    ) : Bool
+      return true if included_module_macro_ivar_branch_has_declaration?(node.then_body)
+      if else_id = node.else_body
+        return true if included_module_macro_ivar_branch_has_declaration?(else_id)
+      end
+      false
+    end
+
+    private def included_module_macro_ivar_branch_has_declaration?(expr_id : ExprId) : Bool
+      return false if expr_id.null_ptr? || expr_id.invalid?
+
+      member = unwrap_visibility_member(@arena[expr_id])
+      case member
+      when Adamas::Compiler::Frontend::MacroIfNode
+        included_module_macro_if_has_ivar_declaration?(member)
+      when Adamas::Compiler::Frontend::MacroLiteralNode
+        raw_text = macro_literal_raw_text(member)
+        return false unless raw_text
+        expanded = expand_flag_macro_text(raw_text) || raw_text
+        if parsed = parse_macro_literal_class_body(expanded)
+          parsed_arena, body_ids = parsed
+          with_arena(parsed_arena) do
+            body_ids.any? { |body_id| included_module_macro_ivar_branch_has_declaration?(body_id) }
+          end
+        else
+          # Preserve an undecidable branch as potentially storage-bearing if
+          # its raw source contains an ivar token, then fail closed at selection.
+          raw_text.includes?('@')
+        end
+      when Adamas::Compiler::Frontend::BeginNode, Adamas::Compiler::Frontend::BlockNode
+        member.body.any? { |body_id| included_module_macro_ivar_branch_has_declaration?(body_id) }
+      when Adamas::Compiler::Frontend::InstanceVarDeclNode
+        true
+      when Adamas::Compiler::Frontend::TypeDeclarationNode
+        included_module_macro_type_declaration_is_ivar?(member)
+      when Adamas::Compiler::Frontend::AssignNode
+        @arena[member.target].is_a?(Adamas::Compiler::Frontend::InstanceVarNode)
+      else
+        # Defs, constants, and nested type declarations remain owned by their
+        # source module and cannot affect the including instance layout.
+        false
+      end
+    end
+
+    private def register_included_module_macro_ivar_branch(
+      expr_id : ExprId,
+      class_name : String,
+      module_name : String,
+      ivars : Array(IVarInfo),
+      offset_ref : Pointer(Int32),
+      pending_annotations : Array(Adamas::Compiler::Semantic::AnnotationInfo),
+    ) : Nil
+      return if expr_id.null_ptr? || expr_id.invalid?
+
+      member = unwrap_visibility_member(@arena[expr_id])
+      case member
+      when Adamas::Compiler::Frontend::MacroIfNode
+        register_included_module_macro_if_ivar_branches(
+          member, class_name, module_name, ivars, offset_ref, pending_annotations,
+        )
+      when Adamas::Compiler::Frontend::MacroLiteralNode
+        if raw_text = macro_literal_raw_text(member)
+          expanded = expand_flag_macro_text(raw_text) || raw_text
+          if parsed = parse_macro_literal_class_body(expanded)
+            parsed_arena, body_ids = parsed
+            with_arena(parsed_arena) do
+              body_ids.each do |body_id|
+                register_included_module_macro_ivar_branch(
+                  body_id, class_name, module_name, ivars, offset_ref, pending_annotations,
+                )
+              end
+            end
+          elsif raw_text.includes?('@')
+            raise LoweringError.new("cannot parse included module ivar macro branch", member)
+          end
+        end
+      when Adamas::Compiler::Frontend::BeginNode, Adamas::Compiler::Frontend::BlockNode
+        member.body.each do |body_id|
+          register_included_module_macro_ivar_branch(
+            body_id, class_name, module_name, ivars, offset_ref, pending_annotations,
+          )
+        end
+      when Adamas::Compiler::Frontend::AnnotationNode
+        if annotation_info = annotation_info_from_source(member, expr_id, @arena)
+          pending_annotations << annotation_info unless pending_annotations.includes?(annotation_info)
+        end
+      when Adamas::Compiler::Frontend::InstanceVarDeclNode
+        record_ivar_annotation_member(module_name, member, expr_id, @arena, pending_annotations)
+        register_included_module_ivar_expansion(class_name, expr_id, ivars, offset_ref)
+      when Adamas::Compiler::Frontend::TypeDeclarationNode
+        if included_module_macro_type_declaration_is_ivar?(member)
+          register_included_module_ivar_expansion(class_name, expr_id, ivars, offset_ref)
+        end
+        pending_annotations.clear
+      when Adamas::Compiler::Frontend::AssignNode
+        target = @arena[member.target]
+        if target.is_a?(Adamas::Compiler::Frontend::InstanceVarNode)
+          register_included_module_ivar_expansion(class_name, expr_id, ivars, offset_ref)
+        end
+        pending_annotations.clear
+      else
+        pending_annotations.clear
+      end
+    end
+
+    private def included_module_macro_type_declaration_is_ivar?(
+      node : Adamas::Compiler::Frontend::TypeDeclarationNode,
+    ) : Bool
+      name = safe_slice_to_string(node.name) || ""
+      valid_instance_ivar_name?(name)
+    end
+
+    private def register_included_module_ivar_expansion(
+      class_name : String,
+      expr_id : ExprId,
+      ivars : Array(IVarInfo),
+      offset_ref : Pointer(Int32),
+    ) : Nil
+      register_class_members_from_expansion(
+        class_name,
+        expr_id,
+        Set(String).new,
+        Set(String).new,
+        ivars,
+        offset_ref,
+        specialize_declared_ivar_type_params: true,
+      )
     end
 
     private def register_included_module_macro_for_container_in_class(

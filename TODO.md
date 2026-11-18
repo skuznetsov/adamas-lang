@@ -27511,3 +27511,12 @@ One fix per commit, each with an oracle-qualified regression
   examples. A full-source diagnostic run now rebuilds the real macro scanner
   consumer with its exact source and no outstanding dependency. The two full
   stage builds still stop in HIR on the parser and backtrace paths.
+- [x] Publish fields declared by the selected conditional macro branch of an
+  included module to each including class. Preserve the declaration arena,
+  default and substituted field type. Five HIR examples cover reopenings,
+  generic owners and adjacent non-field declarations. With both Darwin's
+  default flags and an explicit alternate flag, stock Crystal and the fixed
+  S1 return 42 and reject the inactive field. The previous S1 dropped the
+  selected fields in both cases. Installed-prelude hello now passes
+  Thread#system_close and reaches ThreadPool#main_thread_loop. Both full
+  self-builds still stop on the parser and backtrace dependencies above.
