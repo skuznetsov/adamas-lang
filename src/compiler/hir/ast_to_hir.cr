@@ -147580,6 +147580,16 @@ module Adamas::HIR
         end
       end
 
+      # A literal typed as Array(T) carries its element type and may take a
+      # Range index; the typed-array path below owns both. Only an untyped
+      # pointer-array receiver keeps the Int32 default here: forcing Int32 on a
+      # typed literal read union, String, and Float elements with the wrong
+      # width (`[7, "arg"][i]` printed the type id).
+      if is_array_literal
+        literal_desc = @module.get_type_descriptor(ctx.type_of(object_id))
+        is_array_literal = false if literal_desc && literal_desc.kind == TypeKind::Array
+      end
+
       # Array indexing: use IndexGet for element access
       if is_array_literal && index_ids.size == 1
         element_type = TypeRef::INT32 # Default element type
