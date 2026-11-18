@@ -27486,3 +27486,13 @@ One fix per commit, each with an oracle-qualified regression
   both keys from a controlled environment. Seven MIR examples cover both
   heap callback arms and reject raw addresses and distinct same-size tuples.
   Both full self-builds still stop at the parser and backtrace dependencies.
+- [x] Pass a known `typeof` expression to an ordinary call as a type object.
+  The previous S1 routed it through String overloads and accepted a
+  String-only call. Stock Crystal and the corrected S1 print `TTVSTT`
+  for direct, relayed, and non-evaluated operands and reject the String-only
+  call. Both full self-builds still stop at the parser and backtrace
+  dependencies above.
+- [ ] Check unknown operands and infix dispatch separately. The installed
+  Crystal rejects `typeof(missing_operand_for_type)`; the current S1
+  accepts it as an argument to a String-only method. The infix form
+  `io << typeof(value)` also lacks the ordinary call's value-kind path.

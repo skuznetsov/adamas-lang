@@ -97947,13 +97947,12 @@ module Adamas::HIR
       class_has_subclasses?(info.name)
     end
 
-    # `.class` of a non-virtual concrete class/struct receiver: the type
-    # literal already is the exact runtime class, so it can travel as a type
-    # value. Virtual, union and module receivers need the runtime type_id and
-    # still materialize the dynamic class name.
-    private def static_runtime_class_type_value?(ctx : LoweringContext, value_id : ValueId) : Bool
+    # A known typeof is a type object even if its operand has a union type.
+    # For .class the same is true only when the runtime class is fixed.
+    private def static_call_type_value?(ctx : LoweringContext, value_id : ValueId) : Bool
       identity = ctx.runtime_type_identity?(value_id)
       return false unless identity
+      return ctx.type_literal?(value_id) if identity.origin.typeof?
       return false unless identity.origin.runtime_class?
       return false if ctx.dot_class_source?(value_id)
       semantic = identity.semantic_type
@@ -125127,14 +125126,10 @@ module Adamas::HIR
           end
         end
       end
-      # Convert type-visible value args to String (compile-time class name).
-      # RuntimeTypeIdentity is the authoritative source; dot_class_literal? is
-      # retained only as a legacy compatibility shim. Receivers
-      # (e.g., `self.class.new`) are unaffected. A statically known `.class`
-      # stays a type value: `p(C.new.class)` must bind `object : C.class`
-      # and dispatch Class#inspect, not String#inspect.
+      # Overload selection consumes the type object and its source kind.
+      # Only the legacy dynamic-class representation needs a name here.
       args.each_with_index do |arg_id, i|
-        next if static_runtime_class_type_value?(ctx, arg_id)
+        next if static_call_type_value?(ctx, arg_id)
         if type_string_id = materialize_runtime_type_identity_string(ctx, arg_id)
           args[i] = type_string_id
           arg_types[i] = TypeRef::STRING

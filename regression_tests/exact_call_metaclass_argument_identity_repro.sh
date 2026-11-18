@@ -69,6 +69,47 @@ LibC.putchar(parser.forward("2", 2))
 consume(parser.forward_marker(Int32))
 consume(parser.forward_marker(1))
 consume(parser.forward_marker(Int32))
+
+class Token
+end
+
+def observed : Token
+  LibC.putchar(88)
+  Token.new
+end
+
+def emit(value : Token.class)
+  LibC.putchar(84)
+end
+
+def emit(value : Token)
+  LibC.putchar(86)
+end
+
+def emit(value : String)
+  LibC.putchar(83)
+end
+
+def relay(value)
+  emit(value)
+end
+
+emit(Token)
+emit(typeof(observed))
+emit(Token.new)
+emit("Token")
+item = typeof(observed)
+emit(item)
+relay(typeof(observed))
+CR
+
+cat > rejected.cr <<'CR'
+class Token
+end
+def only_string(value : String)
+  1
+end
+only_string(typeof(Token.new))
 CR
 
 build_original() {
@@ -85,7 +126,16 @@ build_original calls > calls.original.log 2>&1 || { cat calls.original.log >&2; 
 build_candidate calls > calls.candidate.log 2>&1 || { cat calls.candidate.log >&2; exit 1; }
 "$safe" "$work/calls.original" 5 512 > calls.original.out
 "$safe" "$work/calls.candidate" 5 512 > calls.candidate.out
-printf ABABABCDC | diff -u - calls.original.out
+printf ABABABCDCTTVSTT | diff -u - calls.original.out
 diff -u calls.original.out calls.candidate.out
+
+for compiler in original candidate; do
+  status=0
+  "build_$compiler" rejected >"rejected.$compiler.log" 2>&1 || status=$?
+  if [[ $status != 1 ]] || ! grep -Eiq '(expected argument|no overload matches).*only_string' "rejected.$compiler.log"; then
+    cat "rejected.$compiler.log" >&2
+    exit 1
+  fi
+done
 
 printf 'PASS exact call identity retains instance and metaclass argument kinds\n'
