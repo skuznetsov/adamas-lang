@@ -27414,3 +27414,8 @@ One fix per commit, each with an oracle-qualified regression
   inside its three-argument overload. Installed 1.22.3 reaches
   `String#unsafe_byte_slice(Int32)`: its body owns `Slice(UInt8)` but its
   emitted result advertises the bare `Slice` restriction.
+- [x] Publish a generated class-variable initializer after its whole body has
+  lowered. Suspension restores the caller context and retires only the
+  initializer's own partial function. The retry, recursive entry and foreign
+  same-name symbol cases pass. The installed prelude smoke now reaches
+  Thread initialization; both compiler self-builds still stop earlier.

@@ -9145,8 +9145,11 @@ module Adamas::HIR
 
     # Lazy classvar init: maps "Owner::cvar_name" → {expr_id, arena, owner_class}
     @classvar_lazy_init_info = {} of String => DeferredClassvarInit
-    # Set of init function names already created (avoid duplicates)
-    @classvar_init_functions_created = Set(String).new
+    # Exact handles establish ownership of fully materialized generated symbols.
+    @classvar_init_function_handles = {} of String => Function
+    # Separate cycle guard for a classvar initializer currently being built.
+    # A suspended build can be discarded and retried without losing this guard.
+    @classvar_init_functions_in_progress = Set(String).new
     # Whether lazy classvar init is active (disabled by ADAMAS_EAGER_CLASSVAR_INIT=1)
     @lazy_classvar_init_active : Bool = !ENV.has_key?("ADAMAS_EAGER_CLASSVAR_INIT")
 
@@ -99727,8 +99730,37 @@ module Adamas::HIR
     # Create a lazy init function for a classvar. Called on first ClassVarGet.
     # The function checks a boolean flag global and only initializes on first call.
     private def ensure_classvar_init_function(key : String, func_name : String, caller_ctx : LoweringContext)
-      return if @classvar_init_functions_created.includes?(func_name)
-      @classvar_init_functions_created << func_name
+      # A recursive read from this initializer emits a call to the same
+      # once-guarded function. The HIR flag is set before evaluating the source
+      # expression, so the runtime call is safe; this guard only prevents the
+      # compiler from recursively rebuilding the same body.
+      return if @classvar_init_functions_in_progress.includes?(func_name)
+
+      existing_function = @module.function_by_name(func_name)
+      owned_function = @classvar_init_function_handles[func_name]?
+      if existing_function
+        if owned_function && existing_function.same?(owned_function)
+          if function_state(func_name).completed? &&
+             @module.has_function_with_body?(func_name)
+            return
+          end
+
+          # The exact handle is ours, but it no longer has a complete receipt.
+          # Remove only this owned partial/stale body before retrying.
+          @module.remove_function(func_name)
+          @classvar_init_function_handles.delete(func_name)
+          clear_function_state(func_name)
+          existing_function = nil
+        else
+          # A completed state, name-only cache entry, or coincidentally equal
+          # synthetic name cannot prove that this symbol belongs to us.
+          raise LoweringError.new("cannot rebuild unowned classvar initializer body: #{func_name}")
+        end
+      else
+        # Discard stale metadata only when no module symbol can be harmed.
+        @classvar_init_function_handles.delete(func_name)
+        clear_function_state(func_name)
+      end
 
       info = @classvar_lazy_init_info[key]
       init_expr_id = info.expr_id
@@ -99739,73 +99771,110 @@ module Adamas::HIR
       saved_arena = @arena
       saved_class = @current_class
       saved_method = @current_method
+      saved_method_is_class = @current_method_is_class
       saved_namespace = @current_namespace_override
 
-      # Create init function: void func_name()
-      func = @module.create_function(func_name, TypeRef::VOID)
-      init_ctx = LoweringContext.new(func, @module, init_arena)
+      previous_function_state = @function_lowering_states[func_name]?
+      function = nil.as(Function?)
+      completed = false
+      @classvar_init_functions_in_progress << func_name
+      begin
+        # Create init function: void func_name(). This generated symbol is
+        # removed if source lowering suspends or fails before completion.
+        func = @module.create_function(func_name, TypeRef::VOID)
+        function = func
+        init_ctx = LoweringContext.new(func, @module, init_arena)
 
-      @arena = init_arena
-      @current_class = owner_class
-      @current_method = nil
+        @arena = init_arena
+        @current_class = owner_class
+        @current_method = nil
+        # Match eager deferred-initializer lowering: select the declaration's
+        # owner while retaining the caller's method-kind and namespace context.
 
-      # Flag check: load boolean flag global
-      flag_name = "#{func_name}$flag"
-      flag_get = ClassVarGet.new(init_ctx.next_id, TypeRef::BOOL, "__init_flags", flag_name)
-      init_ctx.emit(flag_get)
-      init_ctx.register_type(flag_get.id, TypeRef::BOOL)
+        # Flag check: load boolean flag global
+        flag_name = "#{func_name}$flag"
+        flag_get = ClassVarGet.new(init_ctx.next_id, TypeRef::BOOL, "__init_flags", flag_name)
+        init_ctx.emit(flag_get)
+        init_ctx.register_type(flag_get.id, TypeRef::BOOL)
 
-      do_init_block = init_ctx.create_block
-      done_block = init_ctx.create_block
-      init_ctx.terminate(Branch.new(flag_get.id, done_block, do_init_block))
+        do_init_block = init_ctx.create_block
+        done_block = init_ctx.create_block
+        init_ctx.terminate(Branch.new(flag_get.id, done_block, do_init_block))
 
-      # do_init block: lower the init expression
-      init_ctx.switch_to_block(do_init_block)
+        # do_init block: lower the init expression
+        init_ctx.switch_to_block(do_init_block)
 
-      # Set flag to true BEFORE init (prevents infinite recursion on circular deps)
-      true_val = Literal.new(init_ctx.next_id, TypeRef::BOOL, 1_i64)
-      init_ctx.emit(true_val)
-      init_ctx.register_type(true_val.id, TypeRef::BOOL)
-      flag_set = ClassVarSet.new(init_ctx.next_id, TypeRef::BOOL, "__init_flags", flag_name, true_val.id)
-      init_ctx.emit(flag_set)
+        # Set flag to true BEFORE init (prevents infinite recursion on circular deps)
+        true_val = Literal.new(init_ctx.next_id, TypeRef::BOOL, 1_i64)
+        init_ctx.emit(true_val)
+        init_ctx.register_type(true_val.id, TypeRef::BOOL)
+        flag_set = ClassVarSet.new(init_ctx.next_id, TypeRef::BOOL, "__init_flags", flag_name, true_val.id)
+        init_ctx.emit(flag_set)
 
-      # Lower the init expression (same logic as eager deferred init processing)
-      node = @arena[init_expr_id]
-      case node
-      when Adamas::Compiler::Frontend::ClassVarDeclNode
-        if val_id = node.value
-          # Uninitialized aggregates still need backing storage: their HIR
-          # representation is a pointer, unlike Crystal's inline global value.
-          value_id = lower_expr(init_ctx, val_id)
-          value_type = init_ctx.type_of(value_id)
-          cvar_name = (safe_slice_to_string(node.name) || "").lstrip('@')
-          if get_class_var_type(cvar_name) == TypeRef::VOID
-            record_class_var_type(owner_class, cvar_name, value_type, nil, source_location_for_node(@arena, node))
+        # Lower through the exact source arena retained with this declaration.
+        node = init_arena[init_expr_id]
+        case node
+        when Adamas::Compiler::Frontend::ClassVarDeclNode
+          if val_id = node.value
+            # Uninitialized aggregates still need backing storage: their HIR
+            # representation is a pointer, unlike Crystal's inline global value.
+            value_id = lower_expr(init_ctx, val_id)
+            value_type = init_ctx.type_of(value_id)
+            cvar_name = (safe_slice_to_string(node.name) || "").lstrip('@')
+            if get_class_var_type(cvar_name) == TypeRef::VOID
+              record_class_var_type(owner_class, cvar_name, value_type, nil, source_location_for_node(init_arena, node))
+            end
+            set = ClassVarSet.new(init_ctx.next_id, value_type, owner_class, cvar_name, value_id)
+            init_ctx.emit(set)
           end
-          set = ClassVarSet.new(init_ctx.next_id, value_type, owner_class, cvar_name, value_id)
-          init_ctx.emit(set)
+        when Adamas::Compiler::Frontend::AssignNode
+          lower_expr(init_ctx, init_expr_id)
+        when Adamas::Compiler::Frontend::ConstantNode
+          lower_expr(init_ctx, init_expr_id)
         end
-      when Adamas::Compiler::Frontend::AssignNode
-        lower_expr(init_ctx, init_expr_id)
-      when Adamas::Compiler::Frontend::ConstantNode
-        lower_expr(init_ctx, init_expr_id)
+
+        init_ctx.terminate(Jump.new(done_block))
+
+        # done block: return void
+        init_ctx.switch_to_block(done_block)
+        init_ctx.terminate(Return.new(nil))
+
+        unless @module.has_function_with_body?(func_name)
+          raise LoweringError.new("classvar initializer emitted no body: #{func_name}")
+        end
+
+        # Publish ownership only after the full body exists.
+        @classvar_init_function_handles[func_name] = func
+        set_function_state(func_name, FunctionLoweringState::Completed)
+        completed = true
+      ensure
+        @arena = saved_arena
+        @current_class = saved_class
+        @current_method = saved_method
+        @current_method_is_class = saved_method_is_class
+        @current_namespace_override = saved_namespace
+
+        @classvar_init_functions_in_progress.delete(func_name)
+        unless completed
+          if created = function
+            if owned = @classvar_init_function_handles[func_name]?
+              @classvar_init_function_handles.delete(func_name) if owned.same?(created)
+            end
+          end
+          if created = function
+            if current = @module.function_by_name(func_name)
+              @module.remove_function(func_name) if current.same?(created)
+            end
+          end
+          if state = previous_function_state
+            set_function_state(func_name, state)
+          else
+            clear_function_state(func_name)
+          end
+        end
       end
 
-      init_ctx.terminate(Jump.new(done_block))
-
-      # done block: return void
-      init_ctx.switch_to_block(done_block)
-      init_ctx.terminate(Return.new(nil))
-
-      # Mark as completed so lower_function_if_needed won't try to lower it again.
-      # The function is already in @module via create_function.
-      set_function_state(func_name, FunctionLoweringState::Completed)
-
-      # Restore state
-      @arena = saved_arena
-      @current_class = saved_class
-      @current_method = saved_method
-      @current_namespace_override = saved_namespace
+      nil
     end
 
     # ═══════════════════════════════════════════════════════════════════════
