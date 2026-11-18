@@ -358,6 +358,19 @@ module Adamas::HIR
       max_ln
     end
 
+    # Error-path unwinding for a scope owner. An exception raised inside the
+    # owner may leave scopes of nested helpers above `scope`; close them so
+    # `scope` is on top again and the owner's own exit check passes without
+    # replacing the in-flight exception. Returns false when `scope` is no
+    # longer on the stack, leaving the stack untouched.
+    def unwind_scopes_above(scope : ScopeId) : Bool
+      return false unless @scope_stack.includes?(scope)
+      until @scope_stack.last == scope
+        pop_scope
+      end
+      true
+    end
+
     # Pop scope
     def pop_scope : ScopeId
       scope_id = @scope_stack.pop
@@ -105248,7 +105261,7 @@ module Adamas::HIR
     )
       yield
     rescue error
-      ctx.pop_scope if ctx.current_scope == owned_scope
+      ctx.pop_scope if ctx.unwind_scopes_above(owned_scope)
       if snapshot = inline_caller_locals_snapshot
         restore_inline_caller_locals(snapshot)
       end
@@ -106011,7 +106024,7 @@ module Adamas::HIR
         branch_locals = ctx.save_locals.locals
         branch_inline_locals = capture_inline_caller_locals
       rescue error
-        ctx.pop_scope if ctx.current_scope == owned_scope
+        ctx.pop_scope if ctx.unwind_scopes_above(owned_scope)
         raise error
       end
       unless ctx.current_scope == owned_scope
@@ -108097,6 +108110,9 @@ module Adamas::HIR
         # Backedge lookup reads the loop depth after the frame is removed
         # and the local snapshot before the lexical scope is restored.
         {snapshot_loop_updated_values(ctx, assigned_vars, inline_vars), break_info, break_values}
+      rescue error
+        ctx.unwind_scopes_above(loop_scope)
+        raise error
       ensure
         unless ctx.current_scope == loop_scope
           raise LoweringError.new("loop body lost its owned Loop scope", node)
@@ -109593,17 +109609,20 @@ module Adamas::HIR
     end
 
     # Both case arm forms own their lexical scope until body lowering exits.
-    # A failed body must unwind that scope before its enclosing inline block.
+    # A failed body must unwind that scope before its enclosing inline block,
+    # and the failure itself must propagate unchanged: an exact-result
+    # suspension raised from scopes nested inside the arm is resumed by its
+    # catcher, so it must not be replaced by a scope diagnostic.
     private def with_case_branch_scope(ctx : LoweringContext, node : Adamas::Compiler::Frontend::CaseNode, &)
       branch_scope = ctx.push_scope(ScopeKind::Block)
-      begin
+      result = with_owned_scope_error_cleanup(ctx, branch_scope) do
         yield
-      ensure
-        unless ctx.current_scope == branch_scope
-          raise LoweringError.new("case branch lost its owned Block scope", node)
-        end
-        ctx.pop_scope
       end
+      unless ctx.current_scope == branch_scope
+        raise LoweringError.new("case branch lost its owned Block scope", node)
+      end
+      ctx.pop_scope
+      result
     end
 
     private def lower_case(ctx : LoweringContext, node : Adamas::Compiler::Frontend::CaseNode) : ValueId
@@ -139775,6 +139794,9 @@ module Adamas::HIR
           @inline_loop_vars_stack.pop if has_inline_vars
         end
         {ctx.current_block, snapshot_block_scope_phi_values(ctx, assigned_vars, header_phi_nodes), break_info}
+      rescue error
+        ctx.unwind_scopes_above(body_scope)
+        raise error
       ensure
         unless ctx.current_scope == body_scope
           raise LoweringError.new("integer iterator body lost its owned Block scope", block)
@@ -140472,6 +140494,9 @@ module Adamas::HIR
         end
         body_exit_outer_vals = snapshot_block_scope_phi_values(ctx, assigned_vars, phi_nodes)
         body_exit_block = ctx.current_block
+      rescue error
+        ctx.unwind_scopes_above(body_scope)
+        raise error
       ensure
         unless ctx.current_scope == body_scope
           raise LoweringError.new("array each lost its owned Block scope", block)
@@ -144061,7 +144086,7 @@ module Adamas::HIR
         # A failed inline generation owns only this scope. Restore its locals
         # snapshot when it is still the innermost scope, then preserve the
         # original lowering error or pending-source suspension.
-        ctx.pop_scope if ctx.current_scope == block_scope
+        ctx.pop_scope if ctx.unwind_scopes_above(block_scope)
         raise error
       end
     end
@@ -144121,7 +144146,7 @@ module Adamas::HIR
         ctx.pop_scope_preserving_captured_locals(block_parameters)
         value_id
       rescue error
-        ctx.pop_scope if ctx.current_scope == proc_scope
+        ctx.pop_scope if ctx.unwind_scopes_above(proc_scope)
         raise error
       end
     end
@@ -144525,6 +144550,9 @@ module Adamas::HIR
         ctx.register_type(call.id, return_type)
         writeback_args = fallback_args
         call.id
+      rescue error
+        ctx.unwind_scopes_above(fallback_scope) if fallback_scope_pushed
+        raise error
       ensure
         @suppress_force_lower_return_type_depth -= 1
         if fallback_scope_pushed
@@ -145832,6 +145860,9 @@ module Adamas::HIR
               phi.id
             end
           end
+        rescue error
+          ctx.unwind_scopes_above(inline_scope) if inline_scope_pushed
+          raise error
         ensure
           @current_class = old_current_class
           @current_method = old_current_method
@@ -145906,6 +145937,9 @@ module Adamas::HIR
             ctx.restore_local_declaration_scopes(restored_caller_local_declaration_scopes)
           end
         end
+      rescue error
+        ctx.unwind_scopes_above(inline_scope) if inline_scope_pushed
+        raise error
       ensure
         if inline_scope_pushed
           unless ctx.current_scope == inline_scope
@@ -153254,6 +153288,9 @@ module Adamas::HIR
         @block_lowering_cache[cache_key] = body_block
         lowering_completed = true
         body_block
+      rescue error
+        ctx.unwind_scopes_above(closure_scope) if closure_scope_pushed
+        raise error
       ensure
         begin
           if closure_scope_pushed
@@ -153420,7 +153457,7 @@ module Adamas::HIR
         end
         {body_block, proc_id}
       ensure
-        ctx.pop_scope if ctx.current_scope == closure_scope
+        ctx.pop_scope if ctx.unwind_scopes_above(closure_scope)
         ctx.restore_local_declaration_scopes(saved_declaration_scopes)
         ctx.current_block = saved_block
         ctx.restore_locals(saved_locals)
