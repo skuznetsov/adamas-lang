@@ -5074,6 +5074,38 @@ module Adamas::MIR
       end
     end
 
+    SYMBOL_TO_S_SYMBOL = "Symbol$Hto_s"
+
+    # `Symbol#to_s` is a bodyless `@[Primitive(:symbol_to_s)]` declaration.
+    # HIR has no intrinsic for it and leaves the call in place, and HIR does
+    # not materialize bodyless primitive declarations, so the callee usually
+    # reaches emission as a missing function. Both the ordinary-function and
+    # the missing-body paths must emit this symbol-table lookup instead of an
+    # abort stub. Symbol values come only from interned literals, so an id
+    # outside the table cannot occur; it maps to the empty String.
+    private def emit_symbol_to_s_body : String
+      n = @module.symbol_names.size
+      String.build do |io|
+        io << "; Symbol#to_s — symbol table lookup\n"
+        io << "define ptr @" << SYMBOL_TO_S_SYMBOL << "(i32 %self) {\n"
+        io << "entry:\n"
+        if n == 0
+          io << "  ret ptr @.str.empty\n"
+        else
+          io << "  %in_range = icmp ult i32 %self, " << n << "\n"
+          io << "  br i1 %in_range, label %lookup, label %ret_empty\n"
+          io << "lookup:\n"
+          io << "  %idx = zext i32 %self to i64\n"
+          io << "  %ptr = getelementptr [" << n << " x ptr], ptr @.symbol_table, i64 0, i64 %idx\n"
+          io << "  %str = load ptr, ptr %ptr\n"
+          io << "  ret ptr %str\n"
+          io << "ret_empty:\n"
+          io << "  ret ptr @.str.empty\n"
+        end
+        io << "}\n\n"
+      end
+    end
+
     # Both ordinary functions and missing-body calls must use the same native
     # String constructor contract instead of a generic zeroed class allocator.
     private def emit_string_cstr_constructor_body(name : String) : String
@@ -5117,6 +5149,12 @@ module Adamas::MIR
       if name == "String$Dnew$$Pointer$LUInt8$R" && return_type == "ptr" &&
          arg_count == 1 && arg_types == ["ptr"]
         return emit_string_cstr_constructor_body(name)
+      end
+
+      # Symbol#to_s has no HIR body (see emit_symbol_to_s_body).
+      if name == SYMBOL_TO_S_SYMBOL && return_type == "ptr" &&
+         arg_count == 1 && arg_types == ["i32"]
+        return emit_symbol_to_s_body
       end
 
       # Root-qualified top-level methods can still reach the missing-body path as
@@ -12915,21 +12953,8 @@ module Adamas::MIR
       # ── Symbol#to_s primitive ──
       # Looks up the symbol integer value in the global symbol table.
       mangled = mangle_function_name(func.name)
-      if mangled == "Symbol$Hto_s" && !@module.symbol_names.empty?
-        n = @module.symbol_names.size
-        emit_raw "; Symbol#to_s — symbol table lookup\n"
-        emit_raw "define ptr @#{mangled}(i32 %self) {\n"
-        emit_raw "entry:\n"
-        emit_raw "  %in_range = icmp ult i32 %self, #{n}\n"
-        emit_raw "  br i1 %in_range, label %lookup, label %ret_empty\n"
-        emit_raw "lookup:\n"
-        emit_raw "  %idx = zext i32 %self to i64\n"
-        emit_raw "  %ptr = getelementptr [#{n} x ptr], ptr @.symbol_table, i64 0, i64 %idx\n"
-        emit_raw "  %str = load ptr, ptr %ptr\n"
-        emit_raw "  ret ptr %str\n"
-        emit_raw "ret_empty:\n"
-        emit_raw "  ret ptr @.str.empty\n"
-        emit_raw "}\n\n"
+      if mangled == SYMBOL_TO_S_SYMBOL
+        emit_raw emit_symbol_to_s_body
         @emitted_functions << mangled
         return true
       end
