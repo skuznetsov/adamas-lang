@@ -2,7 +2,7 @@
 
 > Status: Draft v0.1, 2026-05-08.
 > Companion to: `TODO.md`, `LANDMARKS.md`, and `regression_tests/`.
-> Scope: stage-to-stage semantic equivalence for the active `codegen` branch.
+> Scope: stage-to-stage semantic equivalence and promotion from `dev` to `main`.
 
 ## 1. Purpose
 
@@ -19,8 +19,17 @@ The contract is:
 2. Preserve normalized HIR/MIR/LLVM meaning across generated stages.
 3. Keep bootstrap progress falsifiable with small, reproducible guards.
 
-The near-term integration gate is `s1 -> s2b`. Longer chains are expensive and
-SHOULD run only after the near-term gate is clean.
+During bootstrap stabilization, commit each verified fix with its regression
+on its working branch and integrate it into `dev`. Keep unrelated WIP in its
+original worktree. After each compiler fix, attempt an uncached `stage1 -> s2b`
+build on both the bundled stdlib and the installed Crystal stdlib. Record the
+first diagnostic for each build that stops.
+
+Promote the tested `dev` revision to `main` once clean builds on both stdlibs
+reproducibly reach `s3b`, the generated compiler runs the ordinary prelude
+smoke program, and the `s3b` and `s4b` compiler LLVM IR converge under the
+normalization rules in section 3.4. Record the source revision, stdlib paths
+and stage comparison so the candidate can be reproduced.
 
 ## 2. Stage Definitions
 
