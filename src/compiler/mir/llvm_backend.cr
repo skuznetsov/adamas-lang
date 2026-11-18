@@ -5106,6 +5106,14 @@ module Adamas::MIR
       end
     end
 
+    # Converts a Symbol (an i32 symbol-table index) to its name String. The
+    # callee is backend-owned: registering it as called lets the missing-body
+    # pass emit emit_symbol_to_s_body when no MIR function carries it.
+    private def emit_symbol_to_s_call(dest : String, symbol_arg : String) : Nil
+      @called_crystal_functions[SYMBOL_TO_S_SYMBOL] ||= {"ptr", 1, ["i32"] of String}
+      emit "#{dest} = call ptr @#{SYMBOL_TO_S_SYMBOL}(i32 #{symbol_arg})"
+    end
+
     # Both ordinary functions and missing-body calls must use the same native
     # String constructor contract instead of a generic zeroed class allocator.
     private def emit_string_cstr_constructor_body(name : String) : String
@@ -27982,6 +27990,11 @@ module Adamas::MIR
           # Convert bool to string
           emit "%#{base_name}.conv#{idx} = call ptr @__adamas_bool_to_string(i1 #{part_ref})"
           string_parts << "%#{base_name}.conv#{idx}"
+        elsif part_type == TypeRef::SYMBOL
+          # A Symbol is an i32 symbol-table index; it prints its name.
+          sym_arg = interpolation_i32_arg(part_ref, part_id, base_name, idx, part_llvm_type_check, signed: false)
+          emit_symbol_to_s_call("%#{base_name}.conv#{idx}", sym_arg)
+          string_parts << "%#{base_name}.conv#{idx}"
         else
           # Check actual LLVM type - might be i32 (enum/symbol) that needs conversion
           part_llvm_type = part_type ? @type_mapper.llvm_type(part_type) : "ptr"
@@ -28203,6 +28216,11 @@ module Adamas::MIR
                   emit "#{prefix}.ext = fpext float #{prefix}.raw to double"
                   emit "#{prefix}.str = call ptr @__adamas_f64_to_string(double #{prefix}.ext)"
                   "#{prefix}.str"
+                when "Symbol"
+                  # The payload is the i32 symbol-table index, not a String.
+                  emit "#{prefix}.raw = load i32, ptr #{payload}, align 4"
+                  emit_symbol_to_s_call("#{prefix}.str", "#{prefix}.raw")
+                  "#{prefix}.str"
                 else
                   ptr_value
                 end
@@ -28225,6 +28243,7 @@ module Adamas::MIR
       when TypeRef::CHAR    then "Char"
       when TypeRef::FLOAT32 then "Float32"
       when TypeRef::FLOAT64 then "Float64"
+      when TypeRef::SYMBOL  then "Symbol"
       else                       ""
       end
     end
