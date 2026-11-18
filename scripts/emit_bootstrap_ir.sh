@@ -45,8 +45,28 @@ fi
 
 mkdir -p "$(dirname "$OUT_PREFIX")"
 
+# Concurrent stages must use different prefixes so a run cannot claim another
+# compiler's intermediate or published files.
+LOCK_DIR="$OUT_PREFIX.emit.lock"
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  echo "error: bootstrap IR output prefix is already in use: $OUT_PREFIX" >&2
+  exit 1
+fi
+cleanup() {
+  if (( $? != 0 )); then
+    rm -f -- "$OUT_PREFIX.hir" "$OUT_PREFIX.mir" "$OUT_PREFIX.ll"
+  fi
+  rmdir "$LOCK_DIR"
+}
+trap cleanup EXIT
+
+for kind in hir mir ll; do
+  rm -f -- "$OUT_PREFIX.$kind" "$OUT_PREFIX.$kind.out.$kind"
+done
+
 run_emit() {
   local kind="$1"
+  shift
   local stem="$OUT_PREFIX.$kind.out"
   local log="$OUT_PREFIX.$kind.log"
   local artifact="$stem.$kind"
@@ -92,16 +112,19 @@ run_emit() {
 
   "$ROOT_DIR/scripts/run_safe.sh" "$wrapper" "$TIMEOUT_SEC" "$MEM_MB" >"$log" 2>&1
 
-  if [[ ! -f "$artifact" ]]; then
+  if [[ ! -f "$artifact" || -L "$artifact" || ! -s "$artifact" ]]; then
     echo "error: expected $kind artifact missing: $artifact" >&2
     tail -n 80 "$log" >&2 || true
     exit 1
   fi
-  cp "$artifact" "$OUT_PREFIX.$kind"
 }
 
 run_emit hir "$@"
 run_emit mir "$@"
 run_emit ll "$@"
+
+for kind in hir mir ll; do
+  cp -- "$OUT_PREFIX.$kind.out.$kind" "$OUT_PREFIX.$kind"
+done
 
 echo "emit_bootstrap_ir_ok prefix=$OUT_PREFIX"
