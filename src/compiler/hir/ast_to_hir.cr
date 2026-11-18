@@ -15158,18 +15158,20 @@ module Adamas::HIR
       end
     end
 
-    # Union variant for a merge incoming value; an enum carrier value selects
-    # the enum variant chosen by merge_incoming_types.
+    # An enum carrier may share storage with an ordinary integer union arm.
+    # Prefer its proven nominal variant when the target has one; use the raw
+    # carrier only when the enum identity is not an admitted target variant.
     private def merge_union_variant_id(
       ctx : LoweringContext,
       union_type : TypeRef,
       value_id : ValueId,
       value_type : TypeRef,
     ) : Int32
-      variant_id = get_union_variant_id(union_type, value_type)
-      return variant_id if variant_id >= 0
-      return variant_id unless enum_carrier_receiver?(ctx, value_id, value_type)
-      get_union_variant_id(union_type, enum_tracked_type(ctx, value_id))
+      if enum_carrier_receiver?(ctx, value_id, value_type)
+        enum_variant_id = get_union_variant_id(union_type, enum_tracked_type(ctx, value_id))
+        return enum_variant_id if enum_variant_id >= 0
+      end
+      get_union_variant_id(union_type, value_type)
     end
 
     private def track_common_enum_merge(
@@ -106791,8 +106793,15 @@ module Adamas::HIR
         # String in one branch and left as the original union in others). We
         # need to unify the types and coerce incoming values, otherwise the
         # phi receives mismatched types and the LLVM backend rejects the IR.
+        # Enum values share their integer carrier, so merge_incoming_types
+        # intentionally keeps a same-carrier set raw. Case-local joins still
+        # need each value's nominal source type to distinguish a common enum
+        # from an enum mixed with an integer or another enum.
         branch_ids = branch_values.map { |entry| entry[1] }
-        var_types = merge_incoming_types(ctx, branch_ids, branch_ids.map { |v| ctx.type_of(v) }).uniq
+        var_types = branch_ids.map do |value_id|
+          value_type = ctx.type_of(value_id)
+          enum_carrier_receiver?(ctx, value_id, value_type) ? enum_tracked_type(ctx, value_id) : value_type
+        end.uniq
         non_void_types = var_types.reject { |t| t == TypeRef::VOID }
         var_types = non_void_types unless non_void_types.empty?
         var_type = if var_types.size == 1
@@ -106803,30 +106812,13 @@ module Adamas::HIR
         next if var_type == TypeRef::VOID
 
         coerced = branch_values.map do |(blk, val)|
-          val_type = ctx.type_of(val)
-          if val_type == var_type
-            {blk, val}
-          elsif is_union_type?(var_type)
-            variant_id = merge_union_variant_id(ctx, var_type, val, val_type)
-            if variant_id >= 0
-              wrap = UnionWrap.new(ctx.next_id, var_type, val, variant_id)
-              ctx.emit_to_block(blk, wrap)
-              {blk, wrap.id}
-            else
-              {blk, val}
-            end
-          elsif numeric_primitive?(val_type) && numeric_primitive?(var_type)
-            cast = Cast.new(ctx.next_id, var_type, val, var_type, safe: false)
-            ctx.emit_to_block(blk, cast)
-            {blk, cast.id}
-          else
-            {blk, val}
-          end
+          {blk, coerce_branch_local_for_phi(ctx, blk, val, var_type)}
         end
 
         merge_phi = Phi.new(ctx.next_id, var_type)
         coerced.each { |(blk, val)| merge_phi.add_incoming(blk, val) }
         ctx.emit(merge_phi)
+        track_common_enum_merge(ctx, merge_phi.id, coerced.map { |entry| entry[1] })
         ctx.register_local(var_name, merge_phi.id)
       end
     end

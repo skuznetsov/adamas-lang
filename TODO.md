@@ -27439,3 +27439,14 @@ One fix per commit, each with an oracle-qualified regression
   overloads. Both the parent and this change accept `Kind.new(true)` on an
   enum without a matching overload; stock Crystal rejects it. Cover source
   overrides, the identity overload, literal ranges, and `previous_def`.
+- [x] Preserve the nominal type of every case-local incoming value and tag
+  same-carrier enum and integer alternatives separately at the join. Crystal
+  and Adamas print `ABKOI` for the native constructor and mixed-arm control.
+  Both self-builds pass the formerly rejected `Lexer#scan_percent_literal`.
+- [ ] Resolve the unfinished dependencies of `Parser#parse_program` on the
+  bundled library and `CallStack#printable_backtrace` on the installed one.
+  Distinguish exact source selection, recursion and publication of a completed
+  body before admitting a result.
+- [ ] Track the independent bitwise enum assertion in
+  `enum_carrier_branch_merge_spec.cr` and the missing no-prelude `exit`
+  in the adjacent native script. Both reproduce at the parent revision.
