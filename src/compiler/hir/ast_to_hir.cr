@@ -12094,12 +12094,15 @@ module Adamas::HIR
       rest_key = fact.rest_values.try do |values|
         values.map { |value| source_call_argument_fact_key(value) }.map { |value| "#{value.bytesize}:#{value}" }.join
       end || "-"
+      tuple_key = fact.tuple_values.try do |values|
+        values.map { |value| source_call_argument_fact_key(value) }.map { |value| "#{value.bytesize}:#{value}" }.join
+      end || "-"
       value_key = fact.value_facts.try do |values|
         values.sort_by { |(type, literal)| {type.id, literal ? 1 : 0} }
           .map { |(type, literal)| "#{type.id}:#{literal ? 1 : 0}" }
           .join(",")
       end || "-"
-      "#{fact.type_ref.id}:#{fact.type_literal ? 1 : 0}:r#{rest_key.bytesize}:#{rest_key}:v#{value_key.bytesize}:#{value_key}"
+      "#{fact.type_ref.id}:#{fact.type_literal ? 1 : 0}:r#{rest_key.bytesize}:#{rest_key}:v#{value_key.bytesize}:#{value_key}:t#{tuple_key.bytesize}:#{tuple_key}"
     end
 
     private def source_argument_facts_shape_key(facts : Array(SourceCallArgument?)?) : String
@@ -12126,6 +12129,7 @@ module Adamas::HIR
         fact.type_literal,
         fact.rest_values.try { |values| values.map { |value| copy_source_call_argument_fact(value) } },
         fact.value_facts.try(&.dup),
+        fact.tuple_values.try { |values| values.map { |value| copy_source_call_argument_fact(value) } },
       )
     end
 
@@ -112110,6 +112114,14 @@ module Adamas::HIR
       else
         hash = (hash ^ 0x29_u64) &* 1099511628211_u64
       end
+      if tuple = value.tuple_values
+        hash = (hash ^ 0x2b_u64) &* 1099511628211_u64
+        tuple.each do |nested|
+          hash = source_call_argument_fingerprint(hash, nested)
+        end
+      else
+        hash = (hash ^ 0x2d_u64) &* 1099511628211_u64
+      end
       hash
     end
 
@@ -112135,6 +112147,32 @@ module Adamas::HIR
         left.enum_names == right.enum_names && left.has_block == right.has_block &&
         left.has_named_args == right.has_named_args && left.named_arg_names == right.named_arg_names &&
         left.selected_target == right.selected_target
+    end
+
+    # Source-aware lowering can enrich an earlier type-only discovery for the
+    # same callshape. Admit only the one-way case where replay facts are fully
+    # implied by the callsite type vector. Any source-specific kind, value,
+    # splat, or tuple evidence still requires exact callsite equality.
+    private def pending_callsite_compatible_with_replay?(pending : CallsiteArgs, replay : CallsiteArgs) : Bool
+      return true if pending == replay
+      return false unless same_callsite_args_shell?(pending, replay)
+      return false unless pending.source_argument_facts.nil?
+      # A matching ABI TypeRef alone cannot distinguish an instance from a
+      # type literal. The pending recipe must independently prove ordinary
+      # positional kinds before replay's plain facts can enrich it.
+      return false unless ordinary_active_body_callsite?(pending)
+      return false if replay.source_binding
+      facts = replay.source_argument_facts
+      return false unless facts && facts.size == replay.types.size
+
+      facts.each_with_index.all? do |fact, index|
+        if argument = fact
+          argument.type_ref == replay.types[index] && !argument.type_literal &&
+            argument.rest_values.nil? && argument.value_facts.nil? && argument.tuple_values.nil?
+        else
+          false
+        end
+      end
     end
 
     # Exact source bindings and unresolved replay facts have different owners.
@@ -112179,7 +112217,7 @@ module Adamas::HIR
           fact && fact.type_ref != callsite.types[index]
         end
         return false if facts.any? do |fact|
-          fact && (fact.type_literal || fact.rest_values || fact.value_facts)
+          fact && (fact.type_literal || fact.rest_values || fact.value_facts || fact.tuple_values)
         end
         kinds_known ||= facts.all? { |fact| !fact.nil? }
       end
@@ -114854,7 +114892,7 @@ module Adamas::HIR
       if replay = request.replay_callsite
         return false unless force_lower_replay_callsite_current?(name, replay)
         pending = @pending_arg_types[name]?
-        return false if pending && pending != replay.callsite
+        return false if pending && !pending_callsite_compatible_with_replay?(pending, replay.callsite)
       end
       return false unless remove_hir_function(name)
       discharged.each { |callee| @force_lower_discharged_edges.add({name, callee}) }
@@ -115168,7 +115206,7 @@ module Adamas::HIR
       requires_result : Bool = true,
     ) : Bool
       existing_callsite = @pending_arg_types[name]?
-      return false if existing_callsite && existing_callsite != replay.callsite
+      return false if existing_callsite && !pending_callsite_compatible_with_replay?(existing_callsite, replay.callsite)
       return false unless force_lower_replay_callsite_current?(name, replay)
       source = replay.exact_source_binding ||
                ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name)

@@ -143,6 +143,155 @@ class Adamas::HIR::AstToHir
     )
   end
 
+  def __test_pending_replay_callsite_compatible?(change : Symbol) : Bool
+    types = [TypeRef::INT32, TypeRef::BOOL]
+    facts = [
+      SourceCallArgument.new(TypeRef::INT32, false).as(SourceCallArgument?),
+      SourceCallArgument.new(TypeRef::BOOL, false).as(SourceCallArgument?),
+    ]
+    pending_facts = nil.as(Array(SourceCallArgument?)?)
+    pending_literals = [false, false].as(Array(Bool)?)
+    replay_facts = facts
+    replay_literals = [false, false]
+    pending_enum_names = nil.as(Array(String?)?)
+    replay_enum_names = nil.as(Array(String?)?)
+    replay_target = nil.as(String?)
+    pending_target = nil.as(String?)
+    pending_binding = nil.as(SourceCallBinding?)
+    replay_binding = nil.as(SourceCallBinding?)
+
+    case change
+    when :compatible_plain_facts
+    when :exact_facts
+      pending_facts = facts
+    when :literal_fact
+      replay_facts = [
+        SourceCallArgument.new(TypeRef::INT32, true).as(SourceCallArgument?),
+        facts[1],
+      ]
+    when :mismatched_type_fact
+      replay_facts = [
+        SourceCallArgument.new(TypeRef::BOOL, false).as(SourceCallArgument?),
+        facts[1],
+      ]
+    when :rest_fact
+      replay_facts = [
+        SourceCallArgument.new(TypeRef::INT32, false, [SourceCallArgument.new(TypeRef::INT32, false)]).as(SourceCallArgument?),
+        facts[1],
+      ]
+    when :value_fact
+      replay_facts = [
+        SourceCallArgument.new(TypeRef::INT32, false, value_facts: [{TypeRef::INT32, true}]).as(SourceCallArgument?),
+        facts[1],
+      ]
+    when :tuple_fact
+      replay_facts = [
+        SourceCallArgument.new(TypeRef::INT32, false,
+          tuple_values: [SourceCallArgument.new(TypeRef::BOOL, false)]).as(SourceCallArgument?),
+        facts[1],
+      ]
+    when :pending_source_fact_differs
+      pending_facts = [
+        SourceCallArgument.new(TypeRef::INT32, true).as(SourceCallArgument?),
+        facts[1],
+      ]
+    when :literal_shell
+      replay_literals = [true, false]
+    when :missing_kind_vector
+      pending_literals = nil
+      replay_literals = nil
+    when :pending_missing_kind_vector
+      pending_literals = nil
+    when :replay_missing_kind_vector
+      replay_literals = nil
+    when :short_kind_vector
+      pending_literals = [false]
+      replay_literals = [false]
+    when :pending_short_kind_vector
+      pending_literals = [false]
+    when :replay_short_kind_vector
+      replay_literals = [false]
+    when :partial_kind_vector
+      pending_literals = [false, true]
+      replay_literals = [false, true]
+    when :type_literal_kind_vector
+      pending_literals = [true, true]
+      replay_literals = [true, true]
+    when :selected_target
+      replay_target = "edge_leaf$Int32"
+    when :selected_target_same
+      pending_target = "edge_leaf$Int32"
+      replay_target = pending_target
+    when :enum_shape
+      pending_enum_names = ["Int32", nil]
+      replay_enum_names = pending_enum_names
+    when :source_binding
+      source = __test_exact_source("edge_leaf")
+      replay_binding = SourceCallBinding.new(
+        "edge_leaf", source.source_def, source.source_arena, facts,
+      )
+    when :source_binding_exact
+      source = __test_exact_source("edge_leaf")
+      pending_binding = SourceCallBinding.new(
+        "edge_leaf", source.source_def, source.source_arena, facts,
+      )
+      replay_binding = SourceCallBinding.new(
+        "edge_leaf", source.source_def, source.source_arena,
+        facts.map { |fact| fact ? copy_source_call_argument_fact(fact) : nil },
+      )
+      pending_facts = facts
+    when :source_binding_mismatch
+      source = __test_exact_source("edge_leaf")
+      foreign_def, _ = __test_foreign_source_pair("edge_leaf")
+      pending_facts = facts
+      pending_binding = SourceCallBinding.new(
+        "edge_leaf", source.source_def, source.source_arena, facts,
+      )
+      replay_binding = SourceCallBinding.new(
+        "edge_leaf", foreign_def, source.source_arena, facts,
+      )
+    else
+      raise "unknown pending/replay callsite change: #{change}"
+    end
+
+    pending = CallsiteArgs.new(
+      types, pending_literals, pending_enum_names, false, false, nil, pending_target, pending_facts, pending_binding,
+    )
+    replay = CallsiteArgs.new(
+      types, replay_literals, replay_enum_names, false, false, nil, replay_target, replay_facts, replay_binding,
+    )
+    pending_callsite_compatible_with_replay?(pending, replay)
+  end
+
+  def __test_source_argument_tuple_copy_preserved? : Bool
+    fact = SourceCallArgument.new(
+      TypeRef::INT32, false,
+      tuple_values: [SourceCallArgument.new(TypeRef::BOOL, true)],
+    )
+    copied = copy_source_call_argument_fact(fact)
+    copied.tuple_values == fact.tuple_values && copied.tuple_values.try(&.first.type_literal) == true
+  end
+
+  def __test_source_argument_fact_key_distinguishes_tuple? : Bool
+    plain = SourceCallArgument.new(TypeRef::INT32, false)
+    child = SourceCallArgument.new(TypeRef::BOOL, false)
+    metaclass_child = SourceCallArgument.new(TypeRef::BOOL, true)
+    tuple = SourceCallArgument.new(
+      TypeRef::INT32, false,
+      tuple_values: [child],
+    )
+    metaclass_tuple = SourceCallArgument.new(
+      TypeRef::INT32, false,
+      tuple_values: [metaclass_child],
+    )
+    source_call_argument_fact_key(plain) != source_call_argument_fact_key(tuple) &&
+      source_call_argument_fact_key(tuple) != source_call_argument_fact_key(metaclass_tuple) &&
+      source_call_argument_fingerprint(1469598103934665603_u64, tuple) !=
+        source_call_argument_fingerprint(1469598103934665603_u64, metaclass_tuple) &&
+      proc_source_type_name(tuple) == "Tuple(Bool)" &&
+      proc_source_type_name(metaclass_tuple) == "Tuple(Bool.class)"
+  end
+
   def __test_retry_request_pair_matches?(change : Symbol) : Bool
     consumer = "edge_c"
     producer = "edge_a"
@@ -474,6 +623,44 @@ describe "exact source retry graph admission" do
     converter.__test_same_callback_replay?(:same).should be_true
     converter.__test_same_callback_replay?(:abi).should be_false
     converter.__test_same_callback_replay?(:callback_source).should be_false
+  end
+
+  it "admits only a redundant positional-fact enrichment of the pending callsite" do
+    converter = force_lower_active_edge_graph_fixture
+    converter.__test_pending_replay_callsite_compatible?(:compatible_plain_facts).should be_true
+    converter.__test_pending_replay_callsite_compatible?(:exact_facts).should be_true
+
+    %i(
+      literal_fact
+      mismatched_type_fact
+      rest_fact
+      value_fact
+      tuple_fact
+      pending_source_fact_differs
+      literal_shell
+      missing_kind_vector
+      pending_missing_kind_vector
+      replay_missing_kind_vector
+      short_kind_vector
+      pending_short_kind_vector
+      replay_short_kind_vector
+      partial_kind_vector
+      type_literal_kind_vector
+      selected_target
+      selected_target_same
+      enum_shape
+      source_binding
+      source_binding_mismatch
+    ).each do |change|
+      converter.__test_pending_replay_callsite_compatible?(change).should be_false
+    end
+    converter.__test_pending_replay_callsite_compatible?(:source_binding_exact).should be_true
+  end
+
+  it "preserves tuple source facts through replay copies and fingerprints" do
+    converter = force_lower_active_edge_graph_fixture
+    converter.__test_source_argument_tuple_copy_preserved?.should be_true
+    converter.__test_source_argument_fact_key_distinguishes_tuple?.should be_true
   end
 
   it "admits the nested C to A to B chain while retaining both exact edges" do

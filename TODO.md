@@ -27406,7 +27406,11 @@ One fix per commit, each with an oracle-qualified regression
   common source declaration, arena and applied generic module supply its
   callback parameters. Distinct applications and direct overrides stay
   distinct. The installed self-build passes the Path separator callback.
-- [ ] The bundled self-build stops at a pending `Int32#tdiv(Int32)` in
-  `Crystal::System.to_int_slice_impl`. Installed 1.22.3 reaches
+- [x] A suspended call can acquire ordinary source argument facts on replay
+  when the previously recorded kinds, ABI slots and call shape prove each
+  fact. Tuple and metaclass facts remain distinct. The bundled self-build
+  passes `Int32#tdiv(Int32)`; all 21 queue and initializer checks pass.
+- [ ] The bundled self-build next suspends the nilary `Regex#match_data`
+  inside its three-argument overload. Installed 1.22.3 reaches
   `String#unsafe_byte_slice(Int32)`: its body owns `Slice(UInt8)` but its
   emitted result advertises the bare `Slice` restriction.
