@@ -27613,3 +27613,12 @@ One fix per commit, each with an oracle-qualified regression
   can anchor the whole cycle while checking full bodies, callee identity
   and actual emitted calls. Cover an all-bottom cycle and an incompatible
   returning branch before accepting any result based on a partial body.
+- [x] Expand an omitted positional suffix of a concrete initializer using
+  the selected declaration, its arena and the supplied argument slots.
+  The allocator takes the supplied prefix and calls the initializer with
+  its complete checked ABI. Both compilers produce the same output for
+  effectful defaults, overload-specific defaults and all four runtime
+  combinations of `Frontend::Parameter.new`. Both reject a missing
+  required slot, an invalid actual and an invalid default. Both uncached
+  self-builds now stop at a separate overload choice for
+  `Frontend::CallNode.new` with a runtime union.

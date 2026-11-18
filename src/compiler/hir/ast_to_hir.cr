@@ -48561,7 +48561,10 @@ module Adamas::HIR
           class_name, class_info, call_arg_types, call_has_named_args, call_has_block,
           call_named_arg_names, call_block_node, call_block_param_types,
           call_block_return_name, true, selected_init_target,
-          source_argument_facts: allocator_source_argument_facts,
+          # Keep the raw optional vector for the exact default-suffix branch so
+          # a malformed supplied vector is rejected there rather than silently
+          # erased by the general allocator normalization.
+          source_argument_facts: source_argument_facts,
         )
         return
       end
@@ -49576,7 +49579,13 @@ module Adamas::HIR
           end
         end
         init_match = if selected = selected_init_target
-                       resolved_init_arena = selected.source_arena || resolve_arena_for_def(selected.def_node, @arena)
+                       selected_source = force_lower_exact_source_binding(
+                         selected.symbol_name, selected.def_node, selected.def_node,
+                         selected.source_arena, selected.symbol_name,
+                       ) || raise LoweringError.new(
+                         "selected initializer lost its exact source binding: #{selected.symbol_name}",
+                       )
+                       resolved_init_arena = selected_source.source_arena
                        {selected.symbol_name, selected.def_node}
                      else
                        lookup_function_def_for_call(
@@ -49826,7 +49835,13 @@ module Adamas::HIR
       bound_initializer_body_name : String? = nil
       bound_initializer_param_types : Array(TypeRef)? = nil
       if selected = selected_init_target
-        source_arena = selected.source_arena || resolve_arena_for_def(selected.def_node, @arena)
+        selected_source = force_lower_exact_source_binding(
+          selected.symbol_name, selected.def_node, selected.def_node,
+          selected.source_arena, selected.symbol_name,
+        ) || raise LoweringError.new(
+          "selected initializer lost its exact source binding: #{selected.symbol_name}",
+        )
+        source_arena = selected_source.source_arena
         source_owner = function_context_from_name(selected.symbol_name) || class_name
         source_info = @class_info[source_owner]? || class_info
         source_base = strip_type_suffix(selected.symbol_name)
@@ -49860,10 +49875,29 @@ module Adamas::HIR
         # actual through an Int restriction's cached Int32 carrier.
         physical_data_types = physical_initializer.params.reject(&.is_block).skip(1).map(&.type)
         allocator_data_count = forwarded_initializer_block_index || allocator_params.size
-        unless physical_data_types.size == allocator_data_count
-          raise LoweringError.new("selected initializer ABI disagrees with allocator slots: #{body_name}")
+        allocator_slots_match = physical_data_types.size == allocator_data_count
+        unless allocator_slots_match
+          # A concrete source selection may still omit a trailing positional
+          # default. The wrapper receives only the supplied prefix; the exact
+          # selected source defaults are expanded below before calling this
+          # full physical initializer ABI. Do not infer optionality from a
+          # loose arity range: authenticate the source slots and every omitted
+          # default against this Def/Arena pair.
+          source_params = function_param_infos(selected.def_node, source_arena)
+          positional_suffix = positional_default_suffix(
+            source_params, allocator_data_count, call_has_named_args,
+            call_has_block || initializer_has_block,
+          )
+          omitted_slots_have_defaults = !forwarded_initializer_block_index &&
+                                        allocator_data_count == initializer_call_arg_types.size &&
+                                        physical_data_types.size == source_params.size &&
+                                        !positional_suffix.nil?
+          unless omitted_slots_have_defaults
+            raise LoweringError.new("selected initializer ABI disagrees with allocator slots: #{body_name}")
+          end
         end
         physical_data_types.each_with_index do |param_type, index|
+          break if index >= allocator_data_count
           allocator_params[index] = {allocator_params[index][0], param_type}
         end
         bound_initializer_param_types = physical_data_types
@@ -50175,7 +50209,16 @@ module Adamas::HIR
         # against the selected source entry (rather than its private physical
         # body name) so the expression and parameter binding retain source
         # identity.
-        default_source_name = if selected = selected_init_target
+        exact_default_source = if selected = selected_init_target
+                                if call_has_named_args || initializer_has_block || forwarded_initializer_block_index
+                                  nil
+                                elsif bound_initializer_param_types.try { |types| types.size > forwarded_init_param_ids.size }
+                                  selected
+                                end
+                              end
+        default_source_name = if exact = exact_default_source
+                                exact.symbol_name
+                              elsif selected = selected_init_target
                                 matched_init_name || selected.symbol_name
                               else
                                 init_name
@@ -50183,6 +50226,8 @@ module Adamas::HIR
         init_call_args = apply_default_args(
           ctx, forwarded_init_param_ids, init_base_name, default_source_name,
           initializer_has_block, call_has_named_args, alloc.id,
+          exact_source_entry: exact_default_source,
+          exact_source_argument_facts: exact_default_source ? source_argument_facts : nil,
         )[0]
         if terminal_default = init_call_args.find { |value| runtime_noreturn_value?(ctx, value) }
           initializer_return_type = ctx.type_of(terminal_default)
@@ -140537,6 +140582,42 @@ module Adamas::HIR
       source_block_result_pattern_matches_value?(actual.type_ref, actual.type_literal, pattern)
     end
 
+    # Return the source-ordered prefix and omitted positional suffix only when
+    # every formal is an ordinary positional parameter and every omitted slot
+    # owns a default expression.
+    private def positional_default_suffix(
+      params : Array(DefParamInfo),
+      supplied_count : Int32,
+      has_named_args : Bool,
+      has_block_call : Bool,
+    ) : Tuple(Array(DefParamInfo), Array(DefParamInfo))?
+      return if has_named_args || has_block_call
+      return if supplied_count < 0 || supplied_count >= params.size
+      return if params.any? do |param|
+        param.is_block || param.is_splat || param.is_double_splat || named_only_separator?(param)
+      end
+
+      omitted = params[supplied_count, params.size - supplied_count]
+      return unless omitted.all? { |param| !param.default_value.nil? }
+
+      {params[0, supplied_count], omitted}
+    end
+
+    private def source_argument_fact_matches_value?(provided : SourceCallArgument, actual : SourceCallArgument) : Bool
+      return false unless provided.type_ref == actual.type_ref && provided.type_literal == actual.type_literal
+      # These callsites are plain positional arguments. A carried rest/tuple
+      # expansion cannot be authenticated by the current ValueId and must not
+      # silently replace its source-level shape.
+      return false if provided.rest_values || provided.tuple_values
+      if provided.value_facts
+        actual_facts = actual.value_facts || [{actual.type_ref, actual.type_literal}]
+        provided_facts = provided.value_facts.not_nil!
+          .uniq.sort_by { |(type, literal)| {type.id, literal ? 1 : 0} }
+        return false unless provided_facts == actual_facts
+      end
+      true
+    end
+
     private def apply_default_args(
       ctx : LoweringContext,
       args : Array(ValueId),
@@ -140548,19 +140629,52 @@ module Adamas::HIR
       source_default_entry_out : Array(Tuple(String, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike))? = nil,
       source_binding_out : Array(SourceCallBinding)? = nil,
       source_callback_result : SourceCallArgument? = nil,
+      exact_source_entry : SelectedCallTarget? = nil,
+      exact_source_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : {Array(ValueId), Bool, String?}
       func_name = full_method_name || method_name
       default_receiver_type = receiver_id.try { |source_receiver| ctx.type_of(source_receiver) }
       source_arg_count = args.size
       arg_types = args.map { |arg_id| ctx.type_of(arg_id) }
-      source_argument_facts = call_resolution_source_argument_facts(ctx, args, arg_types, false, call_has_named_args)
+      source_argument_facts = if exact_source_entry
+                                exact_source_argument_facts
+                              else
+                                call_resolution_source_argument_facts(ctx, args, arg_types, false, call_has_named_args)
+                              end
       # Preserve the actual named-argument signal when choosing an overload for
       # default expansion. Optional named-only defaults remain callable without
       # named args via effective_arity_stats_for_call, but required named-only
-      # params must not be matched by a positional call.
-      func_entry = lookup_function_def_for_call(func_name, args.size, has_block_call, arg_types, false, call_has_named_args,
-        source_argument_facts: source_argument_facts)
+      # params must not be matched by a positional call. A selected allocator
+      # initializer already owns its exact source Def/Arena; do not rediscover
+      # that body through a name-level family or inherited fallback.
       func_entry_arena : Adamas::Compiler::Frontend::ArenaLike? = nil
+      func_entry : Tuple(String, Adamas::Compiler::Frontend::DefNode)? = nil
+      if exact = exact_source_entry
+        unless func_name == exact.symbol_name
+          raise LoweringError.new("selected initializer default source name changed: #{func_name}")
+        end
+        exact_source = force_lower_exact_source_binding(
+          exact.symbol_name, exact.def_node, exact.def_node,
+          exact.source_arena, exact.symbol_name,
+        ) || raise LoweringError.new(
+          "selected initializer default source lost its exact Def/Arena registration: #{exact.symbol_name}",
+        )
+        exact_arena = exact_source.source_arena
+        exact_params = function_param_infos(exact.def_node, exact_arena)
+        unless positional_default_suffix(exact_params, args.size, call_has_named_args, has_block_call)
+          raise LoweringError.new("selected initializer no longer has a positional default suffix: #{exact.symbol_name}")
+        end
+        if facts = exact_source_argument_facts
+          unless facts.size == args.size
+            raise LoweringError.new("selected initializer source argument fact arity changed: #{exact.symbol_name}")
+          end
+        end
+        func_entry = {exact.symbol_name, exact.def_node}
+        func_entry_arena = exact_arena
+      else
+        func_entry = lookup_function_def_for_call(func_name, args.size, has_block_call, arg_types, false, call_has_named_args,
+          source_argument_facts: source_argument_facts)
+      end
       # If not found directly, try parent classes (for inherited methods with defaults)
       unless func_entry
         parts = parse_method_name(func_name)
@@ -140638,7 +140752,14 @@ module Adamas::HIR
       func_entry_name = func_entry[0]
       func_def = func_entry[1]
       func_context, _, _ = selected_default_source_context(func_entry_name, func_name, default_receiver_type)
-      def_arena = registered_arena_for_def(func_def) || func_entry_arena || @function_def_arenas[func_entry[0]]? || @arena
+      def_arena = if exact_source_entry
+                    func_entry_arena || raise LoweringError.new(
+                      "selected initializer default source has no exact arena: #{func_entry_name}",
+                    )
+                  else
+                    registered_arena_for_def(func_def) || func_entry_arena ||
+                      @function_def_arenas[func_entry[0]]? || @arena
+                  end
       params = function_param_infos(func_def, def_arena)
       source_default_binding = nil.as(SourceCallBinding?)
       if bindings = source_binding_out
@@ -140650,7 +140771,23 @@ module Adamas::HIR
         end
       end
       unless source_default_binding || call_has_named_args
-        source_values = args.map { |value| source_call_argument(ctx, value, preserve_value_facts: true) }
+        source_values = if exact_source_entry
+                          args.map_with_index do |value, index|
+                            actual = source_call_argument(ctx, value, preserve_value_facts: true)
+                            if provided = exact_source_argument_facts.try(&.[index]?)
+                              unless source_argument_fact_matches_value?(provided, actual)
+                                raise LoweringError.new(
+                                  "selected initializer source argument facts disagree with slot #{index}: #{exact_source_entry.symbol_name}",
+                                )
+                              end
+                            end
+                            actual
+                          end
+                        else
+                          # Preserve the pre-existing default-binding behavior
+                          # for every non-exact-source caller.
+                          args.map { |value| source_call_argument(ctx, value, preserve_value_facts: true) }
+                        end
         source_default_binding = source_positional_call_binding(
           func_entry_name, func_def, def_arena, source_values,
         ).copy_with(block_result: source_callback_result)
