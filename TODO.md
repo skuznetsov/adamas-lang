@@ -27573,3 +27573,9 @@ One fix per commit, each with an oracle-qualified regression
   instances. The class-only probe calls the instance method before and after
   the labeled-body fix. Both compilers reject an instance-only module on a
   class object. Check mixed source order and the exact callsite witness.
+- [x] Parse blockless `loop` through ordinary identifier handling. A method
+  parameter or local with this name could disappear from the AST or become a
+  null receiver, including in the MIR profiler. Keep the existing immediate
+  block syntax. Native stock and candidate controls cover a field access,
+  assignment, free and receiver calls, both block forms, and an incompatible
+  String argument. The parser spec checks the actual identifier node.

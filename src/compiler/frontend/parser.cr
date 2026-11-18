@@ -10376,8 +10376,14 @@ module Adamas
             # Phase 99: for loop (iteration)
             parse_for
           when Token::Kind::Loop
-            # Phase 83: infinite loop
-            parse_loop
+            # Only the immediate block form has dedicated loop syntax. A local
+            # or a blockless method named loop follows ordinary identifier rules.
+            following = (macro_context? || @in_macro_expression) ? peek_next_non_trivia : peek_next_non_space_or_comment
+            if following.kind.in?(Token::Kind::Do, Token::Kind::LBrace)
+              parse_loop
+            else
+              parse_identifier_like(token.span, stable_identifier_token_slice(token))
+            end
           when Token::Kind::Spawn
             # Phase 84: spawn fiber
             parse_spawn

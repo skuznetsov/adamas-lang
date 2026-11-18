@@ -4,6 +4,17 @@ require "../../src/compiler/frontend/parser"
 
 describe "Adamas::Compiler::Frontend::Parser" do
   describe "Phase 83: Loop keyword (infinite loop)" do
+    it "preserves a blockless loop parameter as an identifier in a method body" do
+      source = "def identity(loop : Int32)\n  loop\nend"
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
+      program = parser.parse_program
+      parser.diagnostics.should be_empty
+      arena = program.arena
+      body = Adamas::Compiler::Frontend.node_def_body(arena[program.roots.first]).not_nil!
+      identifier = arena[body.first].as(Adamas::Compiler::Frontend::IdentifierNode)
+      String.new(identifier.name).should eq("loop")
+    end
+
     it "parses simple loop with single statement" do
       source = <<-CRYSTAL
       loop do
