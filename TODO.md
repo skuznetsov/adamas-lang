@@ -27503,3 +27503,11 @@ One fix per commit, each with an oracle-qualified regression
   and Crystal print false/true/true/false and reject a missing Int32 method
   inside a nested iterator with exit 1. Both full self-builds still stop
   at the parser and backtrace dependencies above.
+- [x] Give a nilary call one argument-kind identity during discovery and
+  replay. Source lowering can produce an empty literal vector while a retry
+  supplies none. Both forms now enter the same pending bucket. Incomplete
+  nonempty vectors and conflicting block, named, target, or source evidence
+  remain distinct. The focused HIR suite changes from 1 failure to 12 passing
+  examples. A full-source diagnostic run now rebuilds the real macro scanner
+  consumer with its exact source and no outstanding dependency. The two full
+  stage builds still stop in HIR on the parser and backtrace paths.

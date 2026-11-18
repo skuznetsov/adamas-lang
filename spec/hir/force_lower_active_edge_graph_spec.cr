@@ -143,6 +143,32 @@ class Adamas::HIR::AstToHir
     )
   end
 
+  def __test_nilary_callsite_kind_evidence : Nil
+    types = [] of TypeRef
+    absent = CallsiteArgs.new(types, nil, nil)
+    explicit = CallsiteArgs.new(types, [] of Bool, nil)
+    pending_callsite_compatible_with_replay?(absent, explicit).should be_true
+    pending_callsite_compatible_with_replay?(explicit, absent).should be_true
+    ordinary_active_body_callsite?(absent).should be_true
+
+    remember_callsite_arg_types("edge_leaf", types, [] of Bool)
+    remember_callsite_arg_types("edge_leaf", types, nil)
+    bucket = @pending_arg_types_by_arity[base_callsite_key("edge_leaf")][0]
+    bucket.size.should eq(1)
+
+    malformed = CallsiteArgs.new(types, [false], nil)
+    pending_callsite_compatible_with_replay?(absent, malformed).should be_false
+    ordinary_active_body_callsite?(malformed).should be_false
+    pending_callsite_compatible_with_replay?(explicit, CallsiteArgs.new(types, nil, nil, has_block: true)).should be_false
+    pending_callsite_compatible_with_replay?(explicit, CallsiteArgs.new(types, nil, nil, selected_target: "other")).should be_false
+    with_default = CallsiteArgs.new(types, nil, nil, has_named_args: true, named_arg_names: ["flag"])
+    pending_callsite_compatible_with_replay?(explicit, with_default).should be_false
+    source = __test_exact_source("edge_leaf")
+    binding = SourceCallBinding.new("edge_leaf", source.source_def, source.source_arena, [] of SourceCallArgument?)
+    bound = CallsiteArgs.new(types, nil, nil, source_binding: binding)
+    pending_callsite_compatible_with_replay?(explicit, bound).should be_false
+  end
+
   def __test_pending_replay_callsite_compatible?(change : Symbol) : Bool
     types = [TypeRef::INT32, TypeRef::BOOL]
     facts = [
@@ -623,6 +649,10 @@ describe "exact source retry graph admission" do
     converter.__test_same_callback_replay?(:same).should be_true
     converter.__test_same_callback_replay?(:abi).should be_false
     converter.__test_same_callback_replay?(:callback_source).should be_false
+  end
+
+  it "keeps one replay and discovery identity for zero positional argument kinds" do
+    force_lower_active_edge_graph_fixture.__test_nilary_callsite_kind_evidence
   end
 
   it "admits only a redundant positional-fact enrichment of the pending callsite" do

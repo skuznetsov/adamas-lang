@@ -2118,16 +2118,35 @@ module Adamas::HIR
       end
     end
 
-    private record CallsiteArgs,
-      types : Array(TypeRef),
-      literals : Array(Bool)?,
-      enum_names : Array(String?)?,
-      has_block : Bool = false,
-      has_named_args : Bool = false,
-      named_arg_names : Array(String)? = nil,
-      selected_target : String? = nil,
-      source_argument_facts : Array(SourceCallArgument?)? = nil,
-      source_binding : SourceCallBinding? = nil
+    private struct CallsiteArgs
+      getter types : Array(TypeRef)
+      getter literals : Array(Bool)?
+      getter enum_names : Array(String?)?
+      getter has_block : Bool
+      getter has_named_args : Bool
+      getter named_arg_names : Array(String)?
+      getter selected_target : String?
+      getter source_argument_facts : Array(SourceCallArgument?)?
+      getter source_binding : SourceCallBinding?
+
+      def initialize(
+        @types : Array(TypeRef), literals : Array(Bool)?, @enum_names : Array(String?)?,
+        @has_block : Bool = false, @has_named_args : Bool = false,
+        @named_arg_names : Array(String)? = nil, @selected_target : String? = nil,
+        @source_argument_facts : Array(SourceCallArgument?)? = nil,
+        @source_binding : SourceCallBinding? = nil,
+      )
+        # Source lowering can supply an empty vector for a nilary call while
+        # replay has no vector. Both describe the same zero argument kinds.
+        # Preserve incomplete and malformed vectors at every other boundary.
+        @literals = literals unless @types.empty? && literals.try(&.empty?)
+      end
+
+      def with_source_evidence(facts : Array(SourceCallArgument?)?, binding : SourceCallBinding?) : self
+        CallsiteArgs.new(@types, @literals, @enum_names, @has_block, @has_named_args,
+          @named_arg_names, @selected_target, facts, binding)
+      end
+    end
 
     # A callback's generated symbol is an identity, not serialized call syntax.
     # Retain the selected source and the actual callshape after pending queues
@@ -112133,39 +112152,30 @@ module Adamas::HIR
       call_signature_for_base(base, param_count, has_block)
     end
 
-    private def callsite_args_fingerprint(
-      arg_types : Array(TypeRef),
-      arg_literals : Array(Bool)?,
-      has_block : Bool,
-      has_named_args : Bool,
-      named_arg_names : Array(String)?,
-      selected_target : String? = nil,
-      source_argument_facts : Array(SourceCallArgument?)? = nil,
-      source_binding : SourceCallBinding? = nil,
-    ) : UInt64
+    private def callsite_args_fingerprint(callsite : CallsiteArgs) : UInt64
       h = 1469598103934665603_u64
-      arg_types.each do |type_ref|
+      callsite.types.each do |type_ref|
         h = (h ^ type_ref.id.to_u64) &* 1099511628211_u64
       end
       h = (h ^ 0xff_u64) &* 1099511628211_u64
-      if literals = arg_literals
+      if literals = callsite.literals
         literals.each do |flag|
           h = (h ^ (flag ? 1_u64 : 2_u64)) &* 1099511628211_u64
         end
       else
         h = (h ^ 3_u64) &* 1099511628211_u64
       end
-      h = (h ^ (has_block ? 5_u64 : 7_u64)) &* 1099511628211_u64
-      h = (h ^ (has_named_args ? 11_u64 : 13_u64)) &* 1099511628211_u64
-      if names = named_arg_names
+      h = (h ^ (callsite.has_block ? 5_u64 : 7_u64)) &* 1099511628211_u64
+      h = (h ^ (callsite.has_named_args ? 11_u64 : 13_u64)) &* 1099511628211_u64
+      if names = callsite.named_arg_names
         names.each do |arg_name|
           h = (h ^ arg_name.object_id.to_u64) &* 1099511628211_u64
         end
       end
-      if target = selected_target
+      if target = callsite.selected_target
         target.each_byte { |byte| h = (h ^ byte.to_u64) &* 1099511628211_u64 }
       end
-      if binding = source_binding
+      if binding = callsite.source_binding
         binding.selected_name.each_byte { |byte| h = (h ^ byte.to_u64) &* 1099511628211_u64 }
         h = (h ^ binding.definition.object_id.to_u64) &* 1099511628211_u64
         h = (h ^ binding.declaration_arena.object_id.to_u64) &* 1099511628211_u64
@@ -112182,7 +112192,7 @@ module Adamas::HIR
           h = source_call_argument_fingerprint(h, argument)
         end
       else
-        source_argument_facts_shape_key(source_argument_facts).each_byte do |byte|
+        source_argument_facts_shape_key(callsite.source_argument_facts).each_byte do |byte|
           h = (h ^ byte.to_u64) &* 1099511628211_u64
         end
       end
@@ -112294,14 +112304,18 @@ module Adamas::HIR
 
       facts = existing_facts || incoming_facts
       binding = incoming_binding || existing_binding
-      incoming.copy_with(source_argument_facts: facts, source_binding: binding)
+      incoming.with_source_evidence(facts, binding)
     end
 
     private def ordinary_active_body_callsite?(callsite : CallsiteArgs) : Bool
       return false if callsite.has_block || callsite.has_named_args ||
                       callsite.selected_target || callsite.source_binding ||
                       callsite.literals.try(&.any?) || callsite.enum_names.try(&.any?)
-      kinds_known = false
+      kinds_known = callsite.types.empty?
+      if kinds_known
+        return false unless callsite.enum_names.nil? || callsite.enum_names.try(&.empty?)
+        return false unless callsite.named_arg_names.nil? || callsite.named_arg_names.try(&.empty?)
+      end
       if literals = callsite.literals
         return false unless literals.size == callsite.types.size
         kinds_known = true
@@ -112447,8 +112461,7 @@ module Adamas::HIR
         end
       end
       return if base_key.empty?
-      callsite_key = callsite_args_fingerprint(call_types, call_literals, has_block, has_named_args,
-        canonical_names, selected_target, source_facts, source_binding)
+      callsite_key = callsite_args_fingerprint(callsite)
       seen_by_arity = @pending_arg_types_seen_by_arity[base_key]? || begin
         new_map = {} of Int32 => Set(UInt64)
         @pending_arg_types_seen_by_arity[base_key] = new_map
