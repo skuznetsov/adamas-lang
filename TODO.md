@@ -27647,3 +27647,18 @@ One fix per commit, each with an oracle-qualified regression
   25 recursive-result and retry examples and the native valid/invalid source
   regression. Both unmodified stdlib self-builds still stop on the pending
   result of `Parser#parse_statement_in_scope` while lowering `CLI#run`.
+- [x] Keep the typed early return and the original call arguments with the
+  suspended specialization. A recursive call may use a reachable, source-typed
+  constant return while its producer is suspended. Its completed body and
+  emitted calls must still pass final validation. Recover an ordinary call's
+  arguments only from agreeing live requests for the same definition, arena,
+  namespace and type environment. The new native control prints RRAA under
+  stock Crystal and Adamas. Both reject a wrong argument and a wrong return.
+  The recursive-result and retry suites pass 27 examples. The uncached
+  1.18.2 and 1.22.3 self-builds both still need the result of
+  `Parser#parse_statement_in_scope` while lowering `CLI#run`.
+- [ ] Distinguish a body's inferred NoReturn result from its explicit struct
+  restriction in typeof. With an annotated C.exit body, an annotated pure
+  recursive body, a returning recursive body and a bare C.exit, Crystal
+  1.22.3 classifies the four static results as NTTN. Adamas at d41e7c33 gives
+  TTTN. Never use a declared restriction alone as a completed result.

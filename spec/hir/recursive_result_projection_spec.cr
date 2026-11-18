@@ -204,6 +204,71 @@ class Adamas::HIR::AstToHir
     recursive_struct_result_argument_facts_match?(callsite, [] of TypeRef, facts)
   end
 
+  def __test_queued_struct_input?(change : Symbol) : Bool
+    name = __test_projection_method_name("value_for")
+    source = __test_projection_source(name)
+    replay = __test_projection_replay(name, __test_projection_bool_callsite(name, false))
+    @force_lower_retry_work.clear
+    unless change == :missing
+      @force_lower_retry_work << ForceLowerRetryRequest.new(name, [] of String, false, replay, source, true)
+    end
+    if change == :conflicting_argument
+      first_class = __test_projection_replay(name, __test_projection_bool_callsite(name, true))
+      @force_lower_retry_work << ForceLowerRetryRequest.new(name, [] of String, false, first_class, source, true)
+    end
+    if change == :entry_namespace
+      return with_namespace_override_or_clear("RecClass") { !live_force_lower_callsite_for(name, source).nil? }
+    end
+    if change == :source
+      source = __test_projection_source(__test_projection_method_name("sibling_value"))
+    end
+    !live_force_lower_callsite_for(name, source).nil?
+  end
+
+  def __test_suspended_constant_return?(change : Symbol) : Bool
+    name = "RecFactory.value"
+    source = __test_projection_source(name)
+    replay = __test_projection_replay(name)
+    original = @module.function_by_name(name).not_nil!
+    type = original.return_type
+    partial = Function.new(original.id, name, type)
+    ctx = LoweringContext.new(partial, @module, source.source_arena)
+    block = ctx.get_block(ctx.current_block_id)
+    if change == :unreachable
+      ctx.switch_to_block(ctx.create_block)
+      block = ctx.get_block(ctx.current_block_id)
+    end
+    read = ClassVarGet.new(ctx.next_id, type, "RecFactory", "BASE")
+    ctx.emit(read)
+    facts = [{type, false}]
+    ctx.register_source_value_facts(read.id, facts)
+    @constant_types["RecFactory::BASE"] = type
+    @constant_source_value_facts["RecFactory::BASE"] = facts
+    returned = Return.new(read.id)
+    ctx.terminate(returned)
+    body = ForceLowerActiveBody.new(partial, source.source_def, source.source_arena,
+      [] of TypeRef, [] of String, type)
+    anchor = PartialStructReturn.new(replay, ctx, block, returned, read, body)
+    pending = ExactResultPending.new("RecFactory.consumer", name, source)
+
+    case change
+    when :replaced_read
+      block.replace(0, ClassVarGet.new(read.id, type, read.class_name, read.var_name))
+    when :replaced_return
+      ctx.terminate(Return.new(read.id))
+    when :missing_constant
+      @constant_types.delete("RecFactory::BASE")
+    when :changed_kind
+      @constant_source_value_facts["RecFactory::BASE"] = [{type, true}]
+    when :changed_operand
+      ctx.register_source_value_facts(read.id, [{type, true}])
+    when :changed_replay_source
+      other = __test_projection_replay("RecFactory.reference")
+      anchor = PartialStructReturn.new(other, ctx, block, returned, read, body)
+    end
+    !checked_partial_struct_result(pending, anchor).nil?
+  end
+
   private def __test_open_projection_use(owner : String = "RecFactory", *, nilary : Bool = false)
     producer = nilary ? "RecFactory.value" : __test_projection_method_name("value_for", owner)
     consumer = nilary ? "RecFactory.consumer" : __test_projection_method_name("consumer_for", owner)
@@ -383,6 +448,23 @@ describe "source result projection inside a recursive specialization" do
     converter.__test_instance_projection_emission_current?.should be_true
     converter.__test_instance_projection_emission_current?(replace_receiver: true).should be_false
     converter.__test_instance_projection_emission_current?(change_receiver_kind: true).should be_false
+  end
+
+  it "requires agreement on the source, stored argument kinds and entry environment of a queued replay" do
+    converter = recursive_projection_converter
+    converter.__test_queued_struct_input?(:unchanged).should be_true
+    [:missing, :conflicting_argument, :source, :entry_namespace].each do |change|
+      converter.__test_queued_struct_input?(change).should be_false
+    end
+  end
+
+  it "permits a provisional struct result only while its reachable source return and operand are current" do
+    converter = recursive_projection_converter
+    converter.__test_suspended_constant_return?(:unchanged).should be_true
+    [:replaced_read, :replaced_return, :unreachable, :missing_constant, :changed_kind,
+     :changed_operand, :changed_replay_source].each do |change|
+      converter.__test_suspended_constant_return?(change).should be_false
+    end
   end
 
   it "recognizes the recorded argument evidence of a real zero-argument call" do

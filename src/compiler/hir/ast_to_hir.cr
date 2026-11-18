@@ -2181,6 +2181,7 @@ module Adamas::HIR
       getter producer_requires_result : Bool
       getter producer_bypass_inline_yield : Bool?
       getter producer_pending : ExactResultPending?
+      getter checked_return : PartialStructReturn?
       property consumer_capture : ForceLowerReplayCapture?
       property consumer_requires_result : Bool = true
       property consumer_bypass_inline_yield : Bool = false
@@ -2196,6 +2197,7 @@ module Adamas::HIR
         @producer_requires_result : Bool = true,
         @producer_bypass_inline_yield : Bool? = nil,
         @producer_pending : ExactResultPending? = nil,
+        @checked_return : PartialStructReturn? = nil,
       )
         super("pending source result #{@producer} in #{@consumer}")
       end
@@ -2209,6 +2211,17 @@ module Adamas::HIR
       param_types : Array(TypeRef),
       param_names : Array(String),
       return_type : TypeRef
+
+    # One independently typed return reached before this exact body suspended.
+    # Its source and HIR must survive replay. Only the finished body's receipt
+    # can discharge the obligation at the end of lowering.
+    private record PartialStructReturn,
+      replay : ForceLowerReplayCallsite,
+      context : LoweringContext,
+      block : Block,
+      terminator : Return,
+      value : ClassVarGet,
+      body : ForceLowerActiveBody
 
     private class ForceLowerReplayCapture
       property binding : ForceLowerReplayCallsite?
@@ -2275,6 +2288,7 @@ module Adamas::HIR
       getter request : ForceLowerSuspendedRequest
       getter expected : TypeRef
       getter producer_replay : ForceLowerReplayCallsite
+      getter checked_return : PartialStructReturn?
       getter emissions = {} of UInt64 => RecursiveStructResultEmissionWitness?
       @next_emission_ticket : UInt64 = 0_u64
 
@@ -2282,6 +2296,7 @@ module Adamas::HIR
         @request : ForceLowerSuspendedRequest,
         @expected : TypeRef,
         @producer_replay : ForceLowerReplayCallsite,
+        @checked_return : PartialStructReturn? = nil,
       )
       end
 
@@ -115468,6 +115483,14 @@ module Adamas::HIR
       left.nil? && right.nil?
     end
 
+    private def same_suspended_struct_return?(left : PartialStructReturn?, right : PartialStructReturn?) : Bool
+      return right.nil? unless left
+      return false unless right
+      left.context.same?(right.context) && left.block.same?(right.block) &&
+        left.terminator.same?(right.terminator) && left.value.same?(right.value) &&
+        same_force_lower_active_body?(left.body, right.body) && same_force_lower_replay_callsite?(left.replay, right.replay)
+    end
+
     private def same_force_lower_exact_result_pending?(left : ExactResultPending, right : ExactResultPending) : Bool
       pending_left = left.as(ExactResultPending?)
       pending_right = right.as(ExactResultPending?)
@@ -115480,6 +115503,7 @@ module Adamas::HIR
                             pending_left.producer_bypass_inline_yield == pending_right.producer_bypass_inline_yield &&
                             pending_left.consumer_requires_result == pending_right.consumer_requires_result &&
                             pending_left.consumer_bypass_inline_yield == pending_right.consumer_bypass_inline_yield &&
+                            same_suspended_struct_return?(pending_left.checked_return, pending_right.checked_return) &&
                             same_force_lower_replay_capture?(pending_left.consumer_capture, pending_right.consumer_capture)
         pending_left = pending_left.producer_pending
         pending_right = pending_right.producer_pending
@@ -115949,6 +115973,22 @@ module Adamas::HIR
                     function.source_return_arena_key == arena_map_key(arena)
       return if materialized_function_noreturn?(name, Set(String).new)
       type = function.return_type
+      return unless recursive_struct_declared_result?(name, source, type)
+      facts = function.source_return_value_facts
+      receipt = function.source_return_result_receipt
+      return unless facts == [{type, false}] && receipt && receipt.discard_type.nil? &&
+                    function.source_return_discard_type.nil? && receipt.definition_id == definition.object_id.to_u64 &&
+                    receipt.arena_key == arena_map_key(arena) && receipt.body_revision == function.body_revision &&
+                    receipt.result_facts_match?(facts.not_nil!) && receipt.body_objects_match?(function.scopes, function.blocks) &&
+                    receipt.body_seal == source_return_function_body_seal(function)
+      type
+    end
+
+    private def recursive_struct_declared_result?(
+      name : String, source : ForceLowerExactSourceBinding, type : TypeRef,
+    ) : Bool?
+      definition = source.source_def
+      arena = source.source_arena
       name_of_type = get_type_name_from_ref(type)
       info = @class_info[name_of_type]? || return
       return unless info.is_struct && info.type_ref == type && !primitive_template_owner(name_of_type) &&
@@ -115973,14 +116013,73 @@ module Adamas::HIR
       return unless restriction && restriction.valid && !restriction.has_unbound_formal? &&
                     restriction.kind == SourceBlockResultPattern::Kind::Concrete &&
                     restriction.type_ref == type && !source_declared_return_contract_guarantees_type_literal_kind?(restriction)
-      facts = function.source_return_value_facts
-      receipt = function.source_return_result_receipt
-      return unless facts == [{type, false}] && receipt && receipt.discard_type.nil? &&
-                    function.source_return_discard_type.nil? && receipt.definition_id == definition.object_id.to_u64 &&
-                    receipt.arena_key == arena_map_key(arena) && receipt.body_revision == function.body_revision &&
-                    receipt.result_facts_match?(facts.not_nil!) && receipt.body_objects_match?(function.scopes, function.blocks) &&
-                    receipt.body_seal == source_return_function_body_seal(function)
-      type
+      true
+    end
+
+    private def suspended_struct_return(ctx : LoweringContext) : PartialStructReturn?
+      capture = @force_lower_active_replay_captures[ctx.function.name]? || return
+      replay = capture.binding || return
+      body = current_active_force_lower_body(ctx.function.name) || return
+      return unless body.function.same?(ctx.function)
+      reachable_blocks(ctx.function).each do |block|
+        returned = block.terminator.as?(Return) || next
+        value_id = returned.value || next
+        constant = ctx.value_for(value_id).as?(ClassVarGet) || next
+        next unless constant.type == body.return_type
+        anchor = PartialStructReturn.new(replay, ctx, block, returned, constant, body)
+        return anchor if suspended_return_value_current?(anchor)
+      end
+      nil
+    end
+
+    private def queued_partial_struct_result(pending : ExactResultPending, replay : ForceLowerReplayCallsite) : PartialStructReturn?
+      @force_lower_retry_work.each do |queued|
+        next unless queued.is_a?(ForceLowerSuspendedRequest) && force_lower_retry_source_current?(queued)
+        tail = queued.pending.as(ExactResultPending?)
+        while tail
+          if tail.consumer == pending.producer && (anchor = tail.checked_return) &&
+             same_force_lower_replay_callsite?(replay, anchor.replay) && checked_partial_struct_result(pending, anchor)
+            return anchor
+          end
+          tail = tail.producer_pending
+        end
+      end
+      nil
+    end
+
+    private def checked_partial_struct_result(pending : ExactResultPending, anchor : PartialStructReturn?) : PartialStructReturn?
+      return unless anchor
+      name = pending.producer
+      source = pending.producer_source
+      return unless pending.producer_requires_result && !pending.producer_pending && force_lower_exact_source_matches?(name, source)
+      return if source.inherited_nilary_member_alias || raw_callback_abi_for(name) || raw_callback_source_binding_for(name)
+      body = anchor.body
+      replay = anchor.replay
+      ctx = anchor.context
+      read = anchor.value
+      return unless replay.source_def.same?(source.source_def) && replay.source_arena.same?(source.source_arena) &&
+                    body.source_def.same?(source.source_def) && body.source_arena.same?(source.source_arena) &&
+                    active_force_lower_source_current?(name, replay) && force_lower_replay_callsite_current?(name, replay) &&
+                    recursive_struct_declared_result?(name, source, read.type) && body.return_type == read.type
+      return unless ctx.function.same?(body.function) && ctx.function.name == name &&
+                    ctx.function.params.map(&.type) == body.param_types && ctx.function.params.map(&.name) == body.param_names &&
+                    ctx.function.return_type == read.type && suspended_return_value_current?(anchor)
+      anchor
+    end
+
+    private def suspended_return_value_current?(anchor : PartialStructReturn) : Bool
+      ctx = anchor.context
+      read = anchor.value
+      block = anchor.block
+      constant = deferred_constant_full_name(read.class_name, read.var_name)
+      facts = [{read.type, false}]
+      reachable_blocks(ctx.function).any? { |reachable| reachable.same?(block) } &&
+        block.terminator.try(&.same?(anchor.terminator)) == true && anchor.terminator.value == read.id &&
+        block.instructions.count { |value| value.id == read.id } == 1 &&
+        block.instructions.any? { |value| value.same?(read) } &&
+        ctx.value_for(read.id).try(&.same?(read)) == true && !ctx.type_literal?(read.id) &&
+        ctx.source_value_facts(read.id) == facts && @constant_types[constant]? == read.type &&
+        @constant_source_value_facts[constant]? == facts
     end
 
     private def cycle_work_reaches?(producer : String, consumer : String) : Bool
@@ -116007,16 +116106,62 @@ module Adamas::HIR
         pending = entry.pending
         edge = {pending.consumer, pending.producer}
         next if pending.consumer == pending.producer || @deferred_struct_result_uses.has_key?(edge)
-        next unless @force_lower_provisional_dependencies.has_key?(pending.producer) &&
-                    force_lower_retry_has_queued_producer?(pending.producer, true) &&
+        next unless force_lower_retry_has_queued_producer?(pending.producer, true) &&
                     cycle_work_reaches?(pending.producer, pending.consumer)
-        type = exact_final_struct_result(pending) || next
         producer_replay = recursive_struct_result_producer_replay(pending) || next
+        type = if @force_lower_provisional_dependencies.has_key?(pending.producer)
+                 exact_final_struct_result(pending)
+               end
+        anchor = type ? nil : queued_partial_struct_result(pending, producer_replay)
+        type ||= anchor.try(&.value.type)
+        next unless type
         next unless recursive_struct_result_callsite_argument_facts(producer_replay.callsite)
-        @deferred_struct_result_uses[edge] = DeferredStructResultUse.new(entry, type, producer_replay)
+        @deferred_struct_result_uses[edge] = DeferredStructResultUse.new(entry, type, producer_replay, anchor)
         return index
       end
       nil
+    end
+
+    private def each_queued_force_lower_replay(name : String, & : ForceLowerReplayCallsite ->) : Nil
+      @force_lower_retry_work.each do |request|
+        next unless force_lower_retry_source_current?(request)
+        if request.name == name && (replay = request.replay_callsite)
+          yield replay
+        end
+        next unless request.is_a?(ForceLowerSuspendedRequest)
+        pending = request.pending.as(ExactResultPending?)
+        while pending
+          if pending.producer == name && (replay = pending.producer_replay)
+            yield replay
+          end
+          capture = pending.consumer_capture
+          while capture
+            if capture.name == name && (replay = capture.binding)
+              yield replay
+            end
+            capture = capture.parent
+          end
+          pending = pending.producer_pending
+        end
+      end
+    end
+
+    # Nested lowering can consume a pending callsite before its owner retries.
+    # Restore it only when every live observation identifies the same ordinary
+    # specialization in this entry namespace and generic environment.
+    private def live_force_lower_callsite_for(name : String, source : ForceLowerExactSourceBinding) : ForceLowerReplayCallsite?
+      retained = nil.as(ForceLowerReplayCallsite?)
+      each_queued_force_lower_replay(name) do |replay|
+        observed = replay.exact_source_binding ||
+                   ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name)
+        return unless same_force_lower_exact_source_binding?(source, observed) &&
+                      active_force_lower_source_current?(name, replay) && force_lower_replay_callsite_current?(name, replay) &&
+                      !replay.callsite.has_block && !replay.callsite.has_named_args &&
+                      replay.entry_type_param_map == @type_param_map && replay.entry_namespace_override == @current_namespace_override
+        return if retained && !same_force_lower_replay_callsite?(retained, replay)
+        retained ||= replay
+      end
+      retained
     end
 
     private def recursive_struct_result_producer_replay(pending : ExactResultPending) : ForceLowerReplayCallsite?
@@ -116128,7 +116273,7 @@ module Adamas::HIR
         same_force_lower_exact_source_binding?(pending.producer_source, use.request.pending.producer_source) &&
         force_lower_replay_callsite_current?(pending.producer, use.producer_replay) &&
         recursive_struct_result_callsite_argument_facts(use.producer_replay.callsite) != nil &&
-        exact_final_struct_result(pending) == use.expected
+        (exact_final_struct_result(pending) || checked_partial_struct_result(pending, use.checked_return).try(&.value.type)) == use.expected
     end
 
     # A usable result lets us rebuild this provisional body. The body is
@@ -116153,7 +116298,7 @@ module Adamas::HIR
       return false unless use.expected == result
       callsite = use.producer_replay.callsite
       return false unless recursive_struct_result_argument_facts_match?(callsite, arg_types, arg_facts)
-      function = @module.function_by_name(producer) || return false
+      function = @module.function_by_name(producer) || checked_partial_struct_result(use.request.pending, use.checked_return).try(&.body.function) || return false
       return false unless recursive_struct_result_abi_matches?(ctx, function, receiver_id, arg_types)
       request = use.request
       source = force_lower_exact_source_binding(producer, selected, called, arena, registry) || return false
@@ -116180,7 +116325,7 @@ module Adamas::HIR
                         !call.has_block? && call.block_value == Call::NO_BLOCK && call.args.size == arg_types.size
       argument_facts = call_resolution_source_argument_facts(ctx, call.args, arg_types)
       return nil unless recursive_struct_result_argument_facts_match?(callsite, arg_types, argument_facts)
-      function = @module.function_by_name(producer) || return nil
+      function = @module.function_by_name(producer) || checked_partial_struct_result(use.request.pending, use.checked_return).try(&.body.function) || return nil
       return nil unless recursive_struct_result_abi_matches?(ctx, function, receiver_id, arg_types) &&
                         call.has_receiver? == !receiver_id.nil?
       if receiver = receiver_id
@@ -116678,7 +116823,8 @@ module Adamas::HIR
       if env_has?("DEBUG_FORCE_LOWER_DEPTH")
         STDERR.puts "[FORCE_LOWER_SUSPENDED] consumer=#{consumer} context=#{ctx.function.name} producer=#{name}"
       end
-      raise ExactResultPending.new(consumer, name, source)
+      checked_return = suspended_struct_return(ctx) if ctx.function.name == consumer
+      raise ExactResultPending.new(consumer, name, source, checked_return: checked_return)
     end
 
     # A producer that suspended on its own unsettled dependency is just as
@@ -118976,6 +119122,10 @@ module Adamas::HIR
       callsite_args = callback_source_binding.callsite if callback_source_binding
       if callsite_args.nil? && resolved_func_def
         callsite_args = pending_callsite_args_for_def(resolved_func_def, name, target_name)
+      end
+      if !callsite_args && @force_lower_retry_driver_active && exact_replay_source &&
+         (replay = live_force_lower_callsite_for(name, exact_replay_source))
+        callsite_args = copy_force_lower_callsite(replay.callsite)
       end
       call_arg_types = callsite_args ? callsite_args.types : nil
       if env_has?("DEBUG_JOIN_LOWER_ARGS") && name.includes?("Path#join$Enumerable")
@@ -132762,6 +132912,10 @@ module Adamas::HIR
              exact_source_discard_result_type == TypeRef::VOID)
         # The exact selected source declaration proves a Nil expression.
         ctx.register_source_value_facts(result_id, [{TypeRef::NIL, false}])
+      elsif cycle_result_ticket && !call.virtual && call.method_name == mangled_method_name &&
+            (cycle_use = @deferred_struct_result_uses[{ctx.function.name, mangled_method_name}]?) &&
+            (anchor = checked_partial_struct_result(cycle_use.request.pending, cycle_use.checked_return)) && anchor.value.type == call.type
+        ctx.register_source_value_facts(call.id, [{anchor.value.type, false}])
       elsif !call.virtual && register_materialized_source_return_value_facts(ctx, result_id, call.method_name)
         # The emitted call owns the actual dispatch mode and target. A module
         # owner can leave the provisional classifier virtual even though its
