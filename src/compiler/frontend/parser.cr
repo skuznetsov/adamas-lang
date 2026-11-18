@@ -997,6 +997,10 @@ module Adamas
             rhs = without_postfix_modifiers { parse_expression(0) }
             return PREFIX_ERROR if rhs.invalid?
 
+            if logical = logical_ivar_assignment(left, rhs, assign_token.kind)
+              return parse_postfix_if_modifier(logical)
+            end
+
             # Phase 20/51/52/89: Desugar compound assignment
             # x += 5  =>  x = x + 5
             # x ||= 5 =>  x = x || 5
@@ -9036,6 +9040,10 @@ module Adamas
               return PREFIX_ERROR if rhs.invalid?
             end
 
+            if logical = logical_ivar_assignment(left, rhs, assign_token.kind)
+              return logical
+            end
+
             # Handle compound assignment (expand to: x = x op y)
             value = if is_compound
                       operator = case assign_token.kind
@@ -9132,6 +9140,18 @@ module Adamas
           # parse_expression_suffix behavior.
           debug { "parse_op_assign: no assignment, returning expression" }
           left
+        end
+
+        # An instance-variable write in a logical assignment belongs to the
+        # branch that evaluates the RHS. Keep its original source expression as
+        # the value of that write for type guessing and normal lowering.
+        private def logical_ivar_assignment(left : ExprId, right : ExprId, operator : Token::Kind) : ExprId?
+          return nil unless operator == Token::Kind::OrOrEq || operator == Token::Kind::AndAndEq
+          return nil unless @arena[left].is_a?(InstanceVarNode)
+          span = node_span(left).cover(node_span(right))
+          write = @arena.add_typed(AssignNode.new(span, left, right))
+          op = operator == Token::Kind::OrOrEq ? "||" : "&&"
+          @arena.add_typed(BinaryNode.new(span, @string_pool.intern(op.to_slice), left, write))
         end
 
         private def parse_leading_splat_assignment : ExprId

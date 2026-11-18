@@ -27520,3 +27520,19 @@ One fix per commit, each with an oracle-qualified regression
   selected fields in both cases. Installed-prelude hello now passes
   Thread#system_close and reaches ThreadPool#main_thread_loop. Both full
   self-builds still stop on the parser and backtrace dependencies above.
+- [x] Give logical instance-field assignments their source evaluation order
+  and publish inferred storage before the first read. A newly allocated
+  receiver can have a nil field even when every successful fetch returns
+  Job. Preserve all known ordinary and logical write types, explicit field
+  declarations and constructor layout. The native oracle prints
+  `NIAAYFAFBACCCUU` and rejects Job passed to an Int32-only overload. Four
+  parser examples cover both expression entry points and postfix guards.
+  Installed-prelude hello advances from Fiber | Void to Int::MIN in
+  Int#remainder. The two full self-builds still report CLI#run_check and
+  Exception::CallStack#printable_backtrace, respectively.
+- [ ] Establish constructor definite assignment and field inference when
+  a RHS depends on a method call the declaration scan cannot type. Crystal
+  rejects a constructor whose only assignment to a non-nilable field is
+  guarded. Both S1 before and after the logical-assignment change accept
+  that case. A separate source restriction check is also needed when an
+  explicit field receives an invalid logical or ordinary write.
