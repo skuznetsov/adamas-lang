@@ -27496,3 +27496,10 @@ One fix per commit, each with an oracle-qualified regression
   Crystal rejects `typeof(missing_operand_for_type)`; the current S1
   accepts it as an argument to a String-only method. The infix form
   `io << typeof(value)` also lacks the ordinary call's value-kind path.
+- [x] Preserve the original exception, including an exact-result suspension,
+  when unwinding a nested HIR scope. Integrated Claude's 4688286d and
+  qualified the regression against the host compiler. The previous S1
+  reports a lost case scope for Symbol.needs_quotes?; both the corrected S1
+  and Crystal print false/true/true/false and reject a missing Int32 method
+  inside a nested iterator with exit 1. Both full self-builds still stop
+  at the parser and backtrace dependencies above.
