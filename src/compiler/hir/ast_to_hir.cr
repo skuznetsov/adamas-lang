@@ -13049,24 +13049,30 @@ module Adamas::HIR
       raw_positional_count : Int32? = nil,
       pending_module_base : String? = nil,
       pending_receiver_shape : String? = nil,
+      source_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : Bool
       base_name = "#{owner}##{method_name}"
-      candidate = mangle_function_name(base_name, arg_types, has_block_call)
-      remember_callsite_family_arg_types(base_name, arg_types, has_block: has_block_call, has_named_args: has_named_args, named_arg_names: named_arg_names)
-      remember_callsite_arg_types(candidate, arg_types, has_block: has_block_call, has_named_args: has_named_args, named_arg_names: named_arg_names)
+      call_types = virtual_target_callsite_types(arg_types, source_argument_facts)
+      call_literals = virtual_target_callsite_literals(source_argument_facts, call_types.size)
+      candidate = virtual_target_mangled_name(base_name, call_types, has_block_call, source_argument_facts)
+      remember_callsite_family_arg_types(base_name, call_types, call_literals, has_block: has_block_call,
+        has_named_args: has_named_args, named_arg_names: named_arg_names, source_argument_facts: source_argument_facts)
+      remember_callsite_arg_types(candidate, call_types, call_literals, has_block: has_block_call,
+        has_named_args: has_named_args, named_arg_names: named_arg_names, source_argument_facts: source_argument_facts)
       selected_name : String? = nil
       selected_def : Adamas::Compiler::Frontend::DefNode? = nil
       selected_arena : Adamas::Compiler::Frontend::ArenaLike? = nil
       selected_source_path : String? = nil
       if resolved = lookup_function_def_for_call(
            base_name,
-           arg_types.size,
+           call_types.size,
            has_block_call,
-           arg_types,
+           call_types,
            has_splat,
            has_named_args,
            named_arg_names,
            raw_positional_count,
+           source_argument_facts: source_argument_facts,
          )
         resolved_name = resolved[0]
         selected_name = resolved_name
@@ -13077,8 +13083,9 @@ module Adamas::HIR
           # Use the same receiver owner as class-target replay.
           lower_demanded_virtual_target_function(candidate)
         else
-          target_name = virtual_replay_specialized_name(resolved_name, arg_types, has_block_call, named_block_call: has_named_args)
-          remember_callsite_arg_types(target_name, arg_types, has_block: has_block_call, has_named_args: has_named_args, named_arg_names: named_arg_names)
+          target_name = virtual_replay_specialized_name(resolved_name, call_types, has_block_call, source_argument_facts, named_block_call: has_named_args)
+          remember_callsite_arg_types(target_name, call_types, call_literals, has_block: has_block_call,
+            has_named_args: has_named_args, named_arg_names: named_arg_names, source_argument_facts: source_argument_facts)
           lower_demanded_virtual_target_function(target_name)
         end
       else
@@ -13092,12 +13099,13 @@ module Adamas::HIR
                    owner,
                    base_name,
                    candidate,
-                   arg_types,
+                   call_types,
                    has_block_call,
                    has_splat,
                    has_named_args,
                    named_arg_names,
                    raw_positional_count,
+                   source_argument_facts: source_argument_facts,
                  )
       if !complete && pending_targets
         authenticated_named_block = has_named_args && has_block_call && !has_splat &&
@@ -133220,7 +133228,7 @@ module Adamas::HIR
       elsif type_desc.kind == TypeKind::Union
         union_name = normalize_union_type_name(type_desc.name)
         unless numeric_conversion_method_name?(method_name)
-          ah = arg_types_hash(arg_types)
+          ah = virtual_target_identity_hash(arg_types, source_argument_facts)
           vf = vdispatch_flags(has_block_call, is_union: true)
           key = {union_name, method_name, ah, vf}
           unless @virtual_targets_lowered.includes?(key)
@@ -133250,9 +133258,12 @@ module Adamas::HIR
                     owners << entry
                   end
                 end
-                record_virtual_target(owner, method_name, arg_types, has_block_call, has_splat)
+                record_virtual_target(owner, method_name, arg_types, has_block_call, has_splat, source_argument_facts: source_argument_facts)
                 owners.uniq.each do |resolved_owner|
-                  lower_virtual_target_resolved(resolved_owner, method_name, arg_types, has_block_call, has_splat)
+                  lower_virtual_target_resolved(
+                    resolved_owner, method_name, arg_types, has_block_call, has_splat,
+                    source_argument_facts: source_argument_facts,
+                  )
                 end
               end
             end
@@ -133370,12 +133381,12 @@ module Adamas::HIR
         # Ensure the concrete receiver implementation is lowered, otherwise
         # vdispatch can miss that type and fall back to no-op/default branch.
         receiver_owner = type_desc.name
-        ah = arg_types_hash(arg_types)
+        ah = virtual_target_identity_hash(arg_types, source_argument_facts)
         vf = vdispatch_flags(has_block_call)
         key = {receiver_owner, method_name, ah, vf}
         unless @virtual_targets_lowered.includes?(key)
           @virtual_targets_lowered.add(key)
-          record_virtual_target(receiver_owner, method_name, arg_types, has_block_call, has_splat)
+          record_virtual_target(receiver_owner, method_name, arg_types, has_block_call, has_splat, source_argument_facts: source_argument_facts)
 
           owners = [receiver_owner]
           receiver_base = strip_generic_args(receiver_owner)
@@ -133383,7 +133394,10 @@ module Adamas::HIR
           owners.uniq!
 
           owners.each do |owner|
-            lower_virtual_target_resolved(owner, method_name, arg_types, has_block_call, has_splat)
+            lower_virtual_target_resolved(
+              owner, method_name, arg_types, has_block_call, has_splat,
+              source_argument_facts: source_argument_facts,
+            )
           end
         end
       end

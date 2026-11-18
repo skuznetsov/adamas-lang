@@ -27732,3 +27732,11 @@ One fix per commit, each with an oracle-qualified regression
   HIR examples pass. Both spellings print CD and both reject returning
   Ticket.class. Both uncached S2 builds repeat the parser and DWARF
   diagnostics above.
+- [x] Retain the observed source type and value kind when pre-lowering union
+  variants and concrete value receivers. An ABI-only demand used to publish
+  the first recipe for the same target, preventing the real call from being
+  replayed. The uncached prelude iterator now builds and prints 55 with both
+  bundled 1.18.2 and installed 1.22.3, matching stock Crystal. Unknown
+  argument kinds still require evidence at replay.
+- [ ] Check the separate module-includer fanout cache and its retry records
+  with opposite-kind arguments sharing an ABI type and with named blocks.

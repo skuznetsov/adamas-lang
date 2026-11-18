@@ -62,6 +62,39 @@ class Adamas::HIR::AstToHir
     end
   end
 
+  def __test_union_replay_argument_kinds(kinds : Array(Bool?)) : Nil
+    owners = ["ReplayInputOwner", "ReplaySecondOwner"]
+    union = @module.intern_type(TypeDescriptor.new(TypeKind::Union, owners.join(" | "), owners.map { |owner| type_ref_for_name(owner) }))
+    caller = @module.create_function("union_input_kinds", TypeRef::VOID)
+    receiver = caller.add_param("receiver", union)
+    ctx = LoweringContext.new(caller, @module, @arena)
+    ctx.register_type(receiver.id, union)
+    types = [TypeRef::BOOL]
+
+    saved_depth = @lowering_depth
+    begin
+      @lowering_depth = @lowering_depth_limit + 1
+      kinds.each do |kind|
+        facts = kind.nil? ? nil : [SourceCallArgument.new(TypeRef::BOOL, kind)] of SourceCallArgument?
+        ensure_virtual_call_targets_lowered(ctx, receiver.id, "echo", types, false, false, false, false,
+          source_argument_facts: facts)
+      end
+    ensure
+      @lowering_depth = saved_depth
+    end
+
+    owners.each do |owner|
+      kinds.each do |kind|
+        facts = kind.nil? ? nil : [SourceCallArgument.new(TypeRef::BOOL, kind)] of SourceCallArgument?
+        target = virtual_target_mangled_name("#{owner}#echo", types, false, facts)
+        inputs = @pending_arg_types[target]?.not_nil!
+        inputs.types.should eq(types)
+        inputs.literals.should eq(kind.nil? ? nil : [kind])
+        inputs.source_argument_facts.should eq(facts)
+      end
+    end
+  end
+
   def __test_df_materialize_inherited_specialization : Tuple(String, String)
     owner = "ReplaySpecializedChild"
     base = "#{owner}#work"
@@ -112,8 +145,8 @@ class Adamas::HIR::AstToHir
 
   def __test_df_repeat_inherited_final_repair : Int32
     execute_final_repair_virtual_target_requests([
-      {"ReplaySpecializedChild", "ReplaySpecializedParent", "work", [TypeRef::INT32], false, false},
-    ])
+      {"ReplaySpecializedChild", "ReplaySpecializedParent", "work", [TypeRef::INT32], false, false, nil},
+    ] of {String, String, String, Array(TypeRef), Bool, Bool, Array(SourceCallArgument?)?})
   end
 end
 
@@ -130,6 +163,16 @@ private def virtual_replay_target_input_fixture : Adamas::HIR::AstToHir
 
       def alone : Int32
         67
+      end
+
+      def echo(value)
+        value
+      end
+    end
+
+    class ReplaySecondOwner
+      def echo(value)
+        value
       end
     end
 
@@ -154,6 +197,15 @@ private def virtual_replay_target_input_fixture : Adamas::HIR::AstToHir
 end
 
 describe "virtual replay target input ownership" do
+  it "retains value and class-object demands on each union receiver in either discovery order" do
+    virtual_replay_target_input_fixture.__test_union_replay_argument_kinds([false, true] of Bool?)
+    virtual_replay_target_input_fixture.__test_union_replay_argument_kinds([true, false] of Bool?)
+  end
+
+  it "keeps an unobserved kind unknown on each union receiver" do
+    virtual_replay_target_input_fixture.__test_union_replay_argument_kinds([nil] of Bool?)
+  end
+
   it "does not demand an unrelated nilary body after a typed resolved lookup fails" do
     converter = virtual_replay_target_input_fixture
     base = converter.__test_df_materialize_nilary("step")
