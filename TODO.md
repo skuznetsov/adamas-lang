@@ -27454,3 +27454,12 @@ One fix per commit, each with an oracle-qualified regression
   loop edge, including `next` and `break`. Stock Crystal and Adamas print
   `ABEIIEBR` and both reject a mixed integer/enum return declared as an enum.
   The two self-builds still reach the pending parser and backtrace dependencies.
+- [x] Keep direct recursion on its exact active specialization for both body
+  scheduling and result lookup. Crystal and Adamas print `ABCD` in opposite
+  specialization orders, reject the wrong concrete result, and retain the
+  union for recursion that actually calls a different specialization. The
+  earlier revision fails the positive program. Both self-builds still stop
+  at the pending parser and backtrace dependencies.
+- [ ] Track class-object versus instance results across unannotated recursive
+  specializations. Both the parent and this revision reject the valid
+  `Letter.class` result after an earlier `Letter` result.

@@ -119836,6 +119836,30 @@ module Adamas::HIR
         @function_def_arenas[base_name]?.try(&.same?(source_arena)))
     end
 
+    # A direct recursive call reuses its active specialization. Starting a
+    # second body under the unspecialized family name would make that body
+    # wait for its own caller. This identifies only the owner of the body.
+    private def active_recursive_callsite_owns_body?(
+      ctx : LoweringContext,
+      target : String,
+      definition : Adamas::Compiler::Frontend::DefNode?,
+      arena : Adamas::Compiler::Frontend::ArenaLike?,
+      types : Array(TypeRef),
+      literals : Array(Bool),
+      enum_names : Array(String?)?,
+      facts : Array(SourceCallArgument?)?,
+      source_binding : SourceCallBinding?,
+    ) : Bool
+      return false unless ctx.function.name == target && function_state(target).in_progress?
+      return false unless definition && arena && @module.function_by_name(target).try(&.same?(ctx.function))
+      replay = @force_lower_active_replay_captures[target]?.try(&.binding)
+      return false unless replay && replay.source_def.same?(definition) && replay.source_arena.same?(arena)
+      return false unless active_force_lower_source_current?(target, replay)
+      observed = CallsiteArgs.new(types, literals, enum_names, source_argument_facts: facts, source_binding: source_binding)
+      pending_callsite_compatible_with_replay?(replay.callsite, observed) ||
+        pending_callsite_compatible_with_replay?(observed, replay.callsite)
+    end
+
     # An untyped regular parameter is specialized from the concrete callsite.
     # Once that exact symbol is admitted, also queueing its bare family alias
     # only duplicates work; keep the alias fallback for every ambiguous shape.
@@ -130136,8 +130160,15 @@ module Adamas::HIR
       exact_return_target_candidate = exact_callsite_target_admitted &&
                                       has_typed_args &&
                                       mangled_method_name != base_method_name
-      exact_return_target_authoritative = exact_return_target_candidate &&
-                                          exact_callsite_return_contract_materialized?(mangled_method_name)
+      recursive_body_owned = exact_return_target_candidate && active_recursive_callsite_owns_body?(
+        ctx, mangled_method_name, selected_call_entry_def, selected_call_entry_arena, arg_types, arg_literals,
+        callsite_arg_enum_names, m3e_input.try(&.source_argument_facts), callsite_source_binding,
+      )
+      # A recursive query belongs to the same active specialization, even while
+      # its result is still being inferred. A family result could be from a
+      # different set of actual arguments.
+      exact_result_owner = recursive_body_owned ||
+                           (exact_return_target_candidate && exact_callsite_return_contract_materialized?(mangled_method_name))
       # The family name answers for this call only while it resolves to the
       # selected source definition. Its arity-only lookup can otherwise pick a
       # sibling overload: `Array#[]?(range : Range) : Array(T)?` for an Int32
@@ -130203,7 +130234,8 @@ module Adamas::HIR
         named_shape = "-" if named_shape.empty?
         STDERR.puts "[CALL_FORCE_IDENTITY] caller=#{ctx.function.name} method=#{method_name} selected_symbol=#{selected_call_entry_name || "none"} selected_def=#{selected_identity} requested1=#{primary_mangled_name} requested2=#{mangled_method_name} requested3=#{base_method_name} args=#{args.size} block=#{has_block_call ? 1 : 0} named=#{named_shape} splat=#{has_splat ? 1 : 0}"
       end
-      unselected_family_body = unselected_call_family_body?(base_method_name, mangled_method_name, selected_call_entry_def)
+      unselected_family_body = recursive_body_owned ||
+                               unselected_call_family_body?(base_method_name, mangled_method_name, selected_call_entry_def)
       refused_before_call_force = @force_lower_depth_refused.size
       if force_return_type_needed &&
          force_pending_call_targets_for_return_type(
@@ -130219,7 +130251,7 @@ module Adamas::HIR
           callsite_forall_bindings: exact_source_forall_bindings,
         )
         if refreshed == TypeRef::VOID && mangled_method_name != base_method_name &&
-           !exact_return_target_authoritative && !base_return_def_foreign
+           !exact_result_owner && !base_return_def_foreign
           refreshed = get_function_return_type(base_method_name, return_def_arg_count)
         end
         if refreshed == TypeRef::VOID && primary_mangled_name != mangled_method_name
@@ -130237,9 +130269,9 @@ module Adamas::HIR
       # The exact target may have been materialized by the force pass above.
       # Recompute authority after that pass, while retaining the base demand
       # itself for deferred/default-argument and recursive source paths.
-      if !exact_return_target_authoritative &&
+      if !exact_result_owner &&
          exact_return_target_candidate
-        exact_return_target_authoritative = exact_callsite_return_contract_materialized?(mangled_method_name)
+        exact_result_owner = exact_callsite_return_contract_materialized?(mangled_method_name)
       end
 
       # After lowering, re-check return type if it was VOID
@@ -130256,7 +130288,7 @@ module Adamas::HIR
           callsite_forall_bindings: exact_source_forall_bindings,
         )
         if return_type == TypeRef::VOID && mangled_method_name != base_method_name &&
-           !exact_return_target_authoritative && !base_return_def_foreign
+           !exact_result_owner && !base_return_def_foreign
           return_type = get_function_return_type(base_method_name, return_def_arg_count)
         end
       end
@@ -130358,7 +130390,7 @@ module Adamas::HIR
         end
         # Try a source-backed base body if still no result.
         if return_type == TypeRef::VOID && base_method_name != mangled_method_name &&
-           !unselected_family_body && !exact_return_target_authoritative && !base_return_def_foreign
+           !unselected_family_body && !exact_result_owner && !base_return_def_foreign
           if function_state(base_method_name).pending?
             if debug_force
               STDERR.puts "[FORCE_LOWER] trying base=#{base_method_name}"
@@ -130393,7 +130425,7 @@ module Adamas::HIR
       if unresolved_generic_return_type?(return_type) && exact_source_discard_result_type.nil?
         [primary_mangled_name, mangled_method_name, base_method_name].uniq.each do |name|
           next if name.empty?
-          next if (unselected_family_body || exact_return_target_authoritative || base_return_def_foreign) && name == base_method_name
+          next if (unselected_family_body || exact_result_owner || base_return_def_foreign) && name == base_method_name
           if function_state(name).pending?
             force_lower_function_for_return_type(name)
           end
@@ -130406,7 +130438,7 @@ module Adamas::HIR
           callsite_forall_bindings: exact_source_forall_bindings,
         )
         if refreshed == TypeRef::VOID && mangled_method_name != base_method_name &&
-           !exact_return_target_authoritative && !base_return_def_foreign
+           !exact_result_owner && !base_return_def_foreign
           refreshed = get_function_return_type(base_method_name, return_def_arg_count)
         end
         if refreshed == TypeRef::VOID && primary_mangled_name != mangled_method_name
@@ -130422,7 +130454,7 @@ module Adamas::HIR
         else
           [mangled_method_name, primary_mangled_name, base_method_name].uniq.each do |name|
             next if name.empty?
-            next if (exact_return_target_authoritative || base_return_def_foreign) && name == base_method_name
+            next if (exact_result_owner || base_return_def_foreign) && name == base_method_name
             if func = @module.function_by_name(name)
               func_rt = func.return_type
               if func_rt != TypeRef::VOID && !unresolved_generic_return_type?(func_rt)
@@ -130453,7 +130485,7 @@ module Adamas::HIR
         callsite_forall_bindings: exact_source_forall_bindings,
       )
       if resolved_return_type == TypeRef::VOID && mangled_method_name != base_method_name &&
-         !exact_return_target_authoritative && !base_return_def_foreign
+         !exact_result_owner && !base_return_def_foreign
         resolved_return_type = get_function_return_type(base_method_name, return_def_arg_count)
       end
       if source_return_a1_trace
@@ -130478,13 +130510,13 @@ module Adamas::HIR
                                          return_type != TypeRef::NIL &&
                                          !unresolved_generic_return_type?(return_type)
       if source_return_a1_trace
-        STDERR.puts "[SOURCE_RETURN_FLOW] stage=late_function_reads_begin lookup=#{lookup_name} base=#{base_method_name} mangled=#{mangled_method_name} #{source_return_a1_def} exact_forall=#{source_return_a1_map} local_return=#{get_type_name_from_ref(return_type)} pinned=#{return_type_pinned ? 1 : 0} preserve_specialized=#{preserve_specialized_return_type ? 1 : 0} exact_authoritative=#{exact_return_target_authoritative ? 1 : 0} #{source_return_flow_target_trace(mangled_method_name, base_method_name)}"
+        STDERR.puts "[SOURCE_RETURN_FLOW] stage=late_function_reads_begin lookup=#{lookup_name} base=#{base_method_name} mangled=#{mangled_method_name} #{source_return_a1_def} exact_forall=#{source_return_a1_map} local_return=#{get_type_name_from_ref(return_type)} pinned=#{return_type_pinned ? 1 : 0} preserve_specialized=#{preserve_specialized_return_type ? 1 : 0} exact_authoritative=#{exact_result_owner ? 1 : 0} #{source_return_flow_target_trace(mangled_method_name, base_method_name)}"
       end
       unless return_type_pinned
         [mangled_method_name, primary_mangled_name, base_method_name].uniq.each do |name|
           next if name.empty?
           next if name == base_method_name &&
-                  (preserve_specialized_return_type || exact_return_target_authoritative)
+                  (preserve_specialized_return_type || exact_result_owner)
           func = @module.function_by_name(name)
           next unless func
 
