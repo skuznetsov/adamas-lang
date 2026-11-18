@@ -14627,6 +14627,18 @@ module Adamas::HIR
       return lit.id
     end
 
+    # An enum construction changes source identity even when its integer
+    # representation has the same width. Give that conversion its own SSA
+    # result, so copies of the argument still prove the original integer.
+    private def lower_enum_construction(ctx : LoweringContext, enum_name : String, ordinal : ValueId) : ValueId
+      carrier = enum_base_type(enum_name)
+      result = Cast.new(ctx.next_id, carrier, ordinal, carrier, safe: false)
+      ctx.emit(result)
+      ctx.register_type(result.id, carrier)
+      (@enum_value_types ||= {} of ValueId => String)[result.id] = enum_name
+      result.id
+    end
+
     private def enum_tracked_type(ctx : LoweringContext, value_id : ValueId) : TypeRef
       if enum_name = enum_value_name_for(ctx, value_id)
         enum_ref = enum_type_ref(enum_name)
@@ -124064,21 +124076,8 @@ module Adamas::HIR
             STDERR.puts "[ENUM_NEW] owner=#{enum_owner} enum=#{enum_name || "nil"} static=#{static_class_name || "nil"} args=#{args.size}"
           end
         end
-        if enum_owner && enum_name
-          enum_type = enum_base_type(enum_name)
-          if args.size == 1
-            value_id = args.first
-            value_type = ctx.type_of(value_id)
-            if value_type != enum_type
-              cast = Cast.new(ctx.next_id, enum_type, value_id, enum_type, safe: false)
-              ctx.emit(cast)
-              ctx.register_type(cast.id, enum_type)
-              (@enum_value_types ||= {} of ValueId => String)[cast.id] = enum_name
-              return cast.id
-            end
-            (@enum_value_types ||= {} of ValueId => String)[value_id] = enum_name
-            return value_id
-          end
+        if enum_name && args.size == 1
+          return lower_enum_construction(ctx, enum_name, args.first)
         end
       end
 
@@ -152179,21 +152178,8 @@ module Adamas::HIR
       if terminal_default = args.find { |value| runtime_noreturn_value?(ctx, value) }
         return terminal_default
       end
-      if enum_name && member_name == "new"
-        enum_type = enum_base_type(enum_name)
-        if args.size == 1
-          value_id = args.first
-          value_type = ctx.type_of(value_id)
-          if value_type != enum_type
-            cast = Cast.new(ctx.next_id, enum_type, value_id, enum_type, safe: false)
-            ctx.emit(cast)
-            ctx.register_type(cast.id, enum_type)
-            (@enum_value_types ||= {} of ValueId => String)[cast.id] = enum_name
-            return cast.id
-          end
-          (@enum_value_types ||= {} of ValueId => String)[value_id] = enum_name
-          return value_id
-        end
+      if enum_name && member_name == "new" && args.size == 1
+        return lower_enum_construction(ctx, enum_name, args.first)
       end
 
       arg_types = args.map { |arg_id| ctx.type_of(arg_id) }

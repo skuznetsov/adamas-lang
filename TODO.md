@@ -27429,3 +27429,12 @@ One fix per commit, each with an oracle-qualified regression
   The FFI consumer currently sees the thread-local wrapper in place of the
   pointer it contains. Installed 1.22.3 still reaches the nilable enum result
   in `Lexer#lex_number_suffix`.
+- [x] Give enum construction its own HIR value while keeping the ordinal
+  and the result of `.value` integers. Conditional and early returns,
+  two enums with the same representation, and reuse of the original ordinal
+  match Crystal. Installed 1.22.3 now passes `Lexer#lex_number_suffix`
+  and reaches the enum argument to `Token.new` in `scan_percent_literal`.
+- [ ] Select the enum ordinal constructor alongside source `self.new`
+  overloads. Both the parent and this change accept `Kind.new(true)` on an
+  enum without a matching overload; stock Crystal rejects it. Cover source
+  overrides, the identity overload, literal ranges, and `previous_def`.
