@@ -64204,7 +64204,7 @@ module Adamas::HIR
     # materialization even when no source-kind suffix is needed. The binding is
     # usable only when its exact Def/arena and every formal-slot actual still
     # align with the call's TypeRefs and source-kind facts.
-    private def complete_exact_forall_source_call_binding(
+    private def complete_formal_source_call_binding(
       binding : SourceCallBinding?,
       definition : Adamas::Compiler::Frontend::DefNode,
       declaration_arena : Adamas::Compiler::Frontend::ArenaLike?,
@@ -64212,7 +64212,6 @@ module Adamas::HIR
       actual_values : Array(ValueId),
       arg_types : Array(TypeRef),
     ) : SourceCallBinding?
-      return nil if forall_type_param_names(definition).empty?
       return nil unless method_forall_positional_signature?(definition)
       return nil unless arena = declaration_arena
       return nil unless source = binding
@@ -64226,8 +64225,8 @@ module Adamas::HIR
         return nil if source_actual.type_ref == TypeRef::VOID || source_actual.type_ref != arg_types[index]
         lowered_actual = source_call_argument(ctx, actual_values[index], preserve_value_facts: true)
         return nil if lowered_actual.type_ref == TypeRef::VOID || lowered_actual.type_ref != arg_types[index]
-        return nil unless source_call_argument_value_facts(source_actual) ==
-                          source_call_argument_value_facts(lowered_actual)
+        source_facts = source_call_argument_value_facts(source_actual) || return nil
+        return nil unless source_facts == source_call_argument_value_facts(lowered_actual)
       end
       source
     end
@@ -64247,7 +64246,11 @@ module Adamas::HIR
       return nil unless arena = declaration_arena
       return nil unless source = binding
       return nil unless source_call_binding_matches?(source, definition, arena)
-      actuals = source_call_binding_actual_arguments(source)
+      source_kind_argument_names(source, arg_types)
+    end
+
+    private def source_kind_argument_names(binding : SourceCallBinding, arg_types : Array(TypeRef)) : Array(String?)?
+      actuals = source_call_binding_actual_arguments(binding)
       return nil unless actuals.size == arg_types.size
 
       names = Array(String?).new(arg_types.size)
@@ -121181,9 +121184,15 @@ module Adamas::HIR
       has_named_args : Bool,
       selected_def : Adamas::Compiler::Frontend::DefNode?,
       source_restriction_names : Array(String?)? = nil,
+      named_binding : SourceCallBinding? = nil,
     ) : Bool
       return false unless selected_def
-      return false if has_block || has_splat || has_named_args
+      return false if has_block || has_splat
+      if has_named_args
+        return false unless named_binding && (arena = @function_def_arenas[target_name]?) &&
+                            @function_defs[target_name]?.try(&.same?(selected_def)) &&
+                            source_call_binding_matches?(named_binding, selected_def, arena)
+      end
       return false unless method_name_codec_exact_callsite_name?(
         target_name,
         base_name,
@@ -128598,7 +128607,7 @@ module Adamas::HIR
 
       exact_positional_source_call = false
       exact_source_argument_names : Array(String?)? = nil
-      exact_forall_source_binding : SourceCallBinding? = nil
+      exact_formal_source_binding : SourceCallBinding? = nil
       # Ordinary positional lowering has no argument-reordering step to create
       # a SourceCallBinding. Preserve the selected declaration's exact source
       # facts here, before the forall gate and callsite replay record are made.
@@ -128633,6 +128642,22 @@ module Adamas::HIR
             source_call_binding = candidate_binding
           end
         end
+      end
+      # Named reordering chose an exact Def. Its untyped formals can observe a
+      # metaclass and its instance differently even when their TypeRefs match.
+      named_untyped_binding = nil.as(SourceCallBinding?)
+      if has_named_args && !has_block_call && !has_splat && !source_has_splat &&
+         !allocator_explicit_new_call && !constructor_arg_binding_name && !source_default_entry &&
+         (selected_def = selected_call_entry_def) && def_has_untyped_regular_param?(selected_def) &&
+         (selected_arena = selected_call_entry_arena || registered_arena_for_def(selected_def)) &&
+         (named_entry = source_named_entry) && named_entry[1].same?(selected_def) &&
+         (binding = complete_formal_source_call_binding(source_call_binding, selected_def, selected_arena, ctx, args, arg_types))
+        named_untyped_binding = binding
+        exact_formal_source_binding = binding
+        exact_positional_source_call = true
+        exact_source_argument_names = source_kind_argument_names(binding, arg_types)
+        mangled_method_name = mangle_function_name(base_method_name, arg_types, source_restriction_names: exact_source_argument_names)
+        primary_mangled_name = mangled_method_name
       end
       selected_exact_source_argument_names : Array(String?)? = nil
       if selected_def = selected_call_entry_def
@@ -128690,17 +128715,18 @@ module Adamas::HIR
           # slots, so it covers named calls without reconstructing argument order.
           exact_positional_source_call = true
           exact_source_argument_names = source_names
-          exact_forall_source_binding = source_call_binding
+          exact_formal_source_binding = source_call_binding
         elsif !allocator_explicit_new_call && has_named_args &&
               (selected_def = selected_call_entry_def) &&
               (declaration_arena = selected_call_entry_arena || registered_arena_for_def(selected_def)) &&
-              (exact_binding = complete_exact_forall_source_call_binding(
+              !forall_type_param_names(selected_def).empty? &&
+              (exact_binding = complete_formal_source_call_binding(
                 source_call_binding, selected_def, declaration_arena, ctx, args, arg_types,
               ))
           # Ordinary named actuals also bind method forall variables. Their
           # source binding must reach deferred lowering even when no class-kind
           # suffix is needed to identify the callsite symbol.
-          exact_forall_source_binding = exact_binding
+          exact_formal_source_binding = exact_binding
         elsif !has_named_args
           exact_positional_source_call = def_has_untyped_regular_param?(selected_def) ||
                                          !prefer_callsite_specialization(
@@ -128725,11 +128751,12 @@ module Adamas::HIR
           primary_mangled_name = mangled_method_name
         end
       end
-      if exact_forall_source_binding.nil? && has_block_call && has_named_args &&
+      if exact_formal_source_binding.nil? && has_block_call && has_named_args &&
          !allocator_explicit_new_call && !source_default_entry && !has_splat && !source_has_splat &&
          (selected_def = selected_call_entry_def) &&
          (declaration_arena = selected_call_entry_arena || registered_arena_for_def(selected_def)) &&
-         (exact_binding = complete_exact_forall_source_call_binding(
+         !forall_type_param_names(selected_def).empty? &&
+         (exact_binding = complete_formal_source_call_binding(
            source_call_binding, selected_def, declaration_arena, ctx, args, arg_types,
          ))
         # A block call keeps its block-shaped symbol, but its named actuals
@@ -128737,7 +128764,7 @@ module Adamas::HIR
         # (`named(box: Box.new(5)) { }` with `box : Box(T)`). The legacy
         # source-order vectors cannot be paired with formals, so only this
         # formal-slot projection can carry them.
-        exact_forall_source_binding = exact_binding
+        exact_formal_source_binding = exact_binding
       end
 
       # Tuple has implicit splat type param T; map it from concrete tuple elements at the callsite.
@@ -128763,7 +128790,7 @@ module Adamas::HIR
         end
       end
 
-      callsite_source_binding = exact_forall_source_binding
+      callsite_source_binding = exact_formal_source_binding
       if callsite_source_binding.nil? && has_named_args &&
          (selected_def = selected_call_entry_def) &&
          (source_binding = source_call_binding) &&
@@ -129136,6 +129163,7 @@ module Adamas::HIR
         has_named_args,
         selected_call_entry_def,
         exact_source_argument_names,
+        named_untyped_binding,
       )
       unselected_family_body = unselected_call_family_body?(base_method_name, mangled_method_name, selected_call_entry_def)
       if !exact_callsite_target_admitted && !unselected_family_body &&
@@ -131621,7 +131649,7 @@ module Adamas::HIR
         named_shape = "-" if named_shape.empty?
         STDERR.puts "[CALL_FORCE_IDENTITY] caller=#{ctx.function.name} method=#{method_name} selected_symbol=#{selected_call_entry_name || "none"} selected_def=#{selected_identity} requested1=#{primary_mangled_name} requested2=#{mangled_method_name} requested3=#{base_method_name} args=#{args.size} block=#{has_block_call ? 1 : 0} named=#{named_shape} splat=#{has_splat ? 1 : 0}"
       end
-      unselected_family_body = recursive_body_owned ||
+      unselected_family_body = recursive_body_owned || (!!named_untyped_binding && exact_callsite_target_admitted) ||
                                unselected_call_family_body?(base_method_name, mangled_method_name, selected_call_entry_def)
       refused_before_call_force = @force_lower_depth_refused.size
       if force_return_type_needed &&
@@ -132989,7 +133017,7 @@ module Adamas::HIR
               selected_return_def,
               arg_types,
               exact_source_argument_names,
-              exact_forall_source_binding,
+              exact_formal_source_binding,
               return_type,
             ))
         # An in-progress recursive call is statically frozen to its exact
@@ -133011,7 +133039,7 @@ module Adamas::HIR
               selected_call_entry_arena,
               arg_types,
               exact_source_argument_names,
-              exact_forall_source_binding,
+              exact_formal_source_binding,
             )
         # A declared restriction can establish only a kind guarantee before
         # body lowering. The exact body certificate above remains authoritative

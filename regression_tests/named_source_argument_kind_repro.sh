@@ -28,7 +28,8 @@ cases=(
   positive_class_only reordered_equal_carriers
   instance_first_top_level class_first_top_level absolute_named_top_level
   nested_named_top_level reordered_instance_first
-  reject_named_instance reject_named_mixed_kind
+  ordinary_named_specialization
+  reject_named_instance reject_named_mixed_kind reject_instance_specialization
 )
 for phase in original candidate; do
   for test_case in "${cases[@]}"; do
@@ -66,7 +67,11 @@ for phase in original candidate; do
       cat "$output.run.log" >&2
       exit 1
     fi
-    printf 'A\n' >"$WORK_DIR/expected.stdout"
+    expected=A
+    if [[ "$test_case" == ordinary_named_specialization ]]; then
+      expected=ACCAACCA
+    fi
+    printf '%s\n' "$expected" >"$WORK_DIR/expected.stdout"
     diff -u "$WORK_DIR/expected.stdout" "$output.stdout"
   done
 done

@@ -27708,3 +27708,11 @@ One fix per commit, each with an oracle-qualified regression
   String#to_u32 control prints 17 with both standard libraries. The uncached
   S2 attempts still fail on parse_statement_in_scope with bundled 1.18.2
   and the tuple returned by DWARF::Backtraces#lookup_line_number with 1.22.3.
+- [x] Keep class objects and instances in distinct specializations of a
+  fully supplied named call with untyped formals. Use the selected source's
+  formal slots and require the lowered actuals to agree. The native oracle
+  prints ACCAACCA for both call orders and rejects a Bool passed to the
+  instance overload. Named receiver and module controls pass. Two inherited
+  typed-rest cases still lose their tuple on both parent and candidate.
+  Uncached S2 stops at Parser#parse_statement_in_scope on stdlib 1.18.2
+  and DWARF::Backtraces#lookup_line_number on stdlib 1.22.3.
