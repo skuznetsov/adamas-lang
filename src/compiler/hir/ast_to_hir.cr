@@ -50664,7 +50664,7 @@ module Adamas::HIR
       # as overrides here: type literals are compile-time values in V2 HIR.
       return nil if type_literal_class_method_override?(literal_owner, method_name)
 
-      # `obj.class.name` on a virtual receiver names the dynamic class.
+      # `obj.class.name` on a virtual or union receiver names the dynamic class.
       if receiver_id && (source_id = ctx.dot_class_source?(receiver_id))
         return emit_runtime_class_name(ctx, source_id)
       end
@@ -97758,6 +97758,12 @@ module Adamas::HIR
     # Name of the dynamic class of a reference object: read the i32 type_id
     # header and look it up in the backend's type name table.
     private def emit_runtime_class_name(ctx : LoweringContext, object_id : ValueId) : ValueId
+      object_type = ctx.type_of(object_id)
+      if is_union_type?(object_type)
+        if union_name = emit_runtime_union_class_name(ctx, object_id, object_type)
+          return union_name
+        end
+      end
       tid = FieldGet.new(ctx.next_id, TypeRef::INT32, object_id, "__type_id", 0)
       ctx.emit(tid)
       ctx.register_type(tid.id, TypeRef::INT32)
@@ -97765,6 +97771,86 @@ module Adamas::HIR
       ctx.emit(name)
       ctx.register_type(name.id, TypeRef::STRING)
       name.id
+    end
+
+    # Members of a union value's runtime class: each variant's type and id,
+    # from the union descriptor. Nil when the union has no descriptor.
+    private def runtime_union_class_members(union_type : TypeRef) : Array({TypeRef, Int32})?
+      return nil unless ensure_union_descriptor_for_type_ref(union_type)
+      union_descriptor = union_descriptor_from_sidecar(union_type)
+      return nil unless union_descriptor && !union_descriptor.variants.empty?
+      members = union_descriptor.variants.map do |variant|
+        {mir_to_hir_type_ref(variant.type_ref), variant.type_id}
+      end
+      return nil if members.any? { |member| member[0] == TypeRef::VOID }
+      members
+    end
+
+    # Branches on the active variant of a union value and merges the value
+    # each arm yields. The last member takes the fall-through arm unchecked.
+    private def emit_union_variant_fanout(
+      ctx : LoweringContext,
+      object_id : ValueId,
+      union_type : TypeRef,
+      members : Array({TypeRef, Int32}),
+      result_type : TypeRef,
+      & : TypeRef, Int32 -> ValueId
+    ) : ValueId
+      saved_locals = ctx.save_locals
+      merge = ctx.create_block
+      incoming = [] of {BlockId, ValueId}
+      members.each_with_index do |(member_type, variant_id), index|
+        next_block : BlockId? = nil
+        unless index == members.size - 1
+          check = UnionIs.new(ctx.next_id, object_id, variant_id, union_type)
+          ctx.emit(check)
+          ctx.register_type(check.id, TypeRef::BOOL)
+          selected = ctx.create_block
+          next_block = ctx.create_block
+          ctx.terminate(Branch.new(check.id, selected, next_block))
+          ctx.current_block = selected
+          ctx.restore_locals(saved_locals)
+        end
+        arm_id = yield member_type, variant_id
+        incoming << {ctx.current_block, arm_id}
+        ctx.terminate(Jump.new(merge))
+        if following = next_block
+          ctx.current_block = following
+          ctx.restore_locals(saved_locals)
+        end
+      end
+      ctx.current_block = merge
+      ctx.restore_locals(saved_locals)
+      result = Phi.new(ctx.next_id, result_type, incoming)
+      ctx.emit(result)
+      ctx.register_type(result.id, result_type)
+      result.id
+    end
+
+    private def emit_union_variant_unwrap(ctx : LoweringContext, object_id : ValueId, member_type : TypeRef, variant_id : Int32) : ValueId
+      unwrapped = UnionUnwrap.new(ctx.next_id, member_type, object_id, variant_id, false)
+      ctx.emit(unwrapped)
+      ctx.register_type(unwrapped.id, member_type)
+      unwrapped.id
+    end
+
+    # Name of the dynamic class of a union value: the active variant's name,
+    # read from the object header when that variant is a virtual class.
+    # Returns nil when the union has no descriptor, so the caller keeps the
+    # header read.
+    private def emit_runtime_union_class_name(ctx : LoweringContext, object_id : ValueId, union_type : TypeRef) : ValueId?
+      members = runtime_union_class_members(union_type)
+      return nil unless members
+      emit_union_variant_fanout(ctx, object_id, union_type, members, TypeRef::STRING) do |member_type, variant_id|
+        if virtual_class_receiver_type?(member_type)
+          emit_runtime_class_name(ctx, emit_union_variant_unwrap(ctx, object_id, member_type, variant_id))
+        else
+          lit = Literal.new(ctx.next_id, TypeRef::STRING, get_type_name_from_ref(member_type))
+          ctx.emit(lit)
+          ctx.register_type(lit.id, TypeRef::STRING)
+          lit.id
+        end
+      end
     end
 
     # A reference class with subclasses: `.class` is only known at runtime.
@@ -149158,7 +149244,13 @@ module Adamas::HIR
         unless type_name.empty?
           lit_id = lower_type_literal_from_name(ctx, type_name)
           ctx.mark_dot_class_literal(lit_id)
-          ctx.mark_dot_class_source(lit_id, object_id) if virtual_class_receiver_type?(receiver_type)
+          # A union receiver's class is its active variant, known only at
+          # runtime like a virtual class receiver's; selecting the variant
+          # needs the union descriptor.
+          if virtual_class_receiver_type?(receiver_type) ||
+             (is_union_type?(receiver_type) && runtime_union_class_members(receiver_type))
+            ctx.mark_dot_class_source(lit_id, object_id)
+          end
           mark_runtime_type_identity(
             ctx,
             lit_id,
