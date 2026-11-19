@@ -182,6 +182,6 @@ describe "parsed case narrowing at a normal call argument" do
       "CaseCopyCallFactsA:false",
       "CaseCopyCallFactsB:false",
     ])
-    observation[:argument_contract_facts].should be_nil
+    observation[:argument_contract_facts].should eq(observation[:argument_facts])
   end
 end

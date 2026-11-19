@@ -263,7 +263,7 @@ private def lower_parsed_case_type_set_copy_probe
       end
     end
 
-    def case_copy_unknown_relation_probe(value : CopyNarrowFactsParent | CopyNarrowFactsB | CopyNarrowFactsC)
+    def case_copy_descendant_probe(value : CopyNarrowFactsParent | CopyNarrowFactsB | CopyNarrowFactsC)
       case value
       when CopyNarrowFactsChild, CopyNarrowFactsB
         value
@@ -537,15 +537,37 @@ describe "case type-set Copy source facts" do
     observation[:after_type_literal].should be_false
   end
 
-  it "retains an ancestor source fact when its relation to a target is unknown" do
+  it "refines a source ancestor when the branch proves its descendant" do
     Adamas::HIR::AstToHir.__test_clear_case_type_set_copy_observations
     lower_parsed_case_type_set_copy_probe
 
     observation = Adamas::HIR::AstToHir.__test_case_type_set_copy_observations.find do |entry|
-      entry[:function_name].starts_with?("case_copy_unknown_relation_probe")
+      entry[:function_name].starts_with?("case_copy_descendant_probe")
     end.not_nil!
     observation[:target_names].should eq(["CopyNarrowFactsB", "CopyNarrowFactsChild"])
-    observation[:resolved_after_facts].should eq(["CopyNarrowFactsB:false", "CopyNarrowFactsParent:false"])
-    observation[:resolved_after_facts].should_not contain("CopyNarrowFactsChild:false")
+    observation[:resolved_after_facts].should eq(["CopyNarrowFactsB:false", "CopyNarrowFactsChild:false"])
+    observation[:resolved_after_facts].should_not contain("CopyNarrowFactsParent:false")
+  end
+
+  it "keeps an ancestor fact when another target already admits it" do
+    converter = lower_parsed_case_type_set_copy_probe
+    observation = converter.__test_case_type_set_copy_producer(
+      ["CopyNarrowFactsParent", "CopyNarrowFactsA"],
+      [{"CopyNarrowFactsParent", false}],
+      ["CopyNarrowFactsChild", "CopyNarrowFactsParent"],
+      false,
+    )
+    observation[:resolved_after_facts].should eq(["CopyNarrowFactsParent:false"])
+  end
+
+  it "does not refine an ancestor class object into a descendant class object" do
+    converter = lower_parsed_case_type_set_copy_probe
+    observation = converter.__test_case_type_set_copy_producer(
+      ["CopyNarrowFactsParent", "CopyNarrowFactsA"],
+      [{"CopyNarrowFactsParent", true}],
+      ["CopyNarrowFactsChild", "CopyNarrowFactsB"],
+      true,
+    )
+    observation[:resolved_after_facts].should eq(["CopyNarrowFactsParent:true"])
   end
 end

@@ -28108,3 +28108,19 @@ changes. No stdlib edits.
   an argument, Crystal rejects a zero-argument call. Adamas accepts and emits
   a binary that aborts, both before and after the dispatch table repair. Keep a
   control where source specialization proves the receiver is the valid arm.
+
+## Nominal result facts on a successful descendant guard (2026-11-19)
+
+- [x] Intersect an instance's source facts with a successful nominal guard.
+  A broad ancestor becomes the proved descendant on that edge. Preserve
+  alternatives already admitted by the guard, including an ancestor when
+  another target admits it, and keep metaclass evidence separate.
+- `regression_tests/descendant_guard_source_result_repro.sh` matches stock
+  Crystal 1.22.3 for positive `case in` and `is_a?` paths, multi-target
+  branches, and rejection of an unguarded ancestor return. The HIR argument
+  check follows the existing complete value-fact contract from `0a2be6b1`.
+- Both fresh S1 → S2 attempts used source seal
+  `fc2beb4fc323a3855efdb82cf77788ebd824b223c2f93be59fb5e35ce4e3e5a6`.
+  Installed 1.22.3 passes the `Process#stdio_to_fd` guard and reaches
+  `Crystal::System::Process.new(Nil)`. Bundled 1.18.2 remains blocked on
+  `CLI#run_check` through the captured block in `Process#io_to_fd`.

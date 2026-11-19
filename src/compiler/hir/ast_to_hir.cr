@@ -104376,15 +104376,9 @@ module Adamas::HIR
       # value claim the alternatives this check excluded. An unexpandable
       # descriptor keeps the unrefined facts.
       source_facts = expand_case_type_set_source_facts(source_facts) || source_facts
-      narrowed_facts = source_facts.compact_map do |(source_type, source_literal)|
-        next if !target_type_literal.nil? && source_literal != target_type_literal
-        relation = statically_is_a_type?(source_type, target_type)
-        next if relation == false
-        # Keep the producer's exact source alternative when the static type
-        # relation is unknown. The Cast/SSA type carries the narrowed target;
-        # rewriting this fact to that target would fabricate source provenance.
-        {source_type, source_literal}
-      end
+      narrowed_facts = source_facts.compact_map do |fact|
+        source_fact_after_type_check(fact, target_type, target_type_literal)
+      end.uniq
       unless narrowed_facts.empty?
         ctx.register_source_value_facts(narrowed_id, narrowed_facts)
         if narrowed_facts.all? { |(source_type, source_literal)| source_literal && source_type != TypeRef::VOID }
@@ -104392,6 +104386,29 @@ module Adamas::HIR
         end
       end
       ctx.register_local(name, narrowed_id)
+    end
+
+    private def source_fact_after_type_check(
+      fact : {TypeRef, Bool},
+      target_type : TypeRef,
+      target_type_literal : Bool?,
+    ) : {TypeRef, Bool}?
+      source_type, source_literal = fact
+      return nil if !target_type_literal.nil? && source_literal != target_type_literal
+
+      relation = statically_is_a_type?(source_type, target_type)
+      return nil if relation == false
+
+      # On the successful edge of a nominal descendant test an ancestor
+      # receiver denotes a member of the descendant hierarchy. Keep the
+      # producer's more precise types whenever they already satisfy the test.
+      if relation.nil? && !source_literal && target_type_literal == false &&
+         @module.get_type_descriptor(source_type).try(&.kind) == TypeKind::Class &&
+         @module.get_type_descriptor(target_type).try(&.kind) == TypeKind::Class &&
+         statically_is_a_type?(target_type, source_type) == true
+        return {target_type, source_literal}
+      end
+      fact
     end
 
     private def is_a_target_type_literal?(type_name : String) : Bool?
@@ -104853,11 +104870,9 @@ module Adamas::HIR
       expanded_facts = expand_case_type_set_source_facts(source_facts)
       return nil unless expanded_facts
 
-      expanded_facts.select do |(source_type, source_literal)|
-        targets.any? do |target|
-          next false if !target.type_literal.nil? && source_literal != target.type_literal
-          statically_is_a_type?(source_type, target.type) != false
-        end
+      expanded_facts.flat_map do |fact|
+        matches = targets.compact_map { |target| source_fact_after_type_check(fact, target.type, target.type_literal) }
+        matches.includes?(fact) ? [fact] : matches
       end.uniq.sort_by { |(type, literal)| {type.id, literal ? 1 : 0} }
     end
 
@@ -111057,10 +111072,10 @@ module Adamas::HIR
                 if subj_is_union && !should_narrow
                   should_narrow = !get_union_descendant_carrier_variant_for_type_check(subj_type, target_ref).nil?
                 end
-                if single_condition && should_narrow
-                  apply_is_a_narrowing(ctx, [IsANarrowingTarget.new(svn, target_ref)])
-                end
                 target_literal = is_a_target_type_literal?(type_name)
+                if single_condition && should_narrow
+                  apply_is_a_narrowing(ctx, [IsANarrowingTarget.new(svn, target_ref, target_literal)])
+                end
                 type_set_requires_kind ||= target_literal == true
                 if should_narrow && target_ref != TypeRef::VOID
                   type_set_targets << IsANarrowingTarget.new(svn, target_ref, target_literal)
