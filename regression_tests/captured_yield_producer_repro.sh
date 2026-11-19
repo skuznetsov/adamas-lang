@@ -37,7 +37,7 @@ run_focused_specs() {
   )
 
   if ! CRYSTAL_CACHE_DIR="$WORK/cache.spec" \
-    "$SAFE" "$ORIGINAL_CRYSTAL_BIN" 300 8192 spec --no-color "${specs[@]}" >"$log" 2>&1; then
+    "$SAFE" "$ORIGINAL_CRYSTAL_BIN" 300 14336 spec --no-color "${specs[@]}" >"$log" 2>&1; then
     cat "$log" >&2
     return 1
   fi
