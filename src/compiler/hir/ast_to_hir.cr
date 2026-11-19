@@ -130381,7 +130381,41 @@ module Adamas::HIR
       raw_callback_target : String? = nil
       raw_callback_source_def : Adamas::Compiler::Frontend::DefNode? = nil
       raw_callback_source_arena : Adamas::Compiler::Frontend::ArenaLike? = nil
-      if block_id
+      # A literal captured by an unannotated `&block` has no inputs and
+      # discards its result. Bind that ABI to the selected declaration before
+      # probing the method body. In particular a named-only call need not be
+      # rediscovered by the positional block-arity lookup below.
+      captured_literal_source = if receiver_id.nil? && generated_allocator_call_target.nil? &&
+                                   block_pass_expr.nil? && block_for_inline && source_owns_block_value &&
+                                   (definition = selected_call_entry_def) && (registry_name = selected_call_entry_name) &&
+                                   (arena = selected_call_entry_arena || registered_arena_for_def(definition))
+                                  block_param = definition.params.try { |params| find_param(params, &.is_block) }
+                                  if block_param && block_param.type_annotation.nil?
+                                    source = ForceLowerExactSourceBinding.new(definition, arena, registry_name)
+                                    source if force_lower_exact_source_matches?(mangled_method_name, source)
+                                  end
+                                end
+      if (source = captured_literal_source) && (block = block_for_inline)
+        callback_inputs = [] of TypeRef
+        validate_proc_constructor_block_parameters(block, callback_inputs)
+        proc_type = @module.intern_type(TypeDescriptor.new(TypeKind::Proc, "Proc", [TypeRef::NIL]))
+        contract = RawCallbackAbi.new(callback_inputs, TypeRef::NIL, proc_type)
+        callback_callsite = CallsiteArgs.new(
+          callsite_arg_types, callsite_arg_literals, callsite_arg_enum_names, true, has_named_args,
+          canonical_named_arg_names(call_named_arg_names),
+          source_argument_facts: positional_replay_facts, source_binding: callsite_source_binding,
+        )
+        target = register_raw_callback_contract_target(
+          mangled_method_name, contract, source.source_def, source.source_arena, callsite_arg_types,
+          callback_callsite, method_macro_scope: method_macro_scope,
+        )
+        raw_callback_target = target
+        raw_callback_source_def = source.source_def
+        raw_callback_source_arena = source.source_arena
+        mangled_method_name = target
+        primary_mangled_name = target
+        block_return_name = "Nil"
+      elsif block_id
         block_return_name = block_return_type_name(ctx, block_id)
       elsif block_for_inline
         block_return_name = inline_block_return_type_name(block_for_inline, block_param_types_inline, @current_class, ctx)
@@ -130389,7 +130423,7 @@ module Adamas::HIR
       if block_return_name.nil? && block_for_inline
         block_return_name = inline_block_return_type_name(block_for_inline, block_param_types_inline, @current_class, ctx)
       end
-      if block_return_name
+      if block_return_name && captured_literal_source.nil?
         receiver_base_for_block_target = nil
         if receiver_id
           receiver_base_for_block_target = yield_receiver_base_name(ctx.type_of(receiver_id))
@@ -133840,6 +133874,9 @@ module Adamas::HIR
               block_param_types_for_proc = [ctx.type_of(receiver_id)]
             end
           end
+          if captured_literal_source
+            block_param_types_for_proc = [] of TypeRef
+          end
           if constructor_type = proc_constructor_type
             descriptor = @module.get_type_descriptor(constructor_type).not_nil!
             block_param_types_for_proc = descriptor.type_params[0, descriptor.type_params.size - 1]
@@ -133922,6 +133959,7 @@ module Adamas::HIR
                 end
               end
             end
+            block_proc_expected_return_type = TypeRef::NIL if captured_literal_source
             callback_return_hint = raw_callback_abi_for(mangled_method_name).try(&.return_type)
             hint_return_type = unless wildcard_inputs
                                  block_proc_expected_return_type || callback_return_hint || proc_materialize_hint_return_type(ctx)

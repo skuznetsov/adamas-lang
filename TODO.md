@@ -35,6 +35,22 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-19 — Bind unannotated captured literals before exact result demand
+- [x] For a selected ordinary bare call with an unannotated captured block
+  parameter, bind the literal's zero inputs and Nil result before probing the
+  method body. Preserve the selected definition, arena and named/defaulted
+  actuals in the raw callback target. Forwarding an explicit Proc keeps its
+  own signature and scope.
+- [x] The stock Crystal 1.22.3 native oracle and the candidate produce the
+  same bytes for three independently closed-over callbacks. They both reject
+  extra literal parameters, a wrong ordinary argument type and an undefined
+  operation in the discarded callback body. The parent fails the positive.
+- [ ] Fresh uncached S1-to-S2 attempts on installed Crystal 1.22.3 and
+  bundled 1.18.2 exit 1 in the result demand from `CLI#run_check`.
+  Bundled 1.18.2 now passes the old `Process#io_to_fd` → `spawn` →
+  `Fiber#enqueue` corridor. Both reach the mutually recursive macro
+  evaluator result demands. Neither produces S2.
+
 ### 2026-11-19 — Keep checked direct call returns on suspended bodies
 - [x] A suspended recursive body only retained materialized constant
   returns. A reachable return can also carry the result of a settled
