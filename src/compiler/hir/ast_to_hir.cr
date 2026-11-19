@@ -46161,9 +46161,34 @@ module Adamas::HIR
       end
     end
 
+    # A generic module receiver (`Gen(Int32).kind`) specializes the module's
+    # class methods under the canonical instance name, the same owner the
+    # receiver resolves to, with arguments read back from that name so the
+    # type parameters bind without a caller's root-anchored spelling.
+    private def monomorphize_generic_module_instance(lookup_base_name : String, type_args : Array(String), class_name_str : String) : String
+      return class_name_str unless generic_module_template_base?(lookup_base_name) || @module_defs.has_key?(lookup_base_name)
+      canonical = canonical_generic_module_instance_name(class_name_str)
+      return canonical if @monomorphized.includes?(canonical)
+      canonical_args = if info = split_generic_base_and_args(canonical)
+                         split_generic_type_args(info.args)
+                       else
+                         type_args
+                       end
+      canonical_args = type_args unless canonical_args.size == type_args.size
+      monomorphize_generic_module(lookup_base_name, canonical_args, canonical)
+      canonical
+    end
+
     # Monomorphize a generic module (e.g., Impl(Float32, ImplInfo_Float32))
     private def monomorphize_generic_module(base_name : String, type_args : Array(String), specialized_name : String)
+      # The template is keyed by its declaration (`Gen(T)`), not the bare base.
       defs = @module_defs[base_name]?
+      unless defs
+        ensure_module_defs_stripped_lookup
+        if declared_name = module_defs_stripped_lookup(base_name)
+          defs = @module_defs[declared_name]?
+        end
+      end
       return unless defs
 
       # Find a module definition with type parameters
@@ -46223,6 +46248,17 @@ module Adamas::HIR
                             inferred = infer_concrete_return_type_from_body(member, specialized_name, member_arena, node_expr_id: expr_id)
                             inferred || TypeRef::VOID
                           end
+            # A body returning a type (`T`, `Int32`) shares the instance ABI
+            # TypeRef; as in class registration, the call site needs the
+            # recorded literal shape to keep its `T.class` source kind.
+            type_literal_name = with_arena(member_arena) do
+              infer_type_literal_return_name_from_body(member, specialized_name)
+            end
+            type_literal_ref = type_literal_name ? type_ref_for_name(type_literal_name) : TypeRef::VOID
+            if type_literal_ref != TypeRef::VOID && member.return_type.nil? &&
+               (return_type == TypeRef::VOID || return_type == TypeRef::NIL)
+              return_type = type_literal_ref
+            end
 
             # Get parameter types
             param_types = [] of TypeRef
@@ -46253,6 +46289,7 @@ module Adamas::HIR
             register_function_type(full_name, return_type)
             set_function_def_entry(full_name, member)
             set_function_def_arena(full_name, member_arena)
+            record_type_literal_return(full_name, member, member_arena) if type_literal_ref != TypeRef::VOID
 
             # CRITICAL: Store type param map so lowering can resolve type param calls
             # e.g., ImplInfo.get_cache() -> ImplInfo_Float32.get_cache()
@@ -121940,10 +121977,7 @@ module Adamas::HIR
                   monomorphize_generic_class(lookup_base_name, type_args, class_name_str)
                 end
                 # If not a class, try as a generic module
-                if !@monomorphized.includes?(class_name_str) && @module_defs.has_key?(lookup_base_name)
-                  monomorphize_generic_module(lookup_base_name, type_args, class_name_str)
-                end
-                class_name_str = canonical_generic_module_instance_name(class_name_str)
+                class_name_str = monomorphize_generic_module_instance(lookup_base_name, type_args, class_name_str)
               end
             end
           elsif obj_kind == Adamas::Compiler::Frontend::NodeKind::Call
@@ -121985,10 +122019,7 @@ module Adamas::HIR
                       if !@monomorphized.includes?(class_name_str)
                         monomorphize_generic_class(lookup_base_name, type_args, class_name_str)
                       end
-                      if !@monomorphized.includes?(class_name_str) && @module_defs.has_key?(lookup_base_name)
-                        monomorphize_generic_module(lookup_base_name, type_args, class_name_str)
-                      end
-                      class_name_str = canonical_generic_module_instance_name(class_name_str)
+                      class_name_str = monomorphize_generic_module_instance(lookup_base_name, type_args, class_name_str)
                     end
                   else
                     class_name_str = resolve_type_alias_chain(type_name)
@@ -148985,7 +149016,7 @@ module Adamas::HIR
           if !@monomorphized.includes?(class_name_str)
             monomorphize_generic_class(lookup_base_name, type_args, class_name_str)
           end
-          class_name_str = canonical_generic_module_instance_name(class_name_str)
+          class_name_str = monomorphize_generic_module_instance(lookup_base_name, type_args, class_name_str)
         end
       elsif obj_kind == Adamas::Compiler::Frontend::NodeKind::Call
         # Type-like call receiver such as ::Set(String).new parsed without parens.
@@ -149017,10 +149048,7 @@ module Adamas::HIR
                   if !@monomorphized.includes?(class_name_str)
                     monomorphize_generic_class(lookup_base_name, type_args, class_name_str)
                   end
-                  if !@monomorphized.includes?(class_name_str) && @module_defs.has_key?(lookup_base_name)
-                    monomorphize_generic_module(lookup_base_name, type_args, class_name_str)
-                  end
-                  class_name_str = canonical_generic_module_instance_name(class_name_str)
+                  class_name_str = monomorphize_generic_module_instance(lookup_base_name, type_args, class_name_str)
                 end
               else
                 class_name_str = resolve_type_alias_chain(type_name)
