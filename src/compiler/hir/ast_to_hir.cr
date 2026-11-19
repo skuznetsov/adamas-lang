@@ -113507,7 +113507,7 @@ module Adamas::HIR
       )
     end
 
-    private def current_active_force_lower_body(name : String, *, for_struct_return : Bool = false) : ForceLowerActiveBody?
+    private def current_active_force_lower_body(name : String, *, allow_named_or_defaulted : Bool = false) : ForceLowerActiveBody?
       return unless function_state(name).in_progress?
       capture = @force_lower_active_replay_captures[name]?
       return unless capture && capture.name == name
@@ -113515,7 +113515,7 @@ module Adamas::HIR
       active = capture.active_body
       return unless replay && active && active_force_lower_source_current?(name, replay)
       return unless replay.source_def.same?(active.source_def) && replay.source_arena.same?(active.source_arena)
-      return if !for_struct_return && (active.param_defaults || replay.callsite.has_named_args)
+      return if !allow_named_or_defaulted && (active.param_defaults || replay.callsite.has_named_args)
       function = active.function
       return unless @module.function_by_name(name).try(&.same?(function)) == true
       active if active_force_lower_body_abi_current?(active)
@@ -117122,7 +117122,7 @@ module Adamas::HIR
     private def suspended_struct_return(ctx : LoweringContext) : PartialStructReturn?
       capture = @force_lower_active_replay_captures[ctx.function.name]? || return
       replay = capture.binding || return
-      body = current_active_force_lower_body(ctx.function.name, for_struct_return: true) || return
+      body = current_active_force_lower_body(ctx.function.name, allow_named_or_defaulted: true) || return
       return unless body.function.same?(ctx.function)
       if @module.get_type_descriptor(body.return_type).try(&.kind.union?)
         return suspended_nullable_struct_return(ctx, replay, body)
@@ -122855,7 +122855,7 @@ module Adamas::HIR
                     (allow_queued_result_demand && consumer != target &&
                      queued_exact_force_lower_demand?(target, binding))
 
-      if consumer == target && (active = current_active_force_lower_body(target))
+      if consumer == target && (active = current_active_force_lower_body(target, allow_named_or_defaulted: true))
         if active.function.same?(ctx.function) && active.source_def.same?(binding.source_def) &&
            active.source_arena.same?(binding.source_arena)
           # A call to this active body inherits the same unresolved children.

@@ -28222,3 +28222,17 @@ changes. No stdlib edits.
   stops at a self-dependency in `parse_class`. Bundled 1.18.2 still
   stops on the `Process#io_to_fd` dependency on `spawn`. Both failures
   surface through `CLI#run_check`. S2 and S3 remain open.
+
+## Recursive calls to an active body with defaults (2026-11-19)
+
+- [x] Keep the distinct child result dependency when a recursive call
+  already has the same materialized Function, Def and arena. Named or
+  defaulted callsites still require their own ordinary callsite binding.
+- The defaulted-body HIR regression fails on the parent with a self edge,
+  and the candidate passes the 45-example HIR pack. The missing active
+  body control still retains the edge.
+- Fresh S1 → S2 at seal
+  `aeb23e85322b725dcab10a0e4462d1a6b02a76b8c24b186060d03fda10c611c3`
+  resumes the installed Crystal 1.22.3 callers of `parse_class`.
+  `CLI#run_check` still has a later pending result. Bundled 1.18.2
+  stops while replaying `spawn`. Both attempts exit 1 without S2.

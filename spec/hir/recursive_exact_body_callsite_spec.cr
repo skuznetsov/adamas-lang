@@ -265,6 +265,11 @@ private def recursive_exact_body_replay_converter : {Adamas::HIR::AstToHir, Stri
         return lookup(false) if again
         RecursiveBodyPresent.new
       end
+
+      def lookup_defaulted(again : Bool = true) : RecursiveBodyValue?
+        return lookup_defaulted(false) if again
+        RecursiveBodyPresent.new
+      end
     end
 
     class RecursiveBodyChildNode < RecursiveBodyNode
@@ -284,6 +289,7 @@ private def recursive_exact_body_replay_converter : {Adamas::HIR::AstToHir, Stri
 
     RecursiveBodyStarter.new.start(RecursiveBodyChildNode.new)
     RecursiveBodyLookup.new.lookup(true)
+    RecursiveBodyLookup.new.lookup_defaulted
     CRYSTAL
 
   parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
@@ -382,6 +388,16 @@ describe "active exact-body callsite ownership" do
     converter, _ = recursive_exact_body_replay_converter
     target = converter.spec_recursive_replay_target("RecursiveBodyLookup#lookup", [Adamas::HIR::TypeRef::BOOL])
     converter.__test_recursive_result_dependencies(target).should eq(Set{"#{target}#pending-child"})
+  end
+
+  it "keeps only the distinct child of an active body with default parameters" do
+    converter, _ = recursive_exact_body_replay_converter
+    target = converter.spec_recursive_replay_target("RecursiveBodyLookup#lookup_defaulted", [Adamas::HIR::TypeRef::BOOL])
+    converter.__test_recursive_result_dependencies(target).should eq(Set{"#{target}#pending-child"})
+
+    converter, _ = recursive_exact_body_replay_converter
+    target = converter.spec_recursive_replay_target("RecursiveBodyLookup#lookup_defaulted", [Adamas::HIR::TypeRef::BOOL])
+    converter.__test_recursive_result_dependencies(target, current_body: false).should eq(Set{target, "#{target}#pending-child"})
   end
 
   it "keeps the self dependency when the active body has no current witness" do
