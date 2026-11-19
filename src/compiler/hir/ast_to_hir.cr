@@ -1253,6 +1253,11 @@ module Adamas::HIR
     # Crystal String ABI: type_id @0, bytesize @4, size @8, payload @12.
     # Keep this aligned with the String builtins in llvm_backend.cr.
     STRING_DATA_OFFSET = 12
+    # Owner of the meta-instance methods a type literal falls back to
+    # (`T.to_s(io)`, `T.name`, `T == U`). In Crystal the metaclass of a class
+    # *and* of a module inherits from Class (MetaclassType super_class =
+    # program.class_type); there is no Module type to look methods up in.
+    TYPE_LITERAL_META_OWNER = "Class"
 
     alias AstNode = Adamas::Compiler::Frontend::Node
     alias ExprId = Adamas::Compiler::Frontend::ExprId
@@ -50609,7 +50614,7 @@ module Adamas::HIR
       func_def = @function_defs[meta_method]?
       arena = @function_def_arenas[meta_method]?
       return nil unless func_def && arena
-      class_info = @class_info[owner_name]?
+      class_info = @class_info[owner_name]? || type_literal_module_owner_info(owner_name)
       return nil unless class_info
       def_owner = meta_method.split('#', 2).first
       # Metaclass methods are instantiated per receiver type (as in Crystal):
@@ -50633,6 +50638,15 @@ module Adamas::HIR
         end
       end
       @module.has_function?(full_name) ? full_name : nil
+    end
+
+    # A module has no ClassInfo, but its metaclass still instantiates Class
+    # methods with `self`/`@type` = the module. Module bodies are lowered with
+    # an empty-layout owner info (see the instance-module lowering path).
+    private def type_literal_module_owner_info(owner_name : String) : ClassInfo?
+      module_ref = type_ref_for_name(owner_name)
+      return nil unless module_type_ref?(module_ref)
+      ClassInfo.new(owner_name, module_ref, [] of IVarInfo, [] of ClassVarInfo, 0, false, nil)
     end
 
     private def def_macro_references_type_ivar?(
@@ -56845,7 +56859,7 @@ module Adamas::HIR
       end
       if arg_types.empty? && (method_name == "inspect" || method_name == "to_s")
         if receiver_is_type_literal
-          meta_owner = module_type_ref?(receiver_type) ? "Module" : "Class"
+          meta_owner = TYPE_LITERAL_META_OWNER
           meta_base = "#{meta_owner}##{method_name}"
           if has_function_base?(meta_base)
             if resolved = resolve_untyped_overload(meta_base, 0, has_block_call, call_has_named_args)
@@ -116684,7 +116698,7 @@ module Adamas::HIR
                 set_function_state(wrapper, FunctionLoweringState::Completed)
                 return
               end
-              meta_owner = module_type_ref?(type_ref_for_name(owner)) ? "Module" : "Class"
+              meta_owner = TYPE_LITERAL_META_OWNER
               if wrapper = ensure_type_literal_class_method(owner, method_part, arg_types, meta_owner)
                 pop_pending_callsite_args(name, base_name) if callsite
                 set_function_state(wrapper, FunctionLoweringState::Completed)
@@ -120896,7 +120910,7 @@ module Adamas::HIR
             full_method_name = "#{current}.#{method_name}"
             static_class_name = current
           else
-            meta_owner = module_type_ref?(type_ref_for_name(current)) ? "Module" : "Class"
+            meta_owner = TYPE_LITERAL_META_OWNER
             if (meta_method = resolve_method_with_inheritance(meta_owner, method_name)) &&
                ((meta_base = method_owner(meta_method)) == "Class" || meta_base == "Module")
               # Resolved below via the `Owner.m` -> meta-method type-literal fallback.
@@ -122545,7 +122559,7 @@ module Adamas::HIR
               receiver_id = literal_id
               receiver_type = ctx.type_of(literal_id)
               receiver_is_module = module_type_ref?(receiver_type)
-              meta_owner = receiver_is_module ? "Module" : "Class"
+              meta_owner = TYPE_LITERAL_META_OWNER
               if meta_resolved = resolve_method_with_inheritance(meta_owner, method_name)
                 full_method_name = meta_resolved
                 static_class_name = nil
@@ -122929,7 +122943,7 @@ module Adamas::HIR
                       if !@function_defs.has_key?(full_method_name) &&
                          !class_method_overload_exists?(full_method_name)
                         # Fall back to Class/Module instance methods for type literals (e.g., T.to_s).
-                        meta_owner = receiver_is_module ? "Module" : "Class"
+                        meta_owner = TYPE_LITERAL_META_OWNER
                         if meta_method = resolve_method_with_inheritance(meta_owner, method_name)
                           full_method_name = meta_method
                           static_class_name = nil
@@ -123030,7 +123044,7 @@ module Adamas::HIR
                     static_class_name = method_owner(full_method_name)
                     if !@function_defs.has_key?(full_method_name) &&
                        !class_method_overload_exists?(full_method_name)
-                      meta_owner = receiver_is_module ? "Module" : "Class"
+                      meta_owner = TYPE_LITERAL_META_OWNER
                       if meta_resolved = resolve_method_with_inheritance(meta_owner, method_name)
                         full_method_name = meta_resolved
                         static_class_name = nil
@@ -124824,7 +124838,7 @@ module Adamas::HIR
         owner = method_owner(full_method_name)
         if owner && !owner.empty? && type_name_exists?(owner)
           owner_ref = type_ref_for_resolved_name(owner)
-          meta_owner = module_type_ref?(owner_ref) ? "Module" : "Class"
+          meta_owner = TYPE_LITERAL_META_OWNER
           if meta_method = resolve_method_with_inheritance(meta_owner, method_name)
             literal_id = lower_type_literal_from_name(ctx, owner)
             ctx.mark_type_literal(literal_id)
@@ -125132,7 +125146,7 @@ module Adamas::HIR
         owner = method_owner(base_method_name)
         if owner && !owner.empty? && type_name_exists?(owner)
           owner_ref = type_ref_for_resolved_name(owner)
-          meta_owner = module_type_ref?(owner_ref) ? "Module" : "Class"
+          meta_owner = TYPE_LITERAL_META_OWNER
           if meta_method = resolve_method_with_inheritance(meta_owner, method_name)
             if v2_string_readable?(meta_method)
               literal_id = lower_type_literal_from_name(ctx, owner)
@@ -126471,7 +126485,7 @@ module Adamas::HIR
             static_class_name = owner
           else
             owner_ref = type_ref_for_name(owner)
-            meta_owner = module_type_ref?(owner_ref) ? "Module" : "Class"
+            meta_owner = TYPE_LITERAL_META_OWNER
             short_method = method_short_from_name(mangled_method_name) || method_name
             if resolve_class_method_with_inheritance(owner, short_method).nil?
               if wrapper = ensure_type_literal_class_method(owner, short_method, arg_types, meta_owner)
@@ -129766,29 +129780,30 @@ module Adamas::HIR
         self_id = ctx.lookup_local("self")
         # Never rewrite explicit/implicit self in instance methods to class-method calls.
         unless (self_id && receiver_id == self_id && !@current_method_is_class)
-          unless module_type_ref?(receiver_type)
-            # A type literal resolved to a Class/Module meta-instance method
-            # (`C.to_s(io)` -> `Class#to_s$IO`). Rewriting the owner separator
-            # would yield a receiverless `Class.to_s$IO` that names the meta
-            # owner instead of `C` (and drops the literal). Route it through the
-            # per-type wrapper so the literal owner is preserved.
-            meta_wrapper = nil
-            rewrite_owner = method_owner(mangled_method_name)
-            if rewrite_owner == "Class" || rewrite_owner == "Module"
-              literal_owner = get_type_name_from_ref(receiver_type)
-              if !literal_owner.empty? && type_name_exists?(literal_owner)
-                meta_wrapper = ensure_type_literal_class_method(literal_owner, method_name, arg_types, rewrite_owner)
-              end
+          # A type literal resolved to a Class meta-instance method
+          # (`C.to_s(io)` -> `Class#to_s$IO`). Rewriting the owner separator
+          # would yield a receiverless `Class.to_s$IO` that names the meta
+          # owner instead of `C` (and drops the literal). Route it through the
+          # per-type wrapper so the literal owner is preserved. A module's
+          # metaclass inherits Class as well, so module literals take the same
+          # wrapper; only the plain separator rewrite stays class-only.
+          meta_wrapper = nil
+          rewrite_owner = method_owner(mangled_method_name)
+          if rewrite_owner == "Class" || rewrite_owner == "Module"
+            literal_owner = get_type_name_from_ref(receiver_type)
+            if !literal_owner.empty? && type_name_exists?(literal_owner)
+              meta_wrapper = ensure_type_literal_class_method(literal_owner, method_name, arg_types, rewrite_owner)
             end
-            if meta_wrapper
-              mangled_method_name = meta_wrapper
-              primary_mangled_name = meta_wrapper
-              base_method_name = strip_type_suffix(meta_wrapper)
-            else
-              mangled_method_name = mangled_method_name.sub("#", ".")
-              primary_mangled_name = primary_mangled_name.sub("#", ".")
-              base_method_name = base_method_name.sub("#", ".") if base_method_name.includes?('#')
-            end
+          end
+          if meta_wrapper
+            mangled_method_name = meta_wrapper
+            primary_mangled_name = meta_wrapper
+            base_method_name = strip_type_suffix(meta_wrapper)
+            receiver_id = nil
+          elsif !module_type_ref?(receiver_type)
+            mangled_method_name = mangled_method_name.sub("#", ".")
+            primary_mangled_name = primary_mangled_name.sub("#", ".")
+            base_method_name = base_method_name.sub("#", ".") if base_method_name.includes?('#')
             receiver_id = nil
           end
         end
