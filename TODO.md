@@ -67,6 +67,24 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   `Parser#parse_expression$Int32` in `Parser#parse_op_assign$Nil`. This slice
   does not advance the bootstrap frontier past those blockers.
 
+### 2026-11-18 — Validate declared instance-variable stores
+- [x] Check the source type of an assignment to an explicitly declared
+  field before coercing the value for storage. The negative tests cover
+  both forms of an invalid fallback, union members, numeric literals and
+  variables, user-defined numeric method names, and tuple elements.
+  Compatible stores and a terminating right-hand side run with the same
+  outputs and exit codes as stock Crystal 1.22.3.
+- [ ] Check the storage representation for compatible optional subtype
+  and numeric assignments. With the same no-prelude fixture, the sealed
+  parent and candidate both print `XCXXUPXESXTN`, while stock prints
+  `JCWRUPFESBTN`. The failing positions are the subtype fallback, the
+  widened integer and floating-point literals, the widened fallback, and
+  the in-range UInt8 literal. The assignment validator preserves the
+  parent behavior for those inputs. See the paired readback receipt
+  `typed-ivar-parent-readback-20261118/comparison.json`.
+- [ ] The exact candidate's bundled and installed S1-to-S2 runs stop at
+  the same parser pending-source-result errors as the parent.
+
 ### Prelude hello blockers, second batch (2026-10-26)
 Each fix has its own commit and regression (original Crystal 1.22.1 first).
 - [x] 653c8a09 included-module overloads selected by argument types for

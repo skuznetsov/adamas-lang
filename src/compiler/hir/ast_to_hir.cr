@@ -153100,6 +153100,118 @@ module Adamas::HIR
         raise LoweringError.new("can't autocast #{safe_slice_to_string(value_node.name)} to #{enum_name}: no matching enum member", value_node)
     end
 
+    # Keep the source assignment contract for explicitly typed instance
+    # variables separate from the storage coercion below. The slot's layout
+    # type is authoritative, but it does not make every value ABI-compatible
+    # with that type a valid source assignment.
+    private def incompatible_declared_ivar_store_type(
+      ctx : LoweringContext,
+      value_id : ValueId,
+      value_type : TypeRef,
+      target_type : TypeRef?,
+      source_value_node : Adamas::Compiler::Frontend::Node?,
+    ) : TypeRef?
+      return nil if value_type == TypeRef::VOID || target_type.nil? || target_type == TypeRef::VOID
+
+      actual_type = enum_tracked_type(ctx, value_id)
+      if enum_name = enum_value_name_for(ctx, value_id)
+        return nil if enum_metadata_target_compatible?(target_type, enum_name)
+      end
+
+      source_members = if is_union_type?(actual_type)
+                         source_block_result_union_members(actual_type)
+                       else
+                         [actual_type]
+                       end
+      target_members = if is_union_type?(target_type)
+                         source_block_result_union_members(target_type)
+                       else
+                         [target_type]
+                       end
+      return nil unless source_members && target_members
+
+      incompatible = source_members.not_nil!.find do |source_member|
+        target_members.not_nil!.none? do |target_member|
+          declared_ivar_store_member_compatible?(source_member, target_member)
+        end
+      end
+      return nil unless incompatible
+      return nil if declared_ivar_store_numeric_literal_compatible?(
+        source_value_node,
+        source_members.not_nil!,
+        target_members.not_nil!,
+      )
+
+      incompatible
+    end
+
+    private def declared_ivar_store_member_compatible?(
+      source_type : TypeRef,
+      target_type : TypeRef,
+    ) : Bool
+      return true if source_type == target_type
+      return false if source_type == TypeRef::VOID || target_type == TypeRef::VOID
+
+      target_name = get_type_name_from_ref(target_type)
+      return false if target_name.empty?
+
+      # A runtime Symbol does not carry the literal identity needed for enum
+      # autocasting. enum_tracked_type handles actual enum values above.
+      if source_type == TypeRef::SYMBOL && @enum_info.try(&.has_key?(resolve_type_alias_chain(target_name)))
+        return false
+      end
+
+      resolved_param_compatible_with_arg?(source_type, target_name, target_name, false, 0, target_type)
+    end
+
+    private def declared_ivar_store_numeric_literal_compatible?(
+      source_value_node : Adamas::Compiler::Frontend::Node?,
+      source_members : Array(TypeRef),
+      target_members : Array(TypeRef),
+    ) : Bool
+      parts = pointer_numeric_literal_parts(source_value_node)
+      return false unless parts
+      number, negative = parts
+
+      literal_type = type_ref_for_number_kind(number.kind)
+      return false if literal_type == TypeRef::VOID
+      return false unless source_members.all? { |member| member == literal_type }
+
+      target_members.any? do |target_member|
+        numeric_primitive?(target_member) && pointer_numeric_literal_fits?(number, negative, target_member)
+      end
+    end
+
+    private def validate_declared_ivar_store!(
+      ctx : LoweringContext,
+      class_name : String,
+      ivar_name : String,
+      value_id : ValueId,
+      value_type : TypeRef,
+      ivar_type : TypeRef?,
+      node : Adamas::Compiler::Frontend::Node,
+      source_value_node : Adamas::Compiler::Frontend::Node? = nil,
+    ) : Nil
+      return unless declared_ivar_type?(class_name, ivar_name)
+      return unless target_type = ivar_type
+
+      incompatible_type = incompatible_declared_ivar_store_type(
+        ctx,
+        value_id,
+        value_type,
+        target_type,
+        source_value_node,
+      )
+      return unless incompatible_type
+
+      expected_name = get_type_name_from_ref(target_type)
+      actual_name = get_type_name_from_ref(incompatible_type)
+      raise LoweringError.new(
+        "instance variable '#{ivar_name}' of #{class_name} must be #{expected_name}, not #{actual_name}",
+        node,
+      )
+    end
+
     private def lower_assign(
       ctx : LoweringContext,
       node : Adamas::Compiler::Frontend::AssignNode,
@@ -153276,6 +153388,9 @@ module Adamas::HIR
         value_type = assignment_value_type(ctx, value_id)
         ivar_offset = get_ivar_offset(name)
         ivar_type = get_ivar_type(name)
+        if class_name = @current_class
+          validate_declared_ivar_store!(ctx, class_name, name, value_id, value_type, ivar_type, node, @arena[node.value])
+        end
         if value_type == TypeRef::SYMBOL && ivar_type && @enum_info.try(&.has_key?(get_type_name_from_ref(ivar_type)))
           raise LoweringError.new("instance variable '#{name}' must be #{get_type_name_from_ref(ivar_type)}, not Symbol", node)
         end
@@ -154733,6 +154848,9 @@ module Adamas::HIR
         value_type = assignment_value_type(ctx, value_id)
         ivar_offset = get_ivar_offset(name)
         ivar_type = get_ivar_type(name)
+        if class_name = @current_class
+          validate_declared_ivar_store!(ctx, class_name, name, value_id, value_type, ivar_type, target_node)
+        end
         if class_name = @current_class
           if class_info = @class_info[class_name]?
             ivars = class_info.ivars
