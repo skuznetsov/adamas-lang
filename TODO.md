@@ -28204,3 +28204,21 @@ changes. No stdlib edits.
 - Fresh bundled 1.18.2 and installed 1.22.3 S1 → S2 attempts used source
   seal `03f3dce28f5bc5751a8c2181a9c543380e5865a17534b8a2cdb4eecbc315f54e`.
   Both still exit 1 on the pending result surfaced by `CLI#run_check`.
+
+## Tagged nullable struct results in recursive parser specializations (2026-11-19)
+
+- [x] Carry the checked reachable Nil and concrete struct tags together
+  with the suspended body. Verify the selected source, the emitted call
+  and the final return graph before publishing the result. Admit an
+  inverse retry edge when a distinct exact result continuation already
+  owns the producer's queued work.
+- The native regression matches stock Crystal 1.22.3 for a recursive
+  nullable struct and rejects wrong instance and metaclass returns.
+  The focused HIR pack passes 63 examples.
+- Fresh S1 → S2 runs at source seal
+  `ed6eacc4cd28d6bb70adb125009c270d2c795e27c45e4bc2cedd5a2e741b856e`
+  both exit 1. Installed Crystal 1.22.3 settles
+  `parse_bare_proc_type` and `parse_union_type_for_annotation`, then
+  stops at a self-dependency in `parse_class`. Bundled 1.18.2 still
+  stops on the `Process#io_to_fd` dependency on `spawn`. Both failures
+  surface through `CLI#run_check`. S2 and S3 remain open.

@@ -584,7 +584,7 @@ class Adamas::HIR::AstToHir
     ctx.terminate(returned)
     body = ForceLowerActiveBody.new(partial, source.source_def, source.source_arena,
       [] of TypeRef, [] of String, type)
-    anchor = PartialStructReturn.new(replay, ctx, block, returned, read, body)
+    anchor = PartialStructReturn.new(replay, ctx, body, PartialStructReturnValue.new(block, returned, read))
     pending = nested ? __test_nested_projection_pending(change) : ExactResultPending.new("RecFactory.consumer", name, source)
 
     case change
@@ -600,7 +600,7 @@ class Adamas::HIR::AstToHir
       ctx.register_source_value_facts(read.id, [{type, true}])
     when :changed_replay_source
       other = __test_projection_replay("RecFactory.reference")
-      anchor = PartialStructReturn.new(other, ctx, block, returned, read, body)
+      anchor = PartialStructReturn.new(other, ctx, body, PartialStructReturnValue.new(block, returned, read))
     end
     !checked_partial_struct_result(pending, anchor).nil?
   end
@@ -630,7 +630,7 @@ class Adamas::HIR::AstToHir
     result = suspended_return_call_result(ctx, call) || return false
     body = ForceLowerActiveBody.new(partial, source.source_def, source.source_arena,
       [] of TypeRef, [] of String, type)
-    anchor = PartialStructReturn.new(replay, ctx, block, returned, call, body, result)
+    anchor = PartialStructReturn.new(replay, ctx, body, PartialStructReturnValue.new(block, returned, call, result))
 
     case change
     when :different_operand
@@ -648,6 +648,79 @@ class Adamas::HIR::AstToHir
     end
     pending = ExactResultPending.new("RecFactory.consumer", name, source)
     !checked_partial_struct_result(pending, anchor).nil?
+  end
+
+  def __test_suspended_tagged_struct_return?(change : Symbol) : Bool
+    name = __test_projection_method_name("nullable_wide")
+    source = __test_projection_source(name)
+    replay = __test_projection_replay(name, __test_projection_bool_callsite(name, false))
+    original = @module.function_by_name(name).not_nil!
+    type = original.return_type
+    function = Function.new(original.id, name, type)
+    function.add_param("flag", TypeRef::BOOL)
+    ctx = LoweringContext.new(function, @module, source.source_arena)
+    ctx.source_declared_return_contract = recursive_declared_result_contract(name, source, "WideRecToken?")
+    present = ctx.create_block
+    absent = ctx.create_block
+    ctx.terminate(Branch.new(function.params.first.id, present, absent))
+    body = ForceLowerActiveBody.new(function, source.source_def, source.source_arena,
+      [TypeRef::BOOL], ["flag"], type)
+
+    ctx.switch_to_block(absent)
+    null = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+    ctx.emit(null)
+    nil_tag = strict_union_member_variant_id(type, null.type)
+    wrapped_nil = UnionWrap.new(ctx.next_id, type, null.id, nil_tag)
+    ctx.emit(wrapped_nil)
+    ctx.terminate(Return.new(wrapped_nil.id)) unless change == :one_arm
+
+    ctx.switch_to_block(present)
+    leaf = @module.function_by_name("RecFactory.wide_return").not_nil!
+    call = Call.new(ctx.next_id, leaf.return_type, "")
+    call.configure_without_receiver(leaf.name, [] of ValueId)
+    ctx.emit(call)
+    ctx.register_source_value_facts(call.id, [{call.type, false}])
+    payload_tag = strict_union_member_variant_id(type, call.type)
+    payload_tag.should_not eq(nil_tag)
+    wrap = UnionWrap.new(ctx.next_id, type, call.id, change == :wrong_tag ? nil_tag : payload_tag)
+    ctx.emit(wrap)
+    ctx.terminate(Return.new(wrap.id))
+    contract = recursive_nullable_struct_result_contract(ctx, type).not_nil!
+    contract.descriptor.total_size.should be > 8
+    recursive_nullable_struct_return_tags_current?(function, contract).should eq(change != :wrong_tag)
+    anchor = suspended_nullable_struct_return(ctx, replay, body) || return false
+
+    case change
+    when :stale_receipt
+      leaf.source_return_result_receipt = nil
+    when :changed_kind
+      ctx.register_source_value_facts(call.id, [{call.type, true}])
+    when :replaced_wrap
+      ctx.get_block(present).replace(1, UnionWrap.new(wrap.id, type, call.id, payload_tag))
+    when :replaced_return
+      ctx.terminate(Return.new(wrap.id))
+    end
+    pending = ExactResultPending.new("RecFactory.consumer", name, source)
+    !checked_partial_struct_result(pending, anchor).nil?
+  end
+
+  def __test_final_tagged_struct_call?(change : Symbol) : Bool
+    name = __test_projection_method_name("nullable_wide")
+    target = @module.function_by_name(name).not_nil!
+    type = target.return_type
+    source = __test_projection_source(name)
+    function = Function.new(target.id, "tagged_caller", type)
+    ctx = LoweringContext.new(function, @module, source.source_arena)
+    ctx.source_declared_return_contract = recursive_declared_result_contract(name, source, "WideRecToken?")
+    contract = recursive_nullable_struct_result_contract(ctx, type).not_nil!
+    arg = Literal.new(ctx.next_id, change == :wrong_argument ? TypeRef::INT32 : TypeRef::BOOL, false)
+    ctx.emit(arg)
+    call = Call.new(ctx.next_id, type, "")
+    call.configure_without_receiver(change == :foreign_call ? "foreign_nullable_wide" : name, [arg.id])
+    ctx.emit(call)
+    ctx.terminate(Return.new(call.id))
+    target.source_return_result_receipt = nil if change == :stale_body
+    recursive_nullable_struct_return_tags_current?(function, contract)
   end
 
   def __test_suspended_return_with_default?(change : Symbol) : Bool
@@ -747,6 +820,11 @@ private def recursive_projection_converter
     struct RecToken
     end
 
+    struct WideRecToken
+      def initialize(@code : Int32, @wide : Int64)
+      end
+    end
+
     class RecClass
       def value_for(flag : Bool) : RecToken
         RecToken.new
@@ -758,6 +836,15 @@ private def recursive_projection_converter
     end
 
     module RecFactory
+      def self.wide_return : WideRecToken
+        WideRecToken.new(65, 123_i64)
+      end
+
+      def self.nullable_wide(flag : Bool) : WideRecToken?
+        return nil if flag
+        wide_return
+      end
+
       def self.value : RecToken
         RecToken.new
       end
@@ -837,6 +924,7 @@ private def recursive_projection_converter
     RecFactory.recursive_tagged(true)
     RecFactory.sibling_value(false)
     RecFactory.consumer_for(false)
+    RecFactory.nullable_wide(false)
     CRYSTAL
   parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
   program = parser.parse_program
@@ -882,6 +970,13 @@ describe "source result projection inside a recursive specialization" do
     recursive_projection_converter.__test_retry_checked_self_result(
       :current, "recursive_reference", "gate",
     ).should be_true
+  end
+
+  it "rechecks the exact result body and operands through a direct nullable call" do
+    recursive_projection_converter.__test_final_tagged_struct_call?(:current).should be_true
+    [:foreign_call, :wrong_argument, :stale_body].each do |change|
+      recursive_projection_converter.__test_final_tagged_struct_call?(change).should be_false
+    end
   end
 
   it "retains the wait for a nullable result without independent current evidence" do
@@ -1013,6 +1108,13 @@ describe "source result projection inside a recursive specialization" do
     [:missing_argument, :different_type, :unknown_kind, :class_object,
      :named_argument, :missing_return, :changed_default].each do |change|
       recursive_projection_converter.__test_suspended_return_with_default?(change).should be_false
+    end
+  end
+
+  it "admits a suspended tagged struct only with both live and independently checked returns" do
+    recursive_projection_converter.__test_suspended_tagged_struct_return?(:unchanged).should be_true
+    [:one_arm, :wrong_tag, :stale_receipt, :changed_kind, :replaced_wrap, :replaced_return].each do |change|
+      recursive_projection_converter.__test_suspended_tagged_struct_return?(change).should be_false
     end
   end
 

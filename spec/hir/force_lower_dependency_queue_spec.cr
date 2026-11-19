@@ -435,6 +435,50 @@ class Adamas::HIR::AstToHir
     @force_lower_retry_driver_active = false
   end
 
+  def __test_retain_inverse_producer_retry(queued : Symbol) : Bool
+    root = "retry_queue_root"
+    producer = "retry_queue_ancestor_a"
+    leaf = "retry_queue_shared"
+    root_source = __test_force_lower_exact_source_binding(root).not_nil!
+    producer_source = __test_force_lower_exact_source_binding(producer).not_nil!
+    root_replay = __test_queue_replay(root, root_source)
+    producer_replay = __test_queue_replay(producer, producer_source)
+    active = ForceLowerSuspendedRequest.new(
+      ExactResultPending.new(root, producer, producer_source, producer_replay), root_replay, false,
+    )
+    inverse = ExactResultPending.new(producer, root, root_source)
+    capture = ForceLowerReplayCapture.new(producer, nil)
+    capture.binding = producer_replay
+    inverse.consumer_capture = capture
+
+    # A new lowering of the original consumer has a separate leaf wait.
+    # The older suspended edge is still active, outside the worklist.
+    renewed = __test_seed_queue_retry(root, [leaf], requires_result: queued != :body_only)
+    case queued
+    when :foreign_source
+      renewed = ForceLowerRetryRequest.new(root, [leaf], false, root_replay, producer_source, true)
+    when :absent
+      renewed = nil
+    end
+    @force_lower_retry_work << renewed if renewed
+    @force_lower_provisional_dependencies[producer] = Set{root}
+    @force_lower_retry_driver_active = true
+    count = @force_lower_retry_work.size
+
+    retained = retain_nested_producer_retry(active, inverse, producer_replay, false)
+    @force_lower_retry_work.size.should eq(count + (retained ? 2 : 0))
+    if retained
+      @force_lower_retry_work[-2].as(ForceLowerSuspendedRequest).pending.same?(active.pending).should be_true
+      continuation = @force_lower_retry_work.last.as(ForceLowerSuspendedRequest)
+      continuation.pending.same?(inverse).should be_true
+      force_lower_retry_waits_for_queued_producer?(continuation).should be_true
+      retain_nested_producer_retry(active, inverse, producer_replay, false).should be_false
+    end
+    retained
+  ensure
+    @force_lower_retry_driver_active = false
+  end
+
   private def __test_queue_replay(name : String, source : ForceLowerExactSourceBinding) : ForceLowerReplayCallsite
     ForceLowerReplayCallsite.new(source.source_def, source.source_arena,
       __test_empty_callsite, @type_param_map.dup, @current_namespace_override, name,
@@ -662,6 +706,13 @@ describe "dependency-aware exact source retry scheduling" do
     force_lower_dependency_queue_fixture.__test_retain_nested_producer_retry(requires_result: false).should be_false
     force_lower_dependency_queue_fixture.__test_retain_nested_producer_retry(stale_capture: true).should be_false
     force_lower_dependency_queue_fixture.__test_retain_nested_producer_retry(changed_bypass: true).should be_false
+  end
+
+  it "retains an inverse edge when a newer exact result waits on a separate leaf" do
+    force_lower_dependency_queue_fixture.__test_retain_inverse_producer_retry(:exact).should be_true
+    [:absent, :body_only, :foreign_source].each do |queued|
+      force_lower_dependency_queue_fixture.__test_retain_inverse_producer_retry(queued).should be_false
+    end
   end
 
   it "observes ordinary defaulted values without changing which arguments were supplied" do

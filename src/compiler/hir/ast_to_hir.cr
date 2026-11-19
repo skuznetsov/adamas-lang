@@ -2220,11 +2220,34 @@ module Adamas::HIR
     private record PartialStructReturn,
       replay : ForceLowerReplayCallsite,
       context : LoweringContext,
+      body : ForceLowerActiveBody,
+      evidence : PartialStructReturnValue | PartialNullableStructReturn
+
+    private record PartialStructReturnValue,
       block : Block,
       terminator : Return,
       value : ClassVarGet | Call,
-      body : ForceLowerActiveBody,
       call_result : PartialStructCallResult? = nil
+
+    private record NullableStructResultContract,
+      facts : Array({TypeRef, Bool}),
+      descriptor : MIR::UnionDescriptor
+
+    private record PartialNullableStructReturn,
+      contract : NullableStructResultContract,
+      arms : Array(PartialNullableStructReturnArm)
+
+    private record PartialNullableStructReturnArm,
+      block : Block,
+      terminator : Return,
+      wrap : UnionWrap,
+      payload : Literal | Call,
+      call_result : PartialStructCallResult | PartialStructAllocatorResult | Nil
+
+    private record PartialStructAllocatorResult,
+      target : Function,
+      body_revision : UInt64,
+      operands : Array(RecursiveStructResultOperandWitness)
 
     private record PartialStructCallResult,
       target : Function,
@@ -2305,6 +2328,7 @@ module Adamas::HIR
     private class DeferredStructResultUse
       getter request : ForceLowerSuspendedRequest
       getter expected : TypeRef
+      getter expected_facts : Array({TypeRef, Bool})
       getter producer_replay : ForceLowerReplayCallsite
       getter checked_return : PartialStructReturn?
       getter emissions = {} of UInt64 => {Function, RecursiveStructResultEmissionWitness?}
@@ -2316,6 +2340,8 @@ module Adamas::HIR
         @producer_replay : ForceLowerReplayCallsite,
         @checked_return : PartialStructReturn? = nil,
       )
+        nullable = @checked_return.try(&.evidence.as?(PartialNullableStructReturn))
+        @expected_facts = nullable ? nullable.contract.facts : [{@expected, false}]
       end
 
       def begin_emission_ticket(owner : Function) : RecursiveStructResultEmissionTicket
@@ -116183,10 +116209,41 @@ module Adamas::HIR
     private def same_suspended_struct_return?(left : PartialStructReturn?, right : PartialStructReturn?) : Bool
       return right.nil? unless left
       return false unless right
-      left.context.same?(right.context) && left.block.same?(right.block) &&
-        left.terminator.same?(right.terminator) && left.value.same?(right.value) &&
-        same_suspended_return_call_result?(left.call_result, right.call_result) &&
-        same_force_lower_active_body?(left.body, right.body) && same_force_lower_replay_callsite?(left.replay, right.replay)
+      return false unless left.context.same?(right.context) &&
+                          same_force_lower_active_body?(left.body, right.body) &&
+                          same_force_lower_replay_callsite?(left.replay, right.replay)
+      first = left.evidence
+      second = right.evidence
+      case first
+      when PartialStructReturnValue
+        second.is_a?(PartialStructReturnValue) && first.block.same?(second.block) &&
+          first.terminator.same?(second.terminator) && first.value.same?(second.value) &&
+          same_suspended_return_call_result?(first.call_result, second.call_result)
+      when PartialNullableStructReturn
+        second.is_a?(PartialNullableStructReturn) && first.contract == second.contract &&
+          first.arms.size == second.arms.size && first.arms.zip(second.arms).all? do |a, b|
+            a.block.same?(b.block) && a.terminator.same?(b.terminator) &&
+              a.wrap.same?(b.wrap) && a.payload.same?(b.payload) &&
+              same_partial_nullable_call_result?(a.call_result, b.call_result)
+          end
+      else
+        false
+      end
+    end
+
+    private def same_partial_nullable_call_result?(
+      left : PartialStructCallResult | PartialStructAllocatorResult | Nil,
+      right : PartialStructCallResult | PartialStructAllocatorResult | Nil,
+    ) : Bool
+      case left
+      when PartialStructCallResult
+        right.is_a?(PartialStructCallResult) && same_suspended_return_call_result?(left, right)
+      when PartialStructAllocatorResult
+        right.is_a?(PartialStructAllocatorResult) && left.target.same?(right.target) &&
+          left.body_revision == right.body_revision && left.operands == right.operands
+      else
+        right.nil?
+      end
     end
 
     private def same_suspended_return_call_result?(left : PartialStructCallResult?, right : PartialStructCallResult?) : Bool
@@ -116807,7 +116864,7 @@ module Adamas::HIR
     ) : Bool
       pending = request.pending
       return false unless @force_lower_retry_driver_active && child.consumer == pending.producer &&
-                          child.producer != child.consumer && child.producer != pending.consumer
+                          child.producer != child.consumer
       return false unless child.consumer_requires_result == pending.producer_requires_result &&
                           child.consumer_bypass_inline_yield == (bypass || @force_lower_yield_free_only_depth > 0)
       capture = child.consumer_capture
@@ -116815,8 +116872,11 @@ module Adamas::HIR
       return false unless reconcile_recursive_producer_replays(replay, captured)
       continuation = ForceLowerSuspendedRequest.new(child, captured, child.consumer_bypass_inline_yield)
       return false unless force_lower_retry_source_current?(request) && force_lower_retry_source_current?(continuation)
-      return false unless @force_lower_provisional_dependencies[child.consumer]?.try(&.includes?(child.producer)) &&
-                          queued_exact_force_lower_demand?(child.producer, child.producer_source)
+      return false unless @force_lower_provisional_dependencies[child.consumer]?.try(&.includes?(child.producer))
+      # A producer may return an inverse edge while a newer, independent
+      # continuation for the active consumer is already queued. The queued
+      # generation owns its checked result and the final call obligations.
+      return false unless queued_exact_force_lower_demand?(child.producer, child.producer_source)
       return false if has_queued_force_lower_edge_continuation?(child.consumer, child.producer) ||
                       has_equivalent_queued_force_lower_work?(request)
       enqueue_force_lower_retry_work(request)
@@ -116832,7 +116892,7 @@ module Adamas::HIR
       @deferred_struct_result_uses.each_value do |use|
         request = use.request
         producer = request.pending.producer
-        unless settled_force_lower_result?(producer) && exact_final_struct_result(request.pending) == use.expected &&
+        unless settled_force_lower_result?(producer) && final_recursive_struct_use_result?(use) &&
                settled_force_lower_demand?(request.name, request.pending.consumer_requires_result) &&
                force_lower_retry_source_current?(request) &&
                force_lower_replay_callsite_current?(producer, use.producer_replay) &&
@@ -116841,6 +116901,97 @@ module Adamas::HIR
           raise request.pending
         end
       end
+    end
+
+    private def final_recursive_struct_use_result?(use : DeferredStructResultUse) : Bool
+      pending = use.request.pending
+      tagged = use.checked_return.try(&.evidence.as?(PartialNullableStructReturn))
+      return exact_final_struct_result(pending) == use.expected unless tagged
+      return false unless pending.producer_requires_result && nested_recursive_result_demands_settled?(pending)
+      name = pending.producer
+      source = pending.producer_source
+      return false unless force_lower_exact_source_matches?(name, source) &&
+                          function_state(name).completed? && @module.has_function_with_body?(name)
+      function = @module.function_by_name(name) || return false
+      return false unless function.return_type == use.expected &&
+                          union_descriptor_from_sidecar(use.expected) == tagged.contract.descriptor
+      facts = function.source_return_value_facts
+      facts == use.expected_facts && current_recursive_return_receipt?(function, source, facts.not_nil!) &&
+        recursive_nullable_struct_return_tags_current?(function, tagged.contract)
+    end
+
+    # Every reachable value in this carrier must come from a checked box or
+    # an exact source function whose reachable returns obey the same contract.
+    # Revisiting a source function closes an edge in that finite graph.
+    private def recursive_nullable_struct_return_tags_current?(
+      function : Function, contract : NullableStructResultContract,
+    ) : Bool
+      pending_functions = [function]
+      seen_functions = Set(Function).new
+      saw_box = false
+      until pending_functions.empty?
+        current = pending_functions.pop
+        next unless seen_functions.add?(current)
+        values = {} of ValueId => Value
+        current.params.each { |param| values[param.id] = param }
+        current.blocks.each do |block|
+          block.instructions.each do |value|
+            return false if values.has_key?(value.id)
+            values[value.id] = value
+          end
+        end
+
+        pending = [] of ValueId
+        reachable_blocks(current).each do |block|
+          next unless returned = block.terminator.as?(Return)
+          pending << (returned.value || return false)
+        end
+        return false if pending.empty?
+        seen = Set(ValueId).new
+        until pending.empty?
+          id = pending.pop
+          next unless seen.add?(id)
+          value = values[id]? || return false
+          return false unless value.type == current.return_type
+          case value
+          when UnionWrap
+            payload = values[value.value]? || return false
+            return false unless tagged_struct_payload_matches?(contract, value, payload)
+            saw_box = true
+          when Copy
+            pending << value.source
+          when Phi
+            return false if value.incoming_values.empty?
+            pending.concat(value.incoming_values)
+          when Call
+            target = recursive_nullable_struct_call_target(value, values, contract) || return false
+            pending_functions << target
+          else
+            return false
+          end
+        end
+      end
+      saw_box
+    end
+
+    private def recursive_nullable_struct_call_target(
+      call : Call, values : Hash(ValueId, Value), contract : NullableStructResultContract,
+    ) : Function?
+      return if call.virtual || call.has_block?
+      name = call.method_name
+      target = @module.function_by_name(name) || return
+      definition = @function_defs[name]? || return
+      source = force_lower_exact_source_binding(name, definition, definition, nil) || return
+      return unless target.return_type == call.type && function_state(name).completed? &&
+                    @module.has_function_with_body?(name) && force_lower_exact_source_matches?(name, source)
+      return unless call.has_receiver? == (target.params.first?.try(&.name) == "self")
+      operands = call.has_receiver? ? [call.receiver_value] + call.args : call.args
+      return unless operands.size == target.params.size &&
+                    operands.each_with_index.all? { |id, i| values[id]?.try(&.type) == target.params[i].type && !target.params[i].is_block }
+      facts = target.source_return_value_facts || return
+      return unless !facts.empty? && facts.all? { |fact| contract.facts.includes?(fact) } &&
+                    current_recursive_return_receipt?(target, source, facts)
+      target
     end
 
     # Relayed suspensions retain the original producer chain. A completed
@@ -116929,11 +117080,53 @@ module Adamas::HIR
       restriction if restriction && restriction.valid && !restriction.has_unbound_formal?
     end
 
+    private def recursive_nullable_struct_result_contract(
+      ctx : LoweringContext, type : TypeRef,
+    ) : NullableStructResultContract?
+      # The active body has already bound the annotation in its own Def and
+      # specialization environment. Do not resolve it again during a retry.
+      pattern = ctx.source_declared_return_contract || return
+      return unless pattern.kind.union? && pattern.type_ref == type
+      facts = source_declared_return_pattern_value_facts(pattern) || return
+      return unless facts.size == 2 && facts.includes?({TypeRef::NIL, false}) && facts.none?(&.[1])
+      payload = facts.find { |(arm, _)| arm != TypeRef::NIL }.not_nil![0]
+      owner = get_type_name_from_ref(payload)
+      info = @class_info[owner]? || return
+      return unless info.is_struct && info.type_ref == payload && info.size > 0 &&
+                    !registered_abstract_class_name?(owner) && !class_has_subclasses?(owner) &&
+                    !unresolved_generic_return_type?(payload) && !@enum_info.try(&.has_key?(owner))
+      descriptor = union_descriptor_from_sidecar(type) || return
+      return unless descriptor.variants.size == facts.size &&
+                    descriptor.variants.map(&.type_id).uniq.size == facts.size &&
+                    descriptor.variants.all? do |variant|
+                      variant.type_id >= 0 && facts.any? { |(arm, _)| hir_to_mir_type_ref(arm) == variant.type_ref }
+                    end
+      NullableStructResultContract.new(facts, descriptor)
+    end
+
+    private def ordinary_struct_result_source?(name : String, source : ForceLowerExactSourceBinding) : Bool
+      definition = source.source_def
+      !source.inherited_nilary_member_alias && !raw_callback_abi_for(name) && !raw_callback_source_binding_for(name) &&
+        !definition.is_abstract && !!definition.body && definition.forall_type_params.empty?
+    end
+
+    private def tagged_struct_payload_matches?(
+      contract : NullableStructResultContract, wrap : UnionWrap, value : Value,
+    ) : Bool
+      variant = contract.descriptor.variants.find { |entry| entry.type_id == wrap.variant_type_id }
+      !!variant && variant.type_ref == hir_to_mir_type_ref(value.type)
+    end
+
+    # The annotation supplies the closed shape. Each member still needs an
+    # independently checked reachable return and its current physical tag.
     private def suspended_struct_return(ctx : LoweringContext) : PartialStructReturn?
       capture = @force_lower_active_replay_captures[ctx.function.name]? || return
       replay = capture.binding || return
       body = current_active_force_lower_body(ctx.function.name, for_struct_return: true) || return
       return unless body.function.same?(ctx.function)
+      if @module.get_type_descriptor(body.return_type).try(&.kind.union?)
+        return suspended_nullable_struct_return(ctx, replay, body)
+      end
       reachable_blocks(ctx.function).each do |block|
         returned = block.terminator.as?(Return) || next
         value_id = returned.value || next
@@ -116943,10 +117136,66 @@ module Adamas::HIR
         call_result = if value.is_a?(Call)
                         suspended_return_call_result(ctx, value) || next
                       end
-        anchor = PartialStructReturn.new(replay, ctx, block, returned, value, body, call_result)
+        evidence = PartialStructReturnValue.new(block, returned, value, call_result)
+        anchor = PartialStructReturn.new(replay, ctx, body, evidence)
         return anchor if suspended_return_value_current?(anchor)
       end
       nil
+    end
+
+    private def suspended_nullable_struct_return(
+      ctx : LoweringContext, replay : ForceLowerReplayCallsite, body : ForceLowerActiveBody,
+    ) : PartialStructReturn?
+      name = ctx.function.name
+      source = replay.exact_source_binding ||
+               ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name)
+      return unless ordinary_struct_result_source?(name, source)
+      contract = recursive_nullable_struct_result_contract(ctx, body.return_type) || return
+      arms = [] of PartialNullableStructReturnArm
+      reachable_blocks(ctx.function).each do |block|
+        term = block.terminator.as?(Return) || next
+        id = term.value || return
+        wrap = ctx.value_for(id).as?(UnionWrap) || return
+        payload = ctx.value_for(wrap.value)
+        if literal = payload.as?(Literal)
+          return unless literal.type == TypeRef::NIL && literal.value.nil?
+          arms << PartialNullableStructReturnArm.new(block, term, wrap, literal, nil)
+        elsif call = payload.as?(Call)
+          result = suspended_return_allocator_result(ctx, call) || suspended_return_call_result(ctx, call) || return
+          arms << PartialNullableStructReturnArm.new(block, term, wrap, call, result)
+        else
+          return
+        end
+      end
+      evidence = PartialNullableStructReturn.new(contract, arms)
+      anchor = PartialStructReturn.new(replay, ctx, body, evidence)
+      anchor if suspended_return_value_current?(anchor)
+    end
+
+    private def suspended_return_allocator_result(
+      ctx : LoweringContext, call : Call,
+    ) : PartialStructAllocatorResult?
+      name = @generated_allocator_calls[{ctx.function, call.id}]? || return
+      target = materialized_generated_allocator(name) || return
+      operands = recursive_struct_result_operand_witnesses(ctx.function, call.args) || return
+      PartialStructAllocatorResult.new(target, target.body_revision, operands)
+    end
+
+    private def suspended_return_allocator_current?(
+      ctx : LoweringContext, call : Call, proof : PartialStructAllocatorResult,
+    ) : Bool
+      name = @generated_allocator_calls[{ctx.function, call.id}]? || return false
+      return false unless materialized_generated_allocator(name).try(&.same?(proof.target)) == true &&
+                          proof.target.body_revision == proof.body_revision &&
+                          proof.target.return_type == call.type && call.method_name == name &&
+                          !call.virtual && !call.has_block? && !call.has_receiver?
+      return false unless call.args == proof.operands.map(&.id) &&
+                          recursive_struct_result_operand_witnesses_current?(ctx, ctx.function, proof.operands) &&
+                          recursive_struct_result_abi_matches?(ctx, proof.target, nil, call.args.map { |arg| ctx.type_of(arg) })
+      validate_generated_allocator_call_contract!(ctx.function, call, name)
+      true
+    rescue LoweringError
+      false
     end
 
     private def queued_partial_struct_result(pending : ExactResultPending, replay : ForceLowerReplayCallsite) : PartialStructReturn?
@@ -116973,37 +117222,90 @@ module Adamas::HIR
       body = anchor.body
       replay = anchor.replay
       ctx = anchor.context
-      read = anchor.value
+      type = body.return_type
       return unless replay.source_def.same?(source.source_def) && replay.source_arena.same?(source.source_arena) &&
                     body.source_def.same?(source.source_def) && body.source_arena.same?(source.source_arena) &&
-                    active_force_lower_source_current?(name, replay) && force_lower_replay_callsite_current?(name, replay) &&
-                    recursive_struct_declared_result?(name, source, read.type) && body.return_type == read.type
+                    active_force_lower_source_current?(name, replay) && force_lower_replay_callsite_current?(name, replay)
       return unless ctx.function.same?(body.function) && ctx.function.name == name &&
                     active_force_lower_body_abi_current?(body) && suspended_return_value_current?(anchor)
+      evidence = anchor.evidence
+      if evidence.is_a?(PartialNullableStructReturn)
+        return unless ordinary_struct_result_source?(name, source) &&
+                      recursive_nullable_struct_result_contract(ctx, type) == evidence.contract
+      else
+        return unless recursive_struct_declared_result?(name, source, type)
+      end
       anchor
     end
 
     private def suspended_return_value_current?(anchor : PartialStructReturn) : Bool
       ctx = anchor.context
-      read = anchor.value
-      block = anchor.block
+      evidence = anchor.evidence
+      if evidence.is_a?(PartialNullableStructReturn)
+        return suspended_nullable_return_current?(ctx, anchor.body.return_type, evidence)
+      end
+
+      read = evidence.value
       facts = [{read.type, false}]
-      return false unless reachable_blocks(ctx.function).any? { |reachable| reachable.same?(block) } &&
-                          block.terminator.try(&.same?(anchor.terminator)) == true && anchor.terminator.value == read.id &&
-                          block.instructions.count { |value| value.id == read.id } == 1 &&
-                          block.instructions.any? { |value| value.same?(read) } &&
-                          ctx.value_for(read.id).try(&.same?(read)) == true && !ctx.type_literal?(read.id) &&
+      return false unless read.type == anchor.body.return_type &&
+                          suspended_return_slot_current?(ctx, evidence.block, evidence.terminator, read) &&
                           ctx.source_value_facts(read.id) == facts
       case read
       when ClassVarGet
         constant = deferred_constant_full_name(read.class_name, read.var_name)
         @constant_types[constant]? == read.type && @constant_source_value_facts[constant]? == facts
       when Call
-        result = anchor.call_result || return false
+        result = evidence.call_result || return false
         suspended_return_call_current?(ctx, read, result)
       else
         false
       end
+    end
+
+    private def suspended_nullable_return_current?(
+      ctx : LoweringContext, type : TypeRef, evidence : PartialNullableStructReturn,
+    ) : Bool
+      reachable = reachable_blocks(ctx.function).select { |block| block.terminator.is_a?(Return) }
+      return false unless reachable.size == evidence.arms.size && evidence.contract.descriptor == union_descriptor_from_sidecar(type)
+      facts = [] of {TypeRef, Bool}
+      evidence.arms.each do |arm|
+        wrap = arm.wrap
+        payload = arm.payload
+        block = arm.block
+        return false unless wrap.type == type && wrap.value == payload.id &&
+                            suspended_return_slot_current?(ctx, block, arm.terminator, wrap) &&
+                            suspended_return_instruction_current?(ctx, block, payload) &&
+                            tagged_struct_payload_matches?(evidence.contract, wrap, payload)
+        if payload.is_a?(Call)
+          return false unless ctx.source_value_facts(payload.id) == [{payload.type, false}]
+          result = arm.call_result
+          return false unless case result
+                              when PartialStructCallResult
+                                suspended_return_call_current?(ctx, payload, result)
+                              when PartialStructAllocatorResult
+                                suspended_return_allocator_current?(ctx, payload, result)
+                              else
+                                false
+                              end
+        else
+          literal = payload.as?(Literal) || return false
+          return false unless literal.type == TypeRef::NIL && literal.value.nil?
+        end
+        facts << {payload.type, false}
+      end
+      normalize_source_return_result_facts(facts) == evidence.contract.facts
+    end
+
+    private def suspended_return_slot_current?(ctx : LoweringContext, block : Block, term : Return, value : Value) : Bool
+      reachable_blocks(ctx.function).any? { |reachable| reachable.same?(block) } &&
+        block.terminator.try(&.same?(term)) == true && term.value == value.id &&
+        suspended_return_instruction_current?(ctx, block, value)
+    end
+
+    private def suspended_return_instruction_current?(ctx : LoweringContext, block : Block, value : Value) : Bool
+      block.instructions.count { |instruction| instruction.id == value.id } == 1 &&
+        block.instructions.any? { |instruction| instruction.same?(value) } &&
+        ctx.value_for(value.id).try(&.same?(value)) == true && !ctx.type_literal?(value.id)
     end
 
     # A returned direct call can carry an independently checked instance
@@ -117074,7 +117376,7 @@ module Adamas::HIR
                  exact_final_struct_result(pending)
                end
         anchor = type ? nil : queued_partial_struct_result(pending, producer_replay)
-        type ||= anchor.try(&.value.type)
+        type ||= anchor.try(&.body.return_type)
         next unless type
         next unless recursive_struct_result_replay_arguments?(pending.producer, producer_replay)
         @deferred_struct_result_uses[edge] = DeferredStructResultUse.new(entry, type, producer_replay, anchor)
@@ -117307,7 +117609,8 @@ module Adamas::HIR
         same_force_lower_exact_source_binding?(pending.producer_source, use.request.pending.producer_source) &&
         force_lower_replay_callsite_current?(pending.producer, use.producer_replay) &&
         recursive_struct_result_replay_arguments?(pending.producer, use.producer_replay) &&
-        (exact_final_struct_result(pending) || checked_partial_struct_result(pending, use.checked_return).try(&.value.type)) == use.expected
+        (final_recursive_struct_use_result?(use) ||
+         checked_partial_struct_result(pending, use.checked_return).try(&.body.return_type) == use.expected)
     end
 
     # Names and omissions belong to the invocation. A call can discover an
@@ -117394,7 +117697,7 @@ module Adamas::HIR
       if receiver = receiver_id
         return nil unless call.receiver_value == receiver
       end
-      return nil unless ctx.source_value_facts(call.id) == [{use.expected, false}] && !ctx.type_literal?(call.id)
+      return nil unless ctx.source_value_facts(call.id) == use.expected_facts && !ctx.type_literal?(call.id)
       block = ctx.function.get_block(ctx.current_block_id)
       return nil unless block.instructions.any? { |instruction| instruction.same?(call) }
       argument_values = recursive_struct_result_operand_witnesses(ctx.function, call.args) || return nil
@@ -117430,8 +117733,8 @@ module Adamas::HIR
       return false unless ticket && !call.virtual && call.method_name == producer
       use = @deferred_struct_result_uses[{ctx.function.name, producer}]? || return false
       anchor = checked_partial_struct_result(use.request.pending, use.checked_return) || return false
-      return false unless anchor.value.type == call.type
-      ctx.register_source_value_facts(call.id, [{anchor.value.type, false}])
+      return false unless anchor.body.return_type == call.type
+      ctx.register_source_value_facts(call.id, use.expected_facts.dup)
       true
     end
 
@@ -117536,7 +117839,7 @@ module Adamas::HIR
                           call.block_value == witness.block_value && call.block_value == Call::NO_BLOCK &&
                           call.has_receiver? == witness.has_receiver && call.receiver_value == witness.receiver_value &&
                           !call.virtual && !witness.virtual &&
-                          witness.result_facts == [{use.expected, false}] &&
+                          witness.result_facts == use.expected_facts &&
                           recursive_struct_result_operand_witnesses_current?(witness.context, witness.function, witness.argument_values) &&
                           recursive_struct_result_live_argument_facts_current?(use, witness) &&
                           source_block_result_value_facts(witness.context, call.id) == witness.result_facts &&

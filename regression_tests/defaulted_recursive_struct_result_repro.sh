@@ -8,6 +8,7 @@ candidate="${1:-${ADAMAS_BIN:-$root/bin/adamas}}"
 fixtures=(
   "$root/regression_tests/fixtures/defaulted_recursive_struct_result.cr"
   "$root/regression_tests/fixtures/checked_call_recursive_struct_result.cr"
+  "$root/regression_tests/fixtures/nullable_recursive_struct_result.cr"
 )
 work="$(mktemp -d "${TMPDIR:-/tmp}/defaulted-recursive-struct.XXXXXX")"
 trap 'rm -rf -- "$work"' EXIT
@@ -18,7 +19,6 @@ if [[ "$(uname -s)" == Darwin ]]; then
   export ADAMAS_EXTRA_LINK_FLAGS="${ADAMAS_EXTRA_LINK_FLAGS:--fuse-ld=/usr/bin/ld}"
 fi
 
-printf 'AB\n' > "$work/expected"
 for mode in stock candidate; do
   if [[ "$mode" == stock ]]; then
     build=("$safe" "$stock" 60 2048 build --prelude=empty "${link[@]}")
@@ -29,7 +29,16 @@ for mode in stock candidate; do
     sed 's/^      parse0$/      parse0(false)/' "$fixture" > "$work/positional.cr"
     sed 's/RecCode.new(69)/69/' "$fixture" > "$work/wrong-return.cr"
     sed 's/    parse0(again)/    parse0(Bool)/' "$fixture" > "$work/wrong-kind.cr"
-    for source in "$fixture" "$work/positional.cr"; do
+    sources=("$fixture" "$work/positional.cr")
+    if [[ "$fixture" == */nullable_recursive_struct_result.cr ]]; then
+      printf 'ABWN\n' > "$work/expected"
+      sed -e '/^parser.checked_zero$/d' -e 's/return checked_zero unless/return RecCode.new(65) unless/' \
+        "$fixture" > "$work/allocator.cr"
+      sources+=("$work/allocator.cr")
+    else
+      printf 'AB\n' > "$work/expected"
+    fi
+    for source in "${sources[@]}"; do
       "${build[@]}" "$source" -o "$work/program" > "$work/build.log" 2>&1 ||
         { cat "$work/build.log" >&2; exit 1; }
       "$safe" "$work/program" 5 512 > "$work/stdout" 2> "$work/run.log" ||
@@ -43,11 +52,11 @@ for mode in stock candidate; do
         exit 1
       fi
       case "$invalid" in
-        wrong-return) diagnostic='must return RecCode.*Int32' ;;
+        wrong-return) diagnostic='must return .*RecCode.*Int32' ;;
         wrong-kind)   diagnostic='expected argument.*Bool' ;;
       esac
       grep -Eq "$diagnostic" "$work/build.log" || { cat "$work/build.log" >&2; exit 1; }
     done
   done
-  echo "$mode passed the recursive constant and direct-call return controls"
+  echo "$mode passed the recursive constant, direct-call, and tagged return controls"
 done
