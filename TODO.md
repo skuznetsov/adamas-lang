@@ -28150,3 +28150,18 @@ changes. No stdlib edits.
   installed run resumed `fork_for_exec` and passed the previous
   `Process.new(Nil)` failure. Both runs used source seal
   `d4911873b2859e5666709a18479d7efd3563da797b3e420a6773008709f2fb4a`.
+
+## Narrowed positional facts in exact result replay (2026-11-19)
+
+- [x] Retain positional source facts on the invocation's checked lowering
+  request. A late plain ABI write discarded the nominal alternatives of the
+  live operand before replay of `Frontend.node_literal`. The request now
+  keeps facts only when they match its current operands and ordinary fixed
+  formals. The shared callsite registry keeps its previous ownership rules.
+- The HIR regression covers same-ABI invocations with distinct narrowed
+  facts, including rejection when the current operands no longer match the
+  earlier resolution. The bundled run resumes the pending `node_literal`
+  call in `typed_macro_args_callee?`.
+- Fresh bundled 1.18.2 and installed 1.22.3 S1 → S2 attempts used source
+  seal `03f3dce28f5bc5751a8c2181a9c543380e5865a17534b8a2cdb4eecbc315f54e`.
+  Both still exit 1 on the pending result surfaced by `CLI#run_check`.

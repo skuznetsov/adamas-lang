@@ -117812,14 +117812,39 @@ module Adamas::HIR
     private def ordinary_recursive_source_callsite?(
       name : String, source : ForceLowerExactSourceBinding, callsite : CallsiteArgs,
     ) : Bool
+      !!(ordinary_active_body_callsite?(callsite) && recursive_struct_result_callsite_argument_facts(callsite) &&
+         force_lower_plain_source_formals?(name, source, callsite.types.size))
+    end
+
+    private def force_lower_plain_source_formals?(
+      name : String, source : ForceLowerExactSourceBinding, arity : Int32,
+    ) : Bool
       definition = source.source_def
       return false if source.inherited_nilary_member_alias || raw_callback_source_binding_for(name) || raw_callback_abi_for(name)
-      return false unless !definition.is_abstract && definition.body && definition.forall_type_params.empty? &&
-                          ordinary_active_body_callsite?(callsite) && recursive_struct_result_callsite_argument_facts(callsite)
+      return false unless !definition.is_abstract && definition.body && definition.forall_type_params.empty?
       params = function_param_infos(definition, source.source_arena)
-      params.size == callsite.types.size && params.all? do |param|
+      params.size == arity && params.all? do |param|
         !param.default_value && !param.is_block && !param.is_splat && !param.is_double_splat && !named_only_separator?(param)
       end
+    end
+
+    # Narrowed instance facts are safe to retain for this invocation while
+    # its actual operands are available. They cannot identify an ordinary
+    # recursive call by the ABI alone.
+    private def observed_narrowed_positional_callsite(
+      ctx : LoweringContext, name : String, source : ForceLowerExactSourceBinding,
+      callsite : CallsiteArgs, arguments : Array(ValueId), facts : Array(SourceCallArgument?),
+    ) : CallsiteArgs?
+      return if callsite.has_block || callsite.has_named_args || callsite.selected_target ||
+                callsite.source_binding || callsite.source_argument_facts || callsite.enum_names.try(&.any?)
+      return unless facts.any? { |fact| fact.try(&.value_facts) }
+      return unless facts.all? do |fact|
+        fact && !fact.type_literal && !fact.value_facts.try(&.any? { |(_, literal)| literal })
+      end
+      return unless call_resolution_source_argument_facts(ctx, arguments, callsite.types) == facts
+      return unless force_lower_plain_source_formals?(name, source, callsite.types.size)
+      evidence = callsite.with_source_evidence(facts, nil)
+      evidence if recursive_struct_result_callsite_argument_facts(evidence)
     end
 
     private def observed_positional_default_callsite(
@@ -117860,11 +117885,17 @@ module Adamas::HIR
       definition : Adamas::Compiler::Frontend::DefNode?,
       arena : Adamas::Compiler::Frontend::ArenaLike?, source_key : String?,
       *, default_binding : SourceCallBinding? = nil, materialized_arguments : Array(ValueId)? = nil,
+      positional_argument_facts : Array(SourceCallArgument?)? = nil,
     ) : {String, ForceLowerReplayCallsite}?
       return unless (capture = @force_lower_current_replay_capture) && capture.name == ctx.function.name &&
                     capture.binding && definition && arena && callsite
       source = force_lower_exact_source_binding(name, definition, definition, arena, source_key) || return
-      evidence = if ordinary_recursive_source_callsite?(name, source, callsite)
+      positional_evidence = if materialized_arguments && positional_argument_facts
+                              observed_narrowed_positional_callsite(ctx, name, source, callsite, materialized_arguments, positional_argument_facts)
+                            end
+      evidence = if positional_evidence
+                   positional_evidence
+                 elsif ordinary_recursive_source_callsite?(name, source, callsite)
                    callsite
                  elsif callsite.has_named_args && !source.inherited_nilary_member_alias &&
                        !raw_callback_source_binding_for(name) && !raw_callback_abi_for(name) &&
@@ -129957,12 +129988,13 @@ module Adamas::HIR
                                bound
                              end
       named_replay_facts = bound_recursive_facts if named_replay_binding
+      positional_replay_facts = m3e_input.try(&.source_argument_facts) unless has_block_call || has_splat || source_has_splat || has_named_args
       method_macro_scope = method_macro_call.try(&.scope)
       if callsite_arg_types.any? { |t| t != TypeRef::VOID }
         remember_callsite_arg_types(
           mangled_method_name, callsite_arg_types, callsite_arg_literals, callsite_arg_enum_names,
           has_block_call, has_named_args, call_named_arg_names,
-          source_argument_facts: named_replay_facts || (m3e_input.try(&.source_argument_facts) unless has_block_call || has_splat || source_has_splat || has_named_args),
+          source_argument_facts: named_replay_facts || positional_replay_facts,
           record_exact_target: !bound_call_reuses_suspended_body?(
             mangled_method_name, bound_recursive_call, arg_types, bound_recursive_facts, named_call: has_named_args,
           ),
@@ -132600,7 +132632,8 @@ module Adamas::HIR
                                        (has_named_args && !named_replay_binding) || reuses_suspended_body
                                   observed_force_lower_source_call(ctx, mangled_method_name, actual_callsite,
                                     selected_call_entry_def, selected_call_entry_arena, selected_call_entry_name,
-                                    default_binding: source_default_entry ? source_call_binding : nil, materialized_arguments: args)
+                                    default_binding: source_default_entry ? source_call_binding : nil, materialized_arguments: args,
+                                    positional_argument_facts: positional_replay_facts)
                                 end
       if receiver_id
         receiver_type = ctx.type_of(receiver_id)
