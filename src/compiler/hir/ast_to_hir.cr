@@ -48357,41 +48357,12 @@ module Adamas::HIR
       # Return/layout inference can request an allocator before a HIR call
       # context exists. Its actual active force frame owns that demand; never
       # recover an owner from a lexical method name or a registry alias.
-      if consumer = source_result_consumer || @force_lower_current_replay_capture.try(&.name)
-        if selected = selected_initializer
-          source_name, source_def, source_arena = selected
-          source = ForceLowerExactSourceBinding.new(source_def, source_arena, source_name)
-          if force_lower_replay_recipe_available?(consumer) &&
-             force_lower_exact_source_matches?(init_name, source) &&
-             (callsite = @pending_arg_types[init_name]?)
-            replay = ForceLowerReplayCallsite.new(
-              source_def, source_arena, copy_force_lower_callsite(callsite),
-              @type_param_map.dup, @current_namespace_override, source_name,
-              copy_initializer_callback_abi(raw_callback_abi_for(init_name)),
-              copy_initializer_callback_source(raw_callback_source_binding_for(init_name)),
-            )
-            refused_mark = @force_lower_depth_refused.size
-            # Preserve the ordinary force budget. Only an active inline-yield
-            # frame needs the existing yield-free bypass and its tighter cap.
-            bypass_inline_yield = @inline_yield_function_depth > 0 ||
-                                  @inline_yield_block_body_depth > 0 ||
-                                  @inline_yield_proc_depth > 0 ||
-                                  !@inline_yield_name_stack.empty? ||
-                                  @force_lower_yield_free_only_depth > 0
-            replay_force_lower_callsite(init_name, replay, bypass_inline_yield, requires_result: false)
-            if !@module.has_function_with_body?(init_name) &&
-               @force_lower_depth_refused.size > refused_mark &&
-               @force_lower_depth_refused[refused_mark...].includes?(init_name) &&
-               force_lower_replay_recipe_available?(consumer) &&
-               force_lower_exact_source_matches?(init_name, source)
-              dependencies = @force_lower_provisional_dependencies[consumer] ||= Set(String).new
-              dependencies << init_name
-              if env_has?("DEBUG_FORCE_LOWER_DEPTH")
-                STDERR.puts "[FORCE_LOWER_BODY_SUSPENDED] consumer=#{consumer} producer=#{init_name}"
-              end
-              raise ExactResultPending.new(consumer, init_name, source, replay, false, bypass_inline_yield)
-            end
-          end
+      if selected = selected_initializer
+        source_name, source_def, source_arena = selected
+        source = ForceLowerExactSourceBinding.new(source_def, source_arena, source_name)
+        consumer = source_result_consumer || @force_lower_current_replay_capture.try(&.name)
+        if consumer && force_lower_replay_recipe_available?(consumer)
+          demand_allocator_initializer_body(init_name, source, consumer)
         end
       end
       lower_function_if_needed(init_name)
@@ -48428,6 +48399,44 @@ module Adamas::HIR
           end
         end
       end
+    end
+
+    private def demand_allocator_initializer_body(
+      name : String, source : ForceLowerExactSourceBinding, consumer : String?,
+    ) : Nil
+      return if settled_force_lower_demand?(name, false)
+      return unless force_lower_exact_source_matches?(name, source)
+      callsite = @pending_arg_types[name]? || return
+      replay = ForceLowerReplayCallsite.new(
+        source.source_def, source.source_arena, copy_force_lower_callsite(callsite),
+        @type_param_map.dup, @current_namespace_override, source.source_registry_name,
+        copy_initializer_callback_abi(raw_callback_abi_for(name)),
+        copy_initializer_callback_source(raw_callback_source_binding_for(name)),
+        exact_source_binding: source,
+      )
+      # Preserve the ordinary force budget. Only an active inline-yield frame
+      # needs the existing bypass and its tighter cap.
+      bypass_inline_yield = @inline_yield_function_depth > 0 ||
+                            @inline_yield_block_body_depth > 0 ||
+                            @inline_yield_proc_depth > 0 ||
+                            !@inline_yield_name_stack.empty? ||
+                            @force_lower_yield_free_only_depth > 0
+      refused_mark = @force_lower_depth_refused.size
+      pending = queued_exact_force_lower_demand?(name, source, requires_result: false)
+      unless pending
+        replay_force_lower_callsite(name, replay, bypass_inline_yield, requires_result: false)
+        return if settled_force_lower_demand?(name, false)
+        pending = queued_exact_force_lower_demand?(name, source, requires_result: false)
+      end
+      return unless pending || @force_lower_depth_refused[refused_mark...].includes?(name)
+      return unless consumer && force_lower_replay_recipe_available?(consumer) &&
+                    force_lower_replay_callsite_current?(name, replay)
+      dependencies = @force_lower_provisional_dependencies[consumer] ||= Set(String).new
+      dependencies << name
+      if env_has?("DEBUG_FORCE_LOWER_DEPTH")
+        STDERR.puts "[FORCE_LOWER_BODY_SUSPENDED] consumer=#{consumer} producer=#{name}"
+      end
+      raise ExactResultPending.new(consumer, name, source, replay, false, bypass_inline_yield)
     end
 
     private def rematerialize_missing_function_body(name : String, &) : Nil
@@ -48843,6 +48852,7 @@ module Adamas::HIR
           # a malformed supplied vector is rejected there rather than silently
           # erased by the general allocator normalization.
           source_argument_facts: source_argument_facts,
+          source_result_consumer: source_result_consumer,
         )
         return
       end
@@ -49721,6 +49731,7 @@ module Adamas::HIR
       selected_initializer : Bool = false,
       selected_init_target : SelectedCallTarget? = nil,
       source_argument_facts : Array(SourceCallArgument?)? = nil,
+      source_result_consumer : String? = nil,
     ) : Nil
       return unless call_arg_types
 
@@ -50177,10 +50188,14 @@ module Adamas::HIR
           end
         end
         # Publish ivars from this exact body before freezing the wrapper's
-        # object layout and field defaults. No name-level lookup is authority.
-        rematerialize_missing_function_body(body_name) do
-          with_arena(source_arena) do
-            with_namespace_override_or_clear(initializer_declaration_namespace(selected.symbol_name, selected.def_node, source_arena)) do
+        # object layout and field defaults. The physical alias retains the
+        # original initializer Def/Arena and the already-bound ABI types.
+        namespace = initializer_declaration_namespace(selected.symbol_name, selected.def_node, source_arena)
+        with_namespace_override_or_clear(namespace) do
+          consumer = source_result_consumer || @force_lower_current_replay_capture.try(&.name)
+          demand_allocator_initializer_body(body_name, selected_source, consumer)
+          rematerialize_missing_function_body(body_name) do
+            with_arena(source_arena) do
               lower_method(source_owner, source_info, selected.def_node, initializer_call_arg_types, nil, nil, body_name)
             end
           end
@@ -115893,7 +115908,7 @@ module Adamas::HIR
       previous_settled = settled_force_lower_producer?(previous_pending)
       unless previous_settled
         return false unless recursive_struct_result_available?(previous) &&
-                            queued_exact_force_lower_result_demand?(previous_pending.producer, previous_pending.producer_source)
+                            queued_exact_force_lower_demand?(previous_pending.producer, previous_pending.producer_source)
       end
       return false unless pending.consumer_requires_result == previous.pending.consumer_requires_result &&
                           pending.consumer_bypass_inline_yield == previous.bypass_inline_yield
@@ -115903,7 +115918,7 @@ module Adamas::HIR
       return false unless force_lower_retry_source_current?(next_request) &&
                           reconcile_recursive_producer_replays(previous.replay_callsite, replay)
       return false unless @force_lower_provisional_dependencies[consumer]?.try(&.includes?(producer)) &&
-                          queued_exact_force_lower_result_demand?(producer, pending.producer_source)
+                          queued_exact_force_lower_demand?(producer, pending.producer_source)
       edge = {consumer, producer}
       return false if @force_lower_result_suspensions.includes?(edge) ||
                       has_queued_force_lower_edge_continuation?(consumer, producer)
@@ -116763,7 +116778,7 @@ module Adamas::HIR
       continuation = ForceLowerSuspendedRequest.new(child, captured, child.consumer_bypass_inline_yield)
       return false unless force_lower_retry_source_current?(request) && force_lower_retry_source_current?(continuation)
       return false unless @force_lower_provisional_dependencies[child.consumer]?.try(&.includes?(child.producer)) &&
-                          queued_exact_force_lower_result_demand?(child.producer, child.producer_source)
+                          queued_exact_force_lower_demand?(child.producer, child.producer_source)
       return false if has_queued_force_lower_edge_continuation?(child.consumer, child.producer) ||
                       has_equivalent_queued_force_lower_work?(request)
       enqueue_force_lower_retry_work(request)
@@ -117910,7 +117925,7 @@ module Adamas::HIR
       return false if name == consumer
       state = function_state(name)
       return false if state.in_progress?
-      return true if allow_queued_result_demand && queued_exact_force_lower_result_demand?(name, source)
+      return true if allow_queued_result_demand && queued_exact_force_lower_demand?(name, source)
       if @module.has_function_with_body?(name) || state.completed?
         return queued_provisional_source_result_producer?(name)
       end
@@ -117923,14 +117938,13 @@ module Adamas::HIR
     # publishes its own result dependency. Accept the queued request only when
     # its recipe remains current and its physical Def/Arena is the source
     # selected by the caller.
-    private def queued_exact_force_lower_result_demand?(
-      name : String,
-      source : ForceLowerExactSourceBinding,
+    private def queued_exact_force_lower_demand?(
+      name : String, source : ForceLowerExactSourceBinding, *, requires_result : Bool = true,
     ) : Bool
       return false unless @force_lower_retry_driver_active
-      return false if settled_force_lower_result?(name)
+      return false if settled_force_lower_demand?(name, requires_result)
       @force_lower_retry_work.any? do |request|
-        next false unless request.name == name && force_lower_retry_requires_result?(request) &&
+        next false unless request.name == name && (!requires_result || force_lower_retry_requires_result?(request)) &&
                           force_lower_retry_source_current?(request)
         request_source = if request.is_a?(ForceLowerRetryRequest)
                            request.exact_source || request.replay_callsite.try do |replay|
@@ -122418,7 +122432,7 @@ module Adamas::HIR
                      @force_lower_depth_refused[refused_before_force...].includes?(target)) ||
                     @force_lower_provisional_dependencies.has_key?(target) ||
                     (allow_queued_result_demand && consumer != target &&
-                     queued_exact_force_lower_result_demand?(target, binding))
+                     queued_exact_force_lower_demand?(target, binding))
 
       if consumer == target && (active = current_active_force_lower_body(target))
         if active.function.same?(ctx.function) && active.source_def.same?(binding.source_def) &&
@@ -155185,6 +155199,20 @@ module Adamas::HIR
       elsif selected_return_def.nil? && args.empty? && member_name != "new"
         selected_return_def = lookup_function_def_for_call(full_method_name, 0, false, arg_types).try(&.[1])
       end
+      # A bare static call with no runtime arguments still has an exact source
+      # call shape. Capture it before result inference can consume the pending
+      # callsite, so the selected producer can be replayed after a refusal.
+      static_source = if args.empty? && member_name != "new"
+                        selected_static_source_entry.try do |(key, definition, arena)|
+                          force_lower_exact_source_binding(actual_name, definition, definition, arena, key)
+                        end
+                      end
+      static_call_observation = if static_source
+                                  callsite = remember_callsite_arg_types(actual_name, arg_types)
+                                  observed_force_lower_source_call(ctx, actual_name, callsite,
+                                    static_source.source_def, static_source.source_arena, static_source.source_registry_name)
+                                end
+      refused_before_static_call = @force_lower_depth_refused.size
       return_type = get_function_return_type(actual_name, args.size, selected_return_def)
       if member_name == "new" && class_name_str == "Range" && arg_types.size >= 2
         begin_name = get_type_name_from_ref(arg_types[0])
@@ -155248,7 +155276,15 @@ module Adamas::HIR
           force_pending_call_targets_for_return_type(actual_name, mangled_name, full_method_name, context: "static_member_access")
         end
       end
-      record_force_lower_result_dependency(ctx, actual_name, selected_return_def, refused_before_force)
+      if static_source && exact_source_discard_result_type.nil?
+        record_force_lower_result_dependency(ctx, actual_name, selected_return_def, refused_before_static_call,
+          static_source.source_def, static_source.source_arena, static_source.source_registry_name)
+        suspend_depth_refused_source_result(ctx, actual_name, return_type, selected_return_def,
+          static_source.source_def, static_source.source_arena, refused_before_static_call,
+          static_source.source_registry_name, static_source, observed_call: static_call_observation)
+      else
+        record_force_lower_result_dependency(ctx, actual_name, selected_return_def, refused_before_force)
+      end
       if exact_source_discard_result_type.nil? &&
          (return_type == TypeRef::VOID || source_new_entry || !abstract_numeric_return_constraint_for_function(actual_name).nil?)
         refreshed = get_function_return_type(actual_name, args.size, selected_return_def)

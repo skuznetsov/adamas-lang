@@ -110,7 +110,7 @@ class Adamas::HIR::AstToHir
     return false unless advance_suspended_consumer(previous, pending)
     has_equivalent_queued_force_lower_work?(previous).should be_true
     has_queued_force_lower_edge_continuation?(consumer, second).should be_true
-    queued_exact_force_lower_result_demand?(first, previous.pending.producer_source).should be_true
+    queued_exact_force_lower_demand?(first, previous.pending.producer_source).should be_true
     force_lower_retry_waits_for_queued_producer?(previous).should be_true
     settled_force_lower_result?(first).should be_false
     queued = @force_lower_retry_work.dup

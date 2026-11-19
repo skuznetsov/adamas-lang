@@ -35,6 +35,22 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-19 — Keep bound initializer bodies on the exact replay queue
+- [x] The initializer selected by a named allocator call was lowered
+  directly, without its own result continuation. A second force could
+  likewise lower it directly while the retry driver already owned its
+  pending body. Keep the selected Def, declaration arena and bound ABI on
+  the allocator's body-only demand. A bare static call inside that body
+  records its zero-argument callsite before result inference consumes it.
+- [x] The initializer and static call regressions exercise direct refusal
+  and a body already queued behind another exact source result. The focused
+  initializer and recursive replay suites pass 77 examples.
+- [ ] Both uncached S1-to-S2 builds stop before producing S2. On installed
+  1.22.3 the retry driver resumes the bound initializer and reaches
+  `Process#stdio_to_fd`, whose declared `IO::FileDescriptor` result
+  rejects `File | IO | IO::FileDescriptor`. Bundled 1.18.2 still reports a
+  pending result in `CLI#run_check`.
+
 ### 2026-11-19 — Match compact nullable module restrictions per member
 - [x] A forwarded value with the compact type `Nil | Item(Int32)` was
   compared whole against each arm of `Item(Int32)?`. Use the existing union

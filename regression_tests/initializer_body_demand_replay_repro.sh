@@ -14,6 +14,8 @@ SPEC_ARGS=(spec --no-color
   "$ROOT_DIR/spec/hir/force_lower_active_edge_graph_spec.cr"
   "$ROOT_DIR/spec/hir/initializer_body_pending_replay_spec.cr"
   "$ROOT_DIR/spec/hir/initializer_sequential_replay_spec.cr"
+  "$ROOT_DIR/spec/hir/bound_initializer_result_replay_spec.cr"
+  "$ROOT_DIR/spec/hir/static_nilary_result_replay_spec.cr"
   --single-module -D debug_hooks --error-trace)
 if [[ -n "${ADAMAS_EXTRA_LINK_FLAGS:-}" ]]; then
   SPEC_ARGS+=("--link-flags=$ADAMAS_EXTRA_LINK_FLAGS")
