@@ -35,6 +35,27 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-19 — Keep virtual setter results with their selected source bodies
+- [x] A virtual assignment with a module-provided setter could read a
+  provisional Void result after its helper completed. For a closed class
+  receiver set, resolve and queue each executable setter under its selected
+  definition and declaration arena. The virtual expression uses the joined
+  checked results and preserves each source value kind.
+- [x] The native regression compares lazy and eager HIR with Crystal 1.22.3
+  over 24 programs. A private module setter and its class override produce
+  three distinct results, and an assignment result cannot be typed from
+  its right-hand side alone.
+- [ ] Fresh uncached S1-to-S2 with installed 1.22.3 discharges
+  `system_blocking_init` and reaches the annotation parser cycle through
+  `parse_union_type_for_annotation` and `parse_bare_proc_type`. Bundled 1.18.2
+  still reaches a pending result in `CLI#run_check` through the
+  `parse_private`, `parse_class`, and `parse_module` cycle. Both exit 1.
+- [ ] A late specialization of a generic setter override still differs
+  from Crystal on the parent and this compiler. Open generic descendant
+  sets are excluded from the early result join. A separate applied-module
+  case with a concrete generic receiver now agrees with Crystal in lazy
+  mode. It still prints a different result in eager mode on both revisions.
+
 ### 2026-11-19 — Keep bound initializer bodies on the exact replay queue
 - [x] The initializer selected by a named allocator call was lowered
   directly, without its own result continuation. A second force could

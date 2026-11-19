@@ -81521,8 +81521,8 @@ module Adamas::HIR
       selected_target_def = @function_defs[selected_entry_name]? || return nil
       return nil unless selected_target_def.same?(selected_def)
 
-      owner_names = included_forall_virtual_runtime_owners(receiver_owner) || return nil
-      return nil if included_forall_virtual_template_descendant?(receiver_owner, owner_names)
+      owner_names = concrete_virtual_runtime_owners(receiver_owner) || return nil
+      return nil if open_virtual_template_descendant?(receiver_owner, owner_names)
 
       targets = [] of IncludedForallVirtualReturnTarget
       effective_returns = [] of TypeRef
@@ -81570,7 +81570,7 @@ module Adamas::HIR
     # The dispatch owner set is the concrete closure used by MIR: the static
     # class, its registered subclasses, and materialized instances registered
     # under any visited generic template.
-    private def included_forall_virtual_runtime_owners(receiver_owner : String) : Array(String)?
+    private def concrete_virtual_runtime_owners(receiver_owner : String) : Array(String)?
       owners = [] of String
       pending = [receiver_owner]
       seen = Set(String).new
@@ -81608,7 +81608,7 @@ module Adamas::HIR
     # after this call's HIR is lowered. Detect template super chains that can
     # reach this closed concrete owner set and decline to snapshot them as
     # complete. Parameter-dependent parent edges are uncertain by definition.
-    private def included_forall_virtual_template_descendant?(receiver_owner : String, owner_names : Array(String)) : Bool
+    private def open_virtual_template_descendant?(receiver_owner : String, owner_names : Array(String)) : Bool
       reachable = Set(String).new
       reachable << receiver_owner
       reachable << strip_generic_args_from_namespace_path(receiver_owner)
@@ -147919,9 +147919,9 @@ module Adamas::HIR
       return nil unless descriptor && descriptor.kind == TypeKind::Class
       return nil unless registered_abstract_class_name?(descriptor.name) ||
                         class_has_subclasses?(descriptor.name)
-      owners = included_forall_virtual_runtime_owners(descriptor.name) || return nil
+      owners = concrete_virtual_runtime_owners(descriptor.name) || return nil
       return nil if owners.empty?
-      return nil if included_forall_virtual_template_descendant?(descriptor.name, owners)
+      return nil if open_virtual_template_descendant?(descriptor.name, owners)
       owners.sort_by! { |owner| -get_ancestor_chain(owner).size }
 
       definitions = {} of String => Tuple(Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike)
@@ -154895,6 +154895,110 @@ module Adamas::HIR
       {selected, converted_types, converted_facts}
     end
 
+    private def force_property_setter_source_result(
+      ctx : LoweringContext,
+      name : String,
+      source : ForceLowerExactSourceBinding,
+      observed_call : {String, ForceLowerReplayCallsite}? = nil,
+      *,
+      virtual_target : Bool = false,
+    ) : TypeRef
+      definition = source.source_def
+      arena = source.source_arena
+      selected_name = source.source_registry_name
+      refused_mark = @force_lower_depth_refused.size
+      return_type = TypeRef::VOID
+      # The first return probe can force the body before the explicit demand.
+      bound = with_force_lower_exact_source(name, source) do
+        return_type = get_function_return_type(name, 1, definition, selected_source_binding: source)
+        lower_function_if_needed(name)
+        force_lower_function_for_return_type(name, bypass_inline_yield: true,
+          pending_call_target_context: "property_setter_result") unless settled_force_lower_result?(name)
+        true
+      end
+      unless bound
+        raise LoweringError.new("property setter source changed before result inference: #{name}", definition)
+      end
+      record_force_lower_result_dependency(ctx, name, definition, refused_mark, definition, arena,
+        selected_name, allow_queued_result_demand: virtual_target)
+      suspend_depth_refused_source_result(ctx, name, return_type, definition, definition, arena,
+        refused_mark, selected_name, source, observed_call: observed_call, allow_queued_result_demand: virtual_target)
+      settled_force_lower_result?(name) ? @module.function_by_name(name).not_nil!.return_type : return_type
+    end
+
+    # Reachability supplies executable dispatch arms, but cannot supply their
+    # source results while a selected body still owns a queued continuation.
+    # Use the same target selection as virtual replay and join only results
+    # published by the exact bodies. Keep that join on the call expression.
+    private def class_virtual_property_setter_result(
+      ctx : LoweringContext,
+      receiver_id : ValueId,
+      setter_name : String,
+      value_id : ValueId,
+      arg_types : Array(TypeRef),
+      source_arguments : Array(SourceCallArgument?)?,
+    ) : {TypeRef, Array({TypeRef, Bool})}?
+      receiver_type = @module.get_type_descriptor(ctx.type_of(receiver_id)) || return nil
+      return nil unless receiver_type.kind == TypeKind::Class && !ctx.type_literal?(receiver_id)
+      return nil if broad_virtual_target_root?(receiver_type.name) || bare_reference_generic_template?(receiver_type.name)
+      return nil unless (argument = source_arguments.try(&.first?)) && argument.type_ref != TypeRef::VOID
+
+      owners = concrete_virtual_runtime_owners(receiver_type.name) || return nil
+      return nil if owners.empty? || open_virtual_template_descendant?(receiver_type.name, owners)
+
+      types = virtual_target_callsite_types(arg_types, source_arguments)
+      targets = {} of String => ForceLowerExactSourceBinding
+      owners.each do |owner|
+        family = "#{owner}##{setter_name}"
+        selected = lookup_function_def_for_call(family, 1, false, types, source_argument_facts: source_arguments) || return nil
+        selected_name, definition = selected
+        arena = @function_def_arenas[selected_name]? || return nil
+        candidate = virtual_target_mangled_name(family, types, false, source_arguments)
+        name = resolved_virtual_target_name(candidate, family, selected_name, definition, types, false, source_arguments)
+        source = force_lower_exact_source_binding(name, definition, definition, arena, selected_name) || return nil
+        return nil unless force_lower_plain_source_formals?(name, source, 1)
+        yield_free = false
+        with_force_lower_exact_source(name, source) { yield_free = callee_is_yield_free?(name) }
+        return nil unless yield_free
+        if existing = targets[name]?
+          return nil unless existing.source_def.same?(definition) && existing.source_arena.same?(arena)
+        else
+          targets[name] = source
+        end
+      end
+
+      targets.each do |name, source|
+        callsite = remember_callsite_arg_types(name, types, source_argument_facts: source_arguments)
+        observed_call = observed_force_lower_source_call(
+          ctx, name, callsite, source.source_def, source.source_arena, source.source_registry_name,
+          materialized_arguments: [value_id], positional_argument_facts: source_arguments,
+        )
+        force_property_setter_source_result(ctx, name, source, observed_call, virtual_target: true)
+        return nil unless settled_force_lower_result?(name)
+      end
+      return nil unless concrete_virtual_runtime_owners(receiver_type.name) == owners
+
+      returns = [] of TypeRef
+      facts = [] of {TypeRef, Bool}
+      targets.each do |name, source|
+        return nil unless force_lower_exact_source_matches?(name, source) && settled_force_lower_result?(name)
+        function = @module.function_by_name(name).not_nil!
+        result_facts = function.source_return_value_facts || return nil
+        return nil if function.return_type == TypeRef::VOID || result_facts.empty?
+        receipt = function.source_return_result_receipt || return nil
+        return nil unless receipt.definition_id == source.source_def.object_id.to_u64 &&
+                          receipt.arena_key == arena_map_key(source.source_arena) &&
+                          receipt.body_revision == function.body_revision &&
+                          receipt.result_facts_match?(result_facts) &&
+                          receipt.body_objects_match?(function.scopes, function.blocks)
+        facts.concat(result_facts)
+        returns << function.return_type
+      end
+      if result = union_type_for_value_set(returns)
+        {result, normalize_source_return_result_facts(facts)}
+      end
+    end
+
     # Assignment receivers can be modules, unions, or class hierarchies just
     # like ordinary calls. Reuse their target-demand path instead of emitting a
     # direct call to a module accessor that has no standalone implementation.
@@ -154972,29 +155076,13 @@ module Adamas::HIR
                  force_lower_exact_source_binding(method_name, selected_def, selected_def,
                    selected_arena, selected_name)
                end
-      refused_mark = @force_lower_depth_refused.size
-      return_type = TypeRef::VOID
+      virtual_result = if call_virtual
+                         class_virtual_property_setter_result(ctx, object_id, setter_name, value_id, arg_types, source_argument_facts)
+                       end
       if source && callee_is_yield_free?(method_name)
-        # Return probing can itself force the body. Its exact source and the
-        # refusal watermark must already be active before that first probe.
-        source_bound = with_force_lower_exact_source(method_name, source) do
-          return_type = get_function_return_type(method_name, 1, selected_def,
-            selected_source_binding: source)
-          lower_function_if_needed(method_name)
-          force_lower_function_for_return_type(method_name, bypass_inline_yield: true,
-            pending_call_target_context: "property_setter_result") unless settled_force_lower_result?(method_name)
-          true
-        end
-        unless source_bound
-          raise LoweringError.new("property setter source changed before result inference: #{method_name}", selected_def)
-        end
-        record_force_lower_result_dependency(ctx, method_name, selected_def, refused_mark,
-          selected_def, selected_arena, selected_name)
-        suspend_depth_refused_source_result(ctx, method_name, return_type, selected_def,
-          selected_def, selected_arena, refused_mark, selected_name, source)
-        if settled_force_lower_result?(method_name)
-          return_type = @module.function_by_name(method_name).not_nil!.return_type
-        end
+        return_type = force_property_setter_source_result(ctx, method_name, source)
+      elsif virtual_result
+        return_type = virtual_result[0]
       else
         return_type = get_function_return_type(method_name)
         lower_function_if_needed(method_name)
@@ -155011,7 +155099,7 @@ module Adamas::HIR
       end
       if call_virtual
         ensure_virtual_call_targets_lowered(ctx, object_id, setter_name, arg_types,
-          false, false, false, false)
+          false, false, false, false, source_argument_facts: virtual_result ? source_argument_facts : nil)
         if return_type == TypeRef::VOID
           owner = get_type_name_from_ref(ctx.type_of(object_id))
           if inferred = infer_return_type_from_includers(owner, setter_name, arg_types, false)
@@ -155023,6 +155111,11 @@ module Adamas::HIR
         method_name, [value_id], call_virtual)
       ctx.emit(call)
       ctx.register_type(call.id, return_type)
+      if virtual_result
+        facts = virtual_result[1]
+        ctx.register_source_value_facts(call.id, facts)
+        ctx.mark_type_literal(call.id) if !facts.empty? && facts.all?(&.[1])
+      end
       unless call_virtual
         register_materialized_source_return_value_facts(ctx, call.id, method_name)
         if selected_call_noreturn?(method_name, selected_def)
