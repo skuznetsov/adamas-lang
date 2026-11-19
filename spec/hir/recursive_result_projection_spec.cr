@@ -605,6 +605,51 @@ class Adamas::HIR::AstToHir
     !checked_partial_struct_result(pending, anchor).nil?
   end
 
+  def __test_suspended_checked_call_return?(change : Symbol) : Bool
+    name = "RecFactory.value"
+    producer = __test_projection_method_name("value_for")
+    source = __test_projection_source(name)
+    replay = __test_projection_replay(name)
+    original = @module.function_by_name(name).not_nil!
+    type = original.return_type
+    partial = Function.new(original.id, name, type)
+    ctx = LoweringContext.new(partial, @module, source.source_arena)
+    ctx.switch_to_block(ctx.create_block) if change == :unreachable
+    block = ctx.get_block(ctx.current_block_id)
+
+    operand = Literal.new(ctx.next_id, TypeRef::BOOL, false)
+    ctx.emit(operand)
+    other = Literal.new(ctx.next_id, TypeRef::BOOL, true)
+    ctx.emit(other)
+    call = Call.new(ctx.next_id, type, "")
+    call.configure_without_receiver(producer, [operand.id], change == :virtual)
+    ctx.emit(call)
+    ctx.register_source_value_facts(call.id, [{type, false}])
+    returned = Return.new(call.id)
+    ctx.terminate(returned)
+    result = suspended_return_call_result(ctx, call) || return false
+    body = ForceLowerActiveBody.new(partial, source.source_def, source.source_arena,
+      [] of TypeRef, [] of String, type)
+    anchor = PartialStructReturn.new(replay, ctx, block, returned, call, body, result)
+
+    case change
+    when :different_operand
+      call.configure_without_receiver(producer, [other.id])
+    when :replaced_operand
+      block.replace(0, Literal.new(operand.id, TypeRef::BOOL, false))
+    when :stale_receipt
+      @module.function_by_name(producer).not_nil!.source_return_result_receipt = nil
+    when :provisional
+      @force_lower_provisional_dependencies[producer] = Set{"RecFactory.consumer"}
+    when :changed_kind
+      ctx.register_source_value_facts(call.id, [{type, true}])
+    when :different_target
+      call.configure_without_receiver(__test_projection_method_name("sibling_value"), [operand.id])
+    end
+    pending = ExactResultPending.new("RecFactory.consumer", name, source)
+    !checked_partial_struct_result(pending, anchor).nil?
+  end
+
   def __test_suspended_return_with_default?(change : Symbol) : Bool
     name = __test_projection_method_name("value_with_default")
     source = __test_projection_source(name)
@@ -952,6 +997,14 @@ describe "source result projection inside a recursive specialization" do
     [:replaced_read, :replaced_return, :unreachable, :missing_constant, :changed_kind,
      :changed_operand, :changed_replay_source].each do |change|
       converter.__test_suspended_constant_return?(change).should be_false
+    end
+  end
+
+  it "keeps a direct call result only with its active checked body and exact emitted operands" do
+    recursive_projection_converter.__test_suspended_checked_call_return?(:unchanged).should be_true
+    [:different_operand, :replaced_operand, :stale_receipt, :provisional, :unreachable,
+     :changed_kind, :different_target, :virtual].each do |change|
+      recursive_projection_converter.__test_suspended_checked_call_return?(change).should be_false
     end
   end
 

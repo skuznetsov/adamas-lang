@@ -2222,8 +2222,17 @@ module Adamas::HIR
       context : LoweringContext,
       block : Block,
       terminator : Return,
-      value : ClassVarGet,
-      body : ForceLowerActiveBody
+      value : ClassVarGet | Call,
+      body : ForceLowerActiveBody,
+      call_result : PartialStructCallResult? = nil
+
+    private record PartialStructCallResult,
+      target : Function,
+      source : ForceLowerExactSourceBinding,
+      receipt : SourceReturnResultReceipt,
+      receiver : ValueId?,
+      arguments : Array(ValueId),
+      operands : Array(RecursiveStructResultOperandWitness)
 
     private class ForceLowerReplayCapture
       property binding : ForceLowerReplayCallsite?
@@ -116176,7 +116185,16 @@ module Adamas::HIR
       return false unless right
       left.context.same?(right.context) && left.block.same?(right.block) &&
         left.terminator.same?(right.terminator) && left.value.same?(right.value) &&
+        same_suspended_return_call_result?(left.call_result, right.call_result) &&
         same_force_lower_active_body?(left.body, right.body) && same_force_lower_replay_callsite?(left.replay, right.replay)
+    end
+
+    private def same_suspended_return_call_result?(left : PartialStructCallResult?, right : PartialStructCallResult?) : Bool
+      return right.nil? unless left
+      return false unless right
+      left.target.same?(right.target) && left.receipt.same?(right.receipt) &&
+        same_force_lower_exact_source_binding?(left.source, right.source) &&
+        left.receiver == right.receiver && left.arguments == right.arguments && left.operands == right.operands
     end
 
     private def same_force_lower_exact_result_pending?(left : ExactResultPending, right : ExactResultPending) : Bool
@@ -116919,9 +116937,13 @@ module Adamas::HIR
       reachable_blocks(ctx.function).each do |block|
         returned = block.terminator.as?(Return) || next
         value_id = returned.value || next
-        constant = ctx.value_for(value_id).as?(ClassVarGet) || next
-        next unless constant.type == body.return_type
-        anchor = PartialStructReturn.new(replay, ctx, block, returned, constant, body)
+        value = ctx.value_for(value_id)
+        next unless value.is_a?(ClassVarGet) || value.is_a?(Call)
+        next unless value.type == body.return_type
+        call_result = if value.is_a?(Call)
+                        suspended_return_call_result(ctx, value) || next
+                      end
+        anchor = PartialStructReturn.new(replay, ctx, block, returned, value, body, call_result)
         return anchor if suspended_return_value_current?(anchor)
       end
       nil
@@ -116965,15 +116987,60 @@ module Adamas::HIR
       ctx = anchor.context
       read = anchor.value
       block = anchor.block
-      constant = deferred_constant_full_name(read.class_name, read.var_name)
       facts = [{read.type, false}]
-      reachable_blocks(ctx.function).any? { |reachable| reachable.same?(block) } &&
-        block.terminator.try(&.same?(anchor.terminator)) == true && anchor.terminator.value == read.id &&
-        block.instructions.count { |value| value.id == read.id } == 1 &&
-        block.instructions.any? { |value| value.same?(read) } &&
-        ctx.value_for(read.id).try(&.same?(read)) == true && !ctx.type_literal?(read.id) &&
-        ctx.source_value_facts(read.id) == facts && @constant_types[constant]? == read.type &&
-        @constant_source_value_facts[constant]? == facts
+      return false unless reachable_blocks(ctx.function).any? { |reachable| reachable.same?(block) } &&
+                          block.terminator.try(&.same?(anchor.terminator)) == true && anchor.terminator.value == read.id &&
+                          block.instructions.count { |value| value.id == read.id } == 1 &&
+                          block.instructions.any? { |value| value.same?(read) } &&
+                          ctx.value_for(read.id).try(&.same?(read)) == true && !ctx.type_literal?(read.id) &&
+                          ctx.source_value_facts(read.id) == facts
+      case read
+      when ClassVarGet
+        constant = deferred_constant_full_name(read.class_name, read.var_name)
+        @constant_types[constant]? == read.type && @constant_source_value_facts[constant]? == facts
+      when Call
+        result = anchor.call_result || return false
+        suspended_return_call_current?(ctx, read, result)
+      else
+        false
+      end
+    end
+
+    # A returned direct call can carry an independently checked instance
+    # before the enclosing body reaches a recursive dependency. Keep the
+    # emitted target, its current source result and the operands of this call.
+    private def suspended_return_call_result(ctx : LoweringContext, call : Call) : PartialStructCallResult?
+      return if call.virtual || call.has_block? || call.method_name == ctx.function.name
+      return unless ctx.source_value_facts(call.id) == [{call.type, false}]
+      return unless settled_force_lower_result?(call.method_name)
+      target = @module.function_by_name(call.method_name) || return
+      receipt = target.source_return_result_receipt || return
+      definition = @function_defs[call.method_name]? || return
+      source = force_lower_exact_source_binding(call.method_name, definition, definition, nil) || return
+      receiver = call.receiver_value if call.has_receiver?
+      ids = receiver ? [receiver] + call.args : call.args
+      operands = recursive_struct_result_operand_witnesses(ctx.function, ids) || return
+      PartialStructCallResult.new(target, source, receipt, receiver, call.args.dup, operands)
+    end
+
+    private def suspended_return_call_current?(
+      ctx : LoweringContext, call : Call, result : PartialStructCallResult,
+    ) : Bool
+      name = call.method_name
+      receiver = call.receiver_value if call.has_receiver?
+      return false if call.virtual || call.has_block? || name == ctx.function.name
+      return false unless call.args == result.arguments && receiver == result.receiver &&
+                          result.target.name == name && @module.function_by_name(name).try(&.same?(result.target)) &&
+                          result.target.source_return_result_receipt.try(&.same?(result.receipt))
+      return false unless settled_force_lower_result?(name) && exact_final_struct_result(name, result.source) == call.type
+      # These uses remain subject to the final emission check. A completed
+      # result is not independent evidence while its own proof borrows one.
+      return false if @deferred_struct_result_uses.any? do |(consumer, _), _|
+        consumer == name
+      end
+      types = call.args.map { |arg| ctx.type_of(arg) }
+      recursive_struct_result_abi_matches?(ctx, result.target, receiver, types) &&
+        recursive_struct_result_operand_witnesses_current?(ctx, ctx.function, result.operands)
     end
 
     private def cycle_work_reaches?(producer : String, consumer : String) : Bool

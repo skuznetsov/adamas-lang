@@ -35,6 +35,24 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-19 — Keep checked direct call returns on suspended bodies
+- [x] A suspended recursive body only retained materialized constant
+  returns. A reachable return can also carry the result of a settled
+  direct call. Preserve the exact call, checked source receipt, operand
+  identities, and ABI through replay. The existing final result and
+  emission checks remain mandatory.
+- [x] The recursive result repro compares the constant and direct call
+  cases with Crystal 1.22.3, including invalid returns and class-object
+  arguments. The focused HIR suite passes 32 examples, including stale
+  receipts, changed operands, and provisional and virtual calls.
+- [ ] On bundled 1.18.2, fresh S1-to-S2 discharges the old
+  `parse_private` cycle and resumes `parse_program_roots_impl`, then
+  still reports a pending `CLI#run_check` result. Installed 1.22.3
+  reaches the `parse_bare_proc_type` annotation cycle. Both exit 1.
+- [ ] A return wrapped in a tagged union needs independent proof of its
+  payload, discriminator and final checked result. This change also leaves
+  indirect and provisionally justified calls outside the partial proof.
+
 ### 2026-11-19 — Keep virtual setter results with their selected source bodies
 - [x] A virtual assignment with a module-provided setter could read a
   provisional Void result after its helper completed. For a closed class
