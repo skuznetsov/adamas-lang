@@ -58582,6 +58582,12 @@ module Adamas::HIR
       return nil if base_method_name.empty?
       return nil if arg_types.empty?
       return nil if arg_types.all? { |t| t == TypeRef::VOID }
+      # A packed splat target (`hh$Tuple(Int32, Int32)_splat`) is already the
+      # body specialized for this call's Tuple arity. Its source Def is not the
+      # one kept at the base name, so re-deriving a callsite name from that
+      # sibling (`hh(x)`) stripped the marker and rebound the call to it.
+      return nil if resolved_name.includes?('$') && resolved_name.ends_with?("_splat") &&
+                    !resolved_name.ends_with?("_double_splat")
 
       # The selected overload owns the source restrictions. A sibling retained
       # at the unsuffixed name may have a different arity or annotation and
@@ -120069,11 +120075,22 @@ module Adamas::HIR
       has_named_args : Bool,
       selected_def : Adamas::Compiler::Frontend::DefNode?,
       source_restriction_names : Array(String?)? = nil,
+      splat_packed : Bool = false,
     ) : Bool
       return false unless selected_def
-      return false if has_block || has_splat || has_named_args
+      return false if has_block || has_named_args
+      exact_name = target_name
+      if has_splat
+        # A packed splat body (`only$Tuple(Int32, Int32)_splat`) is specialized
+        # from the callsite Tuple exactly like an untyped regular parameter.
+        # Its bare family alias would lower the same Def with `xs : Tuple()`.
+        return false unless splat_packed && target_name.ends_with?("_splat") &&
+                            !target_name.ends_with?("_double_splat") &&
+                            def_has_positional_splat_param?(selected_def)
+        exact_name = target_name.rchop("_splat")
+      end
       return false unless method_name_codec_exact_callsite_name?(
-        target_name,
+        exact_name,
         base_name,
         arg_types,
         has_block,
@@ -123515,6 +123532,7 @@ module Adamas::HIR
       # unnecessary block capture of call-resolution locals in generated stage2.
       has_splat = call_args.any? { |arg_id| call_arena[arg_id].is_a?(Adamas::Compiler::Frontend::SplatNode) }
       raw_call_positional_count : Int32? = has_splat ? nil : call_args.size
+      splat_statically_expanded = false
       lexical_method_name = if callee_kind == Adamas::Compiler::Frontend::NodeKind::Identifier
                               identifier_call_name_text(node, call_arena)
                             else
@@ -123598,7 +123616,10 @@ module Adamas::HIR
                       elsif lowered_call_arguments
                         lowered_call_arguments.positional_values
                       elsif has_splat
-                        expand_splat_args(ctx, call_args, call_arena)
+                        static_splats = [] of Bool
+                        expanded_splat_args = expand_splat_args(ctx, call_args, call_arena, static_splat_expansions: static_splats)
+                        splat_statically_expanded = !static_splats.empty? && static_splats.all? { |expanded| expanded }
+                        expanded_splat_args
                       elsif lowered_arg = prelowered_puts_arg_id
                         [lowered_arg]
                       else
@@ -123618,6 +123639,15 @@ module Adamas::HIR
         full_method_name || "",
         "[CALL_TRACE] stage=after_args method=#{method_name} args=#{args.size} receiver=#{!!receiver_id} full=#{full_method_name || ""}",
       )
+      # Crystal expands `f *t` over a Tuple at compile time: overloads are
+      # selected by the expanded positional actuals, exactly as for
+      # `f(t[0], t[1])`. Keeping the splat flag made the resolver prefer any
+      # `*args` overload, so `puts *objects` with an empty tuple printed `{}`
+      # instead of selecting the zero-argument `puts`.
+      if splat_statically_expanded
+        has_splat = false
+        raw_call_positional_count = args.size
+      end
       # A source-filtered empty receiver need not have terminated the block.
       # Its explicit actuals have now been visited, but it cannot select a
       # callee or contribute an ordinary result.
@@ -124183,6 +124213,11 @@ module Adamas::HIR
                     end
       args = pack_result[0]
       splat_packed = pack_result[1]
+      # Packing bound the trailing positionals to the selected `*param` as one
+      # Tuple. Later lookups see that Tuple as a single actual; without the
+      # splat flag they rebind it to a one-parameter sibling (`g(x)` instead
+      # of `g(*xs)`), so `g(1, 2)` and `io.print a, b` called the wrong body.
+      has_splat = true if splat_packed
       debug_lower_call_trace(
         method_name,
         method_name,
@@ -124907,7 +124942,7 @@ module Adamas::HIR
       end
       # Refine class/module method resolution using concrete arg types once available.
       if receiver_id.nil? && full_method_name
-        call_has_splat = call_args.any? { |arg_expr| call_arena[arg_expr].is_a?(Adamas::Compiler::Frontend::SplatNode) }
+        call_has_splat = has_splat
         call_has_named_args = has_named_args
         # M3f (docs/method_resolution_architecture_map.md): convert this class/module
         # refine site to the structured resolver, same pattern as M3e. Wrapper
@@ -125961,6 +125996,22 @@ module Adamas::HIR
           end
         else
           mangled_method_name = entry_name
+        end
+        # A packed splat body is specialized per Tuple arity, so its remangled
+        # name has the same `Tuple(...)` component as a one-parameter sibling
+        # called with a Tuple (`print(*objects)` vs `print(obj)`). Without the
+        # packed-splat marker every later lookup of that symbol (virtual
+        # replay, lazy materialization) rebinds it to the positional sibling.
+        # Key the marker on the selected definition, not on the entry spelling:
+        # a base-name key can select the splat overload too.
+        if splat_packed && !mangled_method_name.ends_with?("_splat") &&
+           !mangled_method_name.ends_with?("$splat") &&
+           def_has_positional_splat_param?(entry_def)
+          mangled_method_name = if mangled_method_name.includes?('$')
+                                  "#{mangled_method_name}_splat"
+                                else
+                                  "#{mangled_method_name}$splat"
+                                end
         end
         # Preserve the runtime receiver for already-admitted Object wrappers.
         # The selected source definition remains ancestor-owned so its arena and
@@ -127954,6 +128005,7 @@ module Adamas::HIR
         has_named_args,
         selected_call_entry_def,
         exact_source_argument_names,
+        splat_packed: splat_packed,
       )
       unselected_family_body = unselected_call_family_body?(base_method_name, mangled_method_name, selected_call_entry_def)
       if !exact_callsite_target_admitted && !unselected_family_body &&
@@ -134444,6 +134496,7 @@ module Adamas::HIR
       extern_func : ExternFunction? = nil,
       parameter_offset : Int32 = 0,
       source_slot_exprs : Array(ExprId?)? = nil,
+      static_splat_expansions : Array(Bool)? = nil,
     ) : Array(ValueId)
       result = [] of ValueId
 
@@ -134482,6 +134535,7 @@ module Adamas::HIR
               ctx.emit(nil_lit)
               result << nil_lit.id
               source_slot_exprs.try(&.push(nil))
+              static_splat_expansions.try(&.push(false))
               next
             end
             @arena = call_arena
@@ -134502,8 +134556,12 @@ module Adamas::HIR
                                       else
                                         false
                                       end
-            next if empty_tuple_constructor
+            if empty_tuple_constructor
+              static_splat_expansions.try(&.push(!arg_node.double?))
+              next
+            end
             if inner_node.is_a?(Adamas::Compiler::Frontend::ArrayLiteralNode)
+              static_splat_expansions.try(&.push(!arg_node.double?))
               # Expand array elements as individual arguments
               inner_node.elements.each do |elem_id|
                 @arena = call_arena
@@ -134527,9 +134585,11 @@ module Adamas::HIR
               if arg_node.double? && desc && desc.name == "NamedTuple"
                 # An empty `**opts` contributes no argument at all. Passing it
                 # positionally would bind it to a parameter it does not name.
+                static_splat_expansions.try(&.push(false))
                 next
               end
               if desc && (desc.kind == TypeKind::Tuple || desc.name.starts_with?("Tuple("))
+                static_splat_expansions.try(&.push(!arg_node.double?))
                 # Tuple splat: extract each element as a separate argument
                 elem_types = desc.type_params.reject { |t| t == TypeRef::VOID }
                 elem_types.each_with_index do |elem_type, idx|
@@ -134563,6 +134623,7 @@ module Adamas::HIR
                 end
               else
                 # Not a Tuple - pass through as single argument
+                static_splat_expansions.try(&.push(false))
                 result << (extern_func ? try_implicit_to_unsafe(ctx, inner_val, arg_node) : inner_val)
                 if env_get("DEBUG_SPLAT_TRACE")
                   STDERR.puts "[SPLAT_TRACE_DONE] inner=#{arg_node.expr.index}"
@@ -134622,18 +134683,11 @@ module Adamas::HIR
         end
       end
 
-      # When the call does NOT use splat syntax and args are already Tuple types,
-      # don't re-wrap to prevent infinite Tuple nesting (e.g., Object#in? calling
-      # in?(values) where values is Tuple(Object) — should resolve to
-      # in?(collection : Object), not re-pack into Tuple(Tuple(Object))).
-      unless call_has_splat
-        has_tuple_arg = args.any? do |arg_id|
-          if desc = @module.get_type_descriptor(ctx.type_of(arg_id))
-            desc.kind == TypeKind::Tuple || desc.name.starts_with?("Tuple(")
-          end
-        end
-        return {args, false} if has_tuple_arg
-      end
+      # A Tuple-typed positional actual is an ordinary value: `only({1, 2})`
+      # packs into `xs = { {1, 2} }`. Treating it as an already-packed splat
+      # bound it to the body specialized for `only(1, 2)`. A call such as
+      # `Object#in?`'s `in?(values)` must instead select the non-splat
+      # `in?(collection)` overload, which the non-splat check below enforces.
       func_name = if full_method_name
                     full_method_name
                   elsif receiver_id
@@ -134728,13 +134782,9 @@ module Adamas::HIR
       # re-packing when the expanded args can directly match a simpler overload
       # (e.g., join(*parts) expanded to join("subdir") should call join(part)
       # rather than re-packing into Tuple and calling join(*parts) again).
-      # Only do this check when none of the args are already Tuple types.
-      no_tuple_args = args.none? { |a|
-        if desc = @module.get_type_descriptor(ctx.type_of(a))
-          desc.kind.tuple? || desc.name.starts_with?("Tuple(")
-        end
-      }
-      if no_tuple_args
+      # Tuple-typed actuals take part too: `in?(values)` must reach
+      # `in?(collection)` instead of re-packing into `Tuple(Tuple(...))`.
+      begin
         # M3m: convert the non_splat_match lookup in pack_splat_args_for_call to the
         # structured resolver. Same locals as the legacy call at this point
         # (func_name/args.size/arg_types), literal has_splat=false, no named args
@@ -137208,7 +137258,7 @@ module Adamas::HIR
       end
       if ovl_trace
         arg_names_dbg = arg_types ? arg_types.map { |t| get_type_name_from_ref(t) }.join("|") : "nil"
-        STDERR.puts "[OVL] func=#{func_name} argc=#{arg_count} has_block=#{has_block} keys=#{overload_keys.size} fast=#{single_candidate_fast_path} unknown=#{unknown_args} args=#{arg_names_dbg}"
+        STDERR.puts "[OVL] func=#{func_name} argc=#{arg_count} has_block=#{has_block} splat=#{call_has_splat} keys=#{overload_keys.size} fast=#{single_candidate_fast_path} unknown=#{unknown_args} args=#{arg_names_dbg}"
         overload_keys.each { |k| STDERR.puts "[OVL]   key=#{k}" }
       end
       prefer_untyped = false
