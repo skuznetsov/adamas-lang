@@ -5750,6 +5750,29 @@ module Adamas::HIR
       ) == requested_name
     end
 
+    # The packed body of a `*param` definition is spelled as its exact callsite
+    # name plus the packed-splat marker (`zip$Tuple(Array(Int32))_splat`).
+    private def packed_splat_exact_callsite_name?(
+      requested_name : String,
+      base_name : String,
+      exact_arg_types : Array(TypeRef),
+      lookup_expect_block : Bool,
+      func_def : Adamas::Compiler::Frontend::DefNode?,
+      source_restriction_names : Array(String?)? = nil,
+    ) : Bool
+      return false unless func_def
+      return false unless requested_name.ends_with?("_splat") && !requested_name.ends_with?("_double_splat")
+      return false unless def_has_positional_splat_param?(func_def)
+
+      method_name_codec_exact_callsite_name?(
+        requested_name.rchop("_splat"),
+        base_name,
+        exact_arg_types,
+        lookup_expect_block,
+        source_restriction_names,
+      )
+    end
+
     private def method_name_codec_exact_lookup_owner_keep_requested_name?(
       requested_name : String,
       resolved_entry_name : String,
@@ -116740,6 +116763,17 @@ module Adamas::HIR
               exact_arg_types,
               lookup_expect_block
             )
+            # A packed splat body requested by its marked name must not be
+            # materialized under the unmarked key that found its Def
+            # (`zip$Tuple(Array(Int32))`): that key spells a one-parameter call
+            # shape and lowers a second, separately cached copy of the body.
+            keep_requested_name ||= packed_splat_exact_callsite_name?(
+              name,
+              base_name,
+              exact_arg_types,
+              lookup_expect_block,
+              resolved_entry_def,
+            )
             target_name = keep_requested_name ? name : resolved_entry_name
             resolved_entry_parts = parse_method_name(resolved_entry_name)
             if resolved_entry_parts.separator == name_parts.separator &&
@@ -120079,23 +120113,27 @@ module Adamas::HIR
     ) : Bool
       return false unless selected_def
       return false if has_block || has_named_args
-      exact_name = target_name
       if has_splat
         # A packed splat body (`only$Tuple(Int32, Int32)_splat`) is specialized
         # from the callsite Tuple exactly like an untyped regular parameter.
         # Its bare family alias would lower the same Def with `xs : Tuple()`.
-        return false unless splat_packed && target_name.ends_with?("_splat") &&
-                            !target_name.ends_with?("_double_splat") &&
-                            def_has_positional_splat_param?(selected_def)
-        exact_name = target_name.rchop("_splat")
+        return false unless splat_packed && packed_splat_exact_callsite_name?(
+                              target_name,
+                              base_name,
+                              arg_types,
+                              has_block,
+                              selected_def,
+                              source_restriction_names,
+                            )
+      else
+        return false unless method_name_codec_exact_callsite_name?(
+          target_name,
+          base_name,
+          arg_types,
+          has_block,
+          source_restriction_names,
+        )
       end
-      return false unless method_name_codec_exact_callsite_name?(
-        exact_name,
-        base_name,
-        arg_types,
-        has_block,
-        source_restriction_names,
-      )
       return false unless def_has_untyped_regular_param?(selected_def)
 
       state = function_state(target_name)
@@ -125947,7 +125985,13 @@ module Adamas::HIR
             # collection specialization from callsite args to avoid reusing one
             # lowered body across different Tuple/Array shapes.
             mangled_method_name = mangle_function_name(base_method_name, arg_types, has_block_call)
-          elsif splat_packed && (entry_name.ends_with?("_splat") || entry_name.ends_with?("$splat"))
+          elsif splat_packed && (entry_name.ends_with?("_splat") || entry_name.ends_with?("$splat") ||
+                def_has_positional_splat_param?(entry_def))
+            # The entry key can be a sibling spelling built from the unpacked
+            # actuals (`zip$Array(Int32)` for `zip(*others)` called with one
+            # Array); reusing it would name the packed body after the
+            # one-argument call shape, so key the remangle on the selected
+            # definition and rebuild it from the packed Tuple.
             # Splat functions must be monomorphized per tuple arity.
             # Each different call arity produces a different Tuple type, so
             # we create a per-arity specialization (e.g., join$Tuple(String, String)
@@ -126012,6 +126056,20 @@ module Adamas::HIR
                                 else
                                   "#{mangled_method_name}$splat"
                                 end
+        end
+        # The packed body's name spells the packed Tuple, so the inputs recorded
+        # under it must be the packed actuals too. The pre-pack actuals of a
+        # one-argument call (`zip([3, 4])` -> `[Array(Int32)]`) re-resolve to
+        # the sibling key `zip$Array(Int32)`, which then lowers a second copy
+        # of the body, and a single Tuple element (`only({1, 2})`) reads as an
+        # already-packed splat.
+        if splat_packed && use_prepack_callsite_types &&
+           (mangled_method_name.ends_with?("_splat") || mangled_method_name.ends_with?("$splat")) &&
+           !mangled_method_name.ends_with?("_double_splat") &&
+           def_has_positional_splat_param?(entry_def)
+          callsite_arg_types = arg_types.dup
+          callsite_arg_literals = arg_literals.dup
+          callsite_arg_enum_names = call_argument_enum_names(ctx, args)
         end
         # Preserve the runtime receiver for already-admitted Object wrappers.
         # The selected source definition remains ancestor-owned so its arena and
