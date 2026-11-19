@@ -113060,16 +113060,11 @@ module Adamas::HIR
       replay = capture.binding
       return unless replay && active_force_lower_source_current?(function.name, replay)
       return unless replay.source_def.same?(source_def) && replay.source_arena.same?(source_arena)
-      return unless source_def.body && source_def.return_type && source_def.forall_type_params.empty?
-      return if function.return_type == TypeRef::VOID ||
-                raw_callback_abi_for(function.name) || raw_callback_source_binding_for(function.name)
-      return unless ordinary_active_body_callsite?(replay.callsite)
-      params = function_param_infos(source_def, source_arena)
-      return unless params.all? do |param|
-        declared_type_name = param.type_annotation
-        declared_type_name && declared_type_name != "_" &&
-          !param.is_splat && !param.is_double_splat && !param.is_block && !named_only_separator?(param)
-      end
+      return if function.return_type == TypeRef::VOID
+      params = typed_recursive_body_formals(source_def, source_arena) || return
+      callsite = replay.callsite
+      return unless ordinary_active_body_callsite?(callsite) ||
+                    checked_named_recursive_callsite?(function.name, source_def, source_arena, callsite, params)
       formals = function.params
       offset = formals.first?.try(&.name) == "self" ? 1 : 0
       return unless formals.size == params.size + offset && replay.callsite.types.size == params.size
@@ -113080,10 +113075,12 @@ module Adamas::HIR
         # Lowering has already bound every operand to this physical ABI.
         # Keep its checked return, without coalescing new calls that might
         # still need to select an overload or evaluate their own defaults.
-        return unless param_types.skip(offset) == replay.callsite.types
         param_defaults = formals.map(&.default_literal)
       else
         return if formals.any?(&.default_literal)
+      end
+      if param_defaults || callsite.has_named_args
+        return unless param_types.skip(offset) == callsite.types
       end
       capture.active_body = ForceLowerActiveBody.new(
         function, source_def, source_arena, param_types, formals.map(&.name), function.return_type, param_defaults,
@@ -113098,7 +113095,7 @@ module Adamas::HIR
       active = capture.active_body
       return unless replay && active && active_force_lower_source_current?(name, replay)
       return unless replay.source_def.same?(active.source_def) && replay.source_arena.same?(active.source_arena)
-      return if active.param_defaults && !for_struct_return
+      return if !for_struct_return && (active.param_defaults || replay.callsite.has_named_args)
       function = active.function
       return unless @module.function_by_name(name).try(&.same?(function)) == true
       active if active_force_lower_body_abi_current?(active)
@@ -116475,7 +116472,7 @@ module Adamas::HIR
         anchor = type ? nil : queued_partial_struct_result(pending, producer_replay)
         type ||= anchor.try(&.value.type)
         next unless type
-        next unless recursive_struct_result_callsite_argument_facts(producer_replay.callsite)
+        next unless recursive_struct_result_replay_arguments?(pending.producer, producer_replay)
         @deferred_struct_result_uses[edge] = DeferredStructResultUse.new(entry, type, producer_replay, anchor)
         return index
       end
@@ -116516,7 +116513,8 @@ module Adamas::HIR
                    ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name)
         return unless same_force_lower_exact_source_binding?(source, observed) &&
                       active_force_lower_source_current?(name, replay) && force_lower_replay_callsite_current?(name, replay) &&
-                      !replay.callsite.has_block && !replay.callsite.has_named_args &&
+                      !replay.callsite.has_block &&
+                      (!replay.callsite.has_named_args || recursive_struct_result_replay_arguments?(name, replay)) &&
                       replay.entry_type_param_map == @type_param_map && replay.entry_namespace_override == @current_namespace_override
         if prior = retained
           retained = reconcile_recursive_producer_replays(prior, replay) || return
@@ -116569,13 +116567,80 @@ module Adamas::HIR
       )
     end
 
+    private def typed_recursive_body_formals(
+      definition : Adamas::Compiler::Frontend::DefNode,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Array(DefParamInfo)?
+      return unless definition.body && !definition.is_abstract && definition.return_type && definition.forall_type_params.empty?
+      params = function_param_infos(definition, arena)
+      return unless params.all? do |param|
+        declared_type_name = param.type_annotation
+        declared_type_name && declared_type_name != "_" &&
+          !param.is_splat && !param.is_double_splat && !param.is_block && !named_only_separator?(param)
+      end
+      params
+    end
+
+    # Only a selected named binding can explain which ABI slots were supplied
+    # and which defaults were already materialized. The sorted label set alone
+    # does not identify the body or the actual carried by a formal.
+    private def checked_named_recursive_callsite?(
+      name : String, definition : Adamas::Compiler::Frontend::DefNode,
+      arena : Adamas::Compiler::Frontend::ArenaLike, callsite : CallsiteArgs,
+      params : Array(DefParamInfo),
+    ) : Bool
+      binding = callsite.source_binding || return false
+      labels = callsite.named_arg_names || return false
+      return false if !callsite.has_named_args || labels.empty? || callsite.has_block || callsite.selected_target ||
+                      binding.block_result || binding.source_receiver_name
+      return false unless source_call_binding_matches?(binding, definition, arena) &&
+                          force_lower_exact_source_matches?(name, ForceLowerExactSourceBinding.new(definition, arena, binding.selected_name))
+      return false unless params.size == callsite.types.size && params.size == binding.supplied_types.size &&
+                          binding.defaulted_types.size <= params.size
+      params.each_with_index do |param, index|
+        supplied = binding.supplied_types[index]
+        defaulted = binding.defaulted_types[index]?
+        return false if supplied && defaulted || (!supplied && !(defaulted && param.default_value))
+      end
+      return false unless labels.all? do |label|
+        params.each_with_index.any? do |param, index|
+          label == (param.external_name || param.name || "").lchop('@') && !binding.supplied_types[index].nil?
+        end
+      end
+      !!recursive_struct_result_callsite_argument_facts(callsite)
+    end
+
+    private def recursive_struct_result_replay_arguments?(name : String, replay : ForceLowerReplayCallsite) : Bool
+      callsite = replay.callsite
+      return !!recursive_struct_result_callsite_argument_facts(callsite) unless callsite.has_named_args
+      return false unless active_force_lower_source_current?(name, replay)
+      params = typed_recursive_body_formals(replay.source_def, replay.source_arena) || return false
+      checked_named_recursive_callsite?(name, replay.source_def, replay.source_arena, callsite, params)
+    end
+
     # A recursive projection is only usable when the producer's queued source
     # callsite carries a complete per-argument kind witness. ABI TypeRefs alone
     # cannot distinguish an instance from its metaclass.
     private def recursive_struct_result_callsite_argument_facts(
       callsite : CallsiteArgs,
     ) : Array(SourceCallArgument?)?
-      return nil if callsite.has_block || callsite.has_named_args
+      return nil if callsite.has_block
+      if callsite.has_named_args
+        binding = callsite.source_binding || return nil
+        facts = callsite.source_argument_facts || return nil
+        actuals = source_call_binding_actual_arguments(binding)
+        enum_names = callsite.enum_names
+        return nil unless facts.size == callsite.types.size && actuals.size == facts.size &&
+                          (enum_names.nil? || enum_names.size == facts.size)
+        return nil unless facts.each_with_index.all? do |fact, index|
+          actual = actuals[index]
+          enum_name = enum_names.try(&.[index])
+          fact && actual && fact.type_ref == callsite.types[index] && !fact.type_literal &&
+            fact.value_facts.nil? && fact.rest_values.nil? && fact.tuple_values.nil? &&
+            source_argument_fact_matches_value?(actual, fact) &&
+            (enum_name.nil? || enum_type_ref(enum_name) == fact.type_ref)
+        end
+      end
       return [] of SourceCallArgument? if callsite.types.empty? &&
         (callsite.source_argument_facts.nil? || callsite.source_argument_facts.try(&.empty?)) &&
         (callsite.source_binding.nil? || callsite.source_binding.try(&.supplied_types.empty?)) &&
@@ -116637,16 +116702,16 @@ module Adamas::HIR
       same_force_lower_replay_callsite?(request.replay_callsite, use.request.replay_callsite) &&
         same_force_lower_exact_source_binding?(pending.producer_source, use.request.pending.producer_source) &&
         force_lower_replay_callsite_current?(pending.producer, use.producer_replay) &&
-        recursive_struct_result_callsite_argument_facts(use.producer_replay.callsite) != nil &&
+        recursive_struct_result_replay_arguments?(pending.producer, use.producer_replay) &&
         (exact_final_struct_result(pending) || checked_partial_struct_result(pending, use.checked_return).try(&.value.type)) == use.expected
     end
 
-    # Keep discovery of a named call separate from the recipe that already
-    # owns this body. The names and omissions belong to the invocation. The
-    # queued body can be reused only after the binder has lowered and checked
-    # every actual in its formal slot.
-    private def named_call_reuses_suspended_body?(
+    # Names and omissions belong to the invocation. A call can discover an
+    # existing body even if its syntax differs, but only after the binder
+    # has lowered and checked each actual in its formal slot.
+    private def bound_call_reuses_suspended_body?(
       name : String, binding : SourceCallBinding?, types : Array(TypeRef), facts : Array(SourceCallArgument?)?,
+      *, named_call : Bool,
     ) : Bool
       return false unless binding && @force_lower_retry_driver_active &&
                           !binding.block_result && !binding.source_receiver_name &&
@@ -116663,7 +116728,8 @@ module Adamas::HIR
         same_force_lower_exact_source_binding?(source, replay_source) &&
           replay.entry_type_param_map == @type_param_map &&
           replay.entry_namespace_override == @current_namespace_override &&
-          ordinary_active_body_callsite?(replay.callsite) &&
+          (replay.callsite.has_named_args ? recursive_struct_result_replay_arguments?(name, replay) :
+             named_call && ordinary_active_body_callsite?(replay.callsite)) &&
           recursive_struct_result_argument_facts_match?(replay.callsite, types, facts) &&
           active_force_lower_source_current?(name, replay) && force_lower_retry_source_current?(request)
       end
@@ -117250,6 +117316,11 @@ module Adamas::HIR
                     capture.binding && definition && arena && callsite
       source = force_lower_exact_source_binding(name, definition, definition, arena, source_key) || return
       evidence = if ordinary_recursive_source_callsite?(name, source, callsite)
+                   callsite
+                 elsif callsite.has_named_args && !source.inherited_nilary_member_alias &&
+                       !raw_callback_source_binding_for(name) && !raw_callback_abi_for(name) &&
+                       (params = typed_recursive_body_formals(definition, arena)) &&
+                       checked_named_recursive_callsite?(name, definition, arena, callsite, params)
                    callsite
                  elsif default_binding && materialized_arguments && !source.inherited_nilary_member_alias &&
                        !raw_callback_source_binding_for(name) && !raw_callback_abi_for(name) &&
@@ -129293,24 +129364,31 @@ module Adamas::HIR
       # can force-lower the callee, and without an early pending signature that eager
       # lower would see only the broad def name (e.g. `tuple_size$Tuple`) instead of
       # the concrete callsite args.
-      bound_named_call = if @force_lower_retry_driver_active &&
-                            has_named_args && !has_block_call && block_id.nil? && !has_splat && !source_has_splat &&
-                            !allocator_explicit_new_call && method_name != "new" &&
-                            (named_entry = source_named_entry) && (definition = selected_call_entry_def) &&
-                            (binding = source_call_binding) && named_entry[1].same?(definition) &&
-                            named_entry[0] == binding.selected_name && named_entry[0] == selected_call_entry_name
-                           complete_formal_source_call_binding(binding, definition, selected_call_entry_arena, ctx, args, arg_types)
-                         end
-      bound_named_call_facts = call_resolution_source_argument_facts(ctx, args, arg_types) if bound_named_call
+      bound_recursive_call = if (@force_lower_retry_driver_active || (has_named_args && @force_lower_current_replay_capture)) &&
+                                 !has_block_call && block_id.nil? && !has_splat && !source_has_splat &&
+                                 !allocator_explicit_new_call && method_name != "new" &&
+                                 (definition = selected_call_entry_def) && (binding = source_call_binding) &&
+                                 binding.selected_name == selected_call_entry_name &&
+                                 (!has_named_args || source_named_entry.try { |entry| entry[1].same?(definition) && entry[0] == binding.selected_name })
+                               complete_formal_source_call_binding(binding, definition, selected_call_entry_arena, ctx, args, arg_types)
+                             end
+      bound_recursive_facts = call_resolution_source_argument_facts(ctx, args, arg_types) if bound_recursive_call
+      named_replay_binding = if has_named_args && (bound = bound_recursive_call) && bound_recursive_facts &&
+                                (callsite_source_binding.nil? || same_force_lower_source_call_binding?(callsite_source_binding, bound)) &&
+                                arg_types == callsite_arg_types && !bound.block_result && !bound.source_receiver_name &&
+                                typed_recursive_body_formals(bound.definition, bound.declaration_arena)
+                               bound
+                             end
+      named_replay_facts = bound_recursive_facts if named_replay_binding
       if callsite_arg_types.any? { |t| t != TypeRef::VOID }
         remember_callsite_arg_types(
           mangled_method_name, callsite_arg_types, callsite_arg_literals, callsite_arg_enum_names,
           has_block_call, has_named_args, call_named_arg_names,
-          source_argument_facts: if !has_block_call && !has_splat && !source_has_splat && !has_named_args
-                                  m3e_input.try(&.source_argument_facts)
-                                end,
-          record_exact_target: !named_call_reuses_suspended_body?(mangled_method_name, bound_named_call, arg_types, bound_named_call_facts),
-          source_binding: callsite_source_binding,
+          source_argument_facts: named_replay_facts || (m3e_input.try(&.source_argument_facts) unless has_block_call || has_splat || source_has_splat || has_named_args),
+          record_exact_target: !bound_call_reuses_suspended_body?(
+            mangled_method_name, bound_recursive_call, arg_types, bound_recursive_facts, named_call: has_named_args,
+          ),
+          source_binding: named_replay_binding || callsite_source_binding,
         )
       end
       has_typed_args = arg_types.any? { |t| t != TypeRef::VOID }
@@ -131905,25 +131983,34 @@ module Adamas::HIR
         end
       end
 
+      reuses_suspended_body = !call_virtual && bound_call_reuses_suspended_body?(
+        mangled_method_name, bound_recursive_call, arg_types, bound_recursive_facts, named_call: has_named_args,
+      )
+      primary_reuses_suspended_body = if primary_mangled_name == mangled_method_name
+                                        reuses_suspended_body
+                                      else
+                                        !call_virtual && bound_call_reuses_suspended_body?(
+                                          primary_mangled_name, bound_recursive_call, arg_types, bound_recursive_facts, named_call: has_named_args,
+                                        )
+                                      end
       actual_callsite = remember_callsite_arg_types(
         primary_mangled_name, callsite_arg_types, callsite_arg_literals, callsite_arg_enum_names,
         has_block_call, has_named_args, call_named_arg_names,
-        record_exact_target: call_virtual || !named_call_reuses_suspended_body?(
-          primary_mangled_name, bound_named_call, arg_types, bound_named_call_facts,
-        ),
-        source_binding: callsite_source_binding,
+        source_argument_facts: named_replay_facts,
+        record_exact_target: !primary_reuses_suspended_body,
+        source_binding: named_replay_binding || callsite_source_binding,
       )
       if mangled_method_name != primary_mangled_name
         actual_callsite = remember_callsite_arg_types(
           mangled_method_name, callsite_arg_types, callsite_arg_literals, callsite_arg_enum_names,
           has_block_call, has_named_args, call_named_arg_names,
-          record_exact_target: call_virtual || !named_call_reuses_suspended_body?(
-            mangled_method_name, bound_named_call, arg_types, bound_named_call_facts,
-          ),
-          source_binding: callsite_source_binding,
+          source_argument_facts: named_replay_facts,
+          record_exact_target: !reuses_suspended_body,
+          source_binding: named_replay_binding || callsite_source_binding,
         )
       end
-      source_call_observation = unless call_virtual || has_block_call || has_named_args || has_splat || source_has_splat
+      source_call_observation = unless call_virtual || has_block_call || has_splat || source_has_splat ||
+                                       (has_named_args && !named_replay_binding) || reuses_suspended_body
                                   observed_force_lower_source_call(ctx, mangled_method_name, actual_callsite,
                                     selected_call_entry_def, selected_call_entry_arena, selected_call_entry_name,
                                     default_binding: source_default_entry ? source_call_binding : nil, materialized_arguments: args)
@@ -132128,7 +132215,7 @@ module Adamas::HIR
         # The source binding proves which actual reached each formal after
         # keyword reordering and defaults. Validate it against the selected
         # declaration and the lowered values before reading a checked result.
-        if !has_named_args || bound_named_call
+        if !has_named_args || bound_recursive_call
           cycle_result = recursive_struct_result_at_source_call?(ctx, mangled_method_name, return_type, arg_types,
             call_resolution_source_argument_facts(ctx, args, arg_types), receiver_id,
             selected_return_def, selected_call_entry_def, selected_call_entry_arena, selected_call_entry_name)
@@ -133294,6 +133381,19 @@ module Adamas::HIR
       uncoerced_args = args
       args = coerce_raw_proc_call_args_to_function_params(ctx, args, emit_method_name)
       track_call_argument_enum_values(ctx, args, callsite_arg_enum_names)
+      if cycle_result_ticket
+        # The source check already established each formal's enum identity.
+        # Make that type explicit on the emitted operand so replay can verify
+        # it after the lowering context's temporary enum metadata is gone.
+        args = args.map_with_index do |arg, index|
+          type = arg_types[index]?
+          if type && enum_carrier_of?(type, ctx.type_of(arg)) && enum_tracked_type(ctx, arg) == type
+            coerce_enum_tracked_value_to_type(ctx, arg, type)
+          else
+            arg
+          end
+        end
+      end
       if proc_constructor_result = lower_stdlib_raw_proc_pair_constructor(
            ctx,
            node,

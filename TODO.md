@@ -35,6 +35,29 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-19 — Named entry owns its recursive specialization
+- [x] Retain the selected declaration's formal-slot binding and the actual
+  lowered value kinds when the first call to a recursive body is named.
+  A later named or positional invocation may reuse that body only after
+  exact source and ABI checks. Preserve the checked enum identity on emitted
+  operands so the final body can recheck the argument without transient
+  lowering metadata.
+- [x] The original Crystal 1.22.3 regression agrees on output for the first
+  named call, omitted defaults, a positional caller of the same body, and
+  a nilable enum formal. The parent fails the new named-first and enum
+  cases. Both compilers reject unknown labels, incompatible values, and
+  enum literals belonging to a different type or to a class object.
+  A side-effecting default executes once per omission. The focused
+  HIR/parser suites pass 100 examples. The original unanchored recursive
+  struct regression reports the same pending result on the parent.
+- [ ] Fresh S1-to-S2 on bundled 1.18.2 and installed 1.22.3 still exits 1
+  at `CLI#run -> CLI#run_check`. The bundled trace now resumes
+  `parse_private` and `parse_protected` after `parse_abstract(Visibility)`
+  and reaches dependencies between `parse_module` and `parse_lib`.
+- [ ] A truthy test on a nilable enum carrying ordinal zero disagrees
+  with Crystal 1.22.3. It also reproduces in the parent with no recursion.
+  The enum replay regression uses a nonzero branch discriminator.
+
 ### 2026-11-19 — Exact named invocation during recursive result replay
 - [x] Carry the declaration arena from the selected named source binding.
   A named invocation can use an existing checked result only after its
