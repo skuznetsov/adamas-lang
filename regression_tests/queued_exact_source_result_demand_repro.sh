@@ -15,3 +15,5 @@ cd "$ROOT_DIR"
   spec/hir/queued_source_result_demand_spec.cr
 "$SAFE_RUNNER" "$CRYSTAL_BIN" 180 12288 \
   spec/hir/force_lower_retry_handoff_spec.cr
+"$SAFE_RUNNER" "$CRYSTAL_BIN" 180 12288 \
+  spec/hir/queued_static_source_result_spec.cr

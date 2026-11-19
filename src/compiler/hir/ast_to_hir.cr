@@ -155297,11 +155297,16 @@ module Adamas::HIR
         end
       end
       if static_source && exact_source_discard_result_type.nil?
+        # The active retry driver can already own this exact source demand
+        # even after the nested force clears its provisional edge. Wait before
+        # publishing the bare call's return into an inline or ordinary body.
         record_force_lower_result_dependency(ctx, actual_name, selected_return_def, refused_before_static_call,
-          static_source.source_def, static_source.source_arena, static_source.source_registry_name)
+          static_source.source_def, static_source.source_arena, static_source.source_registry_name,
+          allow_queued_result_demand: true)
         suspend_depth_refused_source_result(ctx, actual_name, return_type, selected_return_def,
           static_source.source_def, static_source.source_arena, refused_before_static_call,
-          static_source.source_registry_name, static_source, observed_call: static_call_observation)
+          static_source.source_registry_name, static_source, observed_call: static_call_observation,
+          allow_queued_result_demand: true)
       else
         record_force_lower_result_dependency(ctx, actual_name, selected_return_def, refused_before_force)
       end

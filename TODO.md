@@ -28138,3 +28138,15 @@ changes. No stdlib edits.
   exit 1. Installed 1.22.3 reaches `Process.new(Nil)`. Bundled 1.18.2 reaches
   the parser's pending source result through `CLI#run_check`. S2 and S3
   remain open.
+
+## Bare static calls with an exact queued result (2026-11-19)
+
+- [x] Keep a bare static call pending while its selected source body has an
+  exact queued continuation. Its declared return can seed body replay, but the
+  caller also needs the source result before it lowers its own flow. Test a
+  queued nullable producer and the consumer's result after resuming it.
+- Fresh S1 → S2 for installed Crystal 1.22.3 and bundled 1.18.2 reached the
+  pending parser result surfaced by `CLI#run_check` and exited 1. The
+  installed run resumed `fork_for_exec` and passed the previous
+  `Process.new(Nil)` failure. Both runs used source seal
+  `d4911873b2859e5666709a18479d7efd3563da797b3e420a6773008709f2fb4a`.
