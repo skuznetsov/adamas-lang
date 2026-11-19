@@ -27423,8 +27423,42 @@ One fix per commit, each with an oracle-qualified regression.
 - [ ] `v = [0, :key][1]; v.to_s` fails with "Ambiguous MIR call target
   Int32#to_s$String::Builder_Int32_Int32_Bool" (only the `$IO_...` body is
   lowered).
-- [ ] A ternary in `Crystal::System.to_int_slice_impl` fails with "pending
-  source result Int32#tdiv$Int32".
+- [x] A ternary in `Crystal::System.to_int_slice_impl` fails with "pending
+  source result Int32#tdiv$Int32" (fixed by c22897e4).
 - [ ] `a.class == b.class` with both sides runtime still folds statically.
 - Full sweep after 35c58ba1: 323 pass / 83 fail vs 321/85 before chain 6
   (2 fixed, 0 new; 3 environmental FAILs pass on rerun).
+
+
+### 2026-11-18 — Wrong results on the GPT tip (chain 7)
+
+One fix per commit, each with an oracle-qualified regression.
+
+- [x] 9cd7f9d6 inherited nilary lookup stops at the nearest defaulted
+  overload owner: a bare `to_s` on an Int union arm walked past
+  `Int#to_s(base = 10, ...)` to `Object#to_s` and recursed (exit 132)
+  (`union_arm_defaulted_overload_owner_repro.sh`).
+- [x] c22897e4 force-lower retries reached by `exit` settle: replay records
+  subsumed by the recipe, self edges and recipe-free retries no longer
+  escape as "pending source result" (`exit_force_lower_retry_settles_repro.sh`).
+  Also closes the chain 6 `Int32#tdiv` ternary in `to_int_slice_impl`.
+- [x] dc4dc886 type literals print through untyped IO formals: `io << T` and
+  receiver repair keep the `T.class` source kind in the call symbol
+  (`type_literal_untyped_formal_print_repro.sh`). Side effect: `arr << Int32`
+  on an `Array(Int32.class)` no longer compiles, like `arr.push(Int32)`
+  (metaclass mangling gap, Bug C).
+- [x] 8c4dbc82 module type literals use Class meta methods per owner: a
+  module's metaclass inherits Class, so `Mo.to_s(io)`/`Mo.name`/`Mo == U`
+  are Class methods with `@type` = Mo (`module_type_literal_print_repro.sh`).
+- [ ] A generic module instance literal (`STDERR.puts Gen(Int32)`) lowers to
+  `literal nil : Void`: lower_generic_type_ref reads the TypeRef from
+  ClassInfo, which modules lack; prints an unrelated type name.
+- [ ] Splat print of a type literal: `STDERR.print Int32, "\n"` prints
+  `{0, "\n"}`; with a module literal it fails to compile ("undefined method
+  'to_s' for Mo" at object.cr:354). Tuples/arrays of types share Bug C.
+- [ ] `puts String` overload, `p Int32`, `print Int32.name, "\n"` truncation,
+  `Array(Int32.class)#name`.
+- Full sweep after 8c4dbc82: 328 pass / 78 fail vs 320/86 at the chain 6
+  baseline run (8 fixed, 0 new). Two new FAILs were environmental and pass
+  on rerun; captured_yield_producer_repro.sh hit its 8192 MB stock spec
+  compile bound (b2929f0f raises it to 14336 MB).
