@@ -27790,3 +27790,9 @@ changes. No stdlib edits.
 
 - [x] Require three fresh, nonempty HIR, MIR, and LLVM artifacts from the same invocation of `scripts/emit_bootstrap_ir.sh`. The regression seeds stale outputs, interrupts emission after HIR, and checks the compiler arguments and prefix lock.
 - [ ] Restore Adamas compilation of `regression_tests/bootstrap_semantic_corpus.cr`. Stock Crystal accepts the empty Proc and explicit block at line 33 with an empty prelude. Adamas diagnoses `Hash(Void, Void)#call` there before emitting HIR.
+
+## Static union type-object dispatch (2026-11-18)
+
+- [x] Keep a static type object for a whole union distinct from a runtime union of scalar class objects. Preserve the parenthesized alias/type-object shape through generic binding, while continuing to dispatch dynamic metaclass unions arm by arm. `regression_tests/static_union_type_object_dispatch_repro.sh` passes ten native cases against stock Crystal 1.22.3 and the candidate, including alias and `typeof` inputs, the valid dynamic union, and compile-time rejection controls. The frozen S1 source seal is `8e8299420577cbd63f549a673c051d15991e779bc6f3462cbd44dc44cccf7463`.
+- [ ] Keep the separate helper-return and instance-union gaps open. `helper_typeof.cr` prints `U` on stock Crystal and `I` on the candidate; `reject_instance_union.cr` is rejected by stock with `expected argument #1 to 'pick' to be (Bool | Int32).class, Bool.class or Int32.class, not (Bool | Int32)`, while the candidate currently accepts it and prints `B`. These fixture inputs remain under `regression_tests/static_union_type_object/` and are outside the passing gate.
+- Both candidate S2 profiles still stop at the same parser pending-result diagnostics recorded on the preceding candidate: bundled 1.18.2 at `Parser#parse_op_assign$Nil` in `Parser#parse_block_shorthand`, and installed 1.22.3 at `Parser#parse_expression$Int32` in `Parser#parse_op_assign`. This change does not claim a self-build advance.
