@@ -147886,45 +147886,18 @@ module Adamas::HIR
           return expand_macro_for_owner(ctx, macro_def, macro_arena, node.indexes, nil, nil, macro_key, static_owner_name)
         end
 
-        has_index_splat = node.indexes.any? { |idx| @arena[idx].is_a?(Adamas::Compiler::Frontend::SplatNode) }
-        index_ids = if has_index_splat
-                      expand_splat_args(ctx, node.indexes, @arena)
-                    else
-                      node.indexes.map { |idx| lower_expr(ctx, idx) }
-                    end
-        arg_types = index_ids.map { |idx| ctx.type_of(idx) }
-        refused_before_force = @force_lower_depth_refused.size
-        class_method_base = "#{static_owner_name}.[]"
-        full_method_name = class_method_base
-        if entry = lookup_function_def_for_call(class_method_base, arg_types.size, false, arg_types, has_index_splat, false)
-          full_method_name = entry[0]
-        elsif inherited = resolve_class_method_with_inheritance(static_owner_name, "[]")
-          # For Type[...] prefer class/module methods. Instance receiver fallbacks
-          # (owner#[]) are not valid for static bracket syntax.
-          if inherited.includes?('.')
-            full_method_name = inherited
-          end
-        end
-        lower_function_if_needed(full_method_name)
-        return_type = get_function_return_type(full_method_name)
-        if return_type == TypeRef::VOID
-          return_type = force_lower_pending_index_return_type(full_method_name)
-        end
-        selected_def = @function_defs[full_method_name]?
-        record_force_lower_result_dependency(ctx, full_method_name, selected_def, refused_before_force)
-        suspend_depth_refused_source_result(
-          ctx, full_method_name, return_type, selected_def, selected_def,
-          @function_def_arenas[full_method_name]?, refused_before_force,
+        # `Type[args]` is the class-method call `Type.[](args)`. Lower it through
+        # the regular call path so overload selection, splat packing, untyped
+        # parameter specialization and callsite recording match the explicit
+        # spelling. A raw Call to the declared family name passed the unpacked
+        # splat actuals: `Path["x", "y"]` sent the String "y" where
+        # `Path.[](name, *parts)` expects the packed `Tuple(String)`, and its
+        # body was lowered with an empty `parts`.
+        member_id = @arena.add_typed(
+          Adamas::Compiler::Frontend::MemberAccessNode.new(node.span, node.object, "[]".to_slice)
         )
-        if return_type == TypeRef::VOID
-          owner_type = type_ref_for_name(static_owner_name)
-          return_type = owner_type unless owner_type == TypeRef::VOID
-        end
-        return_type = TypeRef::POINTER if return_type == TypeRef::VOID
-        call = Call.without_receiver(ctx.next_id, return_type, full_method_name, index_ids)
-        ctx.emit(call)
-        ctx.register_type(call.id, return_type)
-        return call.id
+        call_id = @arena.add_typed(Adamas::Compiler::Frontend::CallNode.new(node.span, member_id, node.indexes))
+        return lower_expr(ctx, call_id)
       end
 
       # Check if any index is a Range - if so, this is a slice operation
