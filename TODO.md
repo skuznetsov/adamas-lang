@@ -28123,4 +28123,18 @@ changes. No stdlib edits.
   `fc2beb4fc323a3855efdb82cf77788ebd824b223c2f93be59fb5e35ce4e3e5a6`.
   Installed 1.22.3 passes the `Process#stdio_to_fd` guard and reaches
   `Crystal::System::Process.new(Nil)`. Bundled 1.18.2 remains blocked on
-  `CLI#run_check` through the captured block in `Process#io_to_fd`.
+  `CLI#run_check` through the parser's `typed_macro_args_callee?` demand for
+  `Frontend.node_literal`.
+
+## Retry sibling readiness (2026-11-19)
+
+- [x] Decide whether to run a sibling with the blocked continuation visible.
+  The retry driver used to select a sibling that became unready when the
+  blocked continuation was restored. The sibling could then be selected
+  repeatedly without being dispatched or recording an attempt. Two handoff
+  examples distinguish the dependent sibling from an independent ready one.
+- Both fresh S1 → S2 attempts at source seal
+  `595c258a3d83de084febb018bd900f0eb8b6d39ba83d3abc9ab41a64b46da450`
+  exit 1. Installed 1.22.3 reaches `Process.new(Nil)`. Bundled 1.18.2 reaches
+  the parser's pending source result through `CLI#run_check`. S2 and S3
+  remain open.

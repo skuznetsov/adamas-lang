@@ -115953,6 +115953,9 @@ module Adamas::HIR
     private def schedule_settled_retry_sibling(
       blocked : ForceLowerSuspendedRequest, handoff : ForceLowerRetryWorkHandoff,
     ) : Bool
+      # The blocked request can itself be a producer. Check readiness with
+      # the same queue the driver will see when it dispatches the sibling.
+      inserted = enqueue_force_lower_retry_work(blocked, 0)
       index = @force_lower_retry_work.rindex do |candidate|
         next false unless candidate.is_a?(ForceLowerSuspendedRequest) &&
                           candidate.name != blocked.name && candidate.name != blocked.pending.producer &&
@@ -115963,9 +115966,11 @@ module Adamas::HIR
           depth <= @force_lower_return_type_depth && same_force_lower_work_request?(other, candidate)
         end
       end
-      return false unless index
+      unless index
+        @force_lower_retry_work.delete_at(0) if inserted
+        return false
+      end
       ready = @force_lower_retry_work.delete_at(index)
-      enqueue_force_lower_retry_work(blocked, 0)
       @force_lower_retry_work << ready
       true
     end

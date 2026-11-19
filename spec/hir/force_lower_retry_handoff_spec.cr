@@ -154,6 +154,38 @@ class Adamas::HIR::AstToHir
     !!force_lower_retry_handoff_for_pending(parent)
   end
 
+  def __test_schedule_settled_retry_sibling(independent : Bool) : Nil
+    blocked = __test_retry_handoff_pending("handoff_consumer", "handoff_waiting")
+    dependent = __test_retry_handoff_pending("handoff_sibling", "handoff_leaf")
+    ready = __test_retry_handoff_pending("handoff_ready", "handoff_leaf")
+    replay_force_lower_callsite("handoff_leaf", __test_retry_handoff_replay("handoff_leaf"),
+      false, requires_result: false)
+    settled_force_lower_producer?(dependent.pending).should be_true
+    settled_force_lower_producer?(blocked.pending).should be_false
+
+    # The blocked consumer has left the queue during dispatch. Its dependent
+    # sibling's own immediate producer is ready, but the sibling cannot run
+    # after the scheduler restores the blocked consumer.
+    @force_lower_provisional_dependencies[dependent.name] = Set{blocked.name}
+    enqueue_force_lower_retry_work(ready) if independent
+    enqueue_force_lower_retry_work(dependent)
+    force_lower_retry_waits_for_queued_producer?(dependent).should be_false
+
+    handoff = ForceLowerRetryWorkHandoff.new
+    record_force_lower_retry_attempt(handoff, blocked, @force_lower_return_type_depth)
+    schedule_settled_retry_sibling(blocked, handoff).should eq(independent)
+    if independent
+      @force_lower_retry_work.should eq([blocked, dependent, ready])
+      force_lower_retry_waits_for_queued_producer?(dependent).should be_true
+      force_lower_retry_waits_for_queued_producer?(ready).should be_false
+    else
+      @force_lower_retry_work.should eq([dependent])
+    end
+  ensure
+    @force_lower_retry_work.clear
+    @force_lower_provisional_dependencies.delete("handoff_sibling")
+  end
+
   private def __test_retry_handoff_source(name : String) : ForceLowerExactSourceBinding
     source_def = @function_defs[name]? || raise "missing retry handoff Def: #{name}"
     source_arena = @function_def_arenas[name]? || raise "missing retry handoff arena: #{name}"
@@ -199,6 +231,14 @@ private def retry_handoff_fixture
     def handoff_sibling
       handoff_leaf
     end
+
+    def handoff_waiting
+      9
+    end
+
+    def handoff_ready
+      handoff_leaf
+    end
     CRYSTAL
   parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
   program = parser.parse_program
@@ -218,6 +258,14 @@ private def retry_handoff_fixture
 end
 
 describe "exact pending retry work handoff" do
+  it "does not reschedule a sibling that waits for the restored request" do
+    retry_handoff_fixture.__test_schedule_settled_retry_sibling(independent: false)
+  end
+
+  it "schedules an independent ready sibling even when a dependent sibling appears ready" do
+    retry_handoff_fixture.__test_schedule_settled_retry_sibling(independent: true)
+  end
+
   it "restores only current retry work from the pending that owns it" do
     retry_handoff_fixture.__test_retry_handoff_round_trip?.should be_true
   end
