@@ -35,6 +35,26 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-19 — Exact named invocation during recursive result replay
+- [x] Carry the declaration arena from the selected named source binding.
+  A named invocation can use an existing checked result only after its
+  lowered formal slots match the selected definition. If a current,
+  suspended positional recipe already owns that exact body, record the
+  named call for family discovery and preserve the existing retry recipe.
+- [x] The native regression fails on the previous compiler. With this
+  change it matches Crystal 1.22.3 with either keyword order, an omitted
+  default, and explicit positional arguments. Both compilers reject
+  unknown names, incompatible argument types, and a class object passed
+  in the corresponding instance slot. The focused HIR/parser suites pass
+  100 examples. A separate probe also observes the omitted default's side
+  effect exactly once.
+- [ ] Fresh S1-to-S2 on bundled 1.18.2 and installed 1.22.3 still exits 1 at
+  `CLI#run -> CLI#run_check`. The bundled trace retains the
+  `parse_class -> parse_private -> parse_abstract(Visibility)` chain;
+  the installed trace retains the pending `String#to_i64` fallback-block
+  specialization. The prelude `map(&.[0])` probes retain the respective
+  polling field-type and Hash replay diagnostics seen on the parent.
+
 ### 2026-11-19 — Checked returns from fully bound defaulted bodies
 - [x] Preserve a reachable checked struct return when an active exact body
   has defaulted formals and all positional argument types and kinds have

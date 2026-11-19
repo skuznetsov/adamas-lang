@@ -116641,6 +116641,34 @@ module Adamas::HIR
         (exact_final_struct_result(pending) || checked_partial_struct_result(pending, use.checked_return).try(&.value.type)) == use.expected
     end
 
+    # Keep discovery of a named call separate from the recipe that already
+    # owns this body. The names and omissions belong to the invocation. The
+    # queued body can be reused only after the binder has lowered and checked
+    # every actual in its formal slot.
+    private def named_call_reuses_suspended_body?(
+      name : String, binding : SourceCallBinding?, types : Array(TypeRef), facts : Array(SourceCallArgument?)?,
+    ) : Bool
+      return false unless binding && @force_lower_retry_driver_active &&
+                          !binding.block_result && !binding.source_receiver_name &&
+                          binding.definition.forall_type_params.empty?
+      source = force_lower_exact_source_binding(
+        name, binding.definition, binding.definition, binding.declaration_arena, binding.selected_name,
+      ) || return false
+      @force_lower_retry_work.any? do |request|
+        next false unless request.is_a?(ForceLowerSuspendedRequest) && request.name == name &&
+                          force_lower_retry_requires_result?(request)
+        replay = request.replay_callsite
+        replay_source = replay.exact_source_binding ||
+                        ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name)
+        same_force_lower_exact_source_binding?(source, replay_source) &&
+          replay.entry_type_param_map == @type_param_map &&
+          replay.entry_namespace_override == @current_namespace_override &&
+          ordinary_active_body_callsite?(replay.callsite) &&
+          recursive_struct_result_argument_facts_match?(replay.callsite, types, facts) &&
+          active_force_lower_source_current?(name, replay) && force_lower_retry_source_current?(request)
+      end
+    end
+
     # A usable result lets us rebuild this provisional body. The body is
     # removed and replayed even when this was its last unsatisfied edge.
     private def recursive_struct_result_for_body_retry?(request : ForceLowerRetryRequest, producer : String) : Bool
@@ -127159,7 +127187,12 @@ module Adamas::HIR
       end
       source_call_rejections = [] of Tuple(String, String)
       selected_target = if source_named_entry
-                          SelectedCallTarget.new(source_named_entry[0], source_named_entry[1])
+                          source_name, source_def = source_named_entry
+                          source_arena = if (binding = source_call_binding) && binding.selected_name == source_name &&
+                                            binding.definition.same?(source_def)
+                                           binding.declaration_arena
+                                         end
+                          SelectedCallTarget.new(source_name, source_def, source_arena)
                         elsif source_default_entry
                           source_entry = source_default_entry.not_nil!
                           SelectedCallTarget.new(source_entry[0], source_entry[1], source_entry[2])
@@ -129260,6 +129293,15 @@ module Adamas::HIR
       # can force-lower the callee, and without an early pending signature that eager
       # lower would see only the broad def name (e.g. `tuple_size$Tuple`) instead of
       # the concrete callsite args.
+      bound_named_call = if @force_lower_retry_driver_active &&
+                            has_named_args && !has_block_call && block_id.nil? && !has_splat && !source_has_splat &&
+                            !allocator_explicit_new_call && method_name != "new" &&
+                            (named_entry = source_named_entry) && (definition = selected_call_entry_def) &&
+                            (binding = source_call_binding) && named_entry[1].same?(definition) &&
+                            named_entry[0] == binding.selected_name && named_entry[0] == selected_call_entry_name
+                           complete_formal_source_call_binding(binding, definition, selected_call_entry_arena, ctx, args, arg_types)
+                         end
+      bound_named_call_facts = call_resolution_source_argument_facts(ctx, args, arg_types) if bound_named_call
       if callsite_arg_types.any? { |t| t != TypeRef::VOID }
         remember_callsite_arg_types(
           mangled_method_name, callsite_arg_types, callsite_arg_literals, callsite_arg_enum_names,
@@ -129267,6 +129309,7 @@ module Adamas::HIR
           source_argument_facts: if !has_block_call && !has_splat && !source_has_splat && !has_named_args
                                   m3e_input.try(&.source_argument_facts)
                                 end,
+          record_exact_target: !named_call_reuses_suspended_body?(mangled_method_name, bound_named_call, arg_types, bound_named_call_facts),
           source_binding: callsite_source_binding,
         )
       end
@@ -131865,12 +131908,18 @@ module Adamas::HIR
       actual_callsite = remember_callsite_arg_types(
         primary_mangled_name, callsite_arg_types, callsite_arg_literals, callsite_arg_enum_names,
         has_block_call, has_named_args, call_named_arg_names,
+        record_exact_target: call_virtual || !named_call_reuses_suspended_body?(
+          primary_mangled_name, bound_named_call, arg_types, bound_named_call_facts,
+        ),
         source_binding: callsite_source_binding,
       )
       if mangled_method_name != primary_mangled_name
         actual_callsite = remember_callsite_arg_types(
           mangled_method_name, callsite_arg_types, callsite_arg_literals, callsite_arg_enum_names,
           has_block_call, has_named_args, call_named_arg_names,
+          record_exact_target: call_virtual || !named_call_reuses_suspended_body?(
+            mangled_method_name, bound_named_call, arg_types, bound_named_call_facts,
+          ),
           source_binding: callsite_source_binding,
         )
       end
@@ -132073,11 +132122,18 @@ module Adamas::HIR
           return_type_pinned = true
         end
       end
-      cycle_result = !call_virtual && !has_block_call && block_id.nil? && !has_named_args && !has_splat &&
-                     generated_allocator_call_target.nil? && !allocator_explicit_new_call && method_name != "new" &&
-                     recursive_struct_result_at_source_call?(ctx, mangled_method_name, return_type, arg_types,
-                       call_resolution_source_argument_facts(ctx, args, arg_types), receiver_id,
-                       selected_return_def, selected_call_entry_def, selected_call_entry_arena, selected_call_entry_name)
+      cycle_result = false
+      if !@deferred_struct_result_uses.empty? && !call_virtual && !has_block_call && block_id.nil? && !has_splat &&
+         generated_allocator_call_target.nil? && !allocator_explicit_new_call && method_name != "new"
+        # The source binding proves which actual reached each formal after
+        # keyword reordering and defaults. Validate it against the selected
+        # declaration and the lowered values before reading a checked result.
+        if !has_named_args || bound_named_call
+          cycle_result = recursive_struct_result_at_source_call?(ctx, mangled_method_name, return_type, arg_types,
+            call_resolution_source_argument_facts(ctx, args, arg_types), receiver_id,
+            selected_return_def, selected_call_entry_def, selected_call_entry_arena, selected_call_entry_name)
+        end
+      end
       # Admit a distinct emission obligation before the remaining lower_call
       # paths can return early. A successful sibling call cannot discharge a
       # later invocation that exits before producing its direct Call.
