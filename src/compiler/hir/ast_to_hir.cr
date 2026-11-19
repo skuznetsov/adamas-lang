@@ -122414,14 +122414,12 @@ module Adamas::HIR
                     (allow_queued_result_demand && consumer != target &&
                      queued_exact_force_lower_result_demand?(target, binding))
 
-      if consumer == target && ctx.function.name == target
-        if active = current_active_force_lower_body(target)
-          if active.function.same?(ctx.function) && active.source_def.same?(binding.source_def) &&
-             active.source_arena.same?(binding.source_arena) && active.return_type == TypeRef::NIL
-            # A discarded annotated result adds no self dependency. The live
-            # body still owns every unsettled child dependency already found.
-            return
-          end
+      if consumer == target && (active = current_active_force_lower_body(target))
+        if active.function.same?(ctx.function) && active.source_def.same?(binding.source_def) &&
+           active.source_arena.same?(binding.source_arena)
+          # A call to this active body inherits the same unresolved children.
+          # A self edge would make their owner wait for its own completion.
+          return
         end
       end
       dependencies = @force_lower_provisional_dependencies[consumer] ||= Set(String).new

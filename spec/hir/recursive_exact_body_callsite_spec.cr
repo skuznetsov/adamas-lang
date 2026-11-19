@@ -212,10 +212,9 @@ class Adamas::HIR::AstToHir
     !active_force_lower_source_current?(target, capture.binding.not_nil!)
   end
 
-  def __test_nil_self_edge_preserves_child_dependency?(target : String) : Bool
+  def __test_recursive_result_dependencies(target : String, current_body : Bool = true) : Set(String)
     retained, function, registry_name, _ordinary, capture = __test_install_active_body_owner(target)
-    return false unless retained
-    return false unless function.return_type == TypeRef::NIL
+    retained.should be_true
     replay = capture.binding.not_nil!
     source_def = replay.source_def
     source_arena = replay.source_arena
@@ -223,13 +222,14 @@ class Adamas::HIR::AstToHir
     dependencies = Set(String).new
     dependencies << child
     @force_lower_provisional_dependencies[target] = dependencies
+    capture.active_body = nil unless current_body
     ctx = LoweringContext.new(function, @module, source_arena)
 
     record_force_lower_result_dependency(
       ctx, target, source_def, 0, source_def, source_arena, registry_name,
     )
 
-    dependencies.includes?(child) && !dependencies.includes?(target)
+    dependencies
   end
 end
 
@@ -254,6 +254,19 @@ private def recursive_exact_body_replay_converter : {Adamas::HIR::AstToHir, Stri
       end
     end
 
+    abstract class RecursiveBodyValue
+    end
+
+    class RecursiveBodyPresent < RecursiveBodyValue
+    end
+
+    class RecursiveBodyLookup
+      def lookup(again : Bool) : RecursiveBodyValue?
+        return lookup(false) if again
+        RecursiveBodyPresent.new
+      end
+    end
+
     class RecursiveBodyChildNode < RecursiveBodyNode
     end
 
@@ -270,6 +283,7 @@ private def recursive_exact_body_replay_converter : {Adamas::HIR::AstToHir, Stri
     end
 
     RecursiveBodyStarter.new.start(RecursiveBodyChildNode.new)
+    RecursiveBodyLookup.new.lookup(true)
     CRYSTAL
 
   parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
@@ -359,8 +373,20 @@ describe "active exact-body callsite ownership" do
     converter.__test_active_body_source_binding_rejected?(target, inherited_alias: false, callback: true).should be_true
   end
 
-  it "drops only the authenticated Nil self-edge and keeps an unsettled child" do
+  it "keeps an unsettled child of an active Nil-returning body" do
     converter, target = recursive_exact_body_replay_converter
-    converter.__test_nil_self_edge_preserves_child_dependency?(target).should be_true
+    converter.__test_recursive_result_dependencies(target).should eq(Set{"#{target}#pending-child"})
+  end
+
+  it "keeps an unsettled child of an active body with a nullable abstract result" do
+    converter, _ = recursive_exact_body_replay_converter
+    target = converter.spec_recursive_replay_target("RecursiveBodyLookup#lookup", [Adamas::HIR::TypeRef::BOOL])
+    converter.__test_recursive_result_dependencies(target).should eq(Set{"#{target}#pending-child"})
+  end
+
+  it "keeps the self dependency when the active body has no current witness" do
+    converter, _ = recursive_exact_body_replay_converter
+    target = converter.spec_recursive_replay_target("RecursiveBodyLookup#lookup", [Adamas::HIR::TypeRef::BOOL])
+    converter.__test_recursive_result_dependencies(target, current_body: false).should eq(Set{target, "#{target}#pending-child"})
   end
 end

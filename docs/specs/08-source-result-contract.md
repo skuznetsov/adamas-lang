@@ -121,14 +121,17 @@ fact slots require a complete all-false literal vector; missing facts cannot
 establish ordinary value kind by themselves. Source, Function, formal types,
 names, defaults, heap/block metadata and result must remain unchanged. Clear
 the live receipt on unwind or source replacement. Replay equality remains
-strict. A direct recursive Nil-discard result does not add a self dependency;
-real child dependencies remain owned by the body.
+strict. A direct call from the same live physical body, Def, and arena shares
+that body's unresolved child dependencies. Adding an edge from that body to
+itself would keep it blocked after those children settle. Omitting that edge
+grants no return type, source-value fact, or call emission authority. A call
+without a valid witness remains subject to the existing dependency checks.
 
-The five active-body tests cover actual parsed/materialized definitions with
-controlled live-capture and mutation probes. Their self-edge test seeds a child
-dependency and does not prove actual unwind. Fresh stock-prelude trace 35q5635
-separately establishes advancement through the former Exception replay conflict.
-The next CallStack error and complete bootstrap/LavinMQ parity stay open.
+The active-body tests cover parsed and materialized definitions, controlled
+live-capture and mutation probes, and a seeded child dependency for both Nil
+and abstract nullable results. The fresh builds with bundled and installed
+stdlib advance past the former `CLI#run_check` stall. See `TODO.md` for their
+first diagnostics and the remaining bootstrap work.
 
 ## Exact primitive source ownership
 

@@ -35,6 +35,23 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-19 — Keep recursive result dependencies under their active body
+- [x] `CLI#run_check` was waiting on `SymbolTable#lookup`. Its active recursive
+  call added a self dependency while `Hash#[]?` was pending. That self edge
+  kept the completed provisional body blocked after the hash result settled.
+- [x] When the current replay witness authenticates the same physical
+  function, definition, and declaration arena, keep the existing child
+  dependencies. The active call confers no new result facts or permission to
+  emit a call. Distinct producers and bodies without a live witness retain
+  their dependencies and existing replay checks.
+- [x] The new nullable abstract-result dependency check fails on the parent.
+  The candidate passes 76 focused HIR examples, including the missing-witness
+  and Nil-body controls.
+- [ ] Both uncached S1-to-S2 builds advance past `CLI#run_check` and exit 1.
+  Installed Crystal 1.22.3 stops at `Crystal::System::Process.new(Nil)`.
+  Bundled 1.18.2 stops at `Crystal::System::Process.prepare_args(String,
+  Nil | Enumerable(String), Bool)`. Neither produces S2.
+
 ### 2026-11-19 — Retain named macro expansions for each yielding invocation
 - [x] Infer yield parameters from the expanded AST in its own arena. The
   selected method and originating invocation carry that AST through inline
