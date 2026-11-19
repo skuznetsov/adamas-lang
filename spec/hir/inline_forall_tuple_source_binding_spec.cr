@@ -29,6 +29,11 @@ class Adamas::HIR::AstToHir
     {matched, inferred.empty?}
   end
 
+  def __test_forwarded_callback_input_kind(class_object : Bool, mixed : Bool) : Bool
+    facts = mixed ? [{TypeRef::INT32, false}, {TypeRef::INT32, true}] : nil
+    exact_inline_callback_input?(SourceCallArgument.new(TypeRef::INT32, class_object, value_facts: facts))
+  end
+
   def __test_inline_forall_tuple_source_bindings(
     block : Adamas::Compiler::Frontend::BlockNode,
     block_arena : Adamas::Compiler::Frontend::ArenaLike,
@@ -51,7 +56,7 @@ class Adamas::HIR::AstToHir
     begin
       probe_function = @module.create_function("__inline_tuple_source_probe", TypeRef::VOID)
       probe_context = Adamas::HIR::LoweringContext.new(probe_function, @module, block_arena)
-      value = inline_block_return_source_argument(
+      witness = inline_block_return_source_witness(
         probe_context,
         block,
         block_arena,
@@ -66,7 +71,7 @@ class Adamas::HIR::AstToHir
         source_block_output_type_bindings(
           definition,
           owner,
-          value,
+          witness.result,
           {} of String => String,
         )
       end
@@ -286,6 +291,13 @@ private def replace_first_integer_literal(
 end
 
 describe "inline forall tuple source prebinding" do
+  it "requires a single source kind even when mixed inputs share one carrier" do
+    converter, _ = inline_forall_tuple_source_harness("{item, item}")
+    converter.__test_forwarded_callback_input_kind(false, false).should be_true
+    converter.__test_forwarded_callback_input_kind(true, false).should be_true
+    converter.__test_forwarded_callback_input_kind(false, true).should be_false
+  end
+
   it "binds ordinary tuple slots from callback inputs and literals" do
     inline_forall_tuple_source_bindings("{item, true}").should eq({"K" => "Int32", "V" => "Bool"})
   end

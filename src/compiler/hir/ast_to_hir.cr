@@ -1415,6 +1415,10 @@ module Adamas::HIR
       value_facts : Array({TypeRef, Bool})? = nil,
       tuple_values : Array(SourceCallArgument)? = nil
 
+    private record InlineCallbackSourceWitness,
+      inputs : Array(SourceCallArgument),
+      result : SourceCallArgument
+
     private record SourceCallBinding,
       selected_name : String,
       definition : Adamas::Compiler::Frontend::DefNode,
@@ -8903,8 +8907,9 @@ module Adamas::HIR
       getter declaration_owner : String?
       getter input_bindings : Hash(String, String)
       getter result_facts : Array({TypeRef, Bool})
+      getter early_source : InlineCallbackSourceWitness?
 
-      def initialize(@definition, @arena, @declaration_owner, input_bindings : Hash(String, String))
+      def initialize(@definition, @arena, @declaration_owner, input_bindings : Hash(String, String), @early_source = nil)
         @input_bindings = input_bindings.dup
         @result_facts = [] of {TypeRef, Bool}
       end
@@ -78689,7 +78694,7 @@ module Adamas::HIR
     # expressions that can be read without lowering the callback. Tuple type
     # descriptors retain ABI children, but those children alone do not prove
     # whether a slot came from a class literal or an instance value.
-    private def inline_block_return_source_argument(
+    private def inline_block_return_source_witness(
       ctx : LoweringContext,
       block : Adamas::Compiler::Frontend::BlockNode,
       block_arena : Adamas::Compiler::Frontend::ArenaLike,
@@ -78699,7 +78704,8 @@ module Adamas::HIR
       input_bindings : Hash(String, String),
       lexical_owner : BlockOwner,
       lexical_bindings : Hash(String, String),
-    ) : SourceCallArgument?
+      forwarded_source : InlineCallbackSourceWitness? = nil,
+    ) : InlineCallbackSourceWitness?
       return nil if block.unpacks
 
       source_inputs = with_arena(callee_arena) do
@@ -78724,28 +78730,33 @@ module Adamas::HIR
             with_arena(block_arena) do
               params = block.params || [] of Adamas::Compiler::Frontend::Parameter
               source_locals = {} of String => SourceCallArgument
+              body = block.body
+              return nil if body.empty?
+              tail = body.last
+              if !params.empty? && params.size != source_inputs.size
+                # Extra source yield inputs can be dropped by a transparent
+                # forwarding block. Keep other partial maps out of this path.
+                return nil unless forwarded_source && node_for_expr(tail).is_a?(Adamas::Compiler::Frontend::YieldNode)
+              end
+              positional_inputs = source_inputs
+              if params.size > 1 && source_inputs.size == 1
+                positional_inputs = source_inputs.first.tuple_values || return nil
+              end
 
               # Parameter facts come from the selected callback annotation and its
               # exact input bindings. Do not use the ambient typeof/name maps here:
               # those maps contain ABI carriers and may have been seeded by another
               # specialization.
-              if params.size == source_inputs.size && params.all? { |param| inline_yield_param_is_plain_unannotated?(param) }
-                params.each_with_index do |param, index|
-                  name = safe_slice_to_string(param.name.not_nil!) || return nil
-                  input = source_inputs[index]
-                  return nil if input.type_ref == TypeRef::VOID
-                  source_locals[name] = input
-                end
-              elsif !params.empty?
-                # A partial or destructured callback input map cannot safely name a
-                # leaf used by this witness.
-                return nil
+              return nil if params.size > positional_inputs.size
+              return nil unless params.all? { |param| inline_yield_param_is_plain_unannotated?(param) }
+              params.each_with_index do |param, index|
+                name = safe_slice_to_string(param.name.not_nil!) || return nil
+                input = positional_inputs[index]
+                return nil if input.type_ref == TypeRef::VOID
+                source_locals[name] = input
               end
 
-              body = block.body
-              return nil if body.empty?
               # A non-local return is not the callback's source result.
-              tail = body.last
               index = 0
               while index < body.size - 1
                 assignment = node_for_expr(body[index]).as?(Adamas::Compiler::Frontend::AssignNode) || return nil
@@ -78759,7 +78770,10 @@ module Adamas::HIR
                 index += 1
               end
 
-              inline_block_source_argument_for_expr(ctx, tail, source_locals, lexical_owner.class_name)
+              result = inline_block_source_argument_for_expr(
+                ctx, tail, source_locals, lexical_owner.class_name, forwarded_source,
+              ) || return nil
+              InlineCallbackSourceWitness.new(source_inputs, result)
             end
           end
         end
@@ -78768,11 +78782,46 @@ module Adamas::HIR
       end
     end
 
+    # The callback annotation is a restriction. An argument-dependent result
+    # is reusable early only where the restriction pins the actual source type.
+    private def exact_inline_callback_input?(input : SourceCallArgument) : Bool
+      if values = input.tuple_values
+        return values.all? { |value| exact_inline_callback_input?(value) }
+      end
+      type = input.type_ref
+      return false if type == TypeRef::VOID || type.null_ptr? || noreturn_type?(type)
+      return false unless source_call_argument_value_facts(input) == [{type, input.type_literal}]
+      name = get_type_name_from_ref(type)
+      if descriptor = @module.get_type_descriptor(type)
+        return false if descriptor.kind == TypeKind::Module || descriptor.kind == TypeKind::Generic ||
+                        descriptor.kind == TypeKind::Union || descriptor.kind == TypeKind::Proc
+      end
+      !registered_abstract_class_name?(name) && !class_has_subclasses?(name) &&
+        !class_has_subclasses?(strip_generic_args(name)) && !module_like_type_name?(name)
+    end
+
+    private def active_forwarded_callback_source(
+      ctx : LoweringContext,
+      lexical_source : SourceYieldContext,
+      lexical_return : InlineReturnContext?,
+    ) : InlineCallbackSourceWitness?
+      return nil unless lexical_return && lexical_source.kind.method?
+      block = @inline_yield_block_stack.last? || return nil
+      _, owner = inline_block_return_owner(ctx, block) || return nil
+      return nil unless owner.same?(lexical_return)
+      callback = owner.callback_result_context || return nil
+      return nil unless lexical_source.source_def.try(&.same?(callback.definition)) &&
+                        lexical_source.source_arena.try(&.same?(callback.arena))
+      source = callback.early_source || return nil
+      source if source.inputs.all? { |input| exact_inline_callback_input?(input) }
+    end
+
     private def inline_block_source_argument_for_expr(
       ctx : LoweringContext,
       expr : ExprId,
       source_locals : Hash(String, SourceCallArgument),
       self_type_name : String?,
+      forwarded_source : InlineCallbackSourceWitness? = nil,
     ) : SourceCallArgument?
       node = node_for_expr(expr) || return nil
       if identifier = node.as?(Adamas::Compiler::Frontend::IdentifierNode)
@@ -78801,7 +78850,18 @@ module Adamas::HIR
         end
         nil
       when Adamas::Compiler::Frontend::GroupingNode
-        inline_block_source_argument_for_expr(ctx, node.expression, source_locals, self_type_name)
+        inline_block_source_argument_for_expr(ctx, node.expression, source_locals, self_type_name, forwarded_source)
+      when Adamas::Compiler::Frontend::YieldNode
+        return nil unless forwarded_source
+        args = node.args || [] of ExprId
+        return nil unless args.size == forwarded_source.inputs.size
+        args.each_with_index do |arg, index|
+          actual = inline_block_source_argument_for_expr(ctx, arg, source_locals, self_type_name) || return nil
+          expected = forwarded_source.inputs[index]
+          return nil unless actual.type_ref == expected.type_ref &&
+                            proc_source_type_name(actual) == proc_source_type_name(expected)
+        end
+        forwarded_source.result
       when Adamas::Compiler::Frontend::MemberAccessNode
         receiver = inline_block_source_argument_for_expr(
           ctx, node.object, source_locals, self_type_name,
@@ -148892,6 +148952,9 @@ module Adamas::HIR
         # Capture the caller's logical method before the callee pushes its own
         # inline return context. Several logical methods share one HIR function.
         caller_return_target = InlineReturnOverride.new(true, current_inline_return_context(ctx))
+        forwarded_source = if source_result_contract && !forall_type_param_names(func_def).empty?
+                             active_forwarded_callback_source(ctx, block_source_yield_context, caller_return_target.context)
+                           end
 
         @inline_yield_name_stack << inline_key
         pushed_name = true
@@ -149115,6 +149178,7 @@ module Adamas::HIR
             inline_param_map.merge!(exact_wildcard_bindings)
           end
         end
+        early_callback_source : InlineCallbackSourceWitness? = nil
         if contract = source_result_contract
           if source_return_flow_trace_match?(inline_key, base_inline_name, ctx.function.name, contract.selected_name)
             map_text = inline_param_map.map { |key, value| "#{key}=>#{value}" }.join(";")
@@ -149128,7 +149192,7 @@ module Adamas::HIR
           forall_type_param_names(func_def).each { |formal| inline_param_map.delete(formal) }
           inline_param_map.merge!(contract.type_bindings)
           declaration_owner = return_declaration_owner_for(inline_key, base_inline_name)
-          source_block_result = inline_block_return_source_argument(
+          early_callback_source = inline_block_return_source_witness(
             ctx,
             block,
             block_arena,
@@ -149138,19 +149202,21 @@ module Adamas::HIR
             contract.type_bindings,
             @block_owner[block.object_id],
             @inline_caller_type_param_map_stack.last,
+            forwarded_source,
           )
-          output_bindings = if source_block_result
+          output_bindings = if source_block_result = early_callback_source.try(&.result)
                               with_arena(callee_arena) do
                                 source_block_output_type_bindings(
                                   func_def,
                                   declaration_owner,
-                                  source_block_result.not_nil!,
+                                  source_block_result,
                                   contract.type_bindings,
                                 )
                               end
                             else
                               nil
                             end
+          early_callback_source = nil unless output_bindings
           if output_bindings.nil? && (inferred = inferred_block_return || inline_block_return_type_name(block, block_param_types, old_current_class))
             # `inferred` can be only the lowered carrier (for example, a
             # `yield` whose callback may return Entry or Entry.class). Binding
@@ -149164,7 +149230,9 @@ module Adamas::HIR
           end
           if output_bindings
             inline_param_map.merge!(output_bindings)
-            record_pending_type_param_map(inline_key, output_bindings)
+            # A forwarded result depends on this lexical invocation, which a
+            # pending name-level map cannot identify.
+            record_pending_type_param_map(inline_key, output_bindings) unless forwarded_source && early_callback_source
           end
           if source_return_flow_trace_match?(inline_key, base_inline_name, ctx.function.name, contract.selected_name)
             map_text = inline_param_map.map { |key, value| "#{key}=>#{value}" }.join(";")
@@ -149198,6 +149266,7 @@ module Adamas::HIR
               inline_return.callback_result_context = InlineCallbackResultContext.new(
                 func_def, callee_arena,
                 return_declaration_owner_for(inline_key, base_inline_name), callback_contract.type_bindings,
+                early_callback_source,
               )
             end
           end

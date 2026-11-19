@@ -28268,3 +28268,20 @@ changes. No stdlib edits.
   bundled 1.18.2. Both exit 1 in `reflection_collection_for_symbol` after a
   forwarded `Hash#map` callback leaves `Array(U)` untyped at allocation.
   These attempts emit no S2, so S3 is still pending.
+
+## Exact forwarded block results before yield (2026-11-19)
+
+- [x] Retain the checked result of a transparent forwarding block on its
+  active invocation. Verify the selected source owner, the actual block
+  inputs, tuple element facts, and instance versus metaclass kinds before
+  binding the result in the nested invocation.
+- The native oracle matches Crystal 1.22.3 in eager and lazy modes.
+  The parent fails the same fixture's early allocation. Crossed instance
+  and metaclass restrictions remain invalid. The focused HIR suite passes
+  39 examples. The older tuple fixture's outer constant shadowing case
+  fails on both revisions and remains open.
+- Fresh S1 → S2 with installed 1.22.3 and bundled 1.18.2 used source
+  seal `c9aef20d9b1530b05cf92035a83f8605523b18167e73fae55aa2d668b6edaef8`.
+  Both stop at the existing `reflection_collection_for_symbol` result
+  error. The actual `Hash#map` corridor still needs the selected
+  `Enumerable(T)` application and a checked result for its explicit cast.

@@ -1067,23 +1067,30 @@ carrier alone does not establish the source kind.
 Read callback input restrictions in the exact selected Def/Arena and its input
 bindings. Resolve the block's own type paths and formals in its lexical owner,
 namespace and captured type bindings. These are separate lookup contexts.
-Admit only literal/type-path leaves, ordinary callback parameters, straight-line
-block-local assignments and recursive Tuple construction. Retain the existing
-completed callback-result validation after lowering.
+Admit literal/type-path leaves, ordinary callback parameters, straight-line
+block-local assignments, recursive Tuple construction and completed ordinary
+nilary member results. Retain completed callback-result validation after
+lowering.
 
-Unproved captures, calls, control flow, non-local returns, partial input maps,
-union inputs and abstract numeric input carriers decline this early witness.
-They require a completed source-result proof; a declared return annotation is
-not that proof. This boundary does not relax source restrictions or pending
-result/replay checks.
+For a transparent tail yield, the caller's current inline invocation may supply
+its early callback result. Match its physical Function, logical block owner
+and source Def/Arena before comparing the forwarded source inputs. Each input
+must be exact, including its class/instance kind and each nested Tuple slot.
+A forwarding block may consume only a prefix of the callee's inputs. Keep the
+forwarded result on the owning invocation and validate actual block lowering.
 
-Gate: inline_forall_tuple_source_binding_spec.cr and
-block_tuple_forall_source_binding_repro.sh COMPILER. Compare original Crystal,
-lazy and eager output for ordinary, class-valued, nested and block-local slots;
-reject crossed class/instance restrictions. Attack lexical shadowing with a
-root type and a same-named type inside the yielding method's owner. Refresh
-after source selection, lexical context, callback input/output binding, Tuple
-descriptors or result-proof changes. Rollback is the atomic witness commit.
+Other partial input maps, unproved captures or calls, control flow, non-local
+returns, union inputs and abstract numeric input carriers require a completed
+source-result proof.
+
+Run inline_forall_tuple_source_binding_spec.cr,
+block_tuple_forall_source_binding_repro.sh COMPILER and
+forwarded_callback_source_result_repro.sh COMPILER. Compare original Crystal,
+lazy and eager output for ordinary, class-valued, nested and block-local slots.
+Reject crossed class/instance restrictions and mixed kinds even with the same
+carrier. Refresh after source selection, lexical context, callback input/output
+binding, Tuple descriptors or result-proof changes. Rollback is the atomic
+witness commit.
 
 
 ### Resolved type identities remain owned across callback and alias boundaries
