@@ -19857,7 +19857,11 @@ module Adamas::HIR
       end
 
       enum_members = @enum_info.try(&.[class_name]?)
-      module_owner = @module_defs.has_key?(class_name) && !info && !template && !enum_members
+      # A generic module instance (`Gen(Int32)`) is a module owner too; its
+      # template stays keyed by the declaration (`Gen(T)`). Like a class
+      # instance with ClassInfo, the instance carries no open type parameters.
+      module_owner = !info && !template && !enum_members &&
+                     (@module_defs.has_key?(class_name) || generic_module_instance_name?(class_name))
       return nil unless info || template || enum_members || module_owner
 
       superclass_name = info.try(&.parent_name)
@@ -50645,8 +50649,34 @@ module Adamas::HIR
     # an empty-layout owner info (see the instance-module lowering path).
     private def type_literal_module_owner_info(owner_name : String) : ClassInfo?
       module_ref = type_ref_for_name(owner_name)
-      return nil unless module_type_ref?(module_ref)
+      return nil if module_ref == TypeRef::VOID
+      return nil unless module_type_ref?(module_ref) || generic_module_instance_name?(owner_name)
       ClassInfo.new(owner_name, module_ref, [] of IVarInfo, [] of ClassVarInfo, 0, false, nil)
+    end
+
+    # A generic module instance (`Gen(Int32)`) has no ClassInfo and its
+    # descriptor is a plain Generic; the template stays in @module_defs under
+    # its declared key (`Gen(T)`).
+    private def generic_module_instance_name?(name : String) : Bool
+      return false unless info = split_generic_base_and_args(name)
+      _, lookup_base_name = resolve_generic_base_names(info.base)
+      generic_module_template_base?(lookup_base_name)
+    end
+
+    # A generic module instance has no ClassInfo to canonicalize a caller's
+    # root-anchored argument spelling; the interned descriptor names the
+    # instance so that `Gen(::Int32)` and `Gen(Int32)` are one type.
+    private def canonical_generic_module_instance_name(name : String) : String
+      return name unless generic_module_instance_name?(name)
+      canonical = get_type_name_from_ref(type_ref_for_name(name))
+      canonical.empty? ? name : canonical
+    end
+
+    private def generic_module_template_base?(base_name : String) : Bool
+      return false if @generic_templates.has_key?(base_name)
+      return false if BUILTIN_GENERIC_BASES.includes?(base_name)
+      ensure_module_defs_stripped_lookup
+      !module_defs_stripped_lookup(base_name).nil?
     end
 
     private def def_macro_references_type_ivar?(
@@ -101728,10 +101758,12 @@ module Adamas::HIR
       # Return a type reference literal (for use as receiver in static calls)
       # We use a nil literal with special type tracking
       type_ref = @class_info[class_name]?.try(&.type_ref) || TypeRef::VOID
-      if type_ref == TypeRef::VOID && BUILTIN_GENERIC_BASES.includes?(lookup_base_name)
-        # Builtin generics such as `Tuple(Int32, UInt8)` are type descriptors
-        # without class_info; as in lower_type_literal_from_name, the literal
-        # still names the instance (a `type : F.class` argument binds F).
+      if type_ref == TypeRef::VOID &&
+         (BUILTIN_GENERIC_BASES.includes?(lookup_base_name) || generic_module_instance_name?(class_name))
+        # Builtin generics such as `Tuple(Int32, UInt8)` and generic module
+        # instances such as `Gen(Int32)` are type descriptors without
+        # class_info; as in lower_type_literal_from_name, the literal still
+        # names the instance (a `type : F.class` argument binds F).
         type_ref = type_ref_for_name(class_name)
       end
       if env_get("ADAMAS_TYPE_LITERAL_ALLOC")
@@ -121911,6 +121943,7 @@ module Adamas::HIR
                 if !@monomorphized.includes?(class_name_str) && @module_defs.has_key?(lookup_base_name)
                   monomorphize_generic_module(lookup_base_name, type_args, class_name_str)
                 end
+                class_name_str = canonical_generic_module_instance_name(class_name_str)
               end
             end
           elsif obj_kind == Adamas::Compiler::Frontend::NodeKind::Call
@@ -121955,6 +121988,7 @@ module Adamas::HIR
                       if !@monomorphized.includes?(class_name_str) && @module_defs.has_key?(lookup_base_name)
                         monomorphize_generic_module(lookup_base_name, type_args, class_name_str)
                       end
+                      class_name_str = canonical_generic_module_instance_name(class_name_str)
                     end
                   else
                     class_name_str = resolve_type_alias_chain(type_name)
@@ -129791,7 +129825,8 @@ module Adamas::HIR
           rewrite_owner = method_owner(mangled_method_name)
           if rewrite_owner == "Class" || rewrite_owner == "Module"
             literal_owner = get_type_name_from_ref(receiver_type)
-            if !literal_owner.empty? && type_name_exists?(literal_owner)
+            if !literal_owner.empty? &&
+               (type_name_exists?(literal_owner) || generic_module_instance_name?(literal_owner))
               meta_wrapper = ensure_type_literal_class_method(literal_owner, method_name, arg_types, rewrite_owner)
             end
           end
@@ -148950,6 +148985,7 @@ module Adamas::HIR
           if !@monomorphized.includes?(class_name_str)
             monomorphize_generic_class(lookup_base_name, type_args, class_name_str)
           end
+          class_name_str = canonical_generic_module_instance_name(class_name_str)
         end
       elsif obj_kind == Adamas::Compiler::Frontend::NodeKind::Call
         # Type-like call receiver such as ::Set(String).new parsed without parens.
@@ -148984,6 +149020,7 @@ module Adamas::HIR
                   if !@monomorphized.includes?(class_name_str) && @module_defs.has_key?(lookup_base_name)
                     monomorphize_generic_module(lookup_base_name, type_args, class_name_str)
                   end
+                  class_name_str = canonical_generic_module_instance_name(class_name_str)
                 end
               else
                 class_name_str = resolve_type_alias_chain(type_name)
@@ -163900,7 +163937,9 @@ module Adamas::HIR
       type_params : Array(TypeRef),
       source_params : Array(String),
     ) : Array(String)?
-      return nil unless @generic_templates.has_key?(base_name)
+      # Generic modules (`module Gen(T)`) are nominal templates too; their
+      # instances must not keep a caller's root-anchored argument spelling.
+      return nil unless @generic_templates.has_key?(base_name) || generic_module_template_base?(base_name)
       return nil if BUILTIN_GENERIC_BASES.includes?(base_name)
       return nil unless type_params.size == source_params.size
       names = [] of String
