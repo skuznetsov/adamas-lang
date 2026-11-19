@@ -2182,7 +2182,7 @@ module Adamas::HIR
       getter producer_requires_result : Bool
       getter producer_bypass_inline_yield : Bool?
       getter producer_pending : ExactResultPending?
-      getter checked_return : PartialStructReturn?
+      getter checked_return : PartialRecursiveReturn?
       property consumer_capture : ForceLowerReplayCapture?
       property consumer_requires_result : Bool = true
       property consumer_bypass_inline_yield : Bool = false
@@ -2198,7 +2198,7 @@ module Adamas::HIR
         @producer_requires_result : Bool = true,
         @producer_bypass_inline_yield : Bool? = nil,
         @producer_pending : ExactResultPending? = nil,
-        @checked_return : PartialStructReturn? = nil,
+        @checked_return : PartialRecursiveReturn? = nil,
       )
         super("pending source result #{@producer} in #{@consumer}")
       end
@@ -2214,20 +2214,29 @@ module Adamas::HIR
       return_type : TypeRef,
       param_defaults : Array(String?)? = nil
 
-    # One independently typed return reached before this exact body suspended.
-    # Its source and HIR must survive replay. Only the finished body's receipt
+    # Independently typed returns reached before this exact body suspended.
+    # Their source and HIR must survive replay. Only the finished body's receipt
     # can discharge the obligation at the end of lowering.
-    private record PartialStructReturn,
+    private record PartialRecursiveReturn,
       replay : ForceLowerReplayCallsite,
       context : LoweringContext,
       body : ForceLowerActiveBody,
-      evidence : PartialStructReturnValue | PartialNullableStructReturn
+      evidence : PartialStructReturnValue | PartialNullableStructReturn | PartialVirtualReferenceReturn
 
     private record PartialStructReturnValue,
       block : Block,
       terminator : Return,
       value : ClassVarGet | Call,
       call_result : PartialStructCallResult? = nil
+
+    private record PartialVirtualReferenceReturn,
+      left : PartialReferenceReturnArm,
+      right : PartialReferenceReturnArm
+
+    private record PartialReferenceReturnArm,
+      block : Block,
+      terminator : Return,
+      call : Call
 
     private record NullableStructResultContract,
       facts : Array({TypeRef, Bool}),
@@ -2330,7 +2339,7 @@ module Adamas::HIR
       getter expected : TypeRef
       getter expected_facts : Array({TypeRef, Bool})
       getter producer_replay : ForceLowerReplayCallsite
-      getter checked_return : PartialStructReturn?
+      getter checked_return : PartialRecursiveReturn?
       getter emissions = {} of UInt64 => {Function, RecursiveStructResultEmissionWitness?}
       @next_emission_ticket : UInt64 = 0_u64
 
@@ -2338,7 +2347,7 @@ module Adamas::HIR
         @request : ForceLowerSuspendedRequest,
         @expected : TypeRef,
         @producer_replay : ForceLowerReplayCallsite,
-        @checked_return : PartialStructReturn? = nil,
+        @checked_return : PartialRecursiveReturn? = nil,
       )
         nullable = @checked_return.try(&.evidence.as?(PartialNullableStructReturn))
         @expected_facts = nullable ? nullable.contract.facts : [{@expected, false}]
@@ -116206,7 +116215,7 @@ module Adamas::HIR
       left.nil? && right.nil?
     end
 
-    private def same_suspended_struct_return?(left : PartialStructReturn?, right : PartialStructReturn?) : Bool
+    private def same_suspended_struct_return?(left : PartialRecursiveReturn?, right : PartialRecursiveReturn?) : Bool
       return right.nil? unless left
       return false unless right
       return false unless left.context.same?(right.context) &&
@@ -116226,9 +116235,16 @@ module Adamas::HIR
               a.wrap.same?(b.wrap) && a.payload.same?(b.payload) &&
               same_partial_nullable_call_result?(a.call_result, b.call_result)
           end
+      when PartialVirtualReferenceReturn
+        second.is_a?(PartialVirtualReferenceReturn) &&
+          same_partial_reference_arm?(first.left, second.left) && same_partial_reference_arm?(first.right, second.right)
       else
         false
       end
+    end
+
+    private def same_partial_reference_arm?(left : PartialReferenceReturnArm, right : PartialReferenceReturnArm) : Bool
+      left.block.same?(right.block) && left.terminator.same?(right.terminator) && left.call.same?(right.call)
     end
 
     private def same_partial_nullable_call_result?(
@@ -116905,7 +116921,11 @@ module Adamas::HIR
 
     private def final_recursive_struct_use_result?(use : DeferredStructResultUse) : Bool
       pending = use.request.pending
-      tagged = use.checked_return.try(&.evidence.as?(PartialNullableStructReturn))
+      evidence = use.checked_return.try(&.evidence)
+      if evidence.is_a?(PartialVirtualReferenceReturn)
+        return final_recursive_virtual_reference_result?(pending, use.expected)
+      end
+      tagged = evidence.as?(PartialNullableStructReturn)
       return exact_final_struct_result(pending) == use.expected unless tagged
       return false unless pending.producer_requires_result && nested_recursive_result_demands_settled?(pending)
       name = pending.producer
@@ -117061,6 +117081,24 @@ module Adamas::HIR
         !source_declared_return_contract_guarantees_type_literal_kind?(restriction)
     end
 
+    private def recursive_virtual_reference_contract?(ctx : LoweringContext, type : TypeRef) : Bool
+      pattern = ctx.source_declared_return_contract
+      !!pattern && pattern.valid && pattern.kind.concrete? && pattern.type_ref == type &&
+        !pattern.has_unbound_formal? && !source_declared_return_contract_guarantees_type_literal_kind?(pattern) &&
+        recursive_virtual_reference_root?(type)
+    end
+
+    private def recursive_virtual_reference_root?(type : TypeRef) : Bool
+      name = get_type_name_from_ref(type)
+      info = @class_info[name]? || return false
+      parent = info.parent_name || return false
+      # Crystal excludes every ClassType at depth zero or one from virtual
+      # joins. Reference's builtin parent also exists under the empty prelude.
+      grandparent = parent_name_for_hierarchy_lookup(parent) || builtin_hierarchy_parent(parent)
+      !!grandparent && info.type_ref == type && !info.is_struct && registered_abstract_class_name?(name) &&
+        crystal_virtual_root_name?(name) && !@generic_templates.has_key?(name) && !name.includes?('(')
+    end
+
     private def recursive_declared_result_contract(
       name : String, source : ForceLowerExactSourceBinding, spelling : String,
     ) : SourceBlockResultPattern?
@@ -117119,13 +117157,19 @@ module Adamas::HIR
 
     # The annotation supplies the closed shape. Each member still needs an
     # independently checked reachable return and its current physical tag.
-    private def suspended_struct_return(ctx : LoweringContext) : PartialStructReturn?
+    private def suspended_struct_return(ctx : LoweringContext) : PartialRecursiveReturn?
       capture = @force_lower_active_replay_captures[ctx.function.name]? || return
       replay = capture.binding || return
       body = current_active_force_lower_body(ctx.function.name, allow_named_or_defaulted: true) || return
       return unless body.function.same?(ctx.function)
       if @module.get_type_descriptor(body.return_type).try(&.kind.union?)
         return suspended_nullable_struct_return(ctx, replay, body)
+      end
+      if recursive_virtual_reference_contract?(ctx, body.return_type)
+        evidence = reachable_virtual_reference_return(ctx.function, body.return_type) || return
+        anchor = PartialRecursiveReturn.new(replay, ctx, body, evidence)
+        return anchor if suspended_return_value_current?(anchor)
+        return nil
       end
       reachable_blocks(ctx.function).each do |block|
         returned = block.terminator.as?(Return) || next
@@ -117137,7 +117181,7 @@ module Adamas::HIR
                         suspended_return_call_result(ctx, value) || next
                       end
         evidence = PartialStructReturnValue.new(block, returned, value, call_result)
-        anchor = PartialStructReturn.new(replay, ctx, body, evidence)
+        anchor = PartialRecursiveReturn.new(replay, ctx, body, evidence)
         return anchor if suspended_return_value_current?(anchor)
       end
       nil
@@ -117145,7 +117189,7 @@ module Adamas::HIR
 
     private def suspended_nullable_struct_return(
       ctx : LoweringContext, replay : ForceLowerReplayCallsite, body : ForceLowerActiveBody,
-    ) : PartialStructReturn?
+    ) : PartialRecursiveReturn?
       name = ctx.function.name
       source = replay.exact_source_binding ||
                ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name)
@@ -117168,7 +117212,7 @@ module Adamas::HIR
         end
       end
       evidence = PartialNullableStructReturn.new(contract, arms)
-      anchor = PartialStructReturn.new(replay, ctx, body, evidence)
+      anchor = PartialRecursiveReturn.new(replay, ctx, body, evidence)
       anchor if suspended_return_value_current?(anchor)
     end
 
@@ -117198,7 +117242,7 @@ module Adamas::HIR
       false
     end
 
-    private def queued_partial_struct_result(pending : ExactResultPending, replay : ForceLowerReplayCallsite) : PartialStructReturn?
+    private def queued_partial_struct_result(pending : ExactResultPending, replay : ForceLowerReplayCallsite) : PartialRecursiveReturn?
       @force_lower_retry_work.each do |queued|
         next unless queued.is_a?(ForceLowerSuspendedRequest) && force_lower_retry_source_current?(queued)
         tail = queued.pending.as(ExactResultPending?)
@@ -117213,7 +117257,7 @@ module Adamas::HIR
       nil
     end
 
-    private def checked_partial_struct_result(pending : ExactResultPending, anchor : PartialStructReturn?) : PartialStructReturn?
+    private def checked_partial_struct_result(pending : ExactResultPending, anchor : PartialRecursiveReturn?) : PartialRecursiveReturn?
       return unless anchor
       name = pending.producer
       source = pending.producer_source
@@ -117229,20 +117273,33 @@ module Adamas::HIR
       return unless ctx.function.same?(body.function) && ctx.function.name == name &&
                     active_force_lower_body_abi_current?(body) && suspended_return_value_current?(anchor)
       evidence = anchor.evidence
-      if evidence.is_a?(PartialNullableStructReturn)
+      case evidence
+      when PartialNullableStructReturn
         return unless ordinary_struct_result_source?(name, source) &&
                       recursive_nullable_struct_result_contract(ctx, type) == evidence.contract
+      when PartialVirtualReferenceReturn
+        return unless ordinary_struct_result_source?(name, source) && recursive_virtual_reference_contract?(ctx, type)
       else
         return unless recursive_struct_declared_result?(name, source, type)
       end
       anchor
     end
 
-    private def suspended_return_value_current?(anchor : PartialStructReturn) : Bool
+    private def suspended_return_value_current?(anchor : PartialRecursiveReturn) : Bool
       ctx = anchor.context
       evidence = anchor.evidence
-      if evidence.is_a?(PartialNullableStructReturn)
+      case evidence
+      when PartialNullableStructReturn
         return suspended_nullable_return_current?(ctx, anchor.body.return_type, evidence)
+      when PartialVirtualReferenceReturn
+        return false unless recursive_reference_join?(anchor.body.return_type, evidence.left.call.type, evidence.right.call.type)
+        return [evidence.left, evidence.right].all? do |arm|
+          call = arm.call
+          facts = ctx.source_value_facts(call.id)
+          suspended_return_slot_current?(ctx, arm.block, arm.terminator, call) &&
+            (facts.nil? || facts == [{call.type, false}]) &&
+            independent_recursive_reference_call?(ctx.function, call)
+        end
       end
 
       read = evidence.value
@@ -117260,6 +117317,81 @@ module Adamas::HIR
       else
         false
       end
+    end
+
+    # The declared instance restriction is an upper bound. Two independently
+    # reached sibling results are a lower bound with the same Crystal virtual
+    # root. Further legal returns cannot change that join.
+    private def reachable_virtual_reference_return(function : Function, root : TypeRef) : PartialVirtualReferenceReturn?
+      arms = [] of PartialReferenceReturnArm
+      reachable_blocks(function).each do |block|
+        term = block.terminator.as?(Return) || next
+        id = term.value || next
+        call = block.instructions.find { |value| value.id == id }.as?(Call) || next
+        next unless recursive_reference_subclass?(root, call.type) && independent_recursive_reference_call?(function, call)
+        right = PartialReferenceReturnArm.new(block, term, call)
+        if left = arms.find { |arm| recursive_reference_join?(root, arm.call.type, call.type) }
+          return PartialVirtualReferenceReturn.new(left, right)
+        end
+        arms << right
+      end
+      nil
+    end
+
+    private def recursive_reference_subclass?(root : TypeRef, type : TypeRef) : Bool
+      return false if root == type
+      name = get_type_name_from_ref(type)
+      info = @class_info[name]?
+      !!info && info.type_ref == type && !info.is_struct && !registered_abstract_class_name?(name) &&
+        get_ancestor_chain(name).includes?(get_type_name_from_ref(root))
+    end
+
+    private def recursive_reference_join?(root : TypeRef, left : TypeRef, right : TypeRef) : Bool
+      return false unless left != right && recursive_reference_subclass?(root, left) &&
+                          recursive_reference_subclass?(root, right)
+      ancestors = get_ancestor_chain(get_type_name_from_ref(left))
+      nearest = get_ancestor_chain(get_type_name_from_ref(right)).find { |name| ancestors.includes?(name) }
+      nearest == get_type_name_from_ref(root)
+    end
+
+    private def independent_recursive_reference_call?(function : Function, call : Call) : Bool
+      return false if call.virtual || call.has_block? || call.method_name == function.name
+      name = call.method_name
+      target = @module.function_by_name(name) || return false
+      return false unless target.return_type == call.type &&
+                          call.has_receiver? == (target.params.first?.try(&.name) == "self")
+      ids = call.has_receiver? ? [call.receiver_value] + call.args : call.args
+      operands = recursive_struct_result_operand_witnesses(function, ids) || return false
+      return false unless operands.size == target.params.size && operands.each_with_index.all? do |operand, index|
+        parameter = target.params[index]
+        !parameter.is_block && operand.type == parameter.type
+      end
+      if allocator = @generated_allocator_calls[{function, call.id}]?
+        validate_generated_allocator_call_contract!(function, call, allocator)
+        return true
+      end
+      definition = @function_defs[name]? || return false
+      arena = @function_def_arenas[name]? || return false
+      fresh_source_return_result_facts(name, target, definition, arena, Set{function.name}) == [{call.type, false}]
+    rescue LoweringError
+      false
+    end
+
+    private def final_recursive_virtual_reference_result?(pending : ExactResultPending, root : TypeRef) : Bool
+      return false unless pending.producer_requires_result && nested_recursive_result_demands_settled?(pending)
+      name = pending.producer
+      source = pending.producer_source
+      return false unless ordinary_struct_result_source?(name, source) && force_lower_exact_source_matches?(name, source) &&
+                          function_state(name).completed? && @module.has_function_with_body?(name)
+      function = @module.function_by_name(name) || return false
+      facts = function.source_return_value_facts || return false
+      return false unless function.return_type == root && !facts.empty? &&
+                          recursive_virtual_reference_root?(root) &&
+                          current_recursive_return_receipt?(function, source, facts)
+      # The finished body still needs both observations. Every other normal
+      # result must obey the same instance restriction after exact replay.
+      facts.all? { |(type, literal)| !literal && (type == root || recursive_reference_subclass?(root, type)) } &&
+        !reachable_virtual_reference_return(function, root).nil?
     end
 
     private def suspended_nullable_return_current?(
@@ -117380,6 +117512,9 @@ module Adamas::HIR
         next unless type
         next unless recursive_struct_result_replay_arguments?(pending.producer, producer_replay)
         @deferred_struct_result_uses[edge] = DeferredStructResultUse.new(entry, type, producer_replay, anchor)
+        if anchor.try(&.evidence.is_a?(PartialVirtualReferenceReturn)) && env_has?("DEBUG_FORCE_LOWER_DEPTH")
+          STDERR.puts "[FORCE_LOWER_RECURSIVE_REFERENCE] consumer=#{pending.consumer} producer=#{pending.producer}"
+        end
         return index
       end
       nil
@@ -161807,7 +161942,7 @@ module Adamas::HIR
     # descendants. Enum types are not class types, so their shared `Enum`
     # parent is no virtual root either (`[Color::Red, Size::Big]` is
     # `Array(Color | Size)`).
-    private def array_literal_virtual_root_name?(name : String) : Bool
+    private def crystal_virtual_root_name?(name : String) : Bool
       name = name.lchop("::")
       case name
       when "Object", "Reference", "Value", "Struct", "Number", "Int", "Float", "Enum", "Unknown", "Void"
@@ -161847,7 +161982,7 @@ module Adamas::HIR
         merged = false
         combined.each_with_index do |existing, index|
           ancestor = find_common_ancestor_class(existing, name)
-          next unless ancestor && array_literal_virtual_root_name?(ancestor)
+          next unless ancestor && crystal_virtual_root_name?(ancestor)
           combined[index] = ancestor
           merged = true
           break

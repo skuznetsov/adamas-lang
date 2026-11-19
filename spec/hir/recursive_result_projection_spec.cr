@@ -584,7 +584,7 @@ class Adamas::HIR::AstToHir
     ctx.terminate(returned)
     body = ForceLowerActiveBody.new(partial, source.source_def, source.source_arena,
       [] of TypeRef, [] of String, type)
-    anchor = PartialStructReturn.new(replay, ctx, body, PartialStructReturnValue.new(block, returned, read))
+    anchor = PartialRecursiveReturn.new(replay, ctx, body, PartialStructReturnValue.new(block, returned, read))
     pending = nested ? __test_nested_projection_pending(change) : ExactResultPending.new("RecFactory.consumer", name, source)
 
     case change
@@ -600,7 +600,7 @@ class Adamas::HIR::AstToHir
       ctx.register_source_value_facts(read.id, [{type, true}])
     when :changed_replay_source
       other = __test_projection_replay("RecFactory.reference")
-      anchor = PartialStructReturn.new(other, ctx, body, PartialStructReturnValue.new(block, returned, read))
+      anchor = PartialRecursiveReturn.new(other, ctx, body, PartialStructReturnValue.new(block, returned, read))
     end
     !checked_partial_struct_result(pending, anchor).nil?
   end
@@ -630,7 +630,7 @@ class Adamas::HIR::AstToHir
     result = suspended_return_call_result(ctx, call) || return false
     body = ForceLowerActiveBody.new(partial, source.source_def, source.source_arena,
       [] of TypeRef, [] of String, type)
-    anchor = PartialStructReturn.new(replay, ctx, body, PartialStructReturnValue.new(block, returned, call, result))
+    anchor = PartialRecursiveReturn.new(replay, ctx, body, PartialStructReturnValue.new(block, returned, call, result))
 
     case change
     when :different_operand

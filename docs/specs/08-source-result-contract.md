@@ -1164,3 +1164,30 @@ Refresh after queue scheduling, suspension edges, source/callback recipes or
 request fields change. Rollback is the atomic retry-graph commit. Graph
 admission does not certify arbitrary recursive compilation, full prelude, fresh
 bootstrap, or LavinMQ native/runtime/upstream parity.
+
+### Nonnullable virtual reference results in recursive lowering
+
+For an exact ordinary body with a bound abstract reference instance return
+contract, two reached direct calls may establish the result before all of
+the body has lowered. Verify each concrete instance independently through its
+current generated allocator contract or settled source return. The nearest
+common superclass of the two instances must equal the declared restriction.
+Crystal only uses this virtual join for class roots deeper than one level, so
+a class directly below Object is ineligible. The join makes the bound exact
+under additional checked returns within the restriction.
+
+Bind the witness to the current Def, arena, replay inputs, physical body,
+reachable Return terminators, and emitted Calls. An existing value-kind
+observation must agree with the independent proof. The recursive consumer
+replays through its own checked call and carries an emission obligation.
+Before HIR publication, the finished producer must retain a current source
+return receipt, satisfy the instance restriction, and reproduce the join from
+independent calls in its reachable returns. Raw callbacks and unresolved,
+virtual, or block-bearing calls supply no such witness.
+
+Gate: recursive_virtual_reference_result_repro.sh COMPILER compares native
+output, rejects both incompatible returns and class objects after the recursive
+call, and checks that a shallow root cannot activate the proof. Refresh after
+hierarchy joins, direct-call result receipts, allocator ownership, body replay,
+or emission validation changes. Rollback is the atomic virtual-reference
+result commit.

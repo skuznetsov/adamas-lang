@@ -28252,3 +28252,19 @@ changes. No stdlib edits.
   resumes the installed Crystal 1.22.3 callers of `parse_class`.
   `CLI#run_check` still has a later pending result. Bundled 1.18.2
   stops while replaying `spawn`. Both attempts exit 1 without S2.
+
+## Recursive virtual-reference source results in `CLI#run_check` (2026-11-19)
+
+- [x] Close the recursive macro-value result dependency using two independently
+  reached reference subclasses. The exact allocator and settled direct getter
+  prove the annotated Crystal virtual join. Recheck the finished body, its
+  instance return facts, and every replayed call before publication.
+- The native oracle covers the recursive instance result, incompatible
+  instance/class returns, and Crystal's shallow virtual-root exclusion.
+  The focused result and retry suite passes 42 HIR examples.
+- Fresh S1 → S2 attempts at seal
+  `b46bdb5e0f5cbfc3fd676bed7b033b52a287911ef4d31e06563c5fefadcf5085`
+  pass the former `CLI#run_check` suspension with both installed 1.22.3 and
+  bundled 1.18.2. Both exit 1 in `reflection_collection_for_symbol` after a
+  forwarded `Hash#map` callback leaves `Array(U)` untyped at allocation.
+  These attempts emit no S2, so S3 is still pending.
