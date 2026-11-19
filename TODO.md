@@ -28323,3 +28323,21 @@ changes. No stdlib edits.
   expressions. A source default `T.new` in a module that binds `T` to a
   different class from the receiving class's `T` prints `BA` on the parent
   and candidate and `AA` on stock Crystal. A literal index default passes.
+
+## Bound tuple fields in early callback results (2026-11-19)
+
+- [x] Recover the sourced field types when a selected callback input formal
+  denotes a tuple. Apply implicit unpack before the early arity rule so
+  `|key, value|` sees the two positional field facts. Keep the original
+  arguments for forwarding and preserve the final result checks.
+- The native oracle agrees with Crystal 1.22.3, lazy and eager lowering
+  in the selected-include and explicit Tuple cases. Crossed field
+  restrictions and incompatible subtype narrowing are rejected.
+- Fresh S1 → S2 with installed 1.22.3 and bundled 1.18.2 used source seal
+  `56a502f663a51e42261273ec3b47c7a2bccb9bd115d6b14389b7e7b0cccb1fc9`.
+  Both pass the `CLI#run_check` and `Hash#map` result frontiers and exit
+  1 on the next blocker, a Char inferred for the range-indexed String
+  passed to `MacroIdValue.new` in the macro expander.
+- [ ] Test an unresolved method forall input that shadows a receiver formal.
+  The legacy annotation fallback precedes this repair. Also exercise
+  tuple fields carrying class objects through a selected module formal.

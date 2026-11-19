@@ -78720,7 +78720,19 @@ module Adamas::HIR
         input_names = proc_input_type_names(resolved_annotation) || return nil
         input_names.map do |input_name|
           with_isolated_type_param_map(input_bindings) do
-            inline_block_source_argument_for_type_name(input_name, declaration_owner) || return nil
+            # A formal such as Enumerable's T may denote a Tuple. Read
+            # its bound source shape before deciding how to unpack it.
+            if bound = bound_annotation_type_contract(input_name, declaration_owner, input_bindings)
+              argument = with_canonical_type_scope do
+                inline_block_source_argument_for_type_name(
+                  root_anchored_canonical_type_name(bound.restriction_name), nil,
+                )
+              end
+              return nil unless argument && argument.type_ref == bound.type_ref
+              argument
+            else
+              inline_block_source_argument_for_type_name(input_name, declaration_owner) || return nil
+            end
           end
         end
       end
@@ -78736,14 +78748,13 @@ module Adamas::HIR
               body = block.body
               return nil if body.empty?
               tail = body.last
-              if !params.empty? && params.size != source_inputs.size
-                # Extra source yield inputs can be dropped by a transparent
-                # forwarding block. Keep other partial maps out of this path.
-                return nil unless forwarded_source && node_for_expr(tail).is_a?(Adamas::Compiler::Frontend::YieldNode)
-              end
               positional_inputs = source_inputs
               if params.size > 1 && source_inputs.size == 1
                 positional_inputs = source_inputs.first.tuple_values || return nil
+              elsif !params.empty? && params.size != source_inputs.size
+                # Extra source yield inputs can be dropped by a transparent
+                # forwarding block. Keep other partial maps out of this path.
+                return nil unless forwarded_source && node_for_expr(tail).is_a?(Adamas::Compiler::Frontend::YieldNode)
               end
 
               # Parameter facts come from the selected callback annotation and its

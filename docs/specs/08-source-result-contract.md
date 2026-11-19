@@ -1237,3 +1237,20 @@ call, and checks that a shallow root cannot activate the proof. Refresh after
 hierarchy joins, direct-call result receipts, allocator ownership, body replay,
 or emission validation changes. Rollback is the atomic virtual-reference
 result commit.
+
+### Implicit callback tuple unpack
+
+A selected callback input may bind a source formal to one Tuple. Recover its
+positional source facts from the bound annotation under canonical scope and
+require the same HIR type. When the block has multiple positional parameters,
+map them to the tuple fields before testing arity or proving its result. Each
+field keeps its original nominal and value-kind facts. A block that forwards
+yield still receives its own source inputs. Final expression and callback
+restriction checks retain authority over the inferred result.
+
+Gate: destructured_callback_result_repro.sh COMPILER compares stock, eager
+and lazy output for both an applied module formal and an explicit Tuple.
+It rejects crossed field restrictions and a downcast inferred from a broader
+annotated field. Refresh after callback selection, annotation binding, tuple
+decomposition or callback result proof changes. Rollback is the atomic tuple
+unpack commit.
