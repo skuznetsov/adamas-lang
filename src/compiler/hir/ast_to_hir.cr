@@ -83063,21 +83063,27 @@ module Adamas::HIR
               source_block_result_type_literal_pattern?(child) ||
                 !source_block_result_module_restriction_key(child).nil?
             end
-        # A metaclass arm cannot admit an instance with the same carrier, and
-        # a module instance arm must use the source Include graph. Keep
-        # ordinary numeric and other source compatibility for the remaining
-        # arms, including their implicit conversions.
-        pattern.children.any? do |child|
-          if source_block_result_module_restriction_key(child)
-            source_block_result_pattern_matches_value?(actual, false, child)
-          elsif !source_block_result_type_literal_pattern?(child)
-            param_compatible_with_arg?(
-              DefParamInfo.new(param.name, param.external_name, child.restriction_name,
-                param.default_value, param.is_splat, param.is_double_splat, param.is_block),
-              actual, context, false, 0,
-            )
-          else
-            false
+        # A compact runtime union still requires one matching restriction
+        # for each of its members. This is the same quantification used for
+        # explicit per-arm source facts above.
+        actual_members = if source_block_result_union_ref?(actual)
+                           source_block_result_union_members(actual) || return false
+                         else
+                           [actual]
+                         end
+        actual_members.all? do |member|
+          pattern.children.any? do |child|
+            if source_block_result_module_restriction_key(child)
+              source_block_result_pattern_matches_value?(member, false, child)
+            elsif !source_block_result_type_literal_pattern?(child)
+              param_compatible_with_arg?(
+                DefParamInfo.new(param.name, param.external_name, child.restriction_name,
+                  param.default_value, param.is_splat, param.is_double_splat, param.is_block),
+                member, context, false, 0,
+              )
+            else
+              false
+            end
           end
         end
       end

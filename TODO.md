@@ -35,6 +35,20 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-19 — Match compact nullable module restrictions per member
+- [x] A forwarded value with the compact type `Nil | Item(Int32)` was
+  compared whole against each arm of `Item(Int32)?`. Use the existing union
+  descriptor to check each member through the ordinary source restriction,
+  including the typed Include graph and the distinction from Extend.
+- [x] `compact_module_union_restriction_repro.sh` reproduces the false rejection
+  on the parent. The candidate and Crystal 1.22.3 agree on the result and
+  both reject the wrong generic application and the extend-only instance.
+- [ ] S1-to-S2 was attempted uncached for both stdlibs. Installed 1.22.3
+  still stops at `Crystal::System::Process.new(Nil)`. Bundled 1.18.2 finishes
+  the `prepare_args` specialization and then stalls on a provisional
+  `Process#io_to_fd` waiting on `spawn`. Its outer diagnostic is again a
+  pending result for `CLI#run_check`. Neither run produces S2.
+
 ### 2026-11-19 — Keep recursive result dependencies under their active body
 - [x] `CLI#run_check` was waiting on `SymbolTable#lookup`. Its active recursive
   call added a self dependency while `Hash#[]?` was pending. That self edge
