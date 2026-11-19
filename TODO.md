@@ -35,6 +35,22 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-19 — Preserve nested exact producer retries
+- [x] Capture the materialized type and value kind of an omitted positional
+  default on the replay for the selected source definition. Preserve the
+  original omission for overload resolution. If replay of an exact producer
+  suspends on a queued result, keep both the caller and producer requests
+  after checking source identity, argument evidence and replay permissions.
+- [x] The focused HIR suites pass 86 examples. Crystal 1.22.3 and the
+  candidate agree on the two native defaulted-call controls and both reject
+  the invalid Int64 overload. Both stdlib profiles trace the retained
+  `parse_typeof -> parse_op_assign(Nil) -> parse_expression(Int32)` edge.
+- [ ] Fresh S1-to-S2 stops at `parse_enum -> parse_private` with bundled
+  stdlib 1.18.2. Installed stdlib 1.22.3 reports `CLI#run -> CLI#run_check`;
+  its trace still contains unresolved parser dependencies. Neither profile
+  produces S2. The parent failures in `map(&.[0])` and the recursive
+  struct result regression remain reproducible.
+
 ### 2026-11-18 — Retain successive exact result dependencies during replay
 - [x] If replay finishes one producer and the same consumer suspends on a
   second, current result-required producer, keep the new edge in the retry

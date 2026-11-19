@@ -387,6 +387,97 @@ class Adamas::HIR::AstToHir
     @force_lower_retry_driver_active = false
   end
 
+  def __test_retain_nested_producer_retry(
+    *, requires_result : Bool = true, stale_capture : Bool = false, changed_bypass : Bool = false,
+  ) : Bool
+    root = "retry_queue_root"
+    producer = "retry_queue_ancestor_a"
+    leaf = "retry_queue_shared"
+    leaf_request = __test_seed_queue_retry(leaf, ["retry_queue_leaf"], requires_result: requires_result)
+    root_source = __test_force_lower_exact_source_binding(root).not_nil!
+    producer_source = __test_force_lower_exact_source_binding(producer).not_nil!
+    leaf_source = __test_force_lower_exact_source_binding(leaf).not_nil!
+    root_replay = __test_queue_replay(root, root_source)
+    producer_replay = __test_queue_replay(producer, producer_source)
+    request = ForceLowerSuspendedRequest.new(
+      ExactResultPending.new(root, producer, producer_source, producer_replay), root_replay, false,
+    )
+    child = ExactResultPending.new(producer, leaf, leaf_source)
+    child.consumer_bypass_inline_yield = changed_bypass
+    capture = ForceLowerReplayCapture.new(producer, nil)
+    capture.binding = stale_capture ? __test_queue_replay(producer, root_source) : producer_replay
+    child.consumer_capture = capture
+    [root, producer].each do |name|
+      remove_hir_function(name)
+      clear_function_state(name)
+    end
+    @force_lower_provisional_dependencies[root] = Set{producer}
+    @force_lower_provisional_dependencies[producer] = Set{leaf}
+    @force_lower_retry_work << leaf_request
+    @force_lower_retry_driver_active = true
+    retained = retain_nested_producer_retry(request, child, producer_replay, false)
+    unless retained
+      @force_lower_retry_work.size.should eq(1)
+      return false
+    end
+    @force_lower_retry_work.size.should eq(3)
+    continuation = @force_lower_retry_work.last.as(ForceLowerSuspendedRequest)
+    continuation.pending.same?(child).should be_true
+    force_lower_retry_waits_for_queued_producer?(request).should be_true
+    force_lower_retry_waits_for_queued_producer?(continuation).should be_true
+    retain_nested_producer_retry(request, child, producer_replay, false).should be_false
+
+    @force_lower_retry_driver_active = false
+    run_force_lower_retry_driver(request).should be_true
+    @module.function_by_name(root).not_nil!.return_type.should eq(TypeRef::INT32)
+    true
+  ensure
+    @force_lower_retry_driver_active = false
+  end
+
+  private def __test_queue_replay(name : String, source : ForceLowerExactSourceBinding) : ForceLowerReplayCallsite
+    ForceLowerReplayCallsite.new(source.source_def, source.source_arena,
+      __test_empty_callsite, @type_param_map.dup, @current_namespace_override, name,
+      exact_source_binding: source)
+  end
+
+  def __test_observe_positional_default(change : Symbol) : Bool
+    name = "retry_queue_with_default"
+    function = Function.new(FunctionId.new(0), "observe_default", TypeRef::INT32)
+    ctx = LoweringContext.new(function, @module, @arena)
+    arg = emit_multiple_assign_int32_literal(ctx, 41)
+    entries = [] of Tuple(String, Adamas::Compiler::Frontend::DefNode, Adamas::Compiler::Frontend::ArenaLike)
+    bindings = [] of SourceCallBinding
+    values, _, _ = apply_default_args(ctx, [arg], name, name, false, false, nil, entries, bindings)
+    selected_name, defn, arena = entries.first
+    binding = bindings.first
+    source = ForceLowerExactSourceBinding.new(defn, arena, selected_name)
+    binding.supplied_types[1].should be_nil
+    binding.defaulted_types[1].not_nil!.type_ref.should eq(TypeRef::INT32)
+    facts = nil.as(Array(SourceCallArgument?)?)
+    case change
+    when :foreign_arena
+      binding = binding.copy_with(declaration_arena: __test_foreign_source_arena)
+    when :changed_value
+      value = Literal.new(ctx.next_id, TypeRef::BOOL, true)
+      ctx.emit(value)
+      ctx.register_type(value.id, TypeRef::BOOL)
+      values[1] = value.id
+    when :conflicting_kind
+      facts = [SourceCallArgument.new(TypeRef::INT32, false), SourceCallArgument.new(TypeRef::INT32, true)] of SourceCallArgument?
+    end
+    callsite = CallsiteArgs.new([TypeRef::INT32, TypeRef::INT32], [false, false], nil,
+      has_named_args: change == :named, source_argument_facts: facts)
+    observed = observed_positional_default_callsite(ctx, source, callsite, binding, values)
+    if observed
+      observed.source_argument_facts.should eq([SourceCallArgument.new(TypeRef::INT32, false)] * 2)
+      observed.source_binding.should be_nil
+      binding.supplied_types[1].should be_nil
+      @pending_arg_types[name]?.should be_nil
+    end
+    !observed.nil?
+  end
+
   def __test_queue_has_producer?(name : String, requires_result : Bool) : Bool
     force_lower_retry_has_queued_producer?(name, requires_result)
   end
@@ -413,6 +504,14 @@ private def force_lower_dependency_queue_fixture : Adamas::HIR::AstToHir
 
     def retry_queue_ancestor_b
       retry_queue_shared
+    end
+
+    def retry_queue_root
+      retry_queue_ancestor_a
+    end
+
+    def retry_queue_with_default(value : Int32, increment : Int32 = 1)
+      value + increment
     end
 
     def retry_queue_cycle_left
@@ -450,6 +549,7 @@ private def force_lower_dependency_queue_fixture : Adamas::HIR::AstToHir
     retry_queue_shared
     retry_queue_ancestor_a
     retry_queue_ancestor_b
+    retry_queue_root
     retry_queue_cycle_left
     retry_queue_cycle_right
     retry_queue_body_only
@@ -552,6 +652,26 @@ describe "dependency-aware exact source retry scheduling" do
     force_lower_dependency_queue_fixture.__test_advance_suspended_consumer(first_settled: false).should be_false
     force_lower_dependency_queue_fixture.__test_advance_suspended_consumer(stale_consumer: true).should be_false
     force_lower_dependency_queue_fixture.__test_advance_suspended_consumer(requires_result: false).should be_false
+  end
+
+  it "settles a nested producer before replaying its exact caller" do
+    force_lower_dependency_queue_fixture.__test_retain_nested_producer_retry.should be_true
+  end
+
+  it "requires a current producer recipe, the same yield context, and a queued result" do
+    force_lower_dependency_queue_fixture.__test_retain_nested_producer_retry(requires_result: false).should be_false
+    force_lower_dependency_queue_fixture.__test_retain_nested_producer_retry(stale_capture: true).should be_false
+    force_lower_dependency_queue_fixture.__test_retain_nested_producer_retry(changed_bypass: true).should be_false
+  end
+
+  it "observes ordinary defaulted values without changing which arguments were supplied" do
+    force_lower_dependency_queue_fixture.__test_observe_positional_default(:original).should be_true
+  end
+
+  it "checks default replay against the live source, value and call kind" do
+    [:foreign_arena, :changed_value, :conflicting_kind, :named].each do |change|
+      force_lower_dependency_queue_fixture.__test_observe_positional_default(change).should be_false
+    end
   end
 
   it "does not report an unresolved initial demand after independent work settles" do
