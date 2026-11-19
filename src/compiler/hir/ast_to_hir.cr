@@ -2226,12 +2226,12 @@ module Adamas::HIR
       replay : ForceLowerReplayCallsite,
       context : LoweringContext,
       body : ForceLowerActiveBody,
-      evidence : PartialStructReturnValue | PartialNullableStructReturn | PartialVirtualReferenceReturn
+      evidence : PartialExactInstanceReturn | PartialNullableStructReturn | PartialVirtualReferenceReturn
 
-    private record PartialStructReturnValue,
+    private record PartialExactInstanceReturn,
       block : Block,
       terminator : Return,
-      value : ClassVarGet | Call,
+      value : ClassVarGet | Call | Literal,
       call_result : PartialStructCallResult? = nil
 
     private record PartialVirtualReferenceReturn,
@@ -116405,8 +116405,8 @@ module Adamas::HIR
       first = left.evidence
       second = right.evidence
       case first
-      when PartialStructReturnValue
-        second.is_a?(PartialStructReturnValue) && first.block.same?(second.block) &&
+      when PartialExactInstanceReturn
+        second.is_a?(PartialExactInstanceReturn) && first.block.same?(second.block) &&
           first.terminator.same?(second.terminator) && first.value.same?(second.value) &&
           same_suspended_return_call_result?(first.call_result, second.call_result)
       when PartialNullableStructReturn
@@ -117226,7 +117226,7 @@ module Adamas::HIR
                     function.source_return_arena_key == arena_map_key(arena)
       return if materialized_function_noreturn?(name, Set(String).new)
       type = function.return_type
-      return unless recursive_struct_declared_result?(name, source, type)
+      return unless recursive_exact_instance_declared_result?(name, source, type)
       facts = function.source_return_value_facts
       return unless facts == [{type, false}] && current_recursive_return_receipt?(function, source, facts.not_nil!)
       type
@@ -117245,21 +117245,34 @@ module Adamas::HIR
         receipt.body_objects_match?(function.scopes, function.blocks) && receipt.body_seal == source_return_function_body_seal(function)
     end
 
-    private def recursive_struct_declared_result?(
+    private def recursive_exact_instance_declared_result?(
       name : String, source : ForceLowerExactSourceBinding, type : TypeRef,
     ) : Bool?
       definition = source.source_def
       name_of_type = get_type_name_from_ref(type)
-      info = @class_info[name_of_type]? || return
-      return unless info.is_struct && info.type_ref == type && !primitive_template_owner(name_of_type) &&
-                    !registered_abstract_class_name?(name_of_type) && !class_has_subclasses?(name_of_type) &&
-                    !@generic_templates.has_key?(name_of_type) && !name_of_type.includes?('(') &&
-                    !@enum_info.try(&.has_key?(name_of_type))
+      unless recursive_literal_result_type?(type)
+        info = @class_info[name_of_type]? || return
+        return unless info.is_struct && info.type_ref == type && !primitive_template_owner(name_of_type) &&
+                      !registered_abstract_class_name?(name_of_type) && !class_has_subclasses?(name_of_type) &&
+                      !@generic_templates.has_key?(name_of_type) && !name_of_type.includes?('(') &&
+                      !@enum_info.try(&.has_key?(name_of_type))
+      end
       spelling = definition.return_type.try { |slice| safe_slice_to_string(slice) } || return
       return unless spelling.matches?(/\A(?:::)?[A-Z]\w*(?:::[A-Z]\w*)*\z/)
       restriction = recursive_declared_result_contract(name, source, spelling) || return
       restriction.kind.concrete? && restriction.type_ref == type &&
         !source_declared_return_contract_guarantees_type_literal_kind?(restriction)
+    end
+
+    # A reached literal proves that at least one path returns an instance.
+    # Its declared restriction fixes the result only for a closed type.
+    private def recursive_literal_result_type?(type : TypeRef) : Bool
+      case type
+      when TypeRef::BOOL, TypeRef::STRING
+        !class_has_subclasses?(get_type_name_from_ref(type))
+      else
+        false
+      end
     end
 
     private def recursive_virtual_reference_contract?(ctx : LoweringContext, type : TypeRef) : Bool
@@ -117356,12 +117369,13 @@ module Adamas::HIR
         returned = block.terminator.as?(Return) || next
         value_id = returned.value || next
         value = ctx.value_for(value_id)
-        next unless value.is_a?(ClassVarGet) || value.is_a?(Call)
+        next unless value.is_a?(ClassVarGet) || value.is_a?(Call) || value.is_a?(Literal)
         next unless value.type == body.return_type
+        next if value.is_a?(Literal) && !recursive_literal_result_type?(value.type)
         call_result = if value.is_a?(Call)
                         suspended_return_call_result(ctx, value) || next
                       end
-        evidence = PartialStructReturnValue.new(block, returned, value, call_result)
+        evidence = PartialExactInstanceReturn.new(block, returned, value, call_result)
         anchor = PartialRecursiveReturn.new(replay, ctx, body, evidence)
         return anchor if suspended_return_value_current?(anchor)
       end
@@ -117461,7 +117475,7 @@ module Adamas::HIR
       when PartialVirtualReferenceReturn
         return unless ordinary_struct_result_source?(name, source) && recursive_virtual_reference_contract?(ctx, type)
       else
-        return unless recursive_struct_declared_result?(name, source, type)
+        return unless recursive_exact_instance_declared_result?(name, source, type)
       end
       anchor
     end
@@ -117486,8 +117500,13 @@ module Adamas::HIR
       read = evidence.value
       facts = [{read.type, false}]
       return false unless read.type == anchor.body.return_type &&
-                          suspended_return_slot_current?(ctx, evidence.block, evidence.terminator, read) &&
-                          ctx.source_value_facts(read.id) == facts
+                          suspended_return_slot_current?(ctx, evidence.block, evidence.terminator, read)
+      value_facts = ctx.source_value_facts(read.id)
+      if read.is_a?(Literal)
+        return false unless recursive_literal_result_type?(read.type) && (!value_facts || value_facts == facts)
+        return read.type == TypeRef::BOOL ? read.value.is_a?(Bool) : read.has_str_value?
+      end
+      return false unless value_facts == facts
       case read
       when ClassVarGet
         constant = deferred_constant_full_name(read.class_name, read.var_name)

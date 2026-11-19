@@ -28364,3 +28364,23 @@ changes. No stdlib edits.
   Wrapping the independent index in an unannotated method still infers
   Char in `infer_type_from_expr(IndexNode)` before the source call runs.
   Preserve the separate intrinsic, numeric and Range cases.
+
+## Reachable literal results in recursive lowering (2026-11-19)
+
+- [x] Admit a reachable Bool or String instance literal as evidence for a
+  recursive result whose source declaration fixes that exact type. Require
+  current source, body, literal, and call evidence. Replay still checks all
+  returns and verifies the resulting body receipt and call emissions.
+- The native oracles match Crystal 1.22.3 in eager and lazy lowering.
+  The parent stops on a pending result. All three runs reject both a later
+  metaclass return in the Bool case and an Int32 return in the String case.
+- Fresh S1 → S2 used source seal
+  `26381c71d40295110da0a171a10bd5c24b3ef69251d42db660cfb2ed24c01476`.
+  Installed 1.22.3 (219.73s) settles `evaluate_flag_call_bool`. Bundled
+  1.18.2 (233.61s) uses that method's proved result and advances the
+  consuming call. Both still exit 1 with `CLI#run_check` pending and
+  emit no S2.
+- [ ] Close the remaining macro evaluation retry cycle. The installed queue
+  contains a completed provisional index-evaluator body waiting on the
+  value evaluator. Examine how the driver's name dependencies relate to the
+  exact inverse call and its replay before opening a recursive result.
