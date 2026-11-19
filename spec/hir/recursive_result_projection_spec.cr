@@ -32,6 +32,58 @@ class Adamas::HIR::AstToHir
     !index.nil?
   end
 
+  def __test_advance_projected_consumer(change : Symbol) : Bool
+    consumer = "RecFactory.consumer"
+    first = "RecFactory.value"
+    second = "RecFactory.reference"
+    replay = __test_projection_replay(consumer)
+    previous = ForceLowerSuspendedRequest.new(
+      ExactResultPending.new(consumer, first, __test_projection_source(first)), replay, false,
+    )
+    @force_lower_provisional_dependencies[consumer] = Set{first}
+    @force_lower_provisional_dependencies[first] = Set{consumer}
+    enqueue_force_lower_retry_work(previous)
+    first_work = ForceLowerRetryRequest.new(first, [consumer], false, __test_projection_replay(first),
+      __test_projection_source(first), true)
+    enqueue_force_lower_retry_work(first_work)
+    @force_lower_retry_driver_active = true
+    open_recursive_struct_result.should eq(0)
+    recursive_struct_result_available?(previous).should be_true
+    @force_lower_retry_work.delete_at(0)
+
+    # The replay consumed the checked projection before finding another wait.
+    @force_lower_provisional_dependencies[consumer] = Set{second}
+    @force_lower_provisional_dependencies[second] = Set{first}
+    second_work = ForceLowerRetryRequest.new(second, [first], false, __test_projection_replay(second),
+      __test_projection_source(second), true)
+    enqueue_force_lower_retry_work(second_work)
+    pending = ExactResultPending.new(consumer, second, __test_projection_source(second))
+    capture = ForceLowerReplayCapture.new(consumer, nil)
+    capture.binding = replay
+    pending.consumer_capture = capture
+
+    case change
+    when :unowned
+      @force_lower_retry_work.delete_at(0)
+    when :invalidated
+      @module.function_by_name(first).not_nil!.source_return_result_receipt = nil
+    end
+
+    return false unless advance_suspended_consumer(previous, pending)
+    has_equivalent_queued_force_lower_work?(previous).should be_true
+    has_queued_force_lower_edge_continuation?(consumer, second).should be_true
+    queued_exact_force_lower_result_demand?(first, previous.pending.producer_source).should be_true
+    force_lower_retry_waits_for_queued_producer?(previous).should be_true
+    settled_force_lower_result?(first).should be_false
+    queued = @force_lower_retry_work.dup
+    advance_suspended_consumer(previous, pending).should be_false
+    @force_lower_retry_work.should eq(queued)
+    expect_raises(ExactResultPending) { validate_recursive_struct_results }
+    true
+  ensure
+    @force_lower_retry_driver_active = false
+  end
+
   private def __test_nested_projection_pending(change : Symbol)
     producer = "RecFactory.value"
     middle = "RecFactory.reference"
@@ -663,6 +715,12 @@ describe "source result projection inside a recursive specialization" do
     recursive_projection_converter.__test_queue_projection(close_cycle: false).should be_false
     recursive_projection_converter.__test_queue_projection(need_result: false).should be_false
     recursive_projection_converter.__test_queue_projection(change_source: true).should be_false
+  end
+
+  it "keeps both continuations after a checked projection exposes a new pending result" do
+    recursive_projection_converter.__test_advance_projected_consumer(:current).should be_true
+    recursive_projection_converter.__test_advance_projected_consumer(:unowned).should be_false
+    recursive_projection_converter.__test_advance_projected_consumer(:invalidated).should be_false
   end
 
   it "consumes a published result only after each relayed source demand is current and settled" do

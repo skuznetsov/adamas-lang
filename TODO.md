@@ -35,6 +35,22 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-19 — Preserve successive retries after a checked projection
+- [x] Admit the next exact dependency when replay consumes a checked recursive
+  result whose producer still has a current queued result demand. Preserve
+  that demand and the earlier consumer continuation. The regression checks
+  invalidated receipts, missing queue ownership, duplicate edges, and
+  rejection at final emission while producer bodies remain unsettled.
+- [x] The focused HIR suites pass 87 examples. A bundled bootstrap trace
+  confirms that `parse_program_roots_impl` can retain a new dependency on
+  `parse_percent_macro_control` after using a checked `parse_macro_definition`
+  result. Lowering passes the previous `parse_enum -> parse_private` stop.
+- [ ] Fresh S1-to-S2 builds on bundled 1.18.2 and installed 1.22.3 both exit 1 in
+  `CLI#run -> CLI#run_check`. The bundled trace reaches the cycle through
+  `parse_class`, `parse_private`, and `parse_abstract(Visibility)`; the
+  installed trace still has open macro-body and expression dependencies.
+  The earlier no-prelude recursive struct regression remains reproducible.
+
 ### 2026-11-19 — Preserve nested exact producer retries
 - [x] Capture the materialized type and value kind of an omitted positional
   default on the replay for the selected source definition. Preserve the

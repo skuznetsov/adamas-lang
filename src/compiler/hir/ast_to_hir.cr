@@ -115500,14 +115500,20 @@ module Adamas::HIR
         settled_force_lower_demand?(name, force_lower_retry_requires_result?(request))
     end
 
-    # A replay can finish its first producer and suspend again before
-    # publishing the same consumer. Keep the newly discovered dependency
-    # with that exact consumer instead of unwinding the retry driver.
+    # A replay can use its first producer's checked result and suspend
+    # again before publishing the same consumer. Keep the new dependency
+    # and any remaining obligation for that first producer.
     private def advance_suspended_consumer(previous : ForceLowerSuspendedRequest, pending : ExactResultPending) : Bool
       consumer = pending.consumer
       producer = pending.producer
       return false unless consumer == previous.name && consumer != producer && producer != previous.pending.producer
-      return false unless settled_force_lower_producer?(previous.pending) && force_lower_retry_source_current?(previous)
+      return false unless force_lower_retry_source_current?(previous)
+      previous_pending = previous.pending
+      previous_settled = settled_force_lower_producer?(previous_pending)
+      unless previous_settled
+        return false unless recursive_struct_result_available?(previous) &&
+                            queued_exact_force_lower_result_demand?(previous_pending.producer, previous_pending.producer_source)
+      end
       return false unless pending.consumer_requires_result == previous.pending.consumer_requires_result &&
                           pending.consumer_bypass_inline_yield == previous.bypass_inline_yield
       capture = pending.consumer_capture
@@ -115521,9 +115527,11 @@ module Adamas::HIR
       return false if @force_lower_result_suspensions.includes?(edge) ||
                       has_queued_force_lower_edge_continuation?(consumer, producer)
       return false unless enqueue_force_lower_retry_work(next_request)
+      enqueue_force_lower_retry_work(previous, 0) unless previous_settled
       @force_lower_result_suspensions << edge
       if env_has?("DEBUG_FORCE_LOWER_DEPTH")
-        STDERR.puts "[FORCE_LOWER_ADVANCED] consumer=#{consumer} settled=#{previous.pending.producer} producer=#{producer}"
+        previous_status = previous_settled ? "settled" : "projected"
+        STDERR.puts "[FORCE_LOWER_ADVANCED] consumer=#{consumer} #{previous_status}=#{previous_pending.producer} producer=#{producer}"
       end
       true
     end
