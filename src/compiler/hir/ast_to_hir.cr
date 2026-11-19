@@ -64590,7 +64590,14 @@ module Adamas::HIR
             source_match = if source_argument_facts && source_argument_facts.size == arg_types.size &&
                               (argument = source_argument_facts[arg_index]?) &&
                               argument.type_ref == arg_types[arg_index]
-                             source_generic_module_argument_match?(param, argument, def_node, context)
+                             restriction = param.type_annotation
+                             if argument.type_literal ||
+                                (restriction && proc_annotation_has_type_literal_arm?(restriction))
+                               source_formals = source_block_type_param_names(def_node, context)
+                               proven_class_argument_matches_param?(param, argument, context, source_formals)
+                             else
+                               source_generic_module_argument_match?(param, argument, def_node, context)
+                             end
                            end
             if source_match == false || (source_match != true && source_generic_restriction_match?(actual_name, declared_name) == false)
               {actual_name, declared_name}
@@ -82508,7 +82515,12 @@ module Adamas::HIR
     private def proc_source_type_name(type : TypeRef, type_literal : Bool) : String
       name = generic_param_type_name_from_ref(type)
       return name unless type_literal
-      split_union_type_name(name).map { |member| "#{member}.class" }.join(" | ")
+      # A type literal for a union TypeRef denotes the single type object of
+      # that whole union. Parenthesize it before appending `.class`; a dynamic
+      # union of scalar class objects is represented by per-arm value facts in
+      # `proc_source_type_name(SourceCallArgument)` and remains distributed.
+      return "(#{name}).class" if split_union_type_name(name).size > 1
+      "#{name}.class"
     end
 
     private def proc_source_type_name(value : SourceCallArgument) : String
@@ -82530,7 +82542,7 @@ module Adamas::HIR
       facts = source_block_result_value_facts(ctx, value).sort_by { |(type, literal)| {type.id, literal ? 1 : 0} }
       kinds = facts.map(&.[1]).uniq
       SourceCallArgument.new(enum_tracked_type(ctx, value), kinds == [true], rest_values,
-        (preserve_value_facts || kinds.size > 1) && !facts.empty? ? facts : nil)
+        (preserve_value_facts || kinds.size > 1 || facts.size > 1) && !facts.empty? ? facts : nil)
     end
 
     # Class objects and instances can share a carrier. Use the selected
@@ -82623,7 +82635,7 @@ module Adamas::HIR
         unless facts.empty?
           kinds = facts.map(&.[1]).uniq
           SourceCallArgument.new(enum_tracked_type(ctx, value), kinds == [true], nil,
-            kinds.size > 1 ? facts : nil)
+            facts.size > 1 ? facts : nil)
         end
       end
       slots.any? { |facts| !facts.nil? } ? slots : nil
@@ -82672,6 +82684,23 @@ module Adamas::HIR
       return nil if source.empty? || source == "_"
       pattern = build_source_block_result_pattern(source, context, formals, annotation_type_bindings(context))
       return nil unless pattern.valid
+      # A static type object for a union uses the union's ordinary TypeRef as
+      # its carrier. Retain that identity only when the formal itself names
+      # the whole union class object. A union of scalar metaclass restrictions
+      # has the same ABI carrier, but requires a union of scalar class values.
+      if argument.type_literal && pattern.kind == SourceBlockResultPattern::Kind::Concrete &&
+         source_block_result_type_literal_pattern?(pattern) && pattern.type_ref == actual
+        return true
+      end
+      if argument.type_literal && argument.value_facts.nil? && source_block_result_union_ref?(actual) &&
+         pattern.kind == SourceBlockResultPattern::Kind::Union &&
+         pattern.children.all? { |child| source_block_result_type_literal_pattern?(child) }
+        # A single whole-union type object is not evidence that the runtime
+        # value is one of the scalar metaclasses listed by this formal. A
+        # dynamic class union carries per-arm source facts and is checked arm
+        # by arm above; without those facts, fail closed on the shape mismatch.
+        return false
+      end
       if source_block_result_module_restriction_key(pattern)
         # Module restrictions need the typed source Include/Extend graph for
         # both value kinds. Checking only class literals leaves an ordinary
@@ -99893,7 +99922,7 @@ module Adamas::HIR
           # name that is not registered until monomorphized; it is still a type.
           # Void is predefined by the compiler without a source declaration;
           # `T.to_s` in `Pointer(Void)#to_s` reads it as a value.
-          if type_name_exists?(resolved) || generic_template_instance_name?(resolved) ||
+          if type_name_exists?(resolved) || union_type_name?(resolved) || generic_template_instance_name?(resolved) ||
              resolved == "Void"
             return lower_type_literal_from_name(ctx, resolved)
           end
@@ -134196,6 +134225,17 @@ module Adamas::HIR
       union_arguments = [] of UnionCallArgument
       args.each_with_index do |arg, index|
         next unless (type = arg_types[index]?) && type != TypeRef::VOID && is_union_type?(type)
+        # Static type-object producers carry the source-level type object for
+        # their whole semantic union. Its union TypeRef is not a runtime tagged
+        # union of class objects, so splitting it here would call scalar
+        # metaclass overloads and bypass strict matching against the complete
+        # type. A runtime `.class` value remains eligible for tagged dispatch.
+        if identity = ctx.runtime_type_identity?(arg)
+          if ctx.type_literal?(arg) && identity.semantic_type == type &&
+             (identity.origin.typeof? || identity.origin.explicit_type_literal?)
+            next
+          end
+        end
         next unless desc = @module.get_type_descriptor(type)
         names = split_union_type_name(desc.name)
         next if names.size < 2

@@ -196,6 +196,11 @@ class Adamas::HIR::AstToHir
     # Parse that target with the same rules as an explicit source restriction;
     # treating NamedTuple(...), for example, as a nominal leaf loses its fields
     # and rejects an otherwise resolved applied owner's callback result.
+    # A `.class`/`.metaclass` suffix changes the source shape: `Choice.class`
+    # denotes one class object even when Choice aliases a union. Keep it as a
+    # concrete literal restriction instead of expanding its carrier union into
+    # a union of ordinary instance restrictions.
+    source_type_literal = source.ends_with?(".class") || source.ends_with?(".metaclass")
     expanded = normalize_declared_type_name(source, owner, specialize_bare_generics: false)
     expanded = resolve_type_alias_chain(expanded, preserve_abstract_int: true)
     if materializable_unknown_named_type?(expanded) && !proc_literal_source_type_identity?(expanded)
@@ -211,7 +216,7 @@ class Adamas::HIR::AstToHir
       end
     end
     expanded = strip_fully_grouped_type_name(normalize_tuple_literal_type_name(expanded.strip))
-    if expanded != source && source_block_result_structural_source?(expanded)
+    if !source_type_literal && expanded != source && source_block_result_structural_source?(expanded)
       alias_key = "alias:#{source}"
       return invalid_source_block_result_pattern(source) if active_bindings.includes?(alias_key)
       next_active = active_bindings.dup
@@ -349,6 +354,22 @@ class Adamas::HIR::AstToHir
     resolved = normalize_declared_type_name(name, owner, specialize_bare_generics: false)
     resolved = resolve_type_alias_chain(resolved).strip
     return false if resolved.empty?
+    source_block_result_literal_base_exists?(resolved)
+  rescue
+    false
+  end
+
+  private def source_block_result_literal_base_exists?(source : String) : Bool
+    name = strip_fully_grouped_type_name(source.strip)
+    return false if name.empty?
+    if has_top_level_union_separator?(name)
+      return split_union_type_name(name).all? do |part|
+        source_block_result_literal_base_exists?(part)
+      end
+    end
+    resolved = resolve_type_alias_chain(name).strip
+    return false if resolved.empty?
+    return source_block_result_literal_base_exists?(resolved) if has_top_level_union_separator?(resolved)
     proc_literal_source_type_identity?(resolved)
   rescue
     false
