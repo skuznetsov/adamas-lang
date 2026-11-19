@@ -27792,3 +27792,27 @@ changes. No stdlib edits.
 
 - [x] Require three fresh, nonempty HIR, MIR, and LLVM artifacts from the same invocation of `scripts/emit_bootstrap_ir.sh`. The regression seeds stale outputs, interrupts emission after HIR, and checks the compiler arguments and prefix lock.
 - [x] Compile `regression_tests/bootstrap_semantic_corpus.cr` with its original empty Proc and explicit block. The forwarded Proc regression checks stock Crystal syntax and native output. The corpus now emits all three IR files.
+
+## Regressions confirmed while integrating historical worktrees
+
+- [ ] Restore tuple-union iteration and predicate results. The two fixtures
+  from `89f013d5` are `path_tuple_union_predicate_repro.cr` and
+  `tuple_union_each_semantics_repro.cr`. Crystal 1.22.3 produces all 14
+  and 12 expected lines respectively. At `108453d8` the first Adamas
+  compilation stops on a `Void` result for `Tuple(Char)#any?`. The second
+  reports two definitions for `Tuple#each$block`. Check the selected source
+  identity for each tuple variant before combining the old and current fixes.
+- [ ] Preserve the printed type of an `xs.each_with_index` local in an
+  `each` block nested inside a call to a yielding wrapper. In
+  `inline_yield_fallback_force_lower_repro.sh` (retained in the
+  `claude_wt_gpt_review` and `claude_wt_one_owner` worktrees), Crystal 1.22.3 prints the
+  concrete iterator name twice, followed by two counts of 2. At `108453d8`
+  Adamas prints two empty names and both counts on bundled 1.18.2 and
+  installed 1.22.3. All three programs exit zero. Check stderr bytes and
+  process status together.
+- [ ] Reject `:key.to_s(1, 2)` at the source call. Stock Crystal reports
+  an argument count of 2 when 0 or 1 is allowed. At `108453d8` Adamas
+  emits a binary with an abort stub for the two-argument method. An
+  ordinary user-defined zero-argument method called with two arguments
+  is already rejected. Keep that negative control when tracing the source
+  and primitive method paths.
