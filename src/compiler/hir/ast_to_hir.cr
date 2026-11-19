@@ -61022,6 +61022,64 @@ module Adamas::HIR
       end
     end
 
+    # Receiver repair may keep `current` instead of `corrected` only when both
+    # name the same owner method, the declaration has an untyped regular
+    # formal, and `current` is that method keyed over the call's own ABI types
+    # with some actuals spelled by source kind (`T.class`). The two symbols
+    # then differ only by source facts that TypeRefs cannot carry.
+    private def receiver_repair_keeps_source_kind_target?(
+      current : String,
+      corrected : String,
+      arg_types : Array(TypeRef),
+      has_block_call : Bool,
+    ) : Bool
+      return false if has_block_call
+      base = strip_type_suffix(current)
+      return false unless base == strip_type_suffix(corrected)
+      suffix_start = base.bytesize + 1
+      return false unless current.bytesize > suffix_start && current.byte_at(base.bytesize) == '$'.ord.to_u8
+      suffix = current.byte_slice(suffix_start, current.bytesize - suffix_start)
+      return false unless source_kind_suffix_over_arg_types?(suffix, arg_types)
+      declaration = @function_defs[current]? || @function_defs[corrected]? ||
+                    lookup_function_def_for_call(base, arg_types.size, false, arg_types).try(&.[1])
+      !declaration.nil? && def_has_untyped_regular_param?(declaration)
+    end
+
+    # True when `suffix` is exactly the mangled suffix of `arg_types` with at
+    # least one component spelled as its type-literal source name.
+    private def source_kind_suffix_over_arg_types?(suffix : String, arg_types : Array(TypeRef)) : Bool
+      position = 0
+      literal_seen = false
+      first = true
+      arg_types.each do |arg_type|
+        next if arg_type == TypeRef::VOID
+        unless first
+          return false unless suffix.byte_at?(position) == '_'.ord.to_u8
+          position += 1
+        end
+        first = false
+        literal_name = proc_source_type_name(arg_type, true)
+        instance_name = type_name_for_mangling(arg_type)
+        if source_suffix_component_at?(suffix, position, literal_name)
+          position += literal_name.bytesize
+          literal_seen = true
+        elsif source_suffix_component_at?(suffix, position, instance_name)
+          position += instance_name.bytesize
+        else
+          return false
+        end
+      end
+      literal_seen && position == suffix.bytesize
+    end
+
+    private def source_suffix_component_at?(suffix : String, position : Int32, component : String) : Bool
+      return false if component.empty?
+      finish = position + component.bytesize
+      return false if finish > suffix.bytesize
+      return false unless suffix.to_slice[position, component.bytesize] == component.to_slice
+      finish == suffix.bytesize || suffix.byte_at(finish) == '_'.ord.to_u8
+    end
+
     private def receiver_value_type_literal?(
       func : Function,
       receiver : ValueId,
@@ -62934,6 +62992,15 @@ module Adamas::HIR
             # the exact callback contract its trailing Proc was materialized for.
             # Re-resolution can find only `T`; rewriting to it drops that contract.
             if raw_callback_abi_for(method_name_text) && method_name_text.starts_with?("#{corrected_name}__rawcb_")
+              corrected_name = method_name_text
+            end
+            # A type-literal actual of an untyped formal is keyed by its source
+            # kind (`IO#<<$Int32.class`) over the same ABI TypeRef an instance
+            # actual uses. Re-resolution sees only TypeRefs and would rebind the
+            # call to the instance body (`IO#<<$Int32`), so keep a symbol of the
+            # same untyped method keyed exactly over the call's ABI types.
+            if corrected_name != method_name_text &&
+               receiver_repair_keeps_source_kind_target?(method_name_text, corrected_name, arg_types, has_block_call)
               corrected_name = method_name_text
             end
 
@@ -102166,6 +102233,7 @@ module Adamas::HIR
         primary_mangled_name = mangle_function_name(base_method_name, [right_type])
         # Debug: log the resolution attempt
         method_name = resolve_method_call(ctx, left_id, "<<", [right_type], false)
+        right_literal_flags : Array(Bool)? = nil
         # Convert type-visible values to String when used as << arguments
         # (e.g., io << self.class). RuntimeTypeIdentity is the authoritative
         # source; dot_class_literal? remains only as a legacy compatibility shim.
@@ -102185,11 +102253,26 @@ module Adamas::HIR
             primary_mangled_name = mangle_function_name(base_method_name, [right_type])
             method_name = resolve_method_call(ctx, left_id, "<<", [right_type], false)
           end
+        elsif ctx.type_literal?(right_id) && right_type != TypeRef::VOID &&
+              (literal_entry = lookup_function_def_for_call(method_name, 1, false, [right_type])) &&
+              def_has_untyped_regular_param?(literal_entry[1])
+          # A type object and its instances share an ABI TypeRef. lower_call
+          # keeps the source kind of an untyped formal in the callsite symbol
+          # and literal flags; this operator path must do the same, or
+          # `io << Int32` binds `IO#<<$Int32` and prints the instance carrier.
+          right_literal_names = [proc_source_type_name(right_type, true)] of String?
+          right_literal_flags = [true]
+          primary_mangled_name = mangle_function_name(
+            base_method_name, [right_type], source_restriction_names: right_literal_names,
+          )
+          method_name = mangle_function_name(
+            strip_type_suffix(method_name), [right_type], source_restriction_names: right_literal_names,
+          )
         end
 
-        remember_callsite_arg_types(primary_mangled_name, [right_type])
+        remember_callsite_arg_types(primary_mangled_name, [right_type], right_literal_flags)
         if method_name != primary_mangled_name
-          remember_callsite_arg_types(method_name, [right_type])
+          remember_callsite_arg_types(method_name, [right_type], right_literal_flags)
         end
         callsite_label = nil
         if DebugHooks::ENABLED
