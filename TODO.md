@@ -35,6 +35,17 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-19 — Preserve positional overload identity while an argument is pending
+- [x] Keep the selected declaration and its arena when an unresolved argument
+  would be omitted from a type suffix. The HIR regression materializes the
+  two-argument sibling first and verifies that the sparse three-argument call
+  still refers to its own declaration. It fails on the preceding compiler.
+- [x] Reduced prelude traces retain the three-argument
+  `Hash#entry_matches?` declaration and specialize it after the key hash
+  resolves to `UInt32`.
+- [ ] Fresh S1-to-S2 exits 1 on both installed 1.22.3 and bundled 1.18.2
+  at the existing `CLI#run_check` result dependency. Neither run produces S2.
+
 ### 2026-11-19 — Preserve the operand for numeric property setter resolution
 - [x] Keep the source expression and its arena through assignment lowering.
   When ordinary overload resolution has no match, apply the common numeric

@@ -59086,6 +59086,10 @@ module Adamas::HIR
     ) : String?
       return nil if base_method_name.empty?
       return nil if arg_types.empty?
+      # A sparse call vector cannot replace the selected arity registration.
+      # Type suffixes omit unresolved slots and could identify another overload.
+      return nil if method_suffix(resolved_name) == "arity#{arg_types.size}" &&
+                    arg_types.any? { |type| type == TypeRef::VOID }
       return nil if arg_types.all? { |t| t == TypeRef::VOID }
 
       # The selected overload owns the source restrictions. A sibling retained
@@ -127693,7 +127697,19 @@ module Adamas::HIR
           base_method_name = strip_type_suffix(lookup_name)
         end
         if entry_name.includes?('$')
-          if selected_call_entry_origin && !has_block_call && !has_splat && !has_named_args &&
+          if preserve_requested_value_owner && !has_block_call && !has_splat && !has_named_args &&
+             has_unknown_arg_types && method_suffix(entry_name) == "arity#{arg_types.size}"
+            # Preserve the selected source while the producer of an argument
+            # is still pending. Remangling would drop the missing slot.
+            reowned_name = specialize_method_owner_name(entry_name, method_owner(base_method_name))
+            reowned_def = @function_defs[reowned_name]?
+            reowned_arena = @function_def_arenas[reowned_name]?
+            mangled_method_name = if reowned_def.same?(entry_def) && reowned_arena && reowned_arena.same?(selected_call_entry_arena)
+                                    reowned_name
+                                  else
+                                    entry_name
+                                  end
+          elsif selected_call_entry_origin && !has_block_call && !has_splat && !has_named_args &&
              m3e_input.try(&.source_argument_facts).try(&.any? { |arg| arg.try(&.type_literal) })
             # The source include registered the complete positional identity.
             # The generic remangling branches below only have carrier types.
