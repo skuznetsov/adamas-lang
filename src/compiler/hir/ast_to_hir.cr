@@ -2158,7 +2158,8 @@ module Adamas::HIR
     private record RawCallbackSourceBinding,
       source_def : Adamas::Compiler::Frontend::DefNode,
       source_arena : Adamas::Compiler::Frontend::ArenaLike,
-      callsite : CallsiteArgs
+      callsite : CallsiteArgs,
+      method_macro_scope : MethodYieldMacroScope? = nil
 
     private record ForceLowerReplayCallsite,
       source_def : Adamas::Compiler::Frontend::DefNode,
@@ -9089,7 +9090,8 @@ module Adamas::HIR
       kind : SourceYieldContextKind,
       source_def : Adamas::Compiler::Frontend::DefNode?,
       source_arena : Adamas::Compiler::Frontend::ArenaLike?,
-      wildcard_input_contract : TypeDescriptor? = nil
+      wildcard_input_contract : TypeDescriptor? = nil,
+      method_macro_scope : MethodYieldMacroScope? = nil
 
     class BlockOwner
       getter class_name : String?
@@ -9127,10 +9129,12 @@ module Adamas::HIR
     private def method_source_yield_context(
       source_def : Adamas::Compiler::Frontend::DefNode,
       preferred_arena : Adamas::Compiler::Frontend::ArenaLike?,
+      method_macro_scope : MethodYieldMacroScope? = nil,
     ) : SourceYieldContext
       source_arena = exact_source_arena_for_yield_owner(source_def, preferred_arena) ||
                      raise LoweringError.new("cannot establish exact source arena for yield owner", source_def)
-      SourceYieldContext.new(SourceYieldContextKind::Method, source_def, source_arena)
+      scope = matching_method_macro_scope(method_macro_scope, source_def, source_arena)
+      SourceYieldContext.new(SourceYieldContextKind::Method, source_def, source_arena, method_macro_scope: scope)
     end
 
     private def captured_block_source_yield_context(
@@ -9318,6 +9322,89 @@ module Adamas::HIR
     @macro_generated_def_sources : Hash({UInt64, UInt64}, String)
     # Exact source buffer for each parameter whose raw annotation slice was lost.
     @macro_generated_parameter_annotation_sources : Hash({UInt64, UInt64}, String)
+    # A parsed Def can be shared by many calls and receiver specializations.
+    # Keep the AST for a named yield macro with the selected invocation.
+    private record MethodYieldCallKey,
+      caller_arena : UInt64,
+      call_id : UInt64,
+      parent : Int32?,
+      caller_function : String?,
+      caller_bindings : Hash(String, String)?,
+      inline_blocks : Array(UInt64)?,
+      declaration_arena : UInt64,
+      declaration_id : UInt64,
+      receiver : TypeRef,
+      owner : String?,
+      argument_types : Array(TypeRef)?
+    private alias MethodMacroInvocationKey = {UInt64, Int32, UInt64, UInt64}
+
+    private record MethodMacroExpansion,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+      expression : ExprId
+
+    class MethodYieldMacroScope
+      getter definition : Adamas::Compiler::Frontend::DefNode
+      getter arena : Adamas::Compiler::Frontend::ArenaLike
+      getter index : Int32
+      getter parent : MethodYieldMacroScope?
+      getter expansions = {} of MethodMacroInvocationKey => MethodMacroExpansion
+      getter expansion_required : Bool = false
+
+      def initialize(@definition, @arena, @index, @parent)
+      end
+
+      def require_expansion
+        return if @expansion_required
+        @expansion_required = true
+        @parent.try(&.require_expansion)
+      end
+    end
+
+    private class MethodYieldCall
+      getter node : Adamas::Compiler::Frontend::CallNode
+      getter arena : Adamas::Compiler::Frontend::ArenaLike
+      getter receiver : TypeRef
+      getter argument_types : Array(TypeRef)?
+      property scope : MethodYieldMacroScope? = nil
+
+      getter parent : MethodYieldMacroScope?
+      getter caller_function : String?
+      getter caller_bindings : Hash(String, String)?
+      getter inline_blocks : Array(UInt64)?
+
+      def initialize(@node, @arena, @receiver, argument_types : Array(TypeRef)?, @parent, @caller_function, @caller_bindings, @inline_blocks)
+        @argument_types = argument_types.try(&.dup)
+      end
+    end
+
+    @method_yield_macro_scopes = {} of MethodYieldCallKey => MethodYieldMacroScope
+
+    private def method_yield_call(node : Adamas::Compiler::Frontend::CallNode, arena : Adamas::Compiler::Frontend::ArenaLike,
+                                  receiver : TypeRef, argument_types : Array(TypeRef)?,
+                                  caller_function : String? = nil) : MethodYieldCall
+      parent = @source_yield_context.method_macro_scope
+      caller_bindings = @type_param_map.dup unless parent
+      inline_blocks = @inline_yield_block_stack.map(&.object_id) unless parent
+      MethodYieldCall.new(node, arena, receiver, argument_types, parent, parent ? nil : caller_function, caller_bindings, inline_blocks)
+    end
+
+    private def retain_method_yield_macro_scope(
+      call : MethodYieldCall,
+      definition : Adamas::Compiler::Frontend::DefNode,
+      definition_arena : Adamas::Compiler::Frontend::ArenaLike,
+      self_type_name : String?,
+    ) : MethodYieldMacroScope
+      # A block result inferred later is not part of the source invocation.
+      key = MethodYieldCallKey.new(
+        arena_map_key(call.arena), call.node.object_id, call.parent.try(&.index), call.caller_function,
+        call.caller_bindings, call.inline_blocks,
+        arena_map_key(definition_arena), definition.object_id, call.receiver, self_type_name, call.argument_types,
+      )
+      @method_yield_macro_scopes[key] ||= MethodYieldMacroScope.new(
+        definition, definition_arena, @method_yield_macro_scopes.size, call.parent,
+      )
+    end
+
     # Exact buffers for nodes parsed by macro expansion, partitioned by arena.
     @macro_generated_sources_by_arena : Hash(UInt64, {Adamas::Compiler::Frontend::ArenaLike, Hash(Int32, String)})
     @link_libraries : Array(String)
@@ -10485,6 +10572,7 @@ module Adamas::HIR
       source_def : Adamas::Compiler::Frontend::DefNode,
       source_arena : Adamas::Compiler::Frontend::ArenaLike,
       callsite : CallsiteArgs,
+      method_macro_scope : MethodYieldMacroScope? = nil,
     ) : Bool
       binding = raw_callback_source_binding_for(name)
       return false unless binding
@@ -10494,7 +10582,8 @@ module Adamas::HIR
         prior.types == callsite.types && prior.literals == callsite.literals &&
         prior.enum_names == callsite.enum_names && prior.has_block == callsite.has_block &&
         prior.has_named_args == callsite.has_named_args &&
-        prior.named_arg_names == callsite.named_arg_names
+        prior.named_arg_names == callsite.named_arg_names &&
+        binding.method_macro_scope == method_macro_scope
     end
 
     private def bind_raw_callback_source(
@@ -10502,6 +10591,7 @@ module Adamas::HIR
       source_def : Adamas::Compiler::Frontend::DefNode,
       source_arena : Adamas::Compiler::Frontend::ArenaLike,
       callsite : CallsiteArgs,
+      method_macro_scope : MethodYieldMacroScope? = nil,
     ) : Nil
       unless callsite.has_block
         raise LoweringError.new("raw callback source call has no block for #{name}", source_def)
@@ -10514,7 +10604,7 @@ module Adamas::HIR
       set_function_def_entry(name, source_def, false)
       set_function_def_arena(name, source_arena)
       @raw_callback_source_bindings[name] = RawCallbackSourceBinding.new(
-        source_def, source_arena, saved_callsite,
+        source_def, source_arena, saved_callsite, method_macro_scope,
       )
       remember_callsite_arg_types(
         name, saved_callsite.types, saved_callsite.literals, saved_callsite.enum_names,
@@ -10556,13 +10646,19 @@ module Adamas::HIR
       source_arena : Adamas::Compiler::Frontend::ArenaLike,
       call_arg_types : Array(TypeRef),
       callsite_args : CallsiteArgs? = nil,
+      method_macro_scope : MethodYieldMacroScope? = nil,
     ) : String
       source_callsite = callsite_args || raw_callback_callsite(call_arg_types)
       unless source_callsite.types == call_arg_types && source_callsite.has_block
         raise LoweringError.new("inconsistent raw callback callshape for #{target_name}", source_def)
       end
       shape = contract.param_types.map { |type| type.id }.join("_")
-      chosen_name = "#{target_name}__rawcb_#{shape}_r#{contract.return_type.id}"
+      method_macro_scope = matching_method_macro_scope(method_macro_scope, source_def, source_arena)
+      alias_name = "#{target_name}__rawcb_#{shape}_r#{contract.return_type.id}"
+      if method_macro_scope
+        alias_name = "#{alias_name}_source#{method_macro_scope.index}"
+      end
+      chosen_name = alias_name
       serial = 0
       while true
         if prior = @raw_callback_abis[chosen_name]?
@@ -10580,7 +10676,7 @@ module Adamas::HIR
                                   end
           if prior.same_shape?(contract) && prior.proc_type == contract.proc_type &&
              same_dependent_source &&
-             raw_callback_source_binding_matches?(chosen_name, source_def, source_arena, source_callsite) &&
+             raw_callback_source_binding_matches?(chosen_name, source_def, source_arena, source_callsite, method_macro_scope) &&
              bound_def && same_def_node?(bound_def, source_def) &&
              bound_arena && bound_arena.object_id == source_arena.object_id
             return chosen_name
@@ -10589,11 +10685,11 @@ module Adamas::HIR
           break
         end
         serial += 1
-        chosen_name = "#{target_name}__rawcb_#{shape}_r#{contract.return_type.id}_v#{serial}"
+        chosen_name = "#{alias_name}_v#{serial}"
       end
 
       @raw_callback_abis[chosen_name] = contract
-      bind_raw_callback_source(chosen_name, source_def, source_arena, source_callsite)
+      bind_raw_callback_source(chosen_name, source_def, source_arena, source_callsite, method_macro_scope)
       if env_get("DEBUG_RAW_CALLBACK_ABI")
         params = contract.param_types.map { |type| get_type_name_from_ref(type) }.join(",")
         STDERR.puts "[RAW_CALLBACK_ABI] late_target=#{chosen_name} params=#{params} return=#{get_type_name_from_ref(contract.return_type)} proc=#{contract.proc_type.id}"
@@ -10669,6 +10765,7 @@ module Adamas::HIR
       block_param_types : Array(TypeRef)?,
       block_return_name : String?,
       callsite_args : CallsiteArgs? = nil,
+      method_macro_scope : MethodYieldMacroScope? = nil,
     ) : String?
       source_callsite = callsite_args || raw_callback_callsite(call_arg_types)
       unless source_callsite.types == call_arg_types && source_callsite.has_block
@@ -10704,6 +10801,15 @@ module Adamas::HIR
         TypeDescriptor.new(TypeKind::Proc, "Proc", proc_params + [return_type])
       )
       contract = RawCallbackAbi.new(proc_params, return_type, proc_type)
+      method_macro_scope = matching_method_macro_scope(method_macro_scope, source_def, source_arena)
+
+      # Identical callback ABIs can still require different expanded source.
+      # Allocate an exact callback target instead of publishing on a shape alias.
+      if method_macro_scope
+        return register_raw_callback_contract_target(
+          target_name, contract, source_def, source_arena, call_arg_types, source_callsite, method_macro_scope,
+        )
+      end
 
       chosen_name = target_name
       if existing = @raw_callback_abis[target_name]?
@@ -10735,7 +10841,7 @@ module Adamas::HIR
 
       unless prior = @raw_callback_abis[chosen_name]?
         @raw_callback_abis[chosen_name] = contract
-        bind_raw_callback_source(chosen_name, source_def, source_arena, source_callsite)
+        bind_raw_callback_source(chosen_name, source_def, source_arena, source_callsite, method_macro_scope)
       end
       if env_get("DEBUG_RAW_CALLBACK_ABI")
         params = contract.param_types.map { |type| get_type_name_from_ref(type) }.join(",")
@@ -10825,34 +10931,67 @@ module Adamas::HIR
       return false if expr_id.null_ptr? || expr_id.invalid?
 
       node = unwrap_visibility_member_in_arena(arena[expr_id], arena)
-      macro_call_args = [] of ExprId
-      macro_named_args : Array(Adamas::Compiler::Frontend::NamedArgument)? = nil
-      method_name = case node
-                    when Adamas::Compiler::Frontend::IdentifierNode
-                      safe_slice_to_string(node.name) || ""
-                    when Adamas::Compiler::Frontend::CallNode
-                      macro_call_args = node.args
-                      macro_named_args = node.named_args
-                      callee = arena[node.callee]
-                      if callee.is_a?(Adamas::Compiler::Frontend::IdentifierNode)
-                        safe_slice_to_string(callee.name) || ""
-                      else
-                        ""
-                      end
-                    when Adamas::Compiler::Frontend::BeginNode,
-                         Adamas::Compiler::Frontend::BlockNode
-                      return node.body.any? { |child_id| expr_calls_yielding_macro?(child_id, arena, owner, depth + 1) }
-                    else
-                      ""
-                    end
-      return false if method_name.empty?
+      case node
+      when Adamas::Compiler::Frontend::BeginNode,
+           Adamas::Compiler::Frontend::BlockNode
+        node.body.any? { |child_id| expr_calls_yielding_macro?(child_id, arena, owner, depth + 1) }
+      else
+        with_arena(arena) { !lookup_source_yield_macro(node, owner).nil? }
+      end
+    end
 
-      lookup = lookup_macro_entry_with_inheritance(
-        method_name, owner, call_args: macro_call_args,
-        named_args: macro_named_args, call_arena: arena
-      )
-      return false unless lookup
-      macro_def, macro_arena = lookup[0]
+    private def lookup_source_yield_macro(node : AstNode, owner : String?)
+      args = [] of ExprId
+      named_args : Array(Adamas::Compiler::Frontend::NamedArgument)? = nil
+      block : ExprId? = nil
+      explicit_owner : String? = nil
+      name = case node
+             when Adamas::Compiler::Frontend::IdentifierNode
+               identifier_name_text(node, @arena)
+             when Adamas::Compiler::Frontend::CallNode
+               callee = @arena[node.callee]
+               args, block = extract_macro_block_from_args(node.args, node.block)
+               named_args = node.named_args
+               case callee
+               when Adamas::Compiler::Frontend::IdentifierNode
+                 text = identifier_name_text(callee, @arena)
+                 if text.includes?('.')
+                   receiver = method_owner(text) || return nil
+                   explicit_owner = resolve_path_string_in_context(receiver)
+                   method_short_from_name(text) || return nil
+                 else
+                   text
+                 end
+               when Adamas::Compiler::Frontend::MemberAccessNode
+                 explicit_owner = infer_type_literal_name_from_expr(callee.object) || return nil
+                 member_access_name_text(callee)
+               else
+                 return nil
+               end
+             else
+               return nil
+             end
+      return nil if name.empty?
+      lookup = if explicit_owner
+                 lookup_macro_entry_with_inheritance(name, explicit_owner, allow_global: false, call_args: args, named_args: named_args, call_arena: @arena)
+               elsif owner
+                 lookup_macro_entry_with_inheritance(name, owner, call_args: args, named_args: named_args, call_arena: @arena)
+               else
+                 lookup_macro_entry(name, nil, call_args: args, named_args: named_args, call_arena: @arena) ||
+                   lookup_macro_entry(name, "Object", call_args: args, named_args: named_args, call_arena: @arena)
+               end
+      return nil unless lookup
+      entry, key = lookup
+      macro_def, macro_arena = entry
+      return nil unless macro_definition_contains_yield?(macro_def, macro_arena)
+
+      {macro_def, macro_arena, args, named_args, block, key, explicit_owner}
+    end
+
+    private def macro_definition_contains_yield?(
+      macro_def : Adamas::Compiler::Frontend::MacroDefNode,
+      macro_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : Bool
       macro_body = macro_arena[macro_def.body]
       if macro_body.is_a?(Adamas::Compiler::Frontend::MacroLiteralNode)
         macro_literal_contains_yield?(macro_body, macro_arena)
@@ -19511,6 +19650,58 @@ module Adamas::HIR
       end
     end
 
+    private def matching_method_macro_scope(
+      scope : MethodYieldMacroScope?,
+      definition : Adamas::Compiler::Frontend::DefNode,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : MethodYieldMacroScope?
+      return nil unless scope && scope.arena.same?(arena)
+      same_def_node?(scope.definition, definition) ? scope : nil
+    end
+
+    private def macro_expansion_key(
+      source_id : ExprId,
+      macro_def : Adamas::Compiler::Frontend::MacroDefNode,
+      macro_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : MethodMacroInvocationKey
+      {arena_map_key(@arena), source_id.index, arena_map_key(macro_arena), macro_def.object_id}
+    end
+
+    # Type queries and HIR consume the same parsed expression in its arena.
+    # Lowering must not rerun compile-time effects, including on a body retry.
+    private def expand_method_yield_macro(
+      scope : MethodYieldMacroScope,
+      source_id : ExprId,
+      macro_def : Adamas::Compiler::Frontend::MacroDefNode,
+      macro_arena : Adamas::Compiler::Frontend::ArenaLike,
+      args : Array(ExprId),
+      named_args : Array(Adamas::Compiler::Frontend::NamedArgument)?,
+      block_id : ExprId?,
+      macro_key : String,
+      explicit_owner : String?,
+    ) : MethodMacroExpansion
+      scope.require_expansion
+      key = macro_expansion_key(source_id, macro_def, macro_arena)
+      scope.expansions[key] ||= begin
+        expression = if explicit_owner
+                       expand_macro_expr_for_owner(macro_def, macro_arena, args, named_args, block_id, macro_key, explicit_owner)
+                     else
+                       expand_macro_expr(macro_def, macro_arena, args, named_args, block_id, macro_key)
+                     end
+        MethodMacroExpansion.new(macro_arena, expression)
+      end
+    end
+
+    private def method_macro_expansion_for(
+      source_id : ExprId,
+      macro_def : Adamas::Compiler::Frontend::MacroDefNode,
+      macro_arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : MethodMacroExpansion?
+      return nil if source_id.invalid?
+      scope = @source_yield_context.method_macro_scope
+      scope.try(&.expansions[macro_expansion_key(source_id, macro_def, macro_arena)]?)
+    end
+
     private def expand_macro(
       ctx : LoweringContext,
       macro_def : Adamas::Compiler::Frontend::MacroDefNode,
@@ -19519,7 +19710,11 @@ module Adamas::HIR
       named_args : Array(Adamas::Compiler::Frontend::NamedArgument)?,
       block_id : ExprId?,
       macro_key : String,
+      source_id : ExprId = ExprId.new(-1),
     ) : ValueId
+      if expansion = method_macro_expansion_for(source_id, macro_def, macro_arena)
+        return lower_expanded_macro_result(ctx, expansion.arena, expansion.expression)
+      end
       expanded_id = expand_macro_expr(macro_def, macro_arena, args, named_args, block_id, macro_key)
       lower_expanded_macro_result(ctx, macro_arena, expanded_id)
     end
@@ -19585,11 +19780,12 @@ module Adamas::HIR
       block_id : ExprId?,
       macro_key : String,
       owner_name : String,
+      source_id : ExprId = ExprId.new(-1),
     ) : ValueId
-      expanded_id = ExprId.new(-1)
-      with_macro_owner_context(owner_name) do
-        expanded_id = expand_macro_expr(macro_def, macro_arena, args, named_args, block_id, macro_key)
+      if expansion = method_macro_expansion_for(source_id, macro_def, macro_arena)
+        return lower_expanded_macro_result(ctx, expansion.arena, expansion.expression)
       end
+      expanded_id = expand_macro_expr_for_owner(macro_def, macro_arena, args, named_args, block_id, macro_key, owner_name)
       lower_expanded_macro_result(ctx, macro_arena, expanded_id)
     end
 
@@ -33573,6 +33769,11 @@ module Adamas::HIR
               end
             end
           end
+          if !self_type_name && !block_pass_expr && (literal_block = block_expr) && @source_yield_context.method_macro_scope
+            if retained_result = infer_nested_source_macro_block_result(method_name, expr_node, literal_block)
+              return retained_result
+            end
+          end
           # Top-level bare call: the base-name caches hold ONE representative
           # per name, so for a def whose return depends on its argument types
           # (`def wrap(x); x; end`) they answer with whichever specialization
@@ -34631,6 +34832,44 @@ module Adamas::HIR
         selected, receiver_name, call, caller_self_type_name, call_count,
         source_call_types, source_named_types,
       )
+    end
+
+    private def infer_nested_source_macro_block_result(
+      name : String,
+      node : Adamas::Compiler::Frontend::CallNode,
+      block : ExprId,
+    ) : TypeRef?
+      return nil if node.named_args || !node_for_expr(block).is_a?(Adamas::Compiler::Frontend::BlockNode)
+      return nil if node.args.any? do |arg|
+        node_for_expr(arg).is_a?(Adamas::Compiler::Frontend::SplatNode)
+      end
+      arg_types = infer_arg_types_for_call(node.args, nil)
+      return nil if arg_types.includes?(TypeRef::VOID)
+      selected = lookup_function_def_for_call(name, arg_types.size, true, arg_types, false, false) || return nil
+      definition = selected[1]
+      definition_arena = registered_arena_for_def(definition) || return nil
+      body = definition.body || return nil
+      return nil unless body.size == 1 && definition.return_type.nil?
+      return nil if function_param_infos(definition, definition_arena).any? { |param| param.is_block && param.type_annotation }
+      return nil unless with_arena(definition_arena) { lookup_source_yield_macro(definition_arena[body.first], nil) }
+
+      caller = method_yield_call(node, @arena, TypeRef::VOID, arg_types)
+      target = SelectedCallTarget.new(selected[0], definition, definition_arena)
+      inputs = block_param_types_for_call(selected[0], name, nil, arg_types, false, node, @arena,
+        selected_source_target: target, method_macro_call: caller)
+      scope = caller.scope || return nil
+      # A result inferred from a nested invocation must come from the expansion
+      # that its callback will actually use. Other bodies still need full inference.
+      expansion = scope.expansions.values.first? || return nil
+      return nil unless with_arena(expansion.arena) do
+        flags = RETURN_ORDER_RETURN | RETURN_ORDER_UNKNOWN
+        tail_is_yield_passthrough_expr?(expansion.expression) &&
+          (return_order_flags_for_expr(expansion.expression, expansion.arena) & flags) == 0_u8
+      end
+      output = infer_call_block_return_name(block, nil, node.span, inputs, nil) || return nil
+      return nil unless stable_block_return_type_name(output)
+      result = type_ref_for_name(output)
+      result unless result == TypeRef::VOID
     end
 
     private def infer_arg_types_for_call(args : Array(ExprId), self_type_name : String?) : Array(TypeRef)
@@ -42055,6 +42294,7 @@ module Adamas::HIR
       full_name_override : String? = nil,
       call_has_named_args : Bool = false,
       call_source_binding : SourceCallBinding? = nil,
+      method_macro_scope : MethodYieldMacroScope? = nil,
     )
       previous_source_yield_context = @source_yield_context
       old_enum_value_types = @enum_value_types
@@ -42077,10 +42317,11 @@ module Adamas::HIR
           full_name_override,
           call_has_named_args,
           call_source_binding,
+          method_macro_scope,
         )
       end
       module_declaration_arena = @arena
-      @source_yield_context = method_source_yield_context(node, @arena)
+      @source_yield_context = method_source_yield_context(node, @arena, method_macro_scope)
       method_name = (safe_slice_to_string(node.name) || "")
       is_class_method = if recv = node.receiver
                           class_method_receiver_text?(safe_slice_to_string(recv) || "")
@@ -51561,6 +51802,7 @@ module Adamas::HIR
       super_source_module : String? = nil,
       call_has_named_args : Bool = false,
       call_source_binding : SourceCallBinding? = nil,
+      method_macro_scope : MethodYieldMacroScope? = nil,
     ) : Bool?
       previous_source_yield_context = @source_yield_context
       previous_super_source_module = @current_super_source_module
@@ -51585,10 +51827,11 @@ module Adamas::HIR
           super_source_module,
           call_has_named_args,
           call_source_binding,
+          method_macro_scope,
         )
       end
       @source_yield_context = method_source_yield_context(
-        node, initializer_replay_source.try(&.source_arena) || @arena,
+        node, initializer_replay_source.try(&.source_arena) || @arena, method_macro_scope,
       )
       included_forall_body_method_arena = nil.as(Adamas::Compiler::Frontend::ArenaLike?)
       method_name = forced_method_name.empty? ? (safe_slice_to_string(node.name) || "") : forced_method_name
@@ -80091,6 +80334,7 @@ module Adamas::HIR
       source_inputs : Array(SourceCallArgument)? = nil,
       source_input_bindings : Hash(String, String)? = nil,
       source_binding : SourceCallBinding? = nil,
+      method_macro_call : MethodYieldCall? = nil,
     ) : Array(TypeRef)?
       debug_trace_each = env_get("DEBUG_TRACE_EACH_WITH_INDEX") &&
                          (mangled_method_name.includes?("each_with_index") || base_method_name.includes?("each_with_index"))
@@ -80541,6 +80785,11 @@ module Adamas::HIR
       if debug_block_params
         STDERR.puts "[BLOCK_PARAMS] type_slice=#{type_slice ? (safe_slice_to_string(type_slice) || "") : "nil"} registered_type=#{type_text || "nil"}"
       end
+      if !method_macro_call && @source_yield_context.method_macro_scope &&
+         (call = call_node) && (arena = call_arena) && (call_arg_types.nil? || call_arg_types.none?(&.==(TypeRef::VOID)))
+        method_macro_call = method_yield_call(call, arena, receiver_type_value, call_arg_types)
+      end
+      retained_macro_scope = raw_callback_source_binding_for(resolved_mangled).try(&.method_macro_scope)
       if type_text.nil?
         if inferred = infer_yield_param_types_from_body(
              func_def,
@@ -80551,6 +80800,7 @@ module Adamas::HIR
              call_arg_types_for_infer,
              source_entry_positional_call_binding(resolved_mangled, func_def, call_arg_types,
                call_has_named_args, call_node, call_arena, selection_input),
+             method_macro_call, retained_macro_scope,
            )
           if debug_block_params
             STDERR.puts "[BLOCK_PARAMS] inferred_nil_type=#{inferred.map { |type_ref| get_type_name_from_ref(type_ref) }.join(",")}"
@@ -80586,6 +80836,7 @@ module Adamas::HIR
              call_arg_types_for_infer,
              source_entry_positional_call_binding(resolved_mangled, func_def, call_arg_types,
                call_has_named_args, call_node, call_arena, selection_input),
+             method_macro_call, retained_macro_scope,
            )
           if debug_block_params
             STDERR.puts "[BLOCK_PARAMS] inferred_empty_inputs=#{inferred.map { |type_ref| get_type_name_from_ref(type_ref) }.join(",")}"
@@ -82005,6 +82256,8 @@ module Adamas::HIR
       param_map : Hash(String, String)?,
       call_arg_types : Array(TypeRef)? = nil,
       entry_binding : SourceCallBinding? = nil,
+      method_macro_call : MethodYieldCall? = nil,
+      retained_macro_scope : MethodYieldMacroScope? = nil,
     ) : Array(TypeRef)?
       debug_trace_each = !!(env_get("DEBUG_TRACE_EACH_WITH_INDEX") &&
                             (func_name.includes?("each_with_index") || base_method_name.includes?("each_with_index")))
@@ -82021,6 +82274,7 @@ module Adamas::HIR
       old_names = @current_typeof_local_names
       old_namespace = @current_namespace_override
       owner_override = function_context_from_name(func_name) || function_context_from_name(base_method_name)
+      old_source_yield_context = @source_yield_context
       owner_override = strip_generic_args(owner_override) if owner_override
       local_map = {} of String => TypeRef
       name_map = {} of String => String
@@ -82095,6 +82349,7 @@ module Adamas::HIR
         local_map["self"] = receiver_type
       end
 
+      retained_macro_scope = matching_method_macro_scope(retained_macro_scope, func_def, def_arena)
       @current_def_node = func_def
       @infer_body_context = inference_body_context(body, def_arena, func_def)
       @arena = def_arena
@@ -82150,6 +82405,7 @@ module Adamas::HIR
               name_map,
               debug_trace_each,
               flow_narrowed_args,
+              method_macro_call, retained_macro_scope,
             )
           end
         end
@@ -82161,6 +82417,7 @@ module Adamas::HIR
           name_map,
           debug_trace_each,
           flow_narrowed_args,
+          method_macro_call, retained_macro_scope,
         )
       ensure
         @current_def_node = old_def_node
@@ -82169,6 +82426,7 @@ module Adamas::HIR
         @current_typeof_locals = old_locals
         @current_typeof_local_names = old_names
         @current_namespace_override = old_namespace
+        @source_yield_context = old_source_yield_context
         @arena = old_arena
         # The restored caller locals are a distinct inference context too.
         # Reject cache entries produced while the callee map was installed --
@@ -82186,21 +82444,25 @@ module Adamas::HIR
       name_map : Hash(String, String),
       debug_trace_each : Bool,
       flow_narrowed_args : Set(ExprId)?,
+      method_macro_call : MethodYieldCall?,
+      macro_scope : MethodYieldMacroScope?,
     ) : Array(TypeRef)?
-      merged = if lists.empty?
-                 nil
-               elsif lists.all?(&.empty?)
-                 [] of TypeRef
-               else
-                 compute_yield_types_with_preinferred_locals(
-                   body, lists, self_type_name, local_map, name_map, debug_trace_each, flow_narrowed_args,
-                 )
-               end
-
-      # Method-level macro loops (notably Tuple#reduce) hide their yields from
-      # the AST collector. Use the same expansion as lowering, in the callee's
-      # type context, before falling back to collection element types.
+      definition = @current_def_node
       definition_arena = @arena
+      if definition && (call = method_macro_call) && !lists.empty?
+        # Nested argument inference runs before the caller body is lowered.
+        # Both passes must use the same containing invocation.
+        macro_scope = retain_method_yield_macro_scope(call, definition, definition_arena, self_type_name)
+        @source_yield_context = method_source_yield_context(definition, definition_arena, macro_scope)
+      elsif definition && macro_scope
+        @source_yield_context = method_source_yield_context(definition, definition_arena, macro_scope)
+      end
+      merged = compute_yield_types_with_preinferred_locals(
+        body, lists, self_type_name, local_map, name_map, debug_trace_each, flow_narrowed_args,
+      )
+
+      # Method-level macro control flow and named macro invocations can both
+      # generate yields. Analyze each parsed body in its own arena.
       body.each do |expr_id|
         node = node_for_expr(expr_id)
         next unless node.is_a?(Adamas::Compiler::Frontend::MacroForNode) ||
@@ -82217,45 +82479,121 @@ module Adamas::HIR
         parsed = parse_macro_literal_method_body(expanded)
         next unless parsed
         parsed_arena, parsed_body = parsed
-        inferred = with_arena(parsed_arena) do
-          # ExprIds are arena-local. Collect, preinfer and consume the expanded
-          # arguments here; only TypeRefs may cross back to the definition.
-          bump_infer_type_cache_version
-          expanded_lists = [] of Array(ExprId)
-          collect_yield_arg_lists(parsed_body, expanded_lists)
-          referenced_names = Set(String).new
-          expanded_lists.each do |args|
-            args.each { |arg| collect_proc_body_ident_walk(arg, referenced_names) }
-          end
-          with_arena(definition_arena) do
-            referenced_names.each do |name|
-              next if local_map.has_key?(name)
-              if local_type = infer_local_type_from_body(body, name, self_type_name, definition_arena)
-                next if local_type == TypeRef::VOID
-                local_map[name] = local_type
-                name_map[name] = get_type_name_from_ref(local_type)
-              end
-            end
-          end
-          bump_infer_type_cache_version
-          expanded_flow = Set(ExprId).new
-          collect_flow_narrowed_yield_args(parsed_body, expanded_flow)
-          # Locals the expansion defines (`other_elem0 = ...`) exist only in
-          # the expanded body, so nested lookups must resolve against it.
-          old_body_context = @infer_body_context
-          @infer_body_context = inference_body_context(parsed_body, parsed_arena)
-          begin
-            compute_yield_types_with_preinferred_locals(
-              parsed_body, expanded_lists, self_type_name, local_map, name_map, debug_trace_each, expanded_flow,
-            )
-          ensure
-            @infer_body_context = old_body_context
-          end
+        inferred = infer_yield_types_from_expansion(
+          parsed_arena, parsed_body, definition_arena, body, self_type_name, local_map, name_map, debug_trace_each,
+        )
+        merged = merge_yield_param_types(merged, inferred)
+      end
+
+      return merged unless definition && (method_macro_call || macro_scope)
+      macro_ids = [] of ExprId
+      collect_source_yield_macro_ids(body, self_type_name, local_map, name_map, macro_ids)
+      return merged if macro_ids.empty?
+      if !macro_scope && (call = method_macro_call)
+        macro_scope = retain_method_yield_macro_scope(call, definition, definition_arena, self_type_name)
+        @source_yield_context = method_source_yield_context(definition, definition_arena, macro_scope)
+      end
+      return merged unless macro_scope
+      macro_ids.each do |expr_id|
+        invocation = lookup_source_yield_macro(definition_arena[expr_id], self_type_name)
+        next unless invocation
+        macro_def, macro_arena, args, named_args, block_id, macro_key, explicit_owner = invocation
+        old_class = @current_class
+        @current_class = self_type_name
+        begin
+          expansion = expand_method_yield_macro(
+            macro_scope, expr_id, macro_def, macro_arena, args, named_args, block_id, macro_key, explicit_owner,
+          )
+        ensure
+          @current_class = old_class
         end
-        bump_infer_type_cache_version
+        next if expansion.expression.invalid?
+        inferred = infer_yield_types_from_expansion(
+          expansion.arena, [expansion.expression], definition_arena, body, self_type_name, local_map, name_map, debug_trace_each,
+        )
         merged = merge_yield_param_types(merged, inferred)
       end
       merged
+    ensure
+      if call = method_macro_call
+        call.scope = macro_scope if macro_scope.try(&.expansion_required)
+      end
+    end
+
+    private def collect_source_yield_macro_ids(
+      body : Array(ExprId),
+      owner : String?,
+      local_map : Hash(String, TypeRef),
+      name_map : Hash(String, String),
+      output : Array(ExprId),
+    ) : Nil
+      body.each do |expr_id|
+        next if expr_id.invalid? || expr_id.null_ptr?
+        node = @arena[expr_id]
+        case node
+        when Adamas::Compiler::Frontend::BeginNode,
+             Adamas::Compiler::Frontend::BlockNode
+          collect_source_yield_macro_ids(node.body, owner, local_map, name_map, output)
+        when Adamas::Compiler::Frontend::IdentifierNode
+          name = identifier_name_text(node, @arena)
+          next if local_map.has_key?(name) || name_map.has_key?(name)
+          next unless lookup_source_yield_macro(node, owner)
+          # A bare local read shadows a parameterless macro of the same name.
+          next if infer_local_type_from_body(body, name, owner, @arena)
+          output << expr_id
+        when Adamas::Compiler::Frontend::CallNode
+          output << expr_id if lookup_source_yield_macro(node, owner)
+        end
+      end
+    end
+
+    private def infer_yield_types_from_expansion(
+      expanded_arena : Adamas::Compiler::Frontend::ArenaLike,
+      expanded_body : Array(ExprId),
+      definition_arena : Adamas::Compiler::Frontend::ArenaLike,
+      definition_body : Array(ExprId),
+      self_type_name : String?,
+      local_map : Hash(String, TypeRef),
+      name_map : Hash(String, String),
+      debug_trace_each : Bool,
+    ) : Array(TypeRef)?
+      with_arena(expanded_arena) do
+        # ExprIds are arena-local. Only the inferred types cross back to the
+        # method; the original AST and expanded AST keep their own owners.
+        expanded_lists = [] of Array(ExprId)
+        collect_yield_arg_lists(expanded_body, expanded_lists)
+        return nil if expanded_lists.empty?
+        return [] of TypeRef if expanded_lists.all?(&.empty?)
+
+        referenced_names = Set(String).new
+        expanded_lists.each do |args|
+          args.each { |arg| collect_proc_body_ident_walk(arg, referenced_names) }
+        end
+        with_arena(definition_arena) do
+          referenced_names.each do |name|
+            next if local_map.has_key?(name)
+            if local_type = infer_local_type_from_body(definition_body, name, self_type_name, definition_arena)
+              next if local_type == TypeRef::VOID
+              local_map[name] = local_type
+              name_map[name] = get_type_name_from_ref(local_type)
+            end
+          end
+        end
+        bump_infer_type_cache_version
+        expanded_flow = Set(ExprId).new
+        collect_flow_narrowed_yield_args(expanded_body, expanded_flow)
+        # Locals the expansion defines exist only in the expanded body.
+        old_body_context = @infer_body_context
+        @infer_body_context = inference_body_context(expanded_body, expanded_arena)
+        begin
+          compute_yield_types_with_preinferred_locals(
+            expanded_body, expanded_lists, self_type_name, local_map, name_map, debug_trace_each, expanded_flow,
+          )
+        ensure
+          @infer_body_context = old_body_context
+          bump_infer_type_cache_version
+        end
+      end
     end
 
     private def merge_yield_param_types(left : Array(TypeRef)?, right : Array(TypeRef)?) : Array(TypeRef)?
@@ -82333,6 +82671,8 @@ module Adamas::HIR
       debug_trace_each : Bool,
       flow_narrowed_args : Set(ExprId)? = nil,
     ) : Array(TypeRef)?
+      return [] of TypeRef if !lists.empty? && lists.all?(&.empty?)
+
       merged_types = nil.as(Array(TypeRef)?)
       lists.each do |args|
         next if args.empty?
@@ -87790,6 +88130,7 @@ module Adamas::HIR
       full_name_override : String? = nil,
       call_has_named_args : Bool = false,
       call_source_binding : SourceCallBinding? = nil,
+      method_macro_scope : MethodYieldMacroScope? = nil,
     ) : Adamas::HIR::Function
       previous_source_yield_context = @source_yield_context
       old_enum_value_types = @enum_value_types
@@ -87804,10 +88145,10 @@ module Adamas::HIR
       if recovered = source_recovered_def_for(node, @arena)
         return lower_def(
           recovered, call_arg_types, call_arg_literals, call_arg_enum_names, full_name_override,
-          call_has_named_args, call_source_binding,
+          call_has_named_args, call_source_binding, method_macro_scope,
         )
       end
-      @source_yield_context = method_source_yield_context(node, @arena)
+      @source_yield_context = method_source_yield_context(node, @arena, method_macro_scope)
       # Enum value tracking is per-function; preserve outer context.
       @enum_value_types = nil
       # Closure ref cells are per-function scope; save and clear for new function.
@@ -92707,7 +93048,7 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::NodeKind::Assign
         return lower_assign(ctx, node.unsafe_as(Adamas::Compiler::Frontend::AssignNode), expr_id)
       when Adamas::Compiler::Frontend::NodeKind::Identifier
-        return narrow_direct_call_result(ctx, lower_identifier(ctx, node.unsafe_as(Adamas::Compiler::Frontend::IdentifierNode)))
+        return narrow_direct_call_result(ctx, lower_identifier(ctx, node.unsafe_as(Adamas::Compiler::Frontend::IdentifierNode), expr_id))
       when Adamas::Compiler::Frontend::NodeKind::MemberAccess
         return narrow_direct_call_result(ctx, lower_member_access(ctx, node.as?(Adamas::Compiler::Frontend::MemberAccessNode) || node.unsafe_as(Adamas::Compiler::Frontend::MemberAccessNode)))
       when Adamas::Compiler::Frontend::NodeKind::Number
@@ -92797,7 +93138,7 @@ module Adamas::HIR
         # ═══════════════════════════════════════════════════════════════════
 
       when Adamas::Compiler::Frontend::IdentifierNode
-        lower_identifier(ctx, node)
+        lower_identifier(ctx, node, expr_id)
       when Adamas::Compiler::Frontend::InstanceVarNode
         lower_instance_var(ctx, node)
       when Adamas::Compiler::Frontend::ClassVarNode
@@ -99784,7 +100125,11 @@ module Adamas::HIR
     # VARIABLE LOWERING
     # ═══════════════════════════════════════════════════════════════════════
 
-    private def lower_identifier(ctx : LoweringContext, node : Adamas::Compiler::Frontend::IdentifierNode) : ValueId
+    private def lower_identifier(
+      ctx : LoweringContext,
+      node : Adamas::Compiler::Frontend::IdentifierNode,
+      expr_id : ExprId = ExprId.new(-1),
+    ) : ValueId
       name = identifier_name_text(node)
       raise LoweringError.new("can't read from _", node) if name == "_"
 
@@ -99951,7 +100296,7 @@ module Adamas::HIR
       if macro_lookup = identifier_macro_lookup
         macro_entry, macro_key = macro_lookup
         macro_def, macro_arena = macro_entry
-        return expand_macro(ctx, macro_def, macro_arena, [] of ExprId, nil, nil, macro_key)
+        return expand_macro(ctx, macro_def, macro_arena, [] of ExprId, nil, nil, macro_key, expr_id)
       end
 
       # A bare `call` inside a Proc instance method is the zero-argument form
@@ -113167,6 +113512,12 @@ module Adamas::HIR
         source_facts,
         source_binding,
       )
+      if filter = env_get("ADAMAS_DEBUG_SOURCE_REPLAY_INPUT")
+        if name.includes?(filter)
+          STDERR.puts "[SOURCE_REPLAY_INPUT] remember name=#{name} prior=#{@pending_arg_types[name]?.try(&.named_arg_names)} types=#{callsite.types.map(&.id)} named=#{callsite.named_arg_names} bound=#{!!callsite.source_binding} exact=#{record_exact_target}"
+          caller[0, 12].each { |line| STDERR.puts line }
+        end
+      end
       # Family discovery must not replace a physical body's exact inputs.
       # Keep a richer source binding when a later replay only knows the ABI
       # carrier; source-selected value kind is part of the exact body input.
@@ -115751,7 +116102,8 @@ module Adamas::HIR
       return right.nil? unless left
       return false unless right
       left.source_def.same?(right.source_def) && left.source_arena.same?(right.source_arena) &&
-        same_force_lower_callsite?(left.callsite, right.callsite)
+        same_force_lower_callsite?(left.callsite, right.callsite) &&
+        left.method_macro_scope == right.method_macro_scope
     end
 
     private def same_force_lower_active_body?(left : ForceLowerActiveBody?, right : ForceLowerActiveBody?) : Bool
@@ -115981,10 +116333,14 @@ module Adamas::HIR
         !@force_lower_discharged_edges.includes?({name, callee}) && settled_force_lower_result?(callee)
       end
       return false if discharged.empty? && projected.empty?
+      retained_pending = nil.as(CallsiteArgs?)
       if replay = request.replay_callsite
         return false unless force_lower_replay_callsite_current?(name, replay)
         pending = @pending_arg_types[name]?
-        return false unless reconciled_force_lower_callsite(pending, replay.callsite)
+        unless reconciled_force_lower_callsite(pending, replay.callsite)
+          return false unless provisional && pending && independent_body_retry_callsite?(name, replay, pending)
+          retained_pending = pending
+        end
       end
       return false unless remove_hir_function(name)
       discharged.each { |callee| @force_lower_discharged_edges.add({name, callee}) }
@@ -116002,12 +116358,31 @@ module Adamas::HIR
       clear_function_state(name)
       replayed = if replay = request.replay_callsite
                    replay_force_lower_callsite(name, replay, bypass_inline_yield,
-                     requires_result: request.requires_result)
+                     requires_result: request.requires_result, retained_pending: retained_pending)
                  else
                    force_lower_function_for_return_type(name, bypass_inline_yield: bypass_inline_yield,
                      requires_result: request.requires_result)
                  end
       replayed && @module.has_function_with_body?(name) && !@force_lower_provisional_dependencies.has_key?(name)
+    end
+
+    # Two checked invocations may differ in supplied/defaulted arguments while
+    # materializing the same restricted formals. The provisional body must
+    # replay its own inputs. Keep the other invocation in the discovery queue.
+    private def independent_body_retry_callsite?(
+      name : String, replay : ForceLowerReplayCallsite, pending : CallsiteArgs,
+    ) : Bool
+      return false unless active_force_lower_source_current?(name, replay)
+      return false unless ordinary_active_body_callsite?(replay.callsite)
+      return false unless pending.types == replay.callsite.types && pending.types.none? { |type| type == TypeRef::VOID }
+      definition = replay.source_def
+      arena = replay.source_arena
+      formals = typed_recursive_body_formals(definition, arena) || return false
+      return false unless checked_named_recursive_callsite?(name, definition, arena, pending, formals)
+      function = @module.function_by_name(name) || return false
+      return false if function.heap_block_param || function.params.any?(&.is_block)
+      offset = function.params.first?.try(&.name) == "self" ? 1 : 0
+      function.params.skip(offset).map(&.type) == replay.callsite.types
     end
 
     # A self call adds no separate body to force. A completed, current body
@@ -117124,10 +117499,15 @@ module Adamas::HIR
 
     private def replay_force_lower_callsite(
       name : String, replay : ForceLowerReplayCallsite, bypass_inline_yield : Bool,
-      requires_result : Bool = true,
+      requires_result : Bool = true, retained_pending : CallsiteArgs? = nil,
     ) : Bool
       existing_callsite = @pending_arg_types[name]?
-      callsite = reconciled_force_lower_callsite(existing_callsite, replay.callsite) || return false
+      callsite = if retained_pending
+                   return false unless existing_callsite == retained_pending
+                   replay.callsite
+                 else
+                   reconciled_force_lower_callsite(existing_callsite, replay.callsite) || return false
+                 end
       return false unless force_lower_replay_callsite_current?(name, replay)
       source = replay.exact_source_binding ||
                ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name)
@@ -117143,7 +117523,14 @@ module Adamas::HIR
         ensure
           # A force that declines to lower must not leave our reinserted
           # request visible to a later sibling lookup.
-          if existing_callsite.nil? && @pending_arg_types[name]? == callsite
+          current = @pending_arg_types[name]?
+          if retained_pending
+            @pending_arg_types[name] = if current && current != callsite
+                                         merge_pending_callsite_evidence(retained_pending, current)
+                                       else
+                                         retained_pending
+                                       end
+          elsif existing_callsite.nil? && current == callsite
             @pending_arg_types.delete(name)
           end
         end
@@ -119830,6 +120217,11 @@ module Adamas::HIR
         end
       end
       callsite_args = pop_pending_callsite_args(name, target_name)
+      if filter = env_get("ADAMAS_DEBUG_SOURCE_REPLAY_INPUT")
+        if name.includes?(filter)
+          STDERR.puts "[SOURCE_REPLAY_INPUT] consume name=#{name} target=#{target_name} exact=#{!!exact_replay_source} types=#{callsite_args.try(&.types.map(&.id))} named=#{callsite_args.try(&.named_arg_names)} bound=#{!!callsite_args.try(&.source_binding)}"
+        end
+      end
       callsite_args = callback_source_binding.callsite if callback_source_binding
       if callsite_args.nil? && resolved_func_def
         callsite_args = pending_callsite_args_for_def(resolved_func_def, name, target_name)
@@ -120188,6 +120580,7 @@ module Adamas::HIR
       call_arg_enum_names = callsite_args ? callsite_args.enum_names : nil
       call_has_named_args = callsite_args.try(&.has_named_args) || false
       call_source_binding = callsite_args.try(&.source_binding)
+      method_macro_scope = callback_source_binding.try(&.method_macro_scope)
 
       base_guard_name = strip_type_suffix(name)
       allow_untyped_base = base_guard_name.ends_with?("#initialize") || base_guard_name.ends_with?(".initialize")
@@ -120511,6 +120904,11 @@ module Adamas::HIR
       if replay_capture && force_lower_exact_source_matches?(name, capture_source)
         replay_capture.source = capture_source
         if callsite_args
+          if filter = env_get("ADAMAS_DEBUG_SOURCE_REPLAY_INPUT")
+            if name.includes?(filter)
+              STDERR.puts "[SOURCE_REPLAY_INPUT] capture name=#{name} target=#{target_name} types=#{callsite_args.types.map(&.id)} named=#{callsite_args.named_arg_names} bound=#{!!callsite_args.source_binding}"
+            end
+          end
           replay_capture.binding = ForceLowerReplayCallsite.new(
             resolved_func_def,
             arena,
@@ -120774,7 +121172,7 @@ module Adamas::HIR
                       force_class_method: force_class_method,
                       included_forall_virtual_body_demand: included_forall_body_demand,
                       call_has_named_args: call_has_named_args,
-                      call_source_binding: call_source_binding,
+                      call_source_binding: call_source_binding, method_macro_scope: method_macro_scope,
                     )
                   end
                 ensure
@@ -120808,7 +121206,7 @@ module Adamas::HIR
                   owner, enum_placeholder_class_info(owner), resolved_func_def,
                   call_arg_types, call_arg_literals, call_arg_enum_names, name,
                   force_class_method: force_class_method, call_has_named_args: call_has_named_args,
-                  call_source_binding: call_source_binding,
+                  call_source_binding: call_source_binding, method_macro_scope: method_macro_scope,
                 )
                 @current_class = old_class
               else
@@ -120831,7 +121229,7 @@ module Adamas::HIR
                       lower_method(
                         owner, dummy_info, resolved_func_def, call_arg_types, call_arg_literals,
                         call_arg_enum_names, name, force_class_method: force_class_method,
-                        call_has_named_args: call_has_named_args, call_source_binding: call_source_binding,
+                        call_has_named_args: call_has_named_args, call_source_binding: call_source_binding, method_macro_scope: method_macro_scope,
                       )
                       @current_class = old_class
                       return
@@ -121000,7 +121398,7 @@ module Adamas::HIR
                       owner, class_info, resolved_func_def, call_arg_types, call_arg_literals,
                       call_arg_enum_names, force_class_method: force_class_method,
                       forced_full_name: target_for_lower, forced_method_name: forced_method_name,
-                      call_has_named_args: call_has_named_args, call_source_binding: call_source_binding,
+                      call_has_named_args: call_has_named_args, call_source_binding: call_source_binding, method_macro_scope: method_macro_scope,
                     )
                   end
                 end
@@ -121010,7 +121408,7 @@ module Adamas::HIR
                     owner, class_info, resolved_func_def, call_arg_types, call_arg_literals,
                     call_arg_enum_names, force_class_method: force_class_method,
                     forced_full_name: target_for_lower, forced_method_name: forced_method_name,
-                    call_has_named_args: call_has_named_args, call_source_binding: call_source_binding,
+                    call_has_named_args: call_has_named_args, call_source_binding: call_source_binding, method_macro_scope: method_macro_scope,
                   )
                 end
               end
@@ -121023,7 +121421,7 @@ module Adamas::HIR
                 lower_method(
                   owner, enum_placeholder_class_info(owner), resolved_func_def, call_arg_types,
                   call_arg_literals, call_arg_enum_names, target_for_lower,
-                  call_has_named_args: call_has_named_args, call_source_binding: call_source_binding,
+                  call_has_named_args: call_has_named_args, call_source_binding: call_source_binding, method_macro_scope: method_macro_scope,
                 )
                 @current_class = old_class
               else
@@ -121035,14 +121433,14 @@ module Adamas::HIR
                       lower_module_method(
                         owner, resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names,
                         target_for_lower, call_has_named_args: call_has_named_args,
-                        call_source_binding: call_source_binding,
+                        call_source_binding: call_source_binding, method_macro_scope: method_macro_scope,
                       )
                     end
                   else
                     lower_module_method(
                       owner, resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names,
                       target_for_lower, call_has_named_args: call_has_named_args,
-                      call_source_binding: call_source_binding,
+                      call_source_binding: call_source_binding, method_macro_scope: method_macro_scope,
                     )
                   end
                 end
@@ -121053,10 +121451,10 @@ module Adamas::HIR
               with_namespace_override_or_clear(namespace_override) do
                 if extra_type_params && !extra_type_params.empty?
                   with_isolated_type_param_map(extra_type_params) do
-                    lower_module_method(owner, resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, target_for_lower, call_has_named_args: call_has_named_args, call_source_binding: call_source_binding)
+                    lower_module_method(owner, resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, target_for_lower, call_has_named_args: call_has_named_args, call_source_binding: call_source_binding, method_macro_scope: method_macro_scope)
                   end
                 else
-                  lower_module_method(owner, resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, target_for_lower, call_has_named_args: call_has_named_args, call_source_binding: call_source_binding)
+                  lower_module_method(owner, resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names, target_for_lower, call_has_named_args: call_has_named_args, call_source_binding: call_source_binding, method_macro_scope: method_macro_scope)
                 end
               end
             end
@@ -121118,14 +121516,14 @@ module Adamas::HIR
                   with_isolated_type_param_map(extra_type_params) do
                     lower_def(
                       resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names,
-                      override_name, call_has_named_args, call_source_binding,
+                      override_name, call_has_named_args, call_source_binding, method_macro_scope,
                     )
                   end
                 else
                   materialization_producer_path = "def_lower_def"
                   lower_def(
                     resolved_func_def, call_arg_types, call_arg_literals, call_arg_enum_names,
-                    override_name, call_has_named_args, call_source_binding,
+                    override_name, call_has_named_args, call_source_binding, method_macro_scope,
                   )
                 end
               end
@@ -122080,6 +122478,7 @@ module Adamas::HIR
       ctx : LoweringContext,
       node : Adamas::Compiler::Frontend::CallNode,
       call_arena : Adamas::Compiler::Frontend::ArenaLike,
+      source_id : ExprId,
     ) : ValueId?
       callee = call_arena[node.callee]
       method_name = ""
@@ -122141,9 +122540,9 @@ module Adamas::HIR
       macro_entry, macro_key = macro_lookup
       macro_def, macro_arena = macro_entry
       if owner = qualified_owner
-        expand_macro_for_owner(ctx, macro_def, macro_arena, args, node.named_args, block_expr, macro_key, owner)
+        expand_macro_for_owner(ctx, macro_def, macro_arena, args, node.named_args, block_expr, macro_key, owner, source_id)
       else
-        expand_macro(ctx, macro_def, macro_arena, args, node.named_args, block_expr, macro_key)
+        expand_macro(ctx, macro_def, macro_arena, args, node.named_args, block_expr, macro_key, source_id)
       end
     end
 
@@ -122411,7 +122810,7 @@ module Adamas::HIR
 
       hoisted_call_splats : HoistedCallSiteSplats? = nil
       if node.args.any? { |arg| (splat = call_arena[arg]).is_a?(Adamas::Compiler::Frontend::SplatNode) && splat.double? }
-        if macro_value = expand_double_splat_source_macro(ctx, node, call_arena)
+        if macro_value = expand_double_splat_source_macro(ctx, node, call_arena, expr_id)
           return macro_value
         end
         hoisted_call_splats = hoist_call_site_splat_operands(ctx, node, call_arena)
@@ -122716,9 +123115,9 @@ module Adamas::HIR
             macro_entry, macro_key = macro_lookup
             macro_def, macro_arena = macro_entry
             if qualified_identifier_call && (owner = static_class_name)
-              return expand_macro_for_owner(ctx, macro_def, macro_arena, call_args, node.named_args, block_expr, macro_key, owner)
+              return expand_macro_for_owner(ctx, macro_def, macro_arena, call_args, node.named_args, block_expr, macro_key, owner, expr_id)
             end
-            return expand_macro(ctx, macro_def, macro_arena, call_args, node.named_args, block_expr, macro_key)
+            return expand_macro(ctx, macro_def, macro_arena, call_args, node.named_args, block_expr, macro_key, expr_id)
           end
         end
 
@@ -124335,7 +124734,7 @@ module Adamas::HIR
                ))
               macro_entry, macro_key = macro_lookup
               macro_def, macro_arena = macro_entry
-              return expand_macro_for_owner(ctx, macro_def, macro_arena, call_args, node.named_args, block_expr, macro_key, class_name_str)
+              return expand_macro_for_owner(ctx, macro_def, macro_arena, call_args, node.named_args, block_expr, macro_key, class_name_str, expr_id)
             end
             # Check if this is a lib function call (e.g., LibC.puts)
             extern_func = @module.get_extern_function(class_name_str, method_name)
@@ -128583,6 +128982,9 @@ module Adamas::HIR
       block_for_inline : Adamas::Compiler::Frontend::BlockNode? = nil
       proc_for_inline : Adamas::Compiler::Frontend::ProcLiteralNode? = nil
       block_param_types_inline : Array(TypeRef)? = nil
+      method_macro_call = if has_block_call && arg_types.none?(&.==(TypeRef::VOID))
+                            method_yield_call(node, call_arena, receiver_id.try { |id| ctx.type_of(id) } || TypeRef::VOID, arg_types, ctx.function.name)
+                          end
       if block_expr
         blk_node = node_for_expr(block_expr)
         if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
@@ -128593,7 +128995,7 @@ module Adamas::HIR
             arg_types,
             !!call_has_named_args, node, call_arena, proc_constructor_receiver,
             m3e_input, selected_block_source_target,
-            source_binding: source_call_binding,
+            source_binding: source_call_binding, method_macro_call: method_macro_call,
           )
           if method_name == "try" && receiver_id
             if non_nil = non_nil_type_for_union(ctx.type_of(receiver_id))
@@ -128614,7 +129016,7 @@ module Adamas::HIR
           arg_types,
           !!call_has_named_args, node, call_arena, proc_constructor_receiver,
           m3e_input, selected_block_source_target,
-          source_binding: source_call_binding,
+          source_binding: source_call_binding, method_macro_call: method_macro_call,
         )
         if method_name == "try" && receiver_id
           if non_nil = non_nil_type_for_union(ctx.type_of(receiver_id))
@@ -128733,7 +129135,7 @@ module Adamas::HIR
                    selected_call_entry_arena,
                    selected_block_source_target.try(&.included_origin),
                  ),
-                 source_binding: source_call_binding,
+                 source_binding: source_call_binding, method_macro_call: method_macro_call,
                )
               block_param_types_inline = selected_block_types
             end
@@ -128772,7 +129174,7 @@ module Adamas::HIR
                   block_param_types_inline,
                   selected_arena,
                   source_call_binding,
-                  source_class_receiver: source_receiver_name,
+                  source_class_receiver: source_receiver_name, method_macro_scope: method_macro_call.try(&.scope),
                 )
               end
             end
@@ -129087,6 +129489,7 @@ module Adamas::HIR
                 return inline_yield_function(
                   ctx, func_def, use_key.as(String), inline_receiver_id, call_arg_values, block_cast,
                   block_param_types_inline, callee_arena, source_call_binding, source_class_receiver: source_receiver_name,
+                    method_macro_scope: method_macro_call.try(&.scope),
                 )
               end
             end
@@ -129129,6 +129532,7 @@ module Adamas::HIR
                   return inline_yield_function(
                     ctx, func_def, yield_name.as(String), inline_receiver_id, call_arg_values, block_cast,
                     block_param_types_inline, callee_arena, source_call_binding, source_class_receiver: source_receiver_name,
+                    method_macro_scope: method_macro_call.try(&.scope),
                   )
                 end
               end
@@ -129165,6 +129569,7 @@ module Adamas::HIR
                 return inline_yield_function(
                   ctx, yield_def, yield_name.as(String), inline_receiver_id, call_arg_values, block_cast,
                   block_param_types_inline, callee_arena, source_call_binding, source_class_receiver: source_receiver_name,
+                    method_macro_scope: method_macro_call.try(&.scope),
                 )
               end
             end
@@ -129184,6 +129589,7 @@ module Adamas::HIR
                 return inline_yield_function(
                   ctx, func_def, yield_key.as(String), inline_receiver_id, call_arg_values, block_cast,
                   block_param_types_inline, callee_arena, source_call_binding, source_class_receiver: source_receiver_name,
+                    method_macro_scope: method_macro_call.try(&.scope),
                 )
               end
             end
@@ -129284,7 +129690,7 @@ module Adamas::HIR
                 block_param_types_inline,
                 callee_arena,
                 source_call_binding,
-                source_class_receiver: source_receiver_name,
+                source_class_receiver: source_receiver_name, method_macro_scope: method_macro_call.try(&.scope),
               )
             end
           end
@@ -129513,6 +129919,7 @@ module Adamas::HIR
                                bound
                              end
       named_replay_facts = bound_recursive_facts if named_replay_binding
+      method_macro_scope = method_macro_call.try(&.scope)
       if callsite_arg_types.any? { |t| t != TypeRef::VOID }
         remember_callsite_arg_types(
           mangled_method_name, callsite_arg_types, callsite_arg_literals, callsite_arg_enum_names,
@@ -129593,7 +130000,9 @@ module Adamas::HIR
                 block_for_inline.not_nil!,
                 block_param_types_inline,
                 block_return_name,
-                raw_callback_callsite(block_target_arg_types, callsite_arg_literals, callsite_arg_enum_names, has_named_args, call_named_arg_names),
+                raw_callback_callsite(block_target_arg_types, callsite_arg_literals, callsite_arg_enum_names,
+                  has_named_args, call_named_arg_names),
+                method_macro_scope: method_macro_scope,
               )
                 raw_callback_target = registered_target
                 raw_callback_source_def = block_entry[1]
@@ -129856,7 +130265,11 @@ module Adamas::HIR
           raise LoweringError.new("no overload matches named arguments for #{lookup_name}", node)
         end
       end
-      lower_function_if_needed(mangled_method_name)
+      # A missing callback result hint does not authorize lowering the
+      # yielding method under its family's ABI. Lower the actual block first:
+      # it supplies the concrete callback or reports its own type error.
+      pending_method_macro_callback = !method_macro_scope.nil? && raw_callback_target.nil? && !block_for_inline.nil?
+      lower_function_if_needed(mangled_method_name) unless pending_method_macro_callback
       exact_callsite_target_admitted = exact_untyped_callsite_target_admitted?(
         mangled_method_name,
         base_method_name,
@@ -129868,8 +130281,9 @@ module Adamas::HIR
         exact_source_argument_names,
         named_untyped_binding,
       )
-      unselected_family_body = unselected_call_family_body?(base_method_name, mangled_method_name, selected_call_entry_def)
-      if !exact_callsite_target_admitted && !unselected_family_body &&
+      unselected_family_body = (method_macro_scope && mangled_method_name != base_method_name) ||
+                               unselected_call_family_body?(base_method_name, mangled_method_name, selected_call_entry_def)
+      if !pending_method_macro_callback && !exact_callsite_target_admitted && !unselected_family_body &&
          mangled_method_name != base_method_name &&
          (@function_defs.has_key?(base_method_name) ||
          @module.has_function?(base_method_name) ||
@@ -129897,7 +130311,9 @@ module Adamas::HIR
       # For non-overloaded functions, prefer base name since that's how they're registered in HIR module
       value_wrapper_source = selected_value_wrapper_source
       value_wrapper_source = nil unless mangled_method_name == selected_reference_wrapper_target
-      return_type = if value_wrapper_source
+      return_type = if pending_method_macro_callback
+                      TypeRef::VOID
+                    elsif value_wrapper_source
                       value_wrapper_return_type = TypeRef::VOID
                       value_wrapper_bound = with_force_lower_exact_source(mangled_method_name, value_wrapper_source) do
                         value_wrapper_return_type = get_function_return_type(
@@ -130255,7 +130671,7 @@ module Adamas::HIR
       # A selected callback contract is a concrete specialization even when
       # there are no ordinary arguments and the block has no returning path.
       # Falling back to the family name would erase its source parameter type.
-      if raw_callback_target.nil? && base_signature_exists && !@function_types.has_key?(mangled_method_name) &&
+      if method_macro_scope.nil? && raw_callback_target.nil? && base_signature_exists && !@function_types.has_key?(mangled_method_name) &&
          mangled_method_name != base_method_name && !@module.has_function_with_body?(mangled_method_name)
         unless block_return_name || has_typed_args
           return_type = get_function_return_type(base_method_name, return_def_arg_count)
@@ -130270,11 +130686,11 @@ module Adamas::HIR
       # Check if function exists in module by base name (for unqualified functions).
       base_func_exists = @module.has_function?(base_method_name)
 
-      if base_func_exists && !base_method_name.includes?('#') && !base_method_name.includes?('.') && !has_typed_args
+      if method_macro_scope.nil? && base_func_exists && !base_method_name.includes?('#') && !base_method_name.includes?('.') && !has_typed_args
         # Function exists with base name - use that (no mangling needed for simple functions)
         return_type = get_function_return_type(base_method_name, return_def_arg_count) if return_type == TypeRef::VOID
         mangled_method_name = base_method_name
-      elsif return_type == TypeRef::VOID && mangled_method_name != base_method_name &&
+      elsif method_macro_scope.nil? && return_type == TypeRef::VOID && mangled_method_name != base_method_name &&
             !base_method_name.includes?('#') && !base_method_name.includes?('.') && !has_typed_args
         # Try unmangled name as fallback for unqualified functions.
         return_type = get_function_return_type(base_method_name, return_def_arg_count)
@@ -131742,7 +132158,7 @@ module Adamas::HIR
       # For module method calls (within the same module), if return type is still void,
       # try to force-lower the function to get its return type, or use POINTER fallback
       # Module methods returning String/Array/etc. should not be void
-      if return_type == TypeRef::VOID && receiver_id.nil? && @current_class
+      if !pending_method_macro_callback && return_type == TypeRef::VOID && receiver_id.nil? && @current_class
         # Check if it's a method that typically returns a value (not a side-effect only method)
         # Methods with "build_", "get_", "create_", "make_", "extract_", "format_" prefixes
         # typically return values
@@ -132205,10 +132621,12 @@ module Adamas::HIR
         block_pass_flag = block_pass_expr.nil? ? 0 : 1
         STDERR.puts "[CALL_TARGET_RESOLVE] caller=#{ctx.function.name} method=#{method_name} base=#{base_method_name} mangled=#{mangled_method_name} primary=#{primary_mangled_name} recv=#{recv_name} block_expr=#{block_expr_flag} block_pass=#{block_pass_flag} args=#{args.size}"
       end
-      with_debug_callsite(callsite_label) do
-        lower_function_if_needed(primary_mangled_name)
-        if mangled_method_name != primary_mangled_name
-          lower_function_if_needed(mangled_method_name)
+      unless pending_method_macro_callback
+        with_debug_callsite(callsite_label) do
+          lower_function_if_needed(primary_mangled_name)
+          if mangled_method_name != primary_mangled_name
+            lower_function_if_needed(mangled_method_name)
+          end
         end
       end
       # A source-selected reference wrapper keeps its exact target even when
@@ -132300,7 +132718,9 @@ module Adamas::HIR
       # selected source definition. Its arity-only lookup can otherwise pick a
       # sibling overload: `Array#[]?(range : Range) : Array(T)?` for an Int32
       # call that selected the included `Indexable#[]?(index : Int)`.
-      base_return_def_foreign = base_return_def_differs_from_selected?(
+      # The same Def can have a different expansion at a sibling call, so
+      # a macro-expanded callback also rules out the bare family result.
+      base_return_def_foreign = !!(method_macro_scope && mangled_method_name != base_method_name) || base_return_def_differs_from_selected?(
         base_method_name,
         return_def_arg_count,
         selected_return_def,
@@ -132361,7 +132781,7 @@ module Adamas::HIR
       # A checked recursive call already has both a result type and a source
       # value kind. Its emission ticket and the final producer body still have
       # to agree. Both eager result queries must honor that same evidence.
-      needs_source_result = exact_source_discard_result_type.nil? && cycle_result_ticket.nil?
+      needs_source_result = !pending_method_macro_callback && exact_source_discard_result_type.nil? && cycle_result_ticket.nil?
       force_return_type_needed = !!dependent_callback_return_pending ||
                                  (allocator_explicit_new_call && !has_block_call) ||
                                  (needs_source_result &&
@@ -132381,7 +132801,8 @@ module Adamas::HIR
         named_shape = "-" if named_shape.empty?
         STDERR.puts "[CALL_FORCE_IDENTITY] caller=#{ctx.function.name} method=#{method_name} selected_symbol=#{selected_call_entry_name || "none"} selected_def=#{selected_identity} requested1=#{primary_mangled_name} requested2=#{mangled_method_name} requested3=#{base_method_name} args=#{args.size} block=#{has_block_call ? 1 : 0} named=#{named_shape} splat=#{has_splat ? 1 : 0}"
       end
-      unselected_family_body = recursive_body_owned || (!!named_untyped_binding && exact_callsite_target_admitted) ||
+      unselected_family_body = (method_macro_scope && mangled_method_name != base_method_name) ||
+                               recursive_body_owned || (!!named_untyped_binding && exact_callsite_target_admitted) ||
                                unselected_call_family_body?(base_method_name, mangled_method_name, selected_call_entry_def)
       refused_before_call_force = @force_lower_depth_refused.size
       if force_return_type_needed &&
@@ -132427,7 +132848,7 @@ module Adamas::HIR
         rt_name = get_type_name_from_ref(return_type)
         STDERR.puts "[GET_CACHE_RT] 3. before_re-check return_type=#{rt_name} mangled=#{mangled_method_name}"
       end
-      if return_type == TypeRef::VOID && exact_source_discard_result_type.nil?
+      if !pending_method_macro_callback && return_type == TypeRef::VOID && exact_source_discard_result_type.nil?
         return_type = get_function_return_type(
           mangled_method_name,
           return_def_arg_count,
@@ -132478,7 +132899,7 @@ module Adamas::HIR
 
       # If return type is still VOID, the function may have been deferred due to inside_lowering?.
       # Force-lower it now to get the correct return type.
-      if return_type == TypeRef::VOID && exact_source_discard_result_type.nil?
+      if !pending_method_macro_callback && return_type == TypeRef::VOID && exact_source_discard_result_type.nil?
         force_lowered = false
         debug_force = env_get("DEBUG_FORCE_LOWER") && method_name == "get_cache"
         if debug_force
@@ -132574,7 +132995,7 @@ module Adamas::HIR
         )
       end
 
-      if unresolved_generic_return_type?(return_type) && exact_source_discard_result_type.nil?
+      if !pending_method_macro_callback && unresolved_generic_return_type?(return_type) && exact_source_discard_result_type.nil?
         [primary_mangled_name, mangled_method_name, base_method_name].uniq.each do |name|
           next if name.empty?
           next if (unselected_family_body || exact_result_owner || base_return_def_foreign) && name == base_method_name
@@ -132630,15 +133051,18 @@ module Adamas::HIR
       if source_return_a1_trace
         STDERR.puts "[SOURCE_RETURN_FLOW] stage=late_get_return_begin lookup=#{lookup_name} base=#{base_method_name} mangled=#{mangled_method_name} #{source_return_a1_def} exact_forall=#{source_return_a1_map} local_return=#{get_type_name_from_ref(return_type)} pinned=#{return_type_pinned ? 1 : 0} #{source_return_flow_target_trace(mangled_method_name, base_method_name)}"
       end
-      resolved_return_type = get_function_return_type(
-        mangled_method_name,
-        return_def_arg_count,
-        selected_return_def,
-        callsite_forall_bindings: exact_source_forall_bindings,
-      )
-      if resolved_return_type == TypeRef::VOID && mangled_method_name != base_method_name &&
-         !exact_result_owner && !base_return_def_foreign
-        resolved_return_type = get_function_return_type(base_method_name, return_def_arg_count)
+      resolved_return_type = TypeRef::VOID
+      unless pending_method_macro_callback
+        resolved_return_type = get_function_return_type(
+          mangled_method_name,
+          return_def_arg_count,
+          selected_return_def,
+          callsite_forall_bindings: exact_source_forall_bindings,
+        )
+        if resolved_return_type == TypeRef::VOID && mangled_method_name != base_method_name &&
+           !exact_result_owner && !base_return_def_foreign
+          resolved_return_type = get_function_return_type(base_method_name, return_def_arg_count)
+        end
       end
       if source_return_a1_trace
         STDERR.puts "[SOURCE_RETURN_FLOW] stage=late_get_return_end lookup=#{lookup_name} base=#{base_method_name} mangled=#{mangled_method_name} #{source_return_a1_def} exact_forall=#{source_return_a1_map} local_return=#{get_type_name_from_ref(return_type)} resolved_return=#{get_type_name_from_ref(resolved_return_type)} pinned=#{return_type_pinned ? 1 : 0} #{source_return_flow_target_trace(mangled_method_name, base_method_name)}"
@@ -132668,7 +133092,7 @@ module Adamas::HIR
         [mangled_method_name, primary_mangled_name, base_method_name].uniq.each do |name|
           next if name.empty?
           next if name == base_method_name &&
-                  (preserve_specialized_return_type || exact_result_owner)
+                  (preserve_specialized_return_type || exact_result_owner || method_macro_scope)
           func = @module.function_by_name(name)
           next unless func
 
@@ -133092,7 +133516,9 @@ module Adamas::HIR
                 target = register_raw_callback_contract_target(
                   mangled_method_name, contract, definition, selected_call_arena,
                   callsite_arg_types,
-                  raw_callback_callsite(callsite_arg_types, callsite_arg_literals, callsite_arg_enum_names, has_named_args, call_named_arg_names),
+                  raw_callback_callsite(callsite_arg_types, callsite_arg_literals, callsite_arg_enum_names,
+                    has_named_args, call_named_arg_names),
+                  method_macro_scope: method_macro_scope,
                 )
                 descriptor = @module.get_type_descriptor(proc_type).not_nil!
                 result_slot = descriptor.type_params.size - 1
@@ -133117,6 +133543,23 @@ module Adamas::HIR
                 end
               end
             end
+            if pending_method_macro_callback && raw_callback_target.nil? && (late_macro_scope = method_macro_scope)
+              proc_type = ctx.type_of(proc_id)
+              contract = raw_callback_abi_for_proc_type(proc_type) ||
+                         raise LoweringError.new("cannot establish the callback type for #{mangled_method_name}", blk_node)
+              target = register_raw_callback_contract_target(
+                mangled_method_name, contract, late_macro_scope.definition, late_macro_scope.arena, callsite_arg_types,
+                raw_callback_callsite(callsite_arg_types, callsite_arg_literals, callsite_arg_enum_names,
+                  has_named_args, call_named_arg_names),
+                method_macro_scope: late_macro_scope,
+              )
+              raw_callback_target = target
+              mangled_method_name = target
+              primary_mangled_name = target
+              lower_function_if_needed(target)
+              force_lower_function_for_return_type(target, materialized_raw_callback: proc_type)
+              return_type = get_function_return_type(target)
+            end
             if raw_callback_target && raw_callback_source_def && raw_callback_source_arena
               expected_callback = raw_callback_abi_for(raw_callback_target)
               unless expected_callback
@@ -133140,7 +133583,9 @@ module Adamas::HIR
                   raw_callback_source_def.not_nil!,
                   raw_callback_source_arena.not_nil!,
                   callsite_arg_types,
-                  raw_callback_callsite(callsite_arg_types, callsite_arg_literals, callsite_arg_enum_names, has_named_args, call_named_arg_names),
+                  raw_callback_callsite(callsite_arg_types, callsite_arg_literals, callsite_arg_enum_names,
+                    has_named_args, call_named_arg_names),
+                  method_macro_scope: method_macro_scope,
                 )
                 raw_callback_target = late_target
                 mangled_method_name = late_target
@@ -134360,7 +134805,7 @@ module Adamas::HIR
         copy_source_call_argument_facts(callsite.source_argument_facts),
         copy_source_call_binding(callsite.source_binding),
       )
-      RawCallbackSourceBinding.new(source.source_def, source.source_arena, snapshot)
+      RawCallbackSourceBinding.new(source.source_def, source.source_arena, snapshot, source.method_macro_scope)
     end
 
     private def initializer_callback_source_matches?(expected : RawCallbackSourceBinding?, actual : RawCallbackSourceBinding?) : Bool
@@ -134373,7 +134818,8 @@ module Adamas::HIR
         left.types == right.types && left.literals == right.literals && left.enum_names == right.enum_names &&
         left.has_block == right.has_block && left.has_named_args == right.has_named_args &&
         left.named_arg_names == right.named_arg_names && left.selected_target == right.selected_target &&
-        left.source_argument_facts == right.source_argument_facts && left.source_binding == right.source_binding
+        left.source_argument_facts == right.source_argument_facts && left.source_binding == right.source_binding &&
+        expected.method_macro_scope == actual.method_macro_scope
     end
 
     private def initializer_callback_abi_matches?(expected : RawCallbackAbi?, actual : RawCallbackAbi?) : Bool
@@ -146933,6 +147379,7 @@ module Adamas::HIR
       selected_arena : Adamas::Compiler::Frontend::ArenaLike,
       block_param_types : Array(TypeRef)? = nil,
       source_result_contract : SourceBlockResultContract? = nil,
+      method_macro_scope : MethodYieldMacroScope? = nil,
     ) : ValueId
       if env_get("DEBUG_WITH_BRACE_CALL") && inline_key.includes?("with_brace_newlines_skipped")
         recv_dbg = receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "nil"
@@ -146953,6 +147400,7 @@ module Adamas::HIR
         # type annotations are silently skipped during deferred lowering.
         base_inline_name = strip_type_suffix(inline_key)
         callsite_arg_types = call_args.map { |arg| ctx.type_of(arg) }
+        method_macro_scope = matching_method_macro_scope(method_macro_scope, selected_def, selected_arena)
         remember_callsite_arg_types(inline_key, callsite_arg_types, nil, nil, true)
         if inline_key != base_inline_name
           remember_callsite_arg_types(base_inline_name, callsite_arg_types, nil, nil, true)
@@ -147016,20 +147464,36 @@ module Adamas::HIR
           end
         end
 
-        lower_function_if_needed(fallback_target)
-        if fallback_target != inline_key
-          lower_function_if_needed(inline_key)
+        if method_macro_scope
+          owned_target = register_raw_callback_abi_target(
+            fallback_target, selected_def, selected_arena, callsite_arg_types, block, block_param_types, block_return_name,
+            method_macro_scope: method_macro_scope,
+          )
         end
-        if inline_key != base_inline_name
-          lower_function_if_needed(base_inline_name)
-        end
+        if owned_target
+          lower_function_if_needed(owned_target)
+          fallback_target = owned_target
+          return_type = get_function_return_type(owned_target)
+        elsif method_macro_scope
+          # A failed signature hint needs the actual block diagnosis. An
+          # unbound fallback would execute macros in the wrong instantiation.
+          return_type = TypeRef::VOID
+        else
+          lower_function_if_needed(fallback_target)
+          if fallback_target != inline_key
+            lower_function_if_needed(inline_key)
+          end
+          if inline_key != base_inline_name
+            lower_function_if_needed(base_inline_name)
+          end
 
-        return_type = get_function_return_type(fallback_target)
-        if return_type == TypeRef::VOID && fallback_target != inline_key
-          return_type = get_function_return_type(inline_key)
-        end
-        if return_type == TypeRef::VOID && inline_key != base_inline_name
-          return_type = get_function_return_type(base_inline_name)
+          return_type = get_function_return_type(fallback_target)
+          if return_type == TypeRef::VOID && fallback_target != inline_key
+            return_type = get_function_return_type(inline_key)
+          end
+          if return_type == TypeRef::VOID && inline_key != base_inline_name
+            return_type = get_function_return_type(base_inline_name)
+          end
         end
 
         if block_return_name
@@ -147082,6 +147546,19 @@ module Adamas::HIR
           source_yield_context: captured_block_source_yield_context(selected_def, selected_arena),
           discard_result: expected_block_proc_return_type == TypeRef::NIL).value
         fallback_args << proc_id
+        if method_macro_scope
+          callback = raw_callback_abi_for_proc_type(ctx.type_of(proc_id)) ||
+                     raise LoweringError.new("cannot establish the callback type for #{inline_key}", block)
+          if raw_callback_abi_for(owned_target).try(&.proc_type) != callback.proc_type
+            fallback_target = register_raw_callback_contract_target(
+              fallback_target, callback, selected_def, selected_arena, callsite_arg_types,
+              method_macro_scope: method_macro_scope,
+            )
+            lower_function_if_needed(fallback_target)
+            exact_result = get_function_return_type(fallback_target)
+            return_type = exact_result if exact_result != TypeRef::VOID
+          end
+        end
         # `inline_key` can still be a bare `Owner#m` when the yield inline path bails out early,
         # or it can be the currently-lowered splat wrapper when a nested inline fallback hits a
         # depth/repeat guard. In both cases, resolve through the block overload table before
@@ -147549,6 +148026,7 @@ module Adamas::HIR
       *,
       source_class_receiver : String? = nil,
       receiver_dispatch_selected : Bool = false,
+      method_macro_scope : MethodYieldMacroScope? = nil,
     ) : ValueId
       caller_source_yield_context = @source_yield_context
       entry_local_declaration_scopes = ctx.save_local_declaration_scopes
@@ -147610,7 +148088,7 @@ module Adamas::HIR
 
         if env_has?("ADAMAS_DISABLE_INLINE_YIELD") && fallback_allowed && !concrete_tuple_each_inline
           STDERR.puts "[WITH_BRACE_INLINE] stage=disabled_inline callee=#{inline_key} caller=#{ctx.function.name}" if debug_with_brace
-          return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract)
+          return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract, method_macro_scope)
         end
         # Prevent infinite recursion / runaway stack usage in aggressive yield inlining.
         # This can happen in stdlib where yield is used deeply (or recursively).
@@ -147625,7 +148103,7 @@ module Adamas::HIR
             STDERR.puts "[INLINE_YIELD] skipping inline: #{inline_key} (depth=#{@inline_yield_name_stack.size}, max=#{max_depth}, repeat=#{repeat_count}, max_repeat=#{max_repeat})"
           end
           if fallback_allowed
-            return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract)
+            return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract, method_macro_scope)
           end
         end
         # Nested inline-yield inside an inlined block body is the main source of
@@ -147641,7 +148119,7 @@ module Adamas::HIR
             STDERR.puts "[INLINE_YIELD] skipping nested block-body inline: #{inline_key} depth=#{@inline_yield_block_body_depth}"
           end
           if fallback_allowed
-            return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract)
+            return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract, method_macro_scope)
           end
         end
         parts = parse_method_name(base_inline_name)
@@ -147682,7 +148160,7 @@ module Adamas::HIR
                 STDERR.puts "[WITH_BRACE_INLINE] stage=unresolved_generic_receiver callee=#{inline_key} caller=#{ctx.function.name}" if debug_with_brace
                 debug_hook("inline.yield.skip", "callee=#{inline_key} receiver=#{receiver} reason=unresolved_generic")
                 if fallback_allowed
-                  return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract)
+                  return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract, method_macro_scope)
                 end
                 # Block has non-local return — proc materialization cannot represent it.
                 # Force inline despite unresolved generic receiver.
@@ -147692,7 +148170,7 @@ module Adamas::HIR
               STDERR.puts "[WITH_BRACE_INLINE] stage=missing_receiver_for_generic callee=#{inline_key} caller=#{ctx.function.name}" if debug_with_brace
               debug_hook("inline.yield.skip", "callee=#{inline_key} receiver=#{receiver} reason=unresolved_generic")
               if fallback_allowed
-                return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract)
+                return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract, method_macro_scope)
               end
               debug_hook("inline.yield.force_inline_for_return", "callee=#{inline_key} reason=missing_receiver_for_generic_with_return")
             end
@@ -147714,7 +148192,7 @@ module Adamas::HIR
           STDERR.puts "[WITH_BRACE_INLINE] stage=block_arena_missing callee=#{inline_key} caller=#{ctx.function.name}" if debug_with_brace
           debug_hook("inline.yield.block_arena_missing", "callee=#{inline_key} caller=#{ctx.function.name}")
           if fallback_allowed
-            return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract)
+            return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract, method_macro_scope)
           end
           # Block has non-local return — proc materialization cannot represent it.
           # Use caller_arena as a fallback to allow inline lowering.
@@ -147731,7 +148209,7 @@ module Adamas::HIR
             )
             STDERR.puts "[WITH_BRACE_INLINE] stage=block_arena_mismatch callee=#{inline_key} caller=#{ctx.function.name} max=#{max_index} arena=#{block_arena.size}" if debug_with_brace
             if fallback_allowed
-              return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract)
+              return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract, method_macro_scope)
             end
             # Block has non-local return — proceed with inline despite arena mismatch.
             debug_hook("inline.yield.force_inline_for_return", "callee=#{inline_key} reason=block_arena_mismatch_with_return")
@@ -147747,7 +148225,7 @@ module Adamas::HIR
               STDERR.puts "[WITH_BRACE_INLINE] stage=callee_arena_mismatch callee=#{inline_key} caller=#{ctx.function.name} max=#{max_index} arena=#{callee_arena.size}" if debug_with_brace
               debug_hook("inline.yield.arena_mismatch", "callee=#{inline_key} max=#{max_index} arena=#{callee_arena.size}")
               if fallback_allowed
-                return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract)
+                return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, func_def, callee_arena, block_param_types, source_result_contract, method_macro_scope)
               end
               # Block has non-local return — proceed with inline despite callee arena mismatch.
               debug_hook("inline.yield.force_inline_for_return", "callee=#{inline_key} reason=callee_arena_mismatch_with_return")
@@ -147771,7 +148249,7 @@ module Adamas::HIR
           @inline_arenas = [caller_arena, callee_arena, block_arena]
         end
         @arena = callee_arena
-        @source_yield_context = method_source_yield_context(func_def, callee_arena)
+        @source_yield_context = method_source_yield_context(func_def, callee_arena, method_macro_scope)
 
         # Isolate callee locals from caller locals, but keep caller locals available for block bodies.
         caller_locals = ctx.save_locals.locals
@@ -152732,7 +153210,9 @@ module Adamas::HIR
         bind_exact_source_call_target(
           actual_name, default_source[0], default_source[1], default_source[2], node,
         )
-        actual_callsite = remember_callsite_arg_types(actual_name, arg_types, has_named_args: defaulted_has_named_args)
+        facts = call_resolution_source_argument_facts(ctx, args, arg_types)
+        actual_callsite = remember_callsite_arg_types(actual_name, arg_types,
+          has_named_args: defaulted_has_named_args, source_argument_facts: facts)
         member_call_observation = observed_force_lower_source_call(ctx, actual_name, actual_callsite,
           default_source[1], default_source[2], default_source[0], default_binding: member_default_bindings.first?,
           materialized_arguments: args)

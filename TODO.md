@@ -35,6 +35,28 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-19 — Retain named macro expansions for each yielding invocation
+- [x] Infer yield parameters from the expanded AST in its own arena. The
+  selected method and originating invocation carry that AST through inline
+  lowering and compiled callbacks. Calls sharing a callback ABI can produce
+  different expansions, including a nested call reached from two callers.
+- [x] Check the actual callback before forcing its yielding body. The
+  no-prelude comparison with Crystal 1.22.3 covers shared ABIs, typed and
+  zero-argument yields, and both a callback type error and a type error in the
+  expansion. Both Adamas paths observe one expansion before each rejection.
+- [x] Preserve source argument facts when positional defaults are materialized.
+  Replay the suspended invocation with its own checked inputs while keeping
+  the independent named binding available for discovery. The installed
+  bootstrap trace discharges both `String#to_i64?` and its dependent macro
+  numeric literal conversion. Keeping the argument facts alone still loops
+  in the retry driver.
+- [ ] Match Crystal's diagnostic ordering for explicitly annotated block
+  results. When a block returns the wrong annotated type, Crystal reports
+  the error before expanding the named macro. Adamas already reported the
+  same type error after expanding the macro once before this change.
+- [ ] Fresh S1-to-S2 reaches the existing `CLI#run_check` result dependency
+  with installed 1.22.3 and bundled 1.18.2. Both exit 1 before producing S2.
+
 ### 2026-11-19 — Preserve positional overload identity while an argument is pending
 - [x] Keep the selected declaration and its arena when an unresolved argument
   would be omitted from a type suffix. The HIR regression materializes the
