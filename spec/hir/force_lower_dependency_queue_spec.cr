@@ -337,6 +337,56 @@ class Adamas::HIR::AstToHir
     copy_force_lower_callsite(callsite).source_binding
   end
 
+  def __test_advance_suspended_consumer(
+    *, requires_result : Bool = true, stale_consumer : Bool = false, first_settled : Bool = true,
+  ) : Bool
+    consumer = "retry_queue_ancestor_a"
+    first = "retry_queue_leaf"
+    second = "retry_queue_shared"
+    producer = __test_seed_queue_retry(second, [first], requires_result: requires_result)
+    first_source = __test_force_lower_exact_source_binding(first).not_nil!
+    second_source = __test_force_lower_exact_source_binding(second).not_nil!
+    consumer_source = __test_force_lower_exact_source_binding(consumer).not_nil!
+    replay = ForceLowerReplayCallsite.new(consumer_source.source_def, consumer_source.source_arena,
+      __test_empty_callsite, @type_param_map.dup, @current_namespace_override, consumer,
+      exact_source_binding: consumer_source)
+    previous = ForceLowerSuspendedRequest.new(ExactResultPending.new(consumer, first, first_source), replay, false)
+    pending = ExactResultPending.new(consumer, second, second_source)
+    capture = ForceLowerReplayCapture.new(consumer, nil)
+    capture.binding = if stale_consumer
+                        foreign = __test_force_lower_exact_source_binding("retry_queue_ancestor_b").not_nil!
+                        ForceLowerReplayCallsite.new(foreign.source_def, foreign.source_arena,
+                          __test_empty_callsite, @type_param_map.dup, @current_namespace_override, consumer)
+                      else
+                        replay
+                      end
+    pending.consumer_capture = capture
+
+    remove_hir_function(consumer)
+    clear_function_state(consumer)
+    @force_lower_provisional_dependencies[consumer] = Set{second}
+    @force_lower_provisional_dependencies[first] = Set{second} unless first_settled
+    @force_lower_retry_work << producer
+    @force_lower_retry_driver_active = true
+    advanced = advance_suspended_consumer(previous, pending)
+    unless advanced
+      @force_lower_retry_work.size.should eq(1)
+      return false
+    end
+    @force_lower_retry_work.size.should eq(2)
+    queued = @force_lower_retry_work.last.as(ForceLowerSuspendedRequest)
+    queued.pending.same?(pending).should be_true
+    force_lower_retry_waits_for_queued_producer?(queued).should be_true
+    advance_suspended_consumer(previous, pending).should be_false
+
+    @force_lower_retry_driver_active = false
+    run_force_lower_retry_driver(queued).should be_true
+    @module.function_by_name(consumer).not_nil!.return_type.should eq(TypeRef::INT32)
+    true
+  ensure
+    @force_lower_retry_driver_active = false
+  end
+
   def __test_queue_has_producer?(name : String, requires_result : Bool) : Bool
     force_lower_retry_has_queued_producer?(name, requires_result)
   end
@@ -492,6 +542,16 @@ describe "dependency-aware exact source retry scheduling" do
       converter.__test_provisional_retry?(name).should be_false
       converter.__test_function_result_type(name).should_not eq(Adamas::HIR::TypeRef::VOID)
     end
+  end
+
+  it "keeps a second producer discovered while replaying the same consumer" do
+    force_lower_dependency_queue_fixture.__test_advance_suspended_consumer.should be_true
+  end
+
+  it "requires the original producer to settle and the new replay to retain its source and result demand" do
+    force_lower_dependency_queue_fixture.__test_advance_suspended_consumer(first_settled: false).should be_false
+    force_lower_dependency_queue_fixture.__test_advance_suspended_consumer(stale_consumer: true).should be_false
+    force_lower_dependency_queue_fixture.__test_advance_suspended_consumer(requires_result: false).should be_false
   end
 
   it "does not report an unresolved initial demand after independent work settles" do

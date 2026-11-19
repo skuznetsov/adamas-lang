@@ -35,6 +35,23 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-18 — Retain successive exact result dependencies during replay
+- [x] If replay finishes one producer and the same consumer suspends on a
+  second, current result-required producer, keep the new edge in the retry
+  driver. Check the consumer recipe and source identity before requeueing.
+  The dependency-queue regressions cover successful replay, duplicate edges,
+  unsettled first producers, stale source recipes, and body-only requests.
+- [ ] Fresh S1-to-S2 now passes the bundled `parse_block_shorthand` stop and
+  reaches `parse_bare_proc_type` from `parse_union_type_for_annotation`.
+  The installed profile still stops at `parse_expression(Int32)` from
+  `parse_op_assign(Nil)`. Neither profile produces S2.
+- [ ] `recursive_struct_result_repro.cr` passes at `8e10bc09` and fails at
+  `8813c191` and current dev. The exact work queue retains all the recursive
+  edges, but the producer's independent return is after its first pending
+  call, so no checked result is available to start the cycle. An independent
+  constant return before the pending call confirms this dependency in a
+  diagnostic fixture. Keep the production source and all result checks intact.
+
 ### 2026-11-18 — Preserve queued exact source-result demand
 - [x] A nested retry driver can consume a producer's provisional dependency
   while its current retry request still carries the exact source-bound result

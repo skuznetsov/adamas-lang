@@ -115449,8 +115449,12 @@ module Adamas::HIR
                        begin
                          resume_suspended_exact_result(current_request)
                        rescue pending : ExactResultPending
-                         raise pending unless current_request.pending.same?(pending) && force_lower_retry_source_current?(current_request)
-                         raise pending unless schedule_settled_retry_sibling(current_request, handoff)
+                         if current_request.pending.same?(pending)
+                           raise pending unless force_lower_retry_source_current?(current_request) &&
+                                                schedule_settled_retry_sibling(current_request, handoff)
+                         else
+                           raise pending unless advance_suspended_consumer(current_request, pending)
+                         end
                          false
                        end
                      when ForceLowerRetryRequest
@@ -115492,6 +115496,34 @@ module Adamas::HIR
       end
       progress && force_lower_retry_source_current?(request) &&
         settled_force_lower_demand?(name, force_lower_retry_requires_result?(request))
+    end
+
+    # A replay can finish its first producer and suspend again before
+    # publishing the same consumer. Keep the newly discovered dependency
+    # with that exact consumer instead of unwinding the retry driver.
+    private def advance_suspended_consumer(previous : ForceLowerSuspendedRequest, pending : ExactResultPending) : Bool
+      consumer = pending.consumer
+      producer = pending.producer
+      return false unless consumer == previous.name && consumer != producer && producer != previous.pending.producer
+      return false unless settled_force_lower_producer?(previous.pending) && force_lower_retry_source_current?(previous)
+      return false unless pending.consumer_requires_result == previous.pending.consumer_requires_result &&
+                          pending.consumer_bypass_inline_yield == previous.bypass_inline_yield
+      capture = pending.consumer_capture
+      return false unless capture && capture.name == consumer && (replay = capture.binding)
+      next_request = ForceLowerSuspendedRequest.new(pending, replay, pending.consumer_bypass_inline_yield)
+      return false unless force_lower_retry_source_current?(next_request) &&
+                          reconcile_recursive_producer_replays(previous.replay_callsite, replay)
+      return false unless @force_lower_provisional_dependencies[consumer]?.try(&.includes?(producer)) &&
+                          queued_exact_force_lower_result_demand?(producer, pending.producer_source)
+      edge = {consumer, producer}
+      return false if @force_lower_result_suspensions.includes?(edge) ||
+                      has_queued_force_lower_edge_continuation?(consumer, producer)
+      return false unless enqueue_force_lower_retry_work(next_request)
+      @force_lower_result_suspensions << edge
+      if env_has?("DEBUG_FORCE_LOWER_DEPTH")
+        STDERR.puts "[FORCE_LOWER_ADVANCED] consumer=#{consumer} settled=#{previous.pending.producer} producer=#{producer}"
+      end
+      true
     end
 
     # Preserve the blocked continuation while an independent consumer can use
