@@ -8549,11 +8549,29 @@ module Adamas
               variants = union_desc.variants.map(&.full_name).join(",")
               STDERR.puts "[VDISPATCH_UNION] union=#{union_desc.name} variants=#{variants}"
             end
+            runtime_header_union = Adamas::MIR.union_storage_kind(@mir_module.type_registry, union_desc).runtime_header?
+            seen_type_ids = ::Set(UInt32).new
             union_desc.variants.each do |variant|
-              if variant.full_name == "Nil"
-                next
-              end
-              if func = resolve_virtual_method_for_class(variant.full_name, method_suffix, arg_count)
+              next if variant.full_name == "Nil"
+
+              if runtime_header_union
+                # The discriminator is the concrete object's header, including
+                # descendants of every declared hierarchy arm.
+                ([variant.full_name] + subclasses_for(variant.full_name)).each do |class_name|
+                  next unless concrete_type = @mir_module.type_registry.get_by_name(class_name)
+                  next unless Adamas::MIR.runtime_header_backed_type?(concrete_type)
+                  next if seen_type_ids.includes?(concrete_type.id)
+                  next unless func = resolve_virtual_method_for_class(class_name, method_suffix, arg_count)
+                  seen_type_ids.add(concrete_type.id)
+                  candidates << VDispatchCandidate.new(
+                    type_id: concrete_type.id.to_i32,
+                    type_ref: TypeRef.new(concrete_type.id),
+                    variant_id: variant.type_id,
+                    func: func,
+                    dispatch_class: nil,
+                  )
+                end
+              elsif func = resolve_virtual_method_for_class(variant.full_name, method_suffix, arg_count)
                 if ENV["DEBUG_VDISPATCH_UNION"]? && method_suffix == "next_power_of_two"
                   STDERR.puts "[VDISPATCH_UNION] candidate=#{variant.full_name} func=#{func.name}"
                 end

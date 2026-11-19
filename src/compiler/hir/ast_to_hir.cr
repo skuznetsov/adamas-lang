@@ -133457,17 +133457,24 @@ module Adamas::HIR
         end
       elsif type_desc.kind == TypeKind::Union
         union_name = normalize_union_type_name(type_desc.name)
-        unless numeric_conversion_method_name?(method_name)
+        # A user method can share the spelling of a primitive conversion.
+        # Its implementation still needs normal virtual reachability.
+        variants = nil
+        primitive_conversion = numeric_conversion_method_name?(method_name) &&
+                               (variants = split_union_type_name(union_name)).any? do |variant|
+                                 numeric_primitive_class_name?(resolve_type_alias_chain(variant))
+                               end
+        unless primitive_conversion
           ah = virtual_target_identity_hash(arg_types, source_argument_facts)
           vf = vdispatch_flags(has_block_call, is_union: true)
           key = {union_name, method_name, ah, vf}
           unless @virtual_targets_lowered.includes?(key)
             @virtual_targets_lowered.add(key)
             # Keep every union variant's method alive through lazy RTA so the
-            # MIR vdispatch table enumerates all variants (see the MemberAccess
-            # branch above and union_vdispatch_variant_enum_repro.sh).
+            # MIR vdispatch table enumerates all variants (see
+            # union_vdispatch_variant_enum_repro.sh).
             rta_record_union_receiver_targets(union_name, method_name)
-            split_union_type_name(union_name).each do |variant|
+            (variants || split_union_type_name(union_name)).each do |variant|
               next if variant == "Nil"
               resolved_variant = resolve_type_alias_chain(variant)
               expanded = [] of String
@@ -152694,41 +152701,11 @@ module Adamas::HIR
               end
             end
           elsif type_desc.kind == TypeKind::Union
-            union_name = normalize_union_type_name(type_desc.name)
-            ah = arg_types_hash(arg_types)
-            vf = vdispatch_flags(false, is_union: true)
-            key = {union_name, member_name, ah, vf}
-            unless @virtual_targets_lowered.includes?(key)
-              @virtual_targets_lowered.add(key)
-              # Keep every union variant's method alive through lazy RTA. The
-              # per-variant lower_function_if_needed calls below otherwise defer
-              # sibling variants (the pending-queue owner gate only keeps method
-              # parts recorded as virtual receivers), so the MIR vdispatch table
-              # under-enumerates and missing variants hit `unreachable`.
-              # See regression_tests/union_vdispatch_variant_enum_repro.sh.
-              rta_record_union_receiver_targets(union_name, member_name)
-              split_union_type_name(union_name).each do |variant|
-                next if variant == "Nil"
-                resolved_variant = resolve_type_alias_chain(variant)
-                expanded = [] of String
-                [resolved_variant, variant].uniq.each do |owner|
-                  if owner.includes?('|')
-                    split_union_type_name(owner).each { |entry| expanded << entry }
-                  else
-                    expanded << owner
-                  end
-                end
-                if env_get("DEBUG_VDISPATCH_UNION") && member_name == "next_power_of_two"
-                  STDERR.puts "[VDISPATCH_UNION_HIR] variant=#{variant} resolved=#{resolved_variant} expanded=#{expanded.join(",")}"
-                end
-                expanded.uniq.each do |owner|
-                  base_name = "#{owner}##{member_name}"
-                  candidate = mangle_function_name(base_name, arg_types, false)
-                  lower_function_if_needed(candidate)
-                  lower_function_if_needed(base_name) unless candidate == base_name
-                end
-              end
-            end
+            # A hierarchy arm also admits its concrete descendants. Use the
+            # same demand/replay closure as parenthesized receiver calls.
+            ensure_virtual_call_targets_lowered(
+              ctx, object_id, member_name, arg_types, false, false, false, false,
+            )
           elsif type_desc.kind == TypeKind::Module || (type_desc.kind == TypeKind::Generic &&
                 (module_like_type_name?(type_desc.name) || module_includers_match?(type_desc.name)))
             # MemberAccess and CallNode need identical applied-module reachability,
