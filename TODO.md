@@ -28335,9 +28335,32 @@ changes. No stdlib edits.
   restrictions and incompatible subtype narrowing are rejected.
 - Fresh S1 → S2 with installed 1.22.3 and bundled 1.18.2 used source seal
   `56a502f663a51e42261273ec3b47c7a2bccb9bd115d6b14389b7e7b0cccb1fc9`.
-  Both pass the `CLI#run_check` and `Hash#map` result frontiers and exit
-  1 on the next blocker, a Char inferred for the range-indexed String
-  passed to `MacroIdValue.new` in the macro expander.
+  Both reach the range-indexed String passed to `MacroIdValue.new` in
+  the macro expander and exit 1 on a Char/String mismatch. This probe
+  qualified the `Hash#map` repair. The remaining `CLI#run_check` demand
+  is visible again after the String override is removed.
 - [ ] Test an unresolved method forall input that shadows a receiver formal.
   The legacy annotation fallback precedes this repair. Also exercise
   tuple fields carrying class objects through a selected module formal.
+
+
+## Result ownership for selected String indexing overloads (2026-11-19)
+
+- [x] Keep the exact selected result after lowering `String#[]`. The
+  late unconditional Char assignment overwrote the producer's String
+  result even though the exact Range overload was already selected.
+- The no-prelude regression matches Crystal 1.22.3 in lazy and eager modes
+  for an open `Range(Int64?, Int64?)`, a numeric index and an independent
+  Bool-returning source overload. The parent misclassifies the independent
+  overload as Char. Both compilers reject a wrong consumer restriction.
+- Fresh S1 → S2 used source seal
+  `f080e2b3adafe73676437b70ab5ebe00bbe87e8fa12d18dd506c1f7a81330aa1`.
+  Installed 1.22.3 (272.15s) and bundled 1.18.2 (236.14s) pass the
+  `MacroIdValue.new` frontier and exit 1 on the remaining exact
+  `CLI#run_check` demand. Its Analyzer/Parser dependencies make progress
+  and the CLI result is still pending at the end of the retry driver.
+  Neither run emitted S2.
+- [ ] Make early String index inference consume the same selected result.
+  Wrapping the independent index in an unannotated method still infers
+  Char in `infer_type_from_expr(IndexNode)` before the source call runs.
+  Preserve the separate intrinsic, numeric and Range cases.

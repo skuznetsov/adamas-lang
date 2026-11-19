@@ -151841,10 +151841,6 @@ module Adamas::HIR
             return_type = inferred_return
           end
         end
-        # String#[](Int32) returns Char, not Int32/Pointer
-        if ctx.type_of(object_id) == TypeRef::STRING && index_ids.size == 1
-          return_type = TypeRef::CHAR
-        end
         source_def = selected_index_def || @function_defs[call_target_name]?
         record_force_lower_result_dependency(ctx, call_target_name, source_def, refused_before_force)
         suspend_depth_refused_source_result(
