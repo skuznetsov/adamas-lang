@@ -115963,7 +115963,14 @@ module Adamas::HIR
         return false
       end
       if provisional
-        return false unless dependencies.not_nil!.all? { |callee| settled_force_lower_result?(callee) || projected.includes?(callee) }
+        ready = dependencies.not_nil!.all? do |callee|
+          if callee == name
+            checked_recursive_self_result?(request)
+          else
+            settled_force_lower_result?(callee) || projected.includes?(callee)
+          end
+        end
+        return false unless ready
       end
 
       discharged = candidates.select do |callee|
@@ -115997,6 +116004,27 @@ module Adamas::HIR
                      requires_result: request.requires_result)
                  end
       replayed && @module.has_function_with_body?(name) && !@force_lower_provisional_dependencies.has_key?(name)
+    end
+
+    # A self call adds no separate body to force. A completed, current body
+    # can supply its own result while a distinct producer enables replay.
+    # Rebuild both the body and its calls before claiming settlement.
+    private def checked_recursive_self_result?(request : ForceLowerRetryRequest) : Bool
+      return false unless request.requires_result
+      source = request.exact_source || return false
+      replay = request.replay_callsite || return false
+      replay_source = replay.exact_source_binding ||
+                      ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name)
+      name = request.name
+      return false unless same_force_lower_exact_source_binding?(source, replay_source) &&
+                          force_lower_retry_source_current?(request) &&
+                          ordinary_recursive_source_callsite?(name, source, replay.callsite)
+      function = @module.function_by_name(name) || return false
+      params = function.params
+      offset = params.first?.try(&.name) == "self" ? 1 : 0
+      return false if function.heap_block_param || params.any?(&.is_block)
+      return false unless params.skip(offset).map(&.type) == replay.callsite.types
+      !!exact_final_struct_result(name, source)
     end
 
     # A raw callback body can be rebuilt in an ordinary lowering context
@@ -116317,10 +116345,12 @@ module Adamas::HIR
     end
 
     private def exact_final_struct_result(pending : ExactResultPending) : TypeRef?
-      name = pending.producer
-      source = pending.producer_source
-      return unless pending.producer_requires_result && nested_recursive_result_demands_settled?(pending) &&
-                    force_lower_exact_source_matches?(name, source)
+      return unless pending.producer_requires_result && nested_recursive_result_demands_settled?(pending)
+      exact_final_struct_result(pending.producer, pending.producer_source)
+    end
+
+    private def exact_final_struct_result(name : String, source : ForceLowerExactSourceBinding) : TypeRef?
+      return unless force_lower_exact_source_matches?(name, source)
       return if source.inherited_nilary_member_alias || raw_callback_abi_for(name) || raw_callback_source_binding_for(name)
       return unless function_state(name).completed? && @module.has_function_with_body?(name)
       function = @module.function_by_name(name) || return

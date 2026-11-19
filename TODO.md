@@ -35,6 +35,23 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-19 — Rebuild a checked recursive body after its producer advances
+- [x] A completed provisional body now accepts its current checked struct
+  result when testing its dependency on itself. Require exact source, replay
+  and argument evidence. A distinct producer must still enable replay, and
+  all body and call checks run again before the result can settle.
+- [x] The new queue regression fails on the parent. The focused HIR suites
+  pass 60 examples, including missing return evidence, unknown argument kind
+  and an unsettled external producer. The native mutual-recursion fixture
+  matches Crystal 1.22.3. Both compilers reject a reachable wrong-type return.
+  Three existing recursive-result and emission regressions also pass.
+- [ ] Fresh S1-to-S2 exits 1 in `CLI#run -> CLI#run_check` on both profiles.
+  Bundled 1.18.2 resumes `parse_module` and `parse_lib`, and later waits
+  on the recursive symbol-table macro lookup. Installed 1.22.3 still has an
+  unsettled `String#to_i64` fallback-block specialization. A reduced
+  macro-generated yield mismatch is reproducible on the parent; the direct
+  yield control matches Crystal.
+
 ### 2026-11-19 — Named entry owns its recursive specialization
 - [x] Retain the selected declaration's formal-slot binding and the actual
   lowered value kinds when the first call to a recursive body is named.

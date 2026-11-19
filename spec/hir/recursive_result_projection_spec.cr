@@ -32,6 +32,35 @@ class Adamas::HIR::AstToHir
     !index.nil?
   end
 
+  def __test_retry_checked_self_result(change : Symbol) : Bool
+    name = __test_projection_method_name("recursive_value")
+    producer = "RecFactory.value"
+    original = @module.function_by_name(name).not_nil!
+    source = __test_projection_source(name)
+    callsite = __test_ordinary_projection_callsite
+    replay = __test_projection_replay(name, callsite)
+    @pending_arg_types[name] = callsite
+    @force_lower_provisional_dependencies[name] = Set{name, producer}
+    if change == :missing_receipt
+      original.source_return_result_receipt = nil
+    elsif change == :unsettled_producer
+      @force_lower_provisional_dependencies[producer] = Set{name}
+    elsif change == :unknown_argument_kind
+      replay = __test_projection_replay(name, CallsiteArgs.new([TypeRef::BOOL], nil, nil))
+    end
+
+    request = ForceLowerRetryRequest.new(name, [name, producer], false, replay, source, true)
+    result = with_force_lower_exact_source(name, source) { retry_force_lower_depth_request(request) }
+    if result
+      @module.function_by_name(name).not_nil!.same?(original).should be_false
+      settled_force_lower_result?(name).should be_true
+    else
+      @module.function_by_name(name).not_nil!.same?(original).should be_true
+      @force_lower_provisional_dependencies[name].should eq(Set{name, producer})
+    end
+    result
+  end
+
   def __test_advance_projected_consumer(change : Symbol) : Bool
     consumer = "RecFactory.consumer"
     first = "RecFactory.value"
@@ -695,6 +724,11 @@ private def recursive_projection_converter
         end
       end
 
+      def self.recursive_value(flag : Bool) : RecToken
+        return recursive_value(false) if flag
+        value
+      end
+
       def self.value_with_default(flag : Bool = false) : RecToken
         RecToken.new
       end
@@ -728,6 +762,7 @@ private def recursive_projection_converter
     RecClass.new.consumer_for(false)
     RecFactory.value_for(false)
     RecFactory.value_with_default(false)
+    RecFactory.recursive_value(true)
     RecFactory.sibling_value(false)
     RecFactory.consumer_for(false)
     CRYSTAL
@@ -765,6 +800,16 @@ describe "source result projection inside a recursive specialization" do
     recursive_projection_converter.__test_queue_projection(close_cycle: false).should be_false
     recursive_projection_converter.__test_queue_projection(need_result: false).should be_false
     recursive_projection_converter.__test_queue_projection(change_source: true).should be_false
+  end
+
+  it "rebuilds a completed recursive body after its independent producer settles" do
+    recursive_projection_converter.__test_retry_checked_self_result(:current).should be_true
+  end
+
+  it "retains a recursive wait without current result and argument evidence" do
+    [:missing_receipt, :unsettled_producer, :unknown_argument_kind].each do |change|
+      recursive_projection_converter.__test_retry_checked_self_result(change).should be_false
+    end
   end
 
   it "keeps both continuations after a checked projection exposes a new pending result" do
