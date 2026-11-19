@@ -49,6 +49,24 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   parent's bundled `parse_percent_macro_control` and installed DWARF tuple
   failures; it does not establish full bootstrap or DWARF closure.
 
+### 2026-11-18 — Preserve bottom on terminal short-circuit joins
+- [x] When neither edge of a `||` expression reaches its merge, return
+  canonical `NoReturn` and mark the synthetic merge dead instead of emitting
+  `Nil`. The focused W40 regression passes for canonical and shadowed
+  `NoReturn`, a live opposite-branch merge, and wrong-result rejection.
+- [x] A reachable invalid RHS is rejected with no executable by stock
+  Crystal, the exact Q512 parent S1, and the candidate S1. The parent and
+  candidate retain the same `Int32`/`Void` method-result diagnostic; stock
+  Crystal reports the undefined name. This diagnostic mismatch predates W40.
+- [ ] Keep general class-object truthiness and undefined-name diagnostic
+  quality outside this slice. The focused `Nil` instance cases do not settle
+  all class-object truthiness paths or RHS diagnostic behavior.
+- [ ] Fresh bundled and installed S1-to-S2 both stop at the same parser
+  pending-source-result blockers recorded for the Q512 parent:
+  `Parser#parse_op_assign$Nil` in `Parser#parse_block_shorthand$Token`, and
+  `Parser#parse_expression$Int32` in `Parser#parse_op_assign$Nil`. This slice
+  does not advance the bootstrap frontier past those blockers.
+
 ### Prelude hello blockers, second batch (2026-10-26)
 Each fix has its own commit and regression (original Crystal 1.22.1 first).
 - [x] 653c8a09 included-module overloads selected by argument types for

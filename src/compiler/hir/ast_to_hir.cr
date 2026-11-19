@@ -103359,9 +103359,10 @@ module Adamas::HIR
         end
       end
 
-      nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
-      ctx.emit(nil_lit)
-      nil_lit.id
+      @control_flow_dead_blocks.add({ctx.function.id, merge_block})
+      bottom = Literal.new(ctx.next_id, @module.intern_type(TypeDescriptor.new(TypeKind::Class, "NoReturn")), nil)
+      ctx.emit(bottom)
+      bottom.id
     end
 
     private def merge_narrowing_target_names(left : Array(String), right : Array(String)) : Array(String)
