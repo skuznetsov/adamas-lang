@@ -1419,6 +1419,13 @@ module Adamas::HIR
       inputs : Array(SourceCallArgument),
       result : SourceCallArgument
 
+    private alias IncludedModuleDefOrigin = Tuple(
+      Adamas::Compiler::Frontend::DefNode,
+      Adamas::Compiler::Frontend::ArenaLike,
+      String,
+      String,
+    )
+
     private record SourceCallBinding,
       selected_name : String,
       definition : Adamas::Compiler::Frontend::DefNode,
@@ -1430,14 +1437,8 @@ module Adamas::HIR
       # facts separate from `supplied_types`: only omitted slots may populate
       # this vector, and source-call inference continues to read supplied
       # arguments alone.
-      defaulted_types : Array(SourceCallArgument?) = [] of SourceCallArgument?
-
-    private alias IncludedModuleDefOrigin = Tuple(
-      Adamas::Compiler::Frontend::DefNode,
-      Adamas::Compiler::Frontend::ArenaLike,
-      String,
-      String,
-    )
+      defaulted_types : Array(SourceCallArgument?) = [] of SourceCallArgument?,
+      included_origin : IncludedModuleDefOrigin? = nil
 
     # Compatibility carrier used during source-to-HIR lowering. The serialized
     # symbol is legacy; included_origin transports the exact source include
@@ -12538,6 +12539,7 @@ module Adamas::HIR
         binding.source_receiver_name,
         binding.block_result.try { |fact| copy_source_call_argument_fact(fact) },
         copy_source_call_argument_facts(binding.defaulted_types).not_nil!,
+        binding.included_origin,
       )
     end
 
@@ -129069,6 +129071,16 @@ module Adamas::HIR
                                          included_origin,
                                        )
                                      end
+      if has_block_call
+        source_call_binding = source_call_binding_with_selected_included_origin(
+          source_call_binding,
+          selected_block_source_target,
+          source_receiver_name,
+          synthesize_empty: source_positional_values.empty? && args.empty? &&
+                            !has_named_args && !allocator_has_named_args && !has_splat && !source_has_splat &&
+                            node.named_args.nil?,
+        )
+      end
       if receiver_id && debug_env_filter_match?("DEBUG_EACH_RESOLVE", method_name)
         recv_name = get_type_name_from_ref(ctx.type_of(receiver_id))
         STDERR.puts "[EACH_RESOLVE_CALL] recv=#{recv_name} lookup=#{lookup_name} base=#{base_method_name} mangled=#{mangled_method_name}"
@@ -160543,6 +160555,68 @@ module Adamas::HIR
       SourceCallBinding.new(selected_name, definition, declaration_arena, supplied, source_receiver_name)
     end
 
+    private def same_included_module_def_origin?(
+      left : IncludedModuleDefOrigin?,
+      right : IncludedModuleDefOrigin?,
+    ) : Bool
+      return right.nil? unless left
+      return false unless right
+
+      left[0].same?(right[0]) && left[1].same?(right[1]) &&
+        left[2] == right[2] && left[3] == right[3]
+    end
+
+    # Carry the selected include application into callback-result inference.
+    # A zero-argument included method such as Enumerable#map has no ordinary
+    # source binding to preserve, so synthesize only its empty formal vector.
+    # Calls with other shapes keep their existing source-binding rules.
+    private def source_call_binding_with_selected_included_origin(
+      binding : SourceCallBinding?,
+      selected_target : SelectedCallTarget?,
+      source_receiver_name : String?,
+      *,
+      synthesize_empty : Bool,
+    ) : SourceCallBinding?
+      target = selected_target || return binding
+      origin = target.included_origin || return binding
+      definition = target.def_node
+      selected_name = target.symbol_name
+      declaration_arena = target.source_arena ||
+                          @function_def_arenas[selected_name]? ||
+                          @function_def_arenas[strip_type_suffix(selected_name)]? ||
+                          registered_arena_for_def(definition) ||
+                          resolve_arena_for_def(definition, @arena)
+      unless origin[0].same?(definition) && origin[1].same?(declaration_arena)
+        raise LoweringError.new("selected callback include lost Def/arena identity")
+      end
+
+      if source = binding
+        # A source binding for another selected body cannot authorize this
+        # include application. Preserve the old path; its existing owner check
+        # will decide whether that binding is usable.
+        return source unless source_call_binding_matches?(source, definition, declaration_arena)
+        if prior_origin = source.included_origin
+          unless same_included_module_def_origin?(prior_origin, origin)
+            raise LoweringError.new("callback source binding carries a different include application")
+          end
+        end
+        return source.copy_with(included_origin: origin)
+      end
+
+      return nil unless synthesize_empty
+      params = function_param_infos(definition, declaration_arena)
+      return nil unless params.any?(&.is_block) && params.all?(&.is_block)
+
+      SourceCallBinding.new(
+        selected_name,
+        definition,
+        declaration_arena,
+        [] of SourceCallArgument?,
+        source_receiver_name,
+        included_origin: origin,
+      )
+    end
+
     private def source_named_call_argument_facts(
       ctx : LoweringContext,
       params : Array(DefParamInfo),
@@ -160690,7 +160764,8 @@ module Adamas::HIR
         left.declaration_arena.same?(right.declaration_arena) &&
         left.supplied_types == right.supplied_types &&
         left.defaulted_types == right.defaulted_types &&
-        left.source_receiver_name == right.source_receiver_name
+        left.source_receiver_name == right.source_receiver_name &&
+        same_included_module_def_origin?(left.included_origin, right.included_origin)
     end
 
     private def collect_source_block_input_bindings(
@@ -160752,6 +160827,38 @@ module Adamas::HIR
             # This is source evidence of a bare owner, not a guess that Void
             # or a self-binding in a physical receiver means "unbound".
             formals.each { |formal| bindings.delete(formal) }
+          end
+        end
+      end
+      if binding = source_binding
+        if origin = binding.included_origin
+          unless source_call_binding_matches?(binding, definition, declaration_arena) &&
+                 origin[0].same?(definition) && origin[1].same?(declaration_arena)
+            raise LoweringError.new("callback include provenance does not belong to the selected declaration #{strip_type_suffix(selected_name)}")
+          end
+          module_formals = declared_module_type_param_names(origin[2])
+          unless module_formals.empty?
+            receiver_name = receiver_type.try do |type_ref|
+              name = get_type_name_from_ref(type_ref)
+              name unless type_ref == TypeRef::VOID || name.empty? || name == "Unknown"
+            end || binding.source_receiver_name || ""
+            include_bindings = included_module_type_param_map_for_origin(
+              receiver_name,
+              origin[2],
+              origin[3],
+            )
+            unless include_bindings
+              raise LoweringError.new("selected callback include has unresolved type parameters for #{strip_type_suffix(selected_name)}")
+            end
+            module_formals.each do |formal|
+              # A same-spelled receiver parameter belongs to a different
+              # declaration scope. Only the exact selected application may
+              # bind this included module formal.
+              bindings.delete(formal)
+              value = include_bindings[formal]? ||
+                      raise LoweringError.new("selected callback include is missing type parameter #{formal}")
+              bindings[formal] = value if formals.includes?(formal)
+            end
           end
         end
       end

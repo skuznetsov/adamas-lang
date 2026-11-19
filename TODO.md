@@ -28301,3 +28301,25 @@ changes. No stdlib edits.
   Both pass the old `CLI#run_check` suspension and stop at
   `reflection_collection_for_symbol`. The selected `Enumerable(T)` block
   contract still substitutes the hash key for the yielded key/value tuple.
+
+## Selected include provenance for callback results (2026-11-19)
+
+- [x] Carry the selected module application and its Def/Arena into callback
+  result inference. Module type parameters come from that application.
+  Source omissions and method-level forall shadowing retain their scope.
+- The native oracle passes with Crystal 1.22.3, eager and lazy lowering.
+  The parent infers the class's `Int64` formal in place of
+  `Tuple(Int32, Bool)`. The candidate rejects the crossed tuple and
+  instance/metaclass result restrictions. All three focused HIR examples
+  pass. The adjacent named-include suite reproduces the same five
+  failures as the parent.
+- Fresh S1 → S2 with installed 1.22.3 and bundled 1.18.2 used source seal
+  `3a6b3c54c660d68b414fcdba6dbd787951b801d1e7ab78f2ae90a3b749f95c88`.
+  Both still exit 1 in `reflection_collection_for_symbol`. The installed
+  trace now retains the key/value tuple in both selected include contracts.
+  The early source witness rejects the outer block's implicit tuple unpack,
+  one of the remaining obstacles to inferring the callback output.
+- [ ] Apply the selected include's type parameters before lowering default
+  expressions. A source default `T.new` in a module that binds `T` to a
+  different class from the receiving class's `T` prints `BA` on the parent
+  and candidate and `AA` on stock Crystal. A literal index default passes.

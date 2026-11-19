@@ -1093,6 +1093,26 @@ binding, Tuple descriptors or result-proof changes. Rollback is the atomic
 witness commit.
 
 
+### Selected include applications own callback type parameters
+
+An included method's callback contract consumes the exact selected Def, its
+arena, and the module application that supplied it. Keep that application
+with the invocation's source arguments, including retained omission slots.
+Selection may publish an empty ordinary-argument binding for a direct call
+whose only formal is the block. An existing argument binding must refer to
+the same declaration before it can carry the include application.
+
+Bind each module formal from that application and apply the method's forall
+scope afterward. A receiver compatibility alias or same-spelled class formal
+has no authority over an included module formal. Retry coalescing requires
+matching applications as well as matching Def and arena.
+
+Gate: included_callback_exact_application_repro.sh COMPILER compares the
+result and rejection behavior with stock Crystal, including nested forwarding
+through a method with an omitted index. The HIR checks cover repeated module
+applications and source bindings for a different declaration. Refresh
+after call selection, include projection, or callback binding changes.
+
 ### Checked reference upcasts in early callback results
 
 A reference upcast can establish an early source result when the source
