@@ -61129,13 +61129,21 @@ module Adamas::HIR
     # True when `suffix` is exactly the mangled suffix of `arg_types` with at
     # least one component spelled as its type-literal source name.
     private def source_kind_suffix_over_arg_types?(suffix : String, arg_types : Array(TypeRef)) : Bool
+      flags = source_kind_flags_from_suffix(suffix, arg_types)
+      !flags.nil? && flags.any?
+    end
+
+    # Per-actual source kinds spelled by `suffix` over `arg_types`: true where
+    # the component is the type-literal source name (`T.class`). Nil when the
+    # suffix is not exactly the mangled suffix of `arg_types`.
+    private def source_kind_flags_from_suffix(suffix : String, arg_types : Array(TypeRef)) : Array(Bool)?
       position = 0
-      literal_seen = false
       first = true
-      arg_types.each do |arg_type|
+      flags = Array(Bool).new(arg_types.size, false)
+      arg_types.each_with_index do |arg_type, index|
         next if arg_type == TypeRef::VOID
         unless first
-          return false unless suffix.byte_at?(position) == '_'.ord.to_u8
+          return nil unless suffix.byte_at?(position) == '_'.ord.to_u8
           position += 1
         end
         first = false
@@ -61143,14 +61151,41 @@ module Adamas::HIR
         instance_name = type_name_for_mangling(arg_type)
         if source_suffix_component_at?(suffix, position, literal_name)
           position += literal_name.bytesize
-          literal_seen = true
+          flags[index] = true
         elsif source_suffix_component_at?(suffix, position, instance_name)
           position += instance_name.bytesize
         else
-          return false
+          return nil
         end
       end
-      literal_seen && position == suffix.bytesize
+      position == suffix.bytesize ? flags : nil
+    end
+
+    # A requested symbol whose suffix spells an actual as a type object
+    # (`File#puts$String.class`) names a different overload than the instance
+    # spelling, although both share one ABI TypeRef. Lazy materialization
+    # resolves its Def from the requested name, so the source kind must reach
+    # that lookup or a type literal binds a `String` formal. Matching exact
+    # callsite facts are preferred because they also carry nested shapes.
+    private def requested_suffix_source_kind_facts(
+      suffix : String?,
+      callsite : CallsiteArgs?,
+      arg_types : Array(TypeRef),
+    ) : Array(SourceCallArgument?)?
+      # Type-literal source names always end in `.class`; skip the per-actual
+      # spelling walk for the common instance-only suffix.
+      return nil unless suffix && suffix.includes?(".class")
+      flags = source_kind_flags_from_suffix(strip_mangled_suffix_flags(suffix), arg_types)
+      return nil unless flags && flags.any?
+      if callsite && (facts = callsite.source_argument_facts) && facts.size == arg_types.size &&
+         callsite.types == arg_types
+        same_kinds = true
+        facts.each_with_index do |fact, index|
+          same_kinds = false if fact.nil? || fact.type_literal != flags[index]
+        end
+        return facts if same_kinds
+      end
+      arg_types.map_with_index { |type, index| SourceCallArgument.new(type, flags[index]).as(SourceCallArgument?) }
     end
 
     private def source_suffix_component_at?(suffix : String, position : Int32, component : String) : Bool
@@ -116682,7 +116717,8 @@ module Adamas::HIR
                exact_arg_types,
                false,
                lookup_has_named_args,
-               lookup_callsite.try(&.named_arg_names)
+               lookup_callsite.try(&.named_arg_names),
+               source_argument_facts: requested_suffix_source_kind_facts(lookup_suffix, explicit_lookup_callsite, exact_arg_types),
              ))
             resolved_entry_name, resolved_entry_def = entry
             func_def = resolved_entry_def
@@ -116941,7 +116977,8 @@ module Adamas::HIR
                          parsed_types.size,
                          suffix_has_block,
                          parsed_types,
-                         suffix_has_splat
+                         suffix_has_splat,
+                         source_argument_facts: requested_suffix_source_kind_facts(suffix, nil, parsed_types),
                        )
                       resolved_entry_name = entry[0]
                       resolved_entry_def = entry[1]
@@ -117027,7 +117064,8 @@ module Adamas::HIR
               suffix = name_parts.suffix
               has_block = suffix ? suffix_has_block_flag?(suffix) : name.ends_with?("$block")
               call_has_splat = name.ends_with?("_splat") || name.ends_with?("_double_splat")
-              if entry = lookup_function_def_for_call(base_name, callsite.types.size, has_block, callsite.types, call_has_splat, callsite.has_named_args, callsite.named_arg_names)
+              if entry = lookup_function_def_for_call(base_name, callsite.types.size, has_block, callsite.types, call_has_splat, callsite.has_named_args, callsite.named_arg_names,
+                   source_argument_facts: requested_suffix_source_kind_facts(suffix, callsite, callsite.types))
                 resolved_entry_name = entry[0]
                 resolved_entry_def = entry[1]
                 func_def = resolved_entry_def
@@ -117057,7 +117095,8 @@ module Adamas::HIR
             unless parsed_types.empty?
               has_block = suffix_has_block_flag?(suffix)
               call_has_splat = suffix.ends_with?("_splat") || suffix.ends_with?("_double_splat")
-              if entry = lookup_function_def_for_call(base_name, parsed_types.size, has_block, parsed_types, call_has_splat)
+              if entry = lookup_function_def_for_call(base_name, parsed_types.size, has_block, parsed_types, call_has_splat,
+                   source_argument_facts: requested_suffix_source_kind_facts(suffix, nil, parsed_types))
                 resolved_entry_name = entry[0]
                 resolved_entry_def = entry[1]
                 func_def = resolved_entry_def
