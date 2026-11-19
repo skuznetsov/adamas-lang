@@ -2210,7 +2210,8 @@ module Adamas::HIR
       source_arena : Adamas::Compiler::Frontend::ArenaLike,
       param_types : Array(TypeRef),
       param_names : Array(String),
-      return_type : TypeRef
+      return_type : TypeRef,
+      param_defaults : Array(String?)? = nil
 
     # One independently typed return reached before this exact body suspended.
     # Its source and HIR must survive replay. Only the finished body's receipt
@@ -113066,19 +113067,30 @@ module Adamas::HIR
       params = function_param_infos(source_def, source_arena)
       return unless params.all? do |param|
         declared_type_name = param.type_annotation
-        declared_type_name && declared_type_name != "_" && !param.default_value &&
+        declared_type_name && declared_type_name != "_" &&
           !param.is_splat && !param.is_double_splat && !param.is_block && !named_only_separator?(param)
       end
-      offset = function.params.first?.try(&.name) == "self" ? 1 : 0
-      return unless function.params.size == params.size + offset && replay.callsite.types.size == params.size
-      return if function.heap_block_param ||
-                function.params.any? { |param| param.type == TypeRef::VOID || param.is_block || param.default_literal }
+      formals = function.params
+      offset = formals.first?.try(&.name) == "self" ? 1 : 0
+      return unless formals.size == params.size + offset && replay.callsite.types.size == params.size
+      return if function.heap_block_param || formals.any? { |param| param.type == TypeRef::VOID || param.is_block }
+      param_types = formals.map(&.type)
+      param_defaults = nil.as(Array(String?)?)
+      if params.any?(&.default_value)
+        # Lowering has already bound every operand to this physical ABI.
+        # Keep its checked return, without coalescing new calls that might
+        # still need to select an overload or evaluate their own defaults.
+        return unless param_types.skip(offset) == replay.callsite.types
+        param_defaults = formals.map(&.default_literal)
+      else
+        return if formals.any?(&.default_literal)
+      end
       capture.active_body = ForceLowerActiveBody.new(
-        function, source_def, source_arena, function.params.map(&.type), function.params.map(&.name), function.return_type,
+        function, source_def, source_arena, param_types, formals.map(&.name), function.return_type, param_defaults,
       )
     end
 
-    private def current_active_force_lower_body(name : String) : ForceLowerActiveBody?
+    private def current_active_force_lower_body(name : String, *, for_struct_return : Bool = false) : ForceLowerActiveBody?
       return unless function_state(name).in_progress?
       capture = @force_lower_active_replay_captures[name]?
       return unless capture && capture.name == name
@@ -113086,12 +113098,23 @@ module Adamas::HIR
       active = capture.active_body
       return unless replay && active && active_force_lower_source_current?(name, replay)
       return unless replay.source_def.same?(active.source_def) && replay.source_arena.same?(active.source_arena)
+      return if active.param_defaults && !for_struct_return
       function = active.function
       return unless @module.function_by_name(name).try(&.same?(function)) == true
-      return unless function.params.map(&.type) == active.param_types &&
-                    function.params.map(&.name) == active.param_names && function.return_type == active.return_type
-      return if function.heap_block_param || function.params.any? { |param| param.is_block || param.default_literal }
-      active
+      active if active_force_lower_body_abi_current?(active)
+    end
+
+    private def active_force_lower_body_abi_current?(body : ForceLowerActiveBody) : Bool
+      function = body.function
+      params = function.params
+      return false unless params.map(&.type) == body.param_types &&
+                          params.map(&.name) == body.param_names && function.return_type == body.return_type
+      return false if function.heap_block_param || params.any?(&.is_block)
+      if defaults = body.param_defaults
+        params.map(&.default_literal) == defaults
+      else
+        !params.any?(&.default_literal)
+      end
     end
 
     # An ordinary request for the sealed formals of an already active exact
@@ -115735,7 +115758,8 @@ module Adamas::HIR
       return false unless right
       left.function.same?(right.function) && left.source_def.same?(right.source_def) &&
         left.source_arena.same?(right.source_arena) && left.param_types == right.param_types &&
-        left.param_names == right.param_names && left.return_type == right.return_type
+        left.param_names == right.param_names && left.return_type == right.return_type &&
+        left.param_defaults == right.param_defaults
     end
 
     private def same_force_lower_replay_capture?(
@@ -116356,7 +116380,7 @@ module Adamas::HIR
     private def suspended_struct_return(ctx : LoweringContext) : PartialStructReturn?
       capture = @force_lower_active_replay_captures[ctx.function.name]? || return
       replay = capture.binding || return
-      body = current_active_force_lower_body(ctx.function.name) || return
+      body = current_active_force_lower_body(ctx.function.name, for_struct_return: true) || return
       return unless body.function.same?(ctx.function)
       reachable_blocks(ctx.function).each do |block|
         returned = block.terminator.as?(Return) || next
@@ -116399,8 +116423,7 @@ module Adamas::HIR
                     active_force_lower_source_current?(name, replay) && force_lower_replay_callsite_current?(name, replay) &&
                     recursive_struct_declared_result?(name, source, read.type) && body.return_type == read.type
       return unless ctx.function.same?(body.function) && ctx.function.name == name &&
-                    ctx.function.params.map(&.type) == body.param_types && ctx.function.params.map(&.name) == body.param_names &&
-                    ctx.function.return_type == read.type && suspended_return_value_current?(anchor)
+                    active_force_lower_body_abi_current?(body) && suspended_return_value_current?(anchor)
       anchor
     end
 

@@ -35,6 +35,22 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-19 — Checked returns from fully bound defaulted bodies
+- [x] Preserve a reachable checked struct return when an active exact body
+  has defaulted formals and all positional argument types and kinds have
+  already been bound to its physical parameters. Recheck the formal types,
+  names and defaults on replay. Keep this evidence local to struct-result
+  projection; it does not authorize coalescing another caller's arguments.
+- [x] The focused HIR suites pass 93 examples. The native regression fails
+  on the parent and matches Crystal 1.22.3 with omitted and explicit
+  positional defaults. Both compilers reject wrong return and argument
+  kinds. A recursive call with a named argument still fails in Adamas.
+- [ ] Fresh S1-to-S2 exits 1 in `CLI#run` on both profiles. Bundled 1.18.2
+  reports `attach_command_call_arguments`; its trace also shows a later
+  completion of that parser body within the same retry driver. Installed
+  1.22.3 reports `run_check`; its trace retains an unsettled
+  `String#to_i64` fallback-block specialization. Neither produces S2.
+
 ### 2026-11-19 — Preserve successive retries after a checked projection
 - [x] Admit the next exact dependency when replay consumes a checked recursive
   result whose producer still has a current queued result demand. Preserve

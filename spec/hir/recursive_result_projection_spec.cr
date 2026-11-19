@@ -567,6 +567,51 @@ class Adamas::HIR::AstToHir
     !checked_partial_struct_result(pending, anchor).nil?
   end
 
+  def __test_suspended_return_with_default?(change : Symbol) : Bool
+    name = __test_projection_method_name("value_with_default")
+    source = __test_projection_source(name)
+    original = @module.function_by_name(name).not_nil!
+    remove_hir_function(name).should be_true
+    function = @module.create_function(name, original.return_type)
+    function.add_param("flag", TypeRef::BOOL)
+    function.set_param_default_literal(0, "false")
+    callsite = case change
+               when :missing_argument
+                 CallsiteArgs.new([] of TypeRef, nil, nil)
+               when :different_type
+                 CallsiteArgs.new([TypeRef::INT32], [false], nil)
+               when :unknown_kind
+                 CallsiteArgs.new([TypeRef::BOOL], nil, nil)
+               when :class_object
+                 CallsiteArgs.new([TypeRef::BOOL], [true], nil)
+               when :named_argument
+                 CallsiteArgs.new([TypeRef::BOOL], [false], nil, has_named_args: true)
+               else
+                 __test_ordinary_projection_callsite
+               end
+    capture = ForceLowerReplayCapture.new(name, nil)
+    capture.binding = __test_projection_replay(name, callsite)
+    @force_lower_active_replay_captures[name] = capture
+    set_function_state(name, FunctionLoweringState::InProgress)
+    retain_active_force_lower_body(function, source.source_def, source.source_arena)
+    active_force_lower_body_owns_callsite?(name, callsite).should be_false
+
+    ctx = LoweringContext.new(function, @module, source.source_arena)
+    type = function.return_type
+    read = ClassVarGet.new(ctx.next_id, type, "RecFactory", "BASE")
+    ctx.emit(read)
+    facts = [{type, false}]
+    ctx.register_source_value_facts(read.id, facts)
+    @constant_types["RecFactory::BASE"] = type
+    @constant_source_value_facts["RecFactory::BASE"] = facts
+    ctx.terminate(Return.new(read.id)) unless change == :missing_return
+    anchor = suspended_struct_return(ctx) || return false
+
+    function.set_param_default_literal(0, "true") if change == :changed_default
+    pending = ExactResultPending.new("RecFactory.consumer", name, source)
+    !checked_partial_struct_result(pending, anchor).nil?
+  end
+
   private def __test_open_projection_use(owner : String = "RecFactory", *, nilary : Bool = false)
     producer = nilary ? "RecFactory.value" : __test_projection_method_name("value_for", owner)
     consumer = nilary ? "RecFactory.consumer" : __test_projection_method_name("consumer_for", owner)
@@ -650,6 +695,10 @@ private def recursive_projection_converter
         end
       end
 
+      def self.value_with_default(flag : Bool = false) : RecToken
+        RecToken.new
+      end
+
       def self.consumer
         value
       end
@@ -678,6 +727,7 @@ private def recursive_projection_converter
     RecFactory.inferred
     RecClass.new.consumer_for(false)
     RecFactory.value_for(false)
+    RecFactory.value_with_default(false)
     RecFactory.sibling_value(false)
     RecFactory.consumer_for(false)
     CRYSTAL
@@ -813,6 +863,14 @@ describe "source result projection inside a recursive specialization" do
     [:replaced_read, :replaced_return, :unreachable, :missing_constant, :changed_kind,
      :changed_operand, :changed_replay_source].each do |change|
       converter.__test_suspended_constant_return?(change).should be_false
+    end
+  end
+
+  it "keeps a checked return after the exact body has bound every default-capable parameter" do
+    recursive_projection_converter.__test_suspended_return_with_default?(:unchanged).should be_true
+    [:missing_argument, :different_type, :unknown_kind, :class_object,
+     :named_argument, :missing_return, :changed_default].each do |change|
+      recursive_projection_converter.__test_suspended_return_with_default?(change).should be_false
     end
   end
 
