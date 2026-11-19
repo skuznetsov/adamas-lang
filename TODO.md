@@ -35,6 +35,22 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-19 — Preserve the operand for numeric property setter resolution
+- [x] Keep the source expression and its arena through assignment lowering.
+  When ordinary overload resolution has no match, apply the common numeric
+  conversion rules to the exact source setter. Recheck the selected source
+  definition and actual value kind, and convert the existing operand once.
+- [x] The new native fixture fails on the previous compiler. All 22 setter
+  fixtures agree with Crystal 1.22.3 in lazy and eager lowering. The
+  new cases cover the UInt16 literal range, ordinary overload precedence,
+  a side-effecting UInt8 RHS, and rejection of narrowing, grouped literals,
+  overflow, unsigned negatives, and ambiguous numeric overloads.
+- [ ] Fresh S1-to-S2 passes the FastFloat `Stackvec(62)#size=` call on bundled
+  1.18.2 and installed 1.22.3. Both builds exit 1 without S2 while lowering
+  `CLI#run_check`. The installed trace retains an expression/typeof cycle.
+  Both traces still show the numeric-macro path waiting for the yielding
+  `String#to_i64` specialization's constructor result.
+
 ### 2026-11-19 — Replay recursive nullable reference results
 - [x] A completed provisional body can use its current checked concrete
   `T?` result to test its dependency on itself. The receipt, physical

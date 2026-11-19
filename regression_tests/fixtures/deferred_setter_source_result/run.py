@@ -10,8 +10,14 @@ import sys
 import tempfile
 
 HERE = Path(__file__).resolve().parent
-POSITIVE = ('reader', 'chain', 'setter_body_result', 'initializer_result', 'class_result', 'class_input', 'terminal_rhs', 'setter_instance_then_class', 'setter_class_then_instance', 'setter_param_instance_then_class', 'setter_param_class_then_instance')
-NEGATIVE = ("reject_class_result_as_instance", "reject_invalid_return", "reject_instance_for_class_input", "reject_class_for_instance_input")
+POSITIVE = ('reader', 'chain', 'setter_body_result', 'initializer_result', 'class_result', 'class_input', 'terminal_rhs', 'setter_instance_then_class', 'setter_class_then_instance', 'setter_param_instance_then_class', 'setter_param_class_then_instance', 'numeric_setter_argument')
+NEGATIVE = (
+    "reject_class_result_as_instance", "reject_invalid_return",
+    "reject_instance_for_class_input", "reject_class_for_instance_input",
+    "reject_setter_grouped_literal", "reject_setter_explicit_grouped_literal",
+    "reject_setter_numeric_local_narrowing", "reject_setter_numeric_overflow",
+    "reject_setter_unsigned_negative", "reject_setter_ambiguous_numeric",
+)
 CASES = POSITIVE + NEGATIVE
 EXIT = re.compile(rb"\[EXIT: ([0-9]+)\] after ~[0-9]+(?:\.[0-9]+)? ?s\n")
 RESOURCE = re.compile(

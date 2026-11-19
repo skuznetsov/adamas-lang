@@ -153633,9 +153633,10 @@ module Adamas::HIR
       node : Adamas::Compiler::Frontend::AssignNode,
       expr_id : Adamas::Compiler::Frontend::ExprId = Adamas::Compiler::Frontend::ExprId.new(-1),
     ) : ValueId
-      target_node = @arena[node.target]
+      source_arena = @arena
+      target_node = source_arena[node.target]
       target_kind = Adamas::Compiler::Frontend.node_kind(target_node)
-      value_node = @arena[node.value]
+      value_node = source_arena[node.value]
       contextual_value = if target_node.is_a?(Adamas::Compiler::Frontend::InstanceVarNode) &&
                             value_node.is_a?(Adamas::Compiler::Frontend::SymbolNode) &&
                             (owner = @current_class) &&
@@ -154267,8 +154268,8 @@ module Adamas::HIR
           end
         end
 
-        # Fallback to setter method call: obj.field=(value)
-        lower_property_setter_call(ctx, object_id, field_name, value_id)
+        # Fallback to a setter call. Preserve the original RHS for overload resolution.
+        lower_property_setter_call(ctx, object_id, field_name, value_id, node.value, source_arena)
       when Adamas::Compiler::Frontend::NodeKind::Global
         target_global = target_node.unsafe_as(Adamas::Compiler::Frontend::GlobalNode)
         # Global variable assignment: $name = value
@@ -154298,6 +154299,35 @@ module Adamas::HIR
         !positional[0].is_splat && !positional[0].is_double_splat
     end
 
+    private def resolve_property_setter_target(
+      family : String, arg_types : Array(TypeRef), source_argument_facts : Array(SourceCallArgument?)?,
+    ) : SelectedCallTarget?
+      resolve_call_target(CallResolutionInput.new(
+        func_name: family, arg_count: 1, arg_types: arg_types,
+        has_block: false, has_splat: false, has_named: false, named_names: nil,
+        source_argument_facts: source_argument_facts,
+      ))
+    end
+
+    private def resolve_numeric_property_setter_target(
+      family : String, value_expr : ExprId, value_arena : Adamas::Compiler::Frontend::ArenaLike,
+      arg_types : Array(TypeRef), source_argument_facts : Array(SourceCallArgument?)?,
+    ) : Tuple(SelectedCallTarget, Array(TypeRef), Array(SourceCallArgument?))?
+      # Check the already emitted value's source kind before using the literal
+      # or the full runtime domain. A type object or enum carrier is not a number.
+      return unless source_argument_facts == [SourceCallArgument.new(arg_types[0], false)]
+      candidate = source_integer_autocast_entry(
+        family, [value_expr], arg_types, value_arena, exact_candidate_arenas: true,
+      ) || return
+      candidate_name, definition, converted_types = candidate
+      candidate_arena = @function_def_arenas[candidate_name]? || return
+      converted_facts = [SourceCallArgument.new(converted_types[0], false)] of SourceCallArgument?
+      selected = resolve_property_setter_target(family, converted_types, converted_facts) || return
+      selected_arena = selected.source_arena || return
+      return unless selected.def_node.same?(definition) && arena_map_key(selected_arena) == arena_map_key(candidate_arena)
+      {selected, converted_types, converted_facts}
+    end
+
     # Assignment receivers can be modules, unions, or class hierarchies just
     # like ordinary calls. Reuse their target-demand path instead of emitting a
     # direct call to a module accessor that has no standalone implementation.
@@ -154306,6 +154336,8 @@ module Adamas::HIR
       object_id : ValueId,
       field_name : String,
       value_id : ValueId,
+      value_expr : ExprId? = nil,
+      value_arena : Adamas::Compiler::Frontend::ArenaLike = @arena,
     ) : ValueId
       setter_name = "#{field_name}="
       arg_types = [ctx.type_of(value_id)]
@@ -154318,13 +154350,15 @@ module Adamas::HIR
         end
       end
       requested_family = strip_type_suffix(method_name)
-      selected = unless call_virtual
-                   resolve_call_target(CallResolutionInput.new(
-                     func_name: requested_family, arg_count: 1, arg_types: arg_types,
-                     has_block: false, has_splat: false, has_named: false, named_names: nil,
-                     source_argument_facts: source_argument_facts,
-                   ))
-                 end
+      selected = resolve_property_setter_target(requested_family, arg_types, source_argument_facts) unless call_virtual
+      if !selected && !call_virtual && value_expr
+        if converted = resolve_numeric_property_setter_target(
+             requested_family, value_expr, value_arena, arg_types, source_argument_facts,
+           )
+          selected, arg_types, source_argument_facts = converted
+          value_id = coerce_value_to_type(ctx, value_id, arg_types[0])
+        end
+      end
       if selected && strip_type_suffix(selected.symbol_name) != requested_family
         raise LoweringError.new("property setter changed its resolved source family: #{requested_family}")
       end
