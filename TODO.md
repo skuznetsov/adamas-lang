@@ -28285,3 +28285,19 @@ changes. No stdlib edits.
   Both stop at the existing `reflection_collection_for_symbol` result
   error. The actual `Hash#map` corridor still needs the selected
   `Enumerable(T)` application and a checked result for its explicit cast.
+
+## Checked callback reference upcasts before yield (2026-11-19)
+
+- [x] Retain the exact result of an explicit reference upcast in a callback
+  before specializing an allocation on the callback's result type. Prove
+  the operand and its canonical ancestry in the callback's source context.
+  Ordinary expression lowering still checks the cast and the result.
+- The native regression matches Crystal 1.22.3 in eager and lazy modes.
+  It checks unrelated casts, incompatible instances and class objects,
+  custom and overriding factories, and a private initializer. The parent
+  fails at the early allocation.
+- Fresh S1 → S2 with installed 1.22.3 and bundled 1.18.2 used source seal
+  `5e6ede53a630273addaa9cca96ebd0ff21872b3e6995fbe7977a8c7691f787d9`.
+  Both pass the old `CLI#run_check` suspension and stop at
+  `reflection_collection_for_symbol`. The selected `Enumerable(T)` block
+  contract still substitutes the hash key for the yielded key/value tuple.

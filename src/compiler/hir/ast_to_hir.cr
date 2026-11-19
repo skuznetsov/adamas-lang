@@ -78705,6 +78705,7 @@ module Adamas::HIR
       lexical_owner : BlockOwner,
       lexical_bindings : Hash(String, String),
       forwarded_source : InlineCallbackSourceWitness? = nil,
+      lexical_locals : Hash(String, ValueId)? = nil,
     ) : InlineCallbackSourceWitness?
       return nil if block.unpacks
 
@@ -78771,7 +78772,8 @@ module Adamas::HIR
               end
 
               result = inline_block_source_argument_for_expr(
-                ctx, tail, source_locals, lexical_owner.class_name, forwarded_source,
+                ctx, tail, source_locals, lexical_owner.class_name,
+                forwarded_source, lexical_locals,
               ) || return nil
               InlineCallbackSourceWitness.new(source_inputs, result)
             end
@@ -78822,6 +78824,7 @@ module Adamas::HIR
       source_locals : Hash(String, SourceCallArgument),
       self_type_name : String?,
       forwarded_source : InlineCallbackSourceWitness? = nil,
+      lexical_locals : Hash(String, ValueId)? = nil,
     ) : SourceCallArgument?
       node = node_for_expr(expr) || return nil
       if identifier = node.as?(Adamas::Compiler::Frontend::IdentifierNode)
@@ -78850,7 +78853,9 @@ module Adamas::HIR
         end
         nil
       when Adamas::Compiler::Frontend::GroupingNode
-        inline_block_source_argument_for_expr(ctx, node.expression, source_locals, self_type_name, forwarded_source)
+        inline_block_source_argument_for_expr(
+          ctx, node.expression, source_locals, self_type_name, forwarded_source, lexical_locals,
+        )
       when Adamas::Compiler::Frontend::YieldNode
         return nil unless forwarded_source
         args = node.args || [] of ExprId
@@ -78862,6 +78867,18 @@ module Adamas::HIR
                             proc_source_type_name(actual) == proc_source_type_name(expected)
         end
         forwarded_source.result
+      when Adamas::Compiler::Frontend::AsNode
+        target_name = resolve_type_name_in_context(safe_slice_to_string(node.target_type) || "")
+        target = source_call_argument_from_name(target_name)
+        target_info = inline_callback_nominal_reference(target) || return nil
+        operand = node_for_expr(node.expression)
+        source = if operand.is_a?(Adamas::Compiler::Frontend::CallNode)
+                   inline_callback_allocator_source_argument(ctx, operand, source_locals, self_type_name, lexical_locals)
+                 else
+                   inline_block_source_argument_for_expr(ctx, node.expression, source_locals, self_type_name)
+                 end
+        source_info = source.try { |value| inline_callback_nominal_reference(value) } || return nil
+        target if class_inherits_from?(source_info.name, target_info.name)
       when Adamas::Compiler::Frontend::MemberAccessNode
         receiver = inline_block_source_argument_for_expr(
           ctx, node.object, source_locals, self_type_name,
@@ -78898,6 +78915,97 @@ module Adamas::HIR
       else
         nil
       end
+    end
+
+    private def inline_callback_nominal_reference(value : SourceCallArgument) : ClassInfo?
+      type = value.type_ref
+      return nil unless source_call_argument_value_facts(value) == [{type, false}]
+      descriptor = @module.get_type_descriptor(type) || return nil
+      return nil unless descriptor.kind == TypeKind::Class
+      owner = canonical_method_owner_name(descriptor.name)
+      return nil if owner == "Object" || owner == "Reference" || owner == "Class" ||
+                    @generic_templates.has_key?(strip_generic_args(owner))
+      info = @class_info[owner]? || return nil
+      info if !info.is_struct && info.type_ref == type
+    end
+
+    # An upcast of a synthesized allocation can bind a callback result before
+    # yield. Check ordinary initializer selection with the source operands.
+    # Factories and macro calls have their own result and must be lowered.
+    private def inline_callback_allocator_source_argument(
+      ctx : LoweringContext,
+      call : Adamas::Compiler::Frontend::CallNode,
+      source_locals : Hash(String, SourceCallArgument),
+      self_type_name : String?,
+      lexical_locals : Hash(String, ValueId)?,
+    ) : SourceCallArgument?
+      return nil if call.has_block? || call.named_args || call.args.empty?
+      member = node_for_expr(call.callee).as?(Adamas::Compiler::Frontend::MemberAccessNode) || return nil
+      return nil unless member_access_name_text(member) == "new"
+      receiver_path = case receiver_node = node_for_expr(member.object)
+                      when Adamas::Compiler::Frontend::IdentifierNode
+                        safe_slice_to_string(receiver_node.name)
+                      when Adamas::Compiler::Frontend::PathNode
+                        # Use the same lookup as the expression path, including
+                        # an explicit root when the spelling starts with ::.
+                        source = source_for_arena(@arena)
+                        source.try { |text| slice_source_for_span(receiver_node.span, text) }
+                      end
+      return nil unless receiver_path && !receiver_path.empty?
+      binding = resolve_expression_path_item(receiver_path.strip) || return nil
+      return nil if constant_name_exists?(binding)
+      receiver = inline_block_source_argument_for_expr(ctx, member.object, source_locals, self_type_name) || return nil
+      return nil unless source_call_argument_value_facts(receiver) == [{receiver.type_ref, true}]
+
+      instance = SourceCallArgument.new(receiver.type_ref, false)
+      info = inline_callback_nominal_reference(instance) || return nil
+      owner = info.name
+      return nil if registered_abstract_class_name?(owner) || resolve_class_method_with_inheritance(owner, "new")
+      return nil if lookup_macro_entry_with_object_fallback("new", owner, call.args, call_arena: @arena)
+      return nil if info.ivars.any?(&.default_source)
+
+      facts = [] of SourceCallArgument?
+      call.args.each do |arg|
+        value = inline_block_source_argument_for_expr(ctx, arg, source_locals, self_type_name) ||
+                inline_callback_constructor_capture(ctx, arg, lexical_locals)
+        return nil unless value && exact_inline_callback_input?(value)
+        facts << value
+      end
+      types = facts.map { |fact| fact.not_nil!.type_ref }
+      initializer = allocator_init_name_for(owner)
+      selected = allocator_initializer_def_for(initializer, initializer, types, source_argument_facts: facts) || return nil
+      name, definition, declaration_arena = selected
+      # The source body is fully known when it only sets automatic ivars.
+      # Defaults or an initializer with its own control flow can suspend or
+      # never return and need their ordinary completed body instead.
+      return nil unless @function_def_arenas[name]?.try(&.same?(declaration_arena))
+      return nil unless direct_source_constructor_initializers(owner).includes?(name)
+      return nil unless definition.body.try(&.empty?) && !definition.is_abstract &&
+                        forall_type_param_names(definition).empty?
+      return nil if definition.visibility.try { |visibility| !visibility.public? }
+      stats = function_param_stats(name, definition)
+      return nil unless stats.param_count == types.size && stats.required == types.size &&
+                        !stats.has_block && !stats.has_splat && !stats.has_double_splat && !stats.has_named_only
+      return nil unless positional_allocator_initializer_accepts_call_shape?(owner, types, facts)
+      instance
+    end
+
+    private def inline_callback_constructor_capture(
+      ctx : LoweringContext,
+      expr : ExprId,
+      lexical_locals : Hash(String, ValueId)?,
+    ) : SourceCallArgument?
+      return nil unless lexical_locals
+      identifier = node_for_expr(expr).as?(Adamas::Compiler::Frontend::IdentifierNode) || return nil
+      name = safe_slice_to_string(identifier.name) || return nil
+      value = lexical_locals[name]? || return nil
+      return nil if name == "_" || ctx.lookup_boxed_local_for_local(name, value) || @closure_ref_cells.has_key?(name)
+      # AddressOf uses the original SSA operand as a mutable storage slot.
+      # A local whose address escaped cannot lend its prior result facts.
+      return nil if ctx.function.blocks.any? do |block|
+        block.instructions.any? { |instruction| instruction.is_a?(AddressOf) && instruction.operand == value }
+      end
+      source_call_argument(ctx, value, preserve_value_facts: true)
     end
 
     # Query the result of an ordinary selected nilary body, without emitting
@@ -149203,6 +149311,7 @@ module Adamas::HIR
             @block_owner[block.object_id],
             @inline_caller_type_param_map_stack.last,
             forwarded_source,
+            caller_locals,
           )
           output_bindings = if source_block_result = early_callback_source.try(&.result)
                               with_arena(callee_arena) do

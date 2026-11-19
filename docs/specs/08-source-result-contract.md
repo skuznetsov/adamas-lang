@@ -1093,6 +1093,25 @@ binding, Tuple descriptors or result-proof changes. Rollback is the atomic
 witness commit.
 
 
+### Checked reference upcasts in early callback results
+
+A reference upcast can establish an early source result when the source
+operand is proved to be an instance in the target's inheritance chain.
+A synthesized allocation can supply that proof when ordinary positional
+selection reaches a public direct initializer with an empty body, exact
+source arguments, and no optional slots or instance defaults. A user factory,
+macro, dynamic class value or unknown argument requires ordinary lowering.
+Read captured arguments from the block's saved caller values and decline
+mutable storage. Keep the cast and callback result validation in the
+ordinary lowering path.
+
+Run nominal_callback_upcast_result_repro.sh COMPILER against stock Crystal,
+lazy and eager lowering. The early allocation must use the upcast result.
+Incompatible casts, argument types, factories and initializer visibility must
+still fail. Refresh after cast, allocator selection or source callback changes.
+Rollback is the atomic checked reference upcast commit.
+
+
 ### Resolved type identities remain owned across callback and alias boundaries
 
 A resolved expression path is a canonical type identity. Lower its type literal
