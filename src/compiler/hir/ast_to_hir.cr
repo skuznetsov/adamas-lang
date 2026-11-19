@@ -116024,7 +116024,82 @@ module Adamas::HIR
       offset = params.first?.try(&.name) == "self" ? 1 : 0
       return false if function.heap_block_param || params.any?(&.is_block)
       return false unless params.skip(offset).map(&.type) == replay.callsite.types
-      !!exact_final_struct_result(name, source)
+      !!exact_final_struct_result(name, source) || checked_recursive_nullable_reference_result?(function, source)
+    end
+
+    # A direct self-call in a nullable reference return carries the whole
+    # union. Its carrier does not prove a new arm. Require both independently
+    # materialized arms and the existing exact body proof before retrying.
+    private def checked_recursive_nullable_reference_result?(
+      function : Function, source : ForceLowerExactSourceBinding,
+    ) : Bool
+      name = function.name
+      type = function.return_type
+      return false unless @module.get_type_descriptor(type).try(&.kind.union?) &&
+                          function_state(name).completed? && @module.has_function_with_body?(name) &&
+                          force_lower_exact_source_matches?(name, source)
+      spelling = source.source_def.return_type.try { |slice| safe_slice_to_string(slice) } || return false
+      return false unless spelling.matches?(/\A(?:::)?[A-Z]\w*(?:::[A-Z]\w*)*\?\z/)
+      pattern = recursive_declared_result_contract(name, source, spelling) || return false
+      return false unless pattern.kind.union? && pattern.type_ref == type
+      arms = source_declared_return_pattern_value_facts(pattern) || return false
+      return false unless arms.size == 2 && arms.includes?({TypeRef::NIL, false}) && arms.none?(&.[1])
+      reference = arms.find { |(arm, _)| arm != TypeRef::NIL }.not_nil![0]
+      reference_name = get_type_name_from_ref(reference)
+      return false unless @module.get_type_descriptor(reference).try(&.kind.class?) &&
+                          @class_info[reference_name]?.try(&.type_ref) == reference &&
+                          !registered_abstract_class_name?(reference_name) && !class_has_subclasses?(reference_name)
+      facts = function.source_return_value_facts || return false
+      carrier_and_arms = normalize_source_return_result_facts(arms + [{type, false}])
+      return false unless facts == arms || facts == carrier_and_arms
+      return false unless current_recursive_return_receipt?(function, source, facts)
+
+      nil_tag = strict_union_member_variant_id(type, TypeRef::NIL)
+      reference_tag = strict_union_member_variant_id(type, reference)
+      return false if nil_tag < 0 || reference_tag < 0 || nil_tag == reference_tag
+      return false unless union_descriptor_from_sidecar(type).try(&.variants.size) == 2
+      checked_recursive_nullable_return_arms?(function, reference, nil_tag, reference_tag)
+    end
+
+    private def checked_recursive_nullable_return_arms?(
+      function : Function, reference : TypeRef, nil_tag : Int32, reference_tag : Int32,
+    ) : Bool
+      values = {} of ValueId => Value
+      function.params.each { |parameter| values[parameter.id] = parameter }
+      function.blocks.each do |block|
+        block.instructions.each do |instruction|
+          return false if values.has_key?(instruction.id)
+          values[instruction.id] = instruction
+        end
+      end
+
+      saw_nil = saw_reference = saw_self = false
+      expected_args = function.params.map(&.type)
+      reachable_blocks(function).each do |block|
+        terminator = block.terminator.as?(Return) || next
+        id = terminator.value || return false
+        returned = values[id]? || return false
+        return false unless returned.type == function.return_type
+        case returned
+        when UnionWrap
+          payload = values[returned.value]? || return false
+          if payload.type == TypeRef::NIL && returned.variant_type_id == nil_tag
+            saw_nil = true
+          elsif payload.type == reference && returned.variant_type_id == reference_tag
+            saw_reference = true
+          else
+            return false
+          end
+        when Call
+          return false if returned.virtual || returned.has_block? || returned.method_name != function.name
+          operands = returned.has_receiver? ? [returned.receiver_value] + returned.args : returned.args
+          return false unless operands.map { |operand| values[operand]?.try(&.type) } == expected_args
+          saw_self = true
+        else
+          return false
+        end
+      end
+      saw_nil && saw_reference && saw_self
     end
 
     # A raw callback body can be rebuilt in an ordinary lowering context
@@ -116363,34 +116438,49 @@ module Adamas::HIR
       type = function.return_type
       return unless recursive_struct_declared_result?(name, source, type)
       facts = function.source_return_value_facts
-      receipt = function.source_return_result_receipt
-      return unless facts == [{type, false}] && receipt && receipt.discard_type.nil? &&
-                    function.source_return_discard_type.nil? && receipt.definition_id == definition.object_id.to_u64 &&
-                    receipt.arena_key == arena_map_key(arena) && receipt.body_revision == function.body_revision &&
-                    receipt.result_facts_match?(facts.not_nil!) && receipt.body_objects_match?(function.scopes, function.blocks) &&
-                    receipt.body_seal == source_return_function_body_seal(function)
+      return unless facts == [{type, false}] && current_recursive_return_receipt?(function, source, facts.not_nil!)
       type
+    end
+
+    private def current_recursive_return_receipt?(
+      function : Function, source : ForceLowerExactSourceBinding, facts : Array({TypeRef, Bool}),
+    ) : Bool
+      definition_id = source.source_def.object_id.to_u64
+      arena_key = arena_map_key(source.source_arena)
+      return false unless function.source_return_definition_id == definition_id && function.source_return_arena_key == arena_key
+      receipt = function.source_return_result_receipt
+      return false unless receipt && receipt.discard_type.nil? && function.source_return_discard_type.nil?
+      receipt.definition_id == definition_id && receipt.arena_key == arena_key &&
+        receipt.body_revision == function.body_revision && receipt.result_facts_match?(facts) &&
+        receipt.body_objects_match?(function.scopes, function.blocks) && receipt.body_seal == source_return_function_body_seal(function)
     end
 
     private def recursive_struct_declared_result?(
       name : String, source : ForceLowerExactSourceBinding, type : TypeRef,
     ) : Bool?
       definition = source.source_def
-      arena = source.source_arena
       name_of_type = get_type_name_from_ref(type)
       info = @class_info[name_of_type]? || return
       return unless info.is_struct && info.type_ref == type && !primitive_template_owner(name_of_type) &&
                     !registered_abstract_class_name?(name_of_type) && !class_has_subclasses?(name_of_type) &&
                     !@generic_templates.has_key?(name_of_type) && !name_of_type.includes?('(') &&
                     !@enum_info.try(&.has_key?(name_of_type))
-      owner = exact_source_declaration_owner(name, source) || return
       spelling = definition.return_type.try { |slice| safe_slice_to_string(slice) } || return
       return unless spelling.matches?(/\A(?:::)?[A-Z]\w*(?:::[A-Z]\w*)*\z/)
+      restriction = recursive_declared_result_contract(name, source, spelling) || return
+      restriction.kind.concrete? && restriction.type_ref == type &&
+        !source_declared_return_contract_guarantees_type_literal_kind?(restriction)
+    end
+
+    private def recursive_declared_result_contract(
+      name : String, source : ForceLowerExactSourceBinding, spelling : String,
+    ) : SourceBlockResultPattern?
+      owner = exact_source_declaration_owner(name, source) || return
       previous_class = @current_class
       @current_class = owner
       begin
         formals = type_param_map_for_generic_type_name(owner)
-        restriction = with_arena(arena) do
+        restriction = with_arena(source.source_arena) do
           with_namespace_override_or_clear(owner) do
             with_isolated_type_param_map(formals) { source_declared_return_contract_for(spelling, owner, formals) }
           end
@@ -116398,10 +116488,7 @@ module Adamas::HIR
       ensure
         @current_class = previous_class
       end
-      return unless restriction && restriction.valid && !restriction.has_unbound_formal? &&
-                    restriction.kind == SourceBlockResultPattern::Kind::Concrete &&
-                    restriction.type_ref == type && !source_declared_return_contract_guarantees_type_literal_kind?(restriction)
-      true
+      restriction if restriction && restriction.valid && !restriction.has_unbound_formal?
     end
 
     private def suspended_struct_return(ctx : LoweringContext) : PartialStructReturn?

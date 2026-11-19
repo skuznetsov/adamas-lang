@@ -35,6 +35,21 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-19 — Replay recursive nullable reference results
+- [x] A completed provisional body can use its current checked concrete
+  `T?` result to test its dependency on itself. The receipt, physical
+  arguments, reachable Nil and reference arms, and direct self-call must
+  agree. A distinct producer must advance before the retry, which rechecks
+  the entire body.
+- [x] The focused HIR suites pass 62 examples after the new queue regression
+  fails on the parent. The native recursive macro-scope fixture matches
+  Crystal 1.22.3 byte for byte. Both compilers reject a class object or scalar
+  returned in place of the declared reference.
+- [ ] Both fresh S1-to-S2 runs resume the exact symbol-table macro lookup
+  after its external producer settles. With bundled 1.18.2 and installed
+  1.22.3, the first error is now the `Float::FastFloat::Stackvec(62)#size=`
+  overload applied to `Int32`. Both runs exit 1 without producing S2.
+
 ### 2026-11-19 — Rebuild a checked recursive body after its producer advances
 - [x] A completed provisional body now accepts its current checked struct
   result when testing its dependency on itself. Require exact source, replay

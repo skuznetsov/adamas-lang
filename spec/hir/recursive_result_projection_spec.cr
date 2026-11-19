@@ -32,31 +32,40 @@ class Adamas::HIR::AstToHir
     !index.nil?
   end
 
-  def __test_retry_checked_self_result(change : Symbol) : Bool
-    name = __test_projection_method_name("recursive_value")
-    producer = "RecFactory.value"
+  def __test_retry_checked_self_result(
+    change : Symbol, method : String = "recursive_value", dependency : String = "value",
+  ) : Bool
+    name = __test_projection_method_name(method)
+    producer = __test_projection_method_name(dependency)
+    settled_force_lower_result?(producer).should be_true
     original = @module.function_by_name(name).not_nil!
     source = __test_projection_source(name)
     callsite = __test_ordinary_projection_callsite
     replay = __test_projection_replay(name, callsite)
     @pending_arg_types[name] = callsite
-    @force_lower_provisional_dependencies[name] = Set{name, producer}
+    dependencies = change == :only_self ? [name] : [name, producer]
+    @force_lower_provisional_dependencies[name] = dependencies.to_set
     if change == :missing_receipt
       original.source_return_result_receipt = nil
     elsif change == :unsettled_producer
       @force_lower_provisional_dependencies[producer] = Set{name}
     elsif change == :unknown_argument_kind
       replay = __test_projection_replay(name, CallsiteArgs.new([TypeRef::BOOL], nil, nil))
+    elsif change == :changed_result_kind
+      original.source_return_value_facts = original.source_return_value_facts.not_nil!.map { |(type, _)| {type, true} }
+    elsif change == :replaced_return
+      block = original.blocks.find { |candidate| candidate.terminator.is_a?(Return) }.not_nil!
+      block.terminator = Return.new(block.terminator.as(Return).value)
     end
 
-    request = ForceLowerRetryRequest.new(name, [name, producer], false, replay, source, true)
+    request = ForceLowerRetryRequest.new(name, dependencies, false, replay, source, true)
     result = with_force_lower_exact_source(name, source) { retry_force_lower_depth_request(request) }
     if result
       @module.function_by_name(name).not_nil!.same?(original).should be_false
       settled_force_lower_result?(name).should be_true
     else
       @module.function_by_name(name).not_nil!.same?(original).should be_true
-      @force_lower_provisional_dependencies[name].should eq(Set{name, producer})
+      @force_lower_provisional_dependencies[name].should eq(dependencies.to_set)
     end
     result
   end
@@ -729,6 +738,22 @@ private def recursive_projection_converter
         value
       end
 
+      def self.recursive_reference(flag : Bool) : RecClass?
+        return recursive_reference(false) if flag
+        return nil unless gate(flag)
+        reference
+      end
+
+      def self.gate(flag : Bool) : Bool
+        !flag
+      end
+
+      def self.recursive_tagged(flag : Bool) : Int32?
+        return recursive_tagged(false) if flag
+        return nil unless gate(flag)
+        42
+      end
+
       def self.value_with_default(flag : Bool = false) : RecToken
         RecToken.new
       end
@@ -763,6 +788,8 @@ private def recursive_projection_converter
     RecFactory.value_for(false)
     RecFactory.value_with_default(false)
     RecFactory.recursive_value(true)
+    RecFactory.recursive_reference(true)
+    RecFactory.recursive_tagged(true)
     RecFactory.sibling_value(false)
     RecFactory.consumer_for(false)
     CRYSTAL
@@ -804,6 +831,23 @@ describe "source result projection inside a recursive specialization" do
 
   it "rebuilds a completed recursive body after its independent producer settles" do
     recursive_projection_converter.__test_retry_checked_self_result(:current).should be_true
+  end
+
+  it "rebuilds a completed recursive nullable reference result after its producer settles" do
+    recursive_projection_converter.__test_retry_checked_self_result(
+      :current, "recursive_reference", "gate",
+    ).should be_true
+  end
+
+  it "retains the wait for a nullable result without independent current evidence" do
+    [:missing_receipt, :unsettled_producer, :unknown_argument_kind, :only_self, :changed_result_kind, :replaced_return].each do |change|
+      recursive_projection_converter.__test_retry_checked_self_result(
+        change, "recursive_reference", "gate",
+      ).should be_false
+    end
+    recursive_projection_converter.__test_retry_checked_self_result(
+      :current, "recursive_tagged", "gate",
+    ).should be_false
   end
 
   it "retains a recursive wait without current result and argument evidence" do
