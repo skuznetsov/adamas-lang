@@ -8919,6 +8919,12 @@ module Adamas::HIR
     # Dead continuation blocks created after control-flow exits (`next`/`break`).
     # These blocks are synthetic and must not be treated as flowing branches.
     @control_flow_dead_blocks : Set({FunctionId, BlockId}) = Set({FunctionId, BlockId}).new
+    # Block calls being lowered once per union argument arm, keyed by CallNode
+    # identity: each arm re-enters lower_call for the same node.
+    @block_union_dispatch_nodes : Set(UInt64) = Set(UInt64).new
+    # Union arguments of those calls, keyed by argument node identity: the
+    # value each arm passes in place of evaluating the argument again.
+    @block_union_dispatch_arg_values : Hash(UInt64, ValueId) = {} of UInt64 => ValueId
     @virtual_targets_lowered : Set({String, String, UInt64, UInt8}) = Set({String, String, UInt64, UInt8}).new
     # Selected virtual bodies remain demanded after layout invalidation. This
     # is not a DCE keepalive: module fanout can visit currently non-live owners.
@@ -92011,6 +92017,11 @@ module Adamas::HIR
 
     # Lower a single expression, returns ValueId of result
     def lower_expr(ctx : LoweringContext, expr_id : ExprId) : ValueId
+      unless @block_union_dispatch_arg_values.empty?
+        if value = block_union_dispatch_arg_read(ctx, expr_id)
+          return value
+        end
+      end
       if env_get("DEBUG_INLINE_CRASH")
         if @inline_yield_name_stack.any? { |name| name.includes?("Char::Reader#decode_char_at") }
           stack = @inline_yield_name_stack.join(" -> ")
@@ -110058,7 +110069,7 @@ module Adamas::HIR
     # and the failure itself must propagate unchanged: an exact-result
     # suspension raised from scopes nested inside the arm is resumed by its
     # catcher, so it must not be replaced by a scope diagnostic.
-    private def with_case_branch_scope(ctx : LoweringContext, node : Adamas::Compiler::Frontend::CaseNode, &)
+    private def with_case_branch_scope(ctx : LoweringContext, node : Adamas::Compiler::Frontend::Node, &)
       branch_scope = ctx.push_scope(ScopeKind::Block)
       result = with_owned_scope_error_cleanup(ctx, branch_scope) do
         yield
@@ -110450,7 +110461,12 @@ module Adamas::HIR
 
       # Merge locals from branches that flow to merge
       merge_case_locals(ctx, pre_case_locals.locals, branch_locals)
+      emit_case_join_value(ctx, incoming)
+    end
 
+    # Joins the values of the branches reaching the current (merge) block.
+    # Values are coerced to the joined type in their predecessor blocks.
+    private def emit_case_join_value(ctx : LoweringContext, incoming : Array(Tuple(BlockId, ValueId))) : ValueId
       incoming_ids = incoming.map { |entry| entry[1] }
       value_types = merge_incoming_types(ctx, incoming_ids, incoming_ids.map { |val| ctx.type_of(val) }).reject { |t| t == TypeRef::VOID }.uniq
       phi_type = union_type_for_value_set(value_types) || TypeRef::VOID
@@ -126875,6 +126891,15 @@ module Adamas::HIR
         end
       end
 
+      if has_block_call && !has_splat && !has_named_args
+        if dispatched = try_emit_block_call_union_arg_dispatch(
+             ctx, node, expr_id, call_arena, callee_node, call_args, block_expr, block_pass_expr,
+             receiver_id, base_method_name, args, arg_types,
+           )
+          return dispatched
+        end
+      end
+
       # Handle yield-functions with inline expansion FIRST (before lowering block)
       # Must check with mangled name since that's how yield functions are registered.
       @pending_inline_class_receiver = nil
@@ -132863,6 +132888,268 @@ module Adamas::HIR
       target = proof[0]
       return nil unless target.return_type == info.type_ref && target.params.map(&.type) == argument_types
       {name, selected}
+    end
+
+    # Union-argument dispatch for a call with a block. Crystal selects an
+    # overload per union member at run time; the blockless fanout
+    # (try_emit_union_arg_dispatch) emits one Call per arm, but a block is
+    # inlined into the selected body, so here each arm lowers the call again
+    # with the argument, evaluated once before the dispatch, narrowed by its
+    # tags as `case` narrows a subject: `fb(y) { 2 }` over `fb(s : String, &)`
+    # and `fb(x : T, &) forall T` runs the String overload for String values.
+    # Only the argument expression reads the narrowed value; the block still
+    # sees `y` with its union type. Members that select the same overload share
+    # one arm narrowed to their sub-union. The overload chosen for the whole
+    # union, when it accepts the whole union (`x : T`, `x : _`, untyped, or a
+    # restriction covering every member), takes the unnarrowed value: Crystal
+    # instantiates it with the union type. Every arm lowers the receiver and
+    # the other arguments again, so they must be re-evaluable without side
+    # effects.
+    private def try_emit_block_call_union_arg_dispatch(
+      ctx : LoweringContext,
+      node : Adamas::Compiler::Frontend::CallNode,
+      expr_id : ExprId,
+      call_arena : Adamas::Compiler::Frontend::ArenaLike,
+      callee_node : Adamas::Compiler::Frontend::Node,
+      call_args : Array(ExprId),
+      block_expr : ExprId?,
+      block_pass_expr : ExprId?,
+      receiver_id : ValueId?,
+      base_method_name : String,
+      args : Array(ValueId),
+      arg_types : Array(TypeRef),
+    ) : ValueId?
+      node_key = node.object_id.to_u64
+      return nil if @block_union_dispatch_nodes.includes?(node_key)
+      return nil unless call_args.size == args.size && arg_types.size == args.size
+      union_index = -1
+      arg_types.each_with_index do |type, index|
+        next unless type != TypeRef::VOID && is_union_type?(type)
+        return nil if union_index >= 0
+        union_index = index
+      end
+      return nil if union_index < 0
+      if receiver = receiver_id
+        return nil if is_union_type?(ctx.type_of(receiver))
+      end
+      union_type = arg_types[union_index]
+      return nil unless descriptor = union_descriptor_from_sidecar(union_type)
+      return nil if descriptor.variants.size < 2
+
+      subject_id = args[union_index]
+      return nil unless ctx.type_of(subject_id) == union_type
+      union_arg_key = with_arena(call_arena) do
+        union_arg_expr = call_args[union_index]
+        next nil unless union_arg_node = block_union_dispatch_arg_node(union_arg_expr)
+        other_args_reevaluable = true
+        call_args.each_with_index do |arg_expr, index|
+          next if index == union_index
+          next if block_union_dispatch_reevaluable?(ctx, arg_expr)
+          other_args_reevaluable = false
+          break
+        end
+        next nil unless other_args_reevaluable
+        if block_pass = block_pass_expr
+          next nil unless block_union_dispatch_reevaluable?(ctx, block_pass)
+        end
+        case callee_node
+        when Adamas::Compiler::Frontend::IdentifierNode
+        when Adamas::Compiler::Frontend::MemberAccessNode
+          next nil unless block_union_dispatch_reevaluable?(ctx, callee_node.object)
+        else
+          next nil
+        end
+        union_arg_node.object_id.to_u64
+      end
+      return nil unless union_arg_key
+      return nil if @block_union_dispatch_arg_values.has_key?(union_arg_key)
+
+      bfm = strip_type_suffix(base_method_name)
+      if receiver = receiver_id
+        unless ctx.type_literal?(receiver)
+          receiver_desc = @module.get_type_descriptor(ctx.type_of(receiver))
+          if receiver_desc && receiver_desc.kind == TypeKind::Class
+            parts = parse_method_name_uncached(bfm)
+            if parts.is_instance && (method = parts.method)
+              bfm = "#{receiver_desc.name}##{method}"
+            end
+          end
+        end
+      end
+      # One group per selected overload, holding the tags that select it.
+      groups = [] of {String, Adamas::Compiler::Frontend::DefNode, Array(Int32)}
+      descriptor.variants.each do |variant|
+        variant_type = exact_hir_type_ref_for_union_variant(variant)
+        return nil if variant_type == TypeRef::VOID
+        arm_types = arg_types.dup
+        arm_types[union_index] = variant_type
+        return nil unless selected = lookup_function_def_for_call(bfm, args.size, true, arm_types)
+        # A captured block becomes one Proc per lowering; keep it single.
+        return nil if def_requires_heap_block?(selected[1], registered_arena_for_def(selected[1]) || call_arena)
+        if group = groups.find { |entry| same_union_dispatch_source_def?(entry[0], entry[1], selected[0], selected[1]) }
+          group[2] << variant.type_id
+        else
+          groups << {selected[0], selected[1], [variant.type_id]}
+        end
+      end
+      return nil if groups.size < 2
+      shared_group = nil.as(Int32?)
+      if whole = lookup_function_def_for_call(bfm, args.size, true, arg_types)
+        if def_accepts_whole_union_argument?(bfm, whole[0], whole[1], union_index, union_type)
+          shared_group = groups.index { |entry| same_union_dispatch_source_def?(whole[0], whole[1], entry[0], entry[1]) }
+        end
+      end
+      order = (0...groups.size).reject { |index| index == shared_group }
+      if shared = shared_group
+        order << shared
+      end
+
+      assigned = Set(String).new
+      if block = block_expr
+        if (block_node = node_for_call_expr(call_arena, block)).is_a?(Adamas::Compiler::Frontend::BlockNode)
+          block_arena = @block_node_arenas[block_node.object_id]? ||
+                        resolve_arena_for_block(block_node, call_arena) || call_arena
+          assigned = with_arena(block_arena) { collect_assigned_var_set(block_node.body) }
+        end
+      end
+      pre_locals = ctx.save_locals
+      pre_inline_locals = capture_inline_caller_locals
+      merge_block = ctx.create_block
+      incoming = [] of {BlockId, ValueId}
+      branch_locals = [] of {BlockId, Hash(String, ValueId)}
+      branch_inline_info = [] of {BlockId, InlineCallerLocalsSnapshot}
+      @block_union_dispatch_nodes << node_key
+      narrowed_arg_name = "__union_dispatch_arg_#{node_key}"
+      begin
+        order.each_with_index do |group_index, position|
+          tags = groups[group_index][2]
+          next_block = nil.as(BlockId?)
+          if position < order.size - 1
+            arm_block = ctx.create_block
+            following = ctx.create_block
+            tags.each_with_index do |tag, tag_position|
+              test = UnionIs.new(ctx.next_id, subject_id, tag, union_type)
+              ctx.emit(test)
+              ctx.register_type(test.id, TypeRef::BOOL)
+              miss_block = tag_position == tags.size - 1 ? following : ctx.create_block
+              ctx.terminate(Branch.new(test.id, arm_block, miss_block))
+              ctx.current_block = miss_block
+            end
+            ctx.current_block = arm_block
+            next_block = following
+          end
+          shared_arm = group_index == shared_group
+          result, exit_block, post_locals = with_case_branch_scope(ctx, node) do
+            arm_value = subject_id
+            unless shared_arm
+              # The hidden name carries the narrowing; it never reaches the
+              # merged locals.
+              ctx.register_local(narrowed_arg_name, subject_id)
+              if apply_case_union_tag_narrowing(ctx, narrowed_arg_name, subject_id, tags.to_set)
+                arm_value = ctx.lookup_local(narrowed_arg_name) || subject_id
+              end
+            end
+            @block_union_dispatch_arg_values[union_arg_key] = arm_value
+            # A semantic target names the whole-union overload; a narrowed arm
+            # selects its own.
+            arm_result = begin
+              lower_call(ctx, node, shared_arm ? expr_id : ExprId.new(-1))
+            ensure
+              @block_union_dispatch_arg_values.delete(union_arg_key)
+            end
+            {arm_result, ctx.current_block, ctx.save_locals.locals}
+          end
+          arm_locals = pre_locals.locals.dup
+          assigned.each do |name|
+            if value = post_locals[name]?
+              arm_locals[name] = value
+            end
+          end
+          exit_data = ctx.get_block(ctx.current_block)
+          if exit_data.terminator.is_a?(Unreachable) && !block_has_raise_instruction?(exit_data) &&
+             !control_flow_dead_block?(ctx, exit_block)
+            branch_locals << {exit_block, arm_locals}
+            branch_inline_info << {exit_block, capture_inline_caller_locals}
+            ctx.terminate(Jump.new(merge_block))
+            incoming << {exit_block, result}
+          end
+          restore_inline_caller_locals(pre_inline_locals)
+          ctx.restore_locals(pre_locals)
+          if following_block = next_block
+            ctx.current_block = following_block
+          end
+        end
+      ensure
+        @block_union_dispatch_nodes.delete(node_key)
+      end
+
+      ctx.current_block = merge_block
+      merge_inline_caller_locals_after_if(ctx, pre_inline_locals, branch_inline_info)
+      if incoming.empty?
+        nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+        ctx.emit(nil_lit)
+        return nil_lit.id
+      end
+      merge_case_locals(ctx, pre_locals.locals, branch_locals)
+      emit_case_join_value(ctx, incoming)
+    end
+
+    # The node lower_expr resolves for an expression of the current arena.
+    private def block_union_dispatch_arg_node(expr_id : ExprId) : Adamas::Compiler::Frontend::Node?
+      arena = arena_for_expr?(expr_id) || @arena
+      return nil if expr_id.index < 0 || expr_id.index >= arena.size
+      arena[expr_id]
+    end
+
+    # A union argument of a block call dispatched per arm reads the value
+    # evaluated before the dispatch, narrowed for the arm being lowered.
+    private def block_union_dispatch_arg_read(ctx : LoweringContext, expr_id : ExprId) : ValueId?
+      return nil unless node = block_union_dispatch_arg_node(expr_id)
+      return nil unless value = @block_union_dispatch_arg_values[node.object_id.to_u64]?
+      copy = Copy.new(ctx.next_id, ctx.type_of(value), value)
+      ctx.emit(copy)
+      ctx.propagate_runtime_type_identity(value, copy.id)
+      if enum_name = enum_value_name_for(ctx, value)
+        track_enum_value(copy.id, enum_name)
+      end
+      copy.id
+    end
+
+    # Operands of a call lowered once per union arm: evaluating them again
+    # must not repeat a side effect.
+    private def block_union_dispatch_reevaluable?(ctx : LoweringContext, expr_id : ExprId) : Bool
+      case expr = @arena[expr_id]
+      when Adamas::Compiler::Frontend::IdentifierNode
+        !ctx.lookup_local(identifier_name_text(expr)).nil?
+      when Adamas::Compiler::Frontend::SelfNode, Adamas::Compiler::Frontend::InstanceVarNode,
+           Adamas::Compiler::Frontend::NumberNode, Adamas::Compiler::Frontend::CharNode,
+           Adamas::Compiler::Frontend::BoolNode, Adamas::Compiler::Frontend::NilNode,
+           Adamas::Compiler::Frontend::SymbolNode, Adamas::Compiler::Frontend::StringNode,
+           Adamas::Compiler::Frontend::ConstantNode, Adamas::Compiler::Frontend::PathNode
+        true
+      else
+        false
+      end
+    end
+
+    # Whether the overload selected for a whole union argument takes that union
+    # as one instantiation: a whole-type parameter, or a restriction every
+    # member satisfies.
+    private def def_accepts_whole_union_argument?(
+      lookup_name : String,
+      name : String,
+      def_node : Adamas::Compiler::Frontend::DefNode,
+      index : Int32,
+      union_type : TypeRef,
+    ) : Bool
+      with_union_variant_declaration_context(name, function_context_for_lookup_candidate(lookup_name, name)) do |declaration_context|
+        positional = function_param_infos(name, def_node).reject { |param| param.is_block || named_only_separator?(param) }
+        param = positional[index]?
+        next false unless param
+        next false if param.is_splat || param.is_double_splat
+        param_binds_whole_argument_type?(param, def_node) ||
+          param_compatible_with_arg?(param, union_type, declaration_context, false, index)
+      end
     end
 
     private record UnionCallArgument,
