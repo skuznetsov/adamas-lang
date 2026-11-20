@@ -132392,6 +132392,70 @@ module Adamas::HIR
       target
     end
 
+    # Crystal matches an unrestricted parameter (`obj`, `obj : _`) or a bare
+    # free variable (`x : T` with `forall T`) against the whole argument type.
+    private def param_binds_whole_argument_type?(
+      param : DefParamInfo,
+      source_def : Adamas::Compiler::Frontend::DefNode,
+    ) : Bool
+      return false if param.is_splat || param.is_double_splat || param.is_block
+      restriction = param.type_annotation
+      return true if restriction.nil? || restriction.empty? || restriction == "_"
+      source_def.forall_type_params.any? { |name| name == restriction.to_slice }
+    end
+
+    # A union argument instantiates an overload selected for one arm with the
+    # union itself at every whole-type parameter: for `puts(string : String)`
+    # and `puts(obj : _)` called with `Int32 | String`, the Int32 arm calls
+    # `puts` instantiated with `obj : Int32 | String` and passes the union
+    # value, so `typeof(obj)` is the union as in Crystal. The family alias the
+    # resolver returns (`IO#puts$arity1`) is lowered for whichever call shape
+    # demanded it first and cannot stand for that instantiation.
+    private def union_variant_whole_argument_target(
+      source_name : String,
+      source_def : Adamas::Compiler::Frontend::DefNode,
+      arm_types : Array(TypeRef),
+      union_arguments : Array(UnionCallArgument),
+    ) : {String, Array(TypeRef)}?
+      return nil unless @function_defs[source_name]?.try(&.same?(source_def))
+      return nil unless source_arena = @function_def_arenas[source_name]?
+      stats = function_param_stats(source_name, source_def)
+      return nil if stats.has_block || stats.has_splat || stats.has_double_splat || stats.has_named_only
+      params = function_param_infos(source_def, source_arena)
+      # Omitted defaults pad the physical call later; keep that shape intact.
+      return nil unless params.size == arm_types.size
+
+      whole_types = arm_types.dup
+      widened = false
+      union_arguments.each do |argument|
+        next unless param = params[argument.index]?
+        next unless param_binds_whole_argument_type?(param, source_def)
+        whole_types[argument.index] = argument.type
+        widened = true
+      end
+      return nil unless widened
+
+      target = mangle_function_name(strip_type_suffix(source_name), whole_types)
+      return {target, whole_types} if target == source_name
+      if existing_def = @function_defs[target]?
+        # One physical name denotes one source; never rebind a different one.
+        return nil unless existing_def.same?(source_def) &&
+                          @function_def_arenas[target]?.try(&.same?(source_arena))
+        return {target, whole_types}
+      end
+      return nil if @function_types.has_key?(target) || @module.has_function?(target)
+
+      bind_exact_source_call_target(target, source_name, source_def, source_arena, binding_context: "union argument")
+      base = strip_type_suffix(source_name)
+      if namespace = function_namespace_override_for(source_name, base)
+        store_function_namespace_override(target, base, namespace, store_base: false)
+      end
+      if bindings = function_type_param_map_for_name(source_name)
+        record_pending_type_param_map(target, bindings)
+      end
+      {target, whole_types}
+    end
+
     # Prove that the physical name and selected source both own this exact
     # call-site type. A shared or parent-typed body keeps its declared ABI.
     private def exact_bound_reference_callsite_type?(
@@ -132851,6 +132915,8 @@ module Adamas::HIR
       has_distinct_source_variant = false
       all_variants_are_allocator_bodies = true
       has_unresolved_variant_target = false
+      # Arm targets instantiated with a whole union argument type.
+      whole_argument_targets = Set(String).new
       # A nilable `.new` call can bind the union-shaped allocator before any
       # concrete allocator overload has been demanded. Materialize each
       # initialize-backed variant from the registered class layout before
@@ -132951,6 +133017,13 @@ module Adamas::HIR
             vm = exact_target
           end
         end
+        if vm == variant_source_name && !allocator_variant && !call_has_splat && !call_splat_packed &&
+           !drop_for_this && variant_source_def
+          if whole = union_variant_whole_argument_target(variant_source_name, variant_source_def, vat, union_arguments)
+            vm, vat = whole
+            whole_argument_targets << vm
+          end
+        end
 
         has_unresolved_variant_target ||= !(@function_types.has_key?(vm) ||
                                              @function_defs.has_key?(vm) ||
@@ -133009,7 +133082,7 @@ module Adamas::HIR
             has_block_call, call_has_splat, call_has_named_args, call_splat_packed,
           )
         end
-        if require_source_compatible_variants
+        if require_source_compatible_variants || whole_argument_targets.includes?(method_name)
           with_union_variant_declaration_context(method_name, function_context_from_name(method_name)) do
             remember_callsite_arg_types(method_name, arm_types)
             lower_function_if_needed(method_name)
@@ -133112,6 +133185,8 @@ module Adamas::HIR
         union_arguments.each_with_index do |argument, tag_index|
           index = argument.index
           variant = arm_types[index]
+          # A whole-type parameter receives the original union value.
+          next if variant == argument.type
           value = if variant == TypeRef::NIL
                     Literal.new(ctx.next_id, TypeRef::NIL, nil)
                   else
