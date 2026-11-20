@@ -126181,6 +126181,25 @@ module Adamas::HIR
             )
           end
         end
+        # A nilary call on a concrete primitive receiver selects the shared
+        # Int/Float template key (`even?` inside `Int32#odd?` finds
+        # `Int#even?`). Calls with arguments are remangled under the concrete
+        # base above, but this one kept the template key, so its body was
+        # lowered with self and `{{@type}}` bound to `Int` (`Int::MIN`).
+        # Re-own it onto the receiver, as member access does for `x.even?`.
+        if receiver_id && !ctx.type_literal?(receiver_id) && selected_reference_wrapper_target.nil? &&
+           args.empty? && !has_block_call && !has_named_args && !has_splat
+          primitive_receiver_type = ctx.type_of(receiver_id)
+          primitive_receiver_owner = normalize_method_owner_name(get_type_name_from_ref(primitive_receiver_type))
+          if (primitive_template = primitive_template_owner(primitive_receiver_owner)) &&
+             method_owner(strip_type_suffix(mangled_method_name)) == primitive_template
+            primitive_target = selected_primitive_member_access_target(mangled_method_name, primitive_receiver_type)
+            if primitive_target != mangled_method_name
+              mangled_method_name = primitive_target
+              base_method_name = strip_type_suffix(primitive_target)
+            end
+          end
+        end
         if debug_env_filter_match?("DEBUG_CALL_LOOKUP", ctx.function.name, lookup_name, entry_name, mangled_method_name)
           stats = function_param_stats(entry_name, entry_def)
           selected_arena = @function_def_arenas[entry_name]? ||
