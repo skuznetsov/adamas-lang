@@ -17,6 +17,46 @@ class Adamas::HIR::LoweringContext
 end
 
 class Adamas::HIR::AstToHir
+  def __test_ordinary_callback_body_retry?(change : Symbol = :current) : Bool
+    name = __test_projection_method_name("fixed_retry_callback")
+    source = __test_projection_source(name)
+    callsite_types = change == :wrong_positionals ? [TypeRef::BOOL] : [TypeRef::INT32]
+    callsite = CallsiteArgs.new(callsite_types, [false], nil, has_block: true)
+    replay = ForceLowerReplayCallsite.new(source.source_def, source.source_arena, callsite,
+      @type_param_map.dup, @current_namespace_override, name, exact_source_binding: source)
+    function = @module.function_by_name(name) || raise "missing lowered body for #{name}"
+    block = function.params.last? || raise "missing fixed callback parameter for #{name}"
+    block_type = block.type
+    original_def = @function_defs[name]?
+    original_arena = @function_def_arenas[name]?
+    pushed_inline_frame = false
+
+    begin
+      case change
+      when :wrong_proc
+        other = @module.function_by_name(__test_projection_method_name("fixed_retry_callback_other")) ||
+                raise "missing lowered body for fixed_retry_callback_other"
+        other_block = other.params.last? || raise "missing alternate fixed callback parameter"
+        function.set_block_param_type(block.id, other_block.type)
+      when :stale_definition
+        @function_defs[name] = @function_defs[__test_projection_method_name("fixed_retry_callback_other")]
+      when :stale_arena
+        @function_def_arenas[name] = Adamas::Compiler::Frontend::AstArena.new
+      when :active_inline_frame
+        @inline_yield_name_stack << name
+        pushed_inline_frame = true
+      end
+
+      request = ForceLowerRetryRequest.new(name, [] of String, false, replay, source, true)
+      ordinary_callback_body_retry?(request)
+    ensure
+      function.set_block_param_type(block.id, block_type) if change == :wrong_proc
+      @function_defs[name] = original_def if original_def && change == :stale_definition
+      @function_def_arenas[name] = original_arena if original_arena && change == :stale_arena
+      @inline_yield_name_stack.pop? if pushed_inline_frame
+    end
+  end
+
   def __test_completed_provisional_projection(change : Symbol = :current, *, rebuild : Bool = false) : Bool
     previous_capture = @force_lower_current_replay_capture
     consumer = __test_projection_method_name("consumer_for")
@@ -1100,6 +1140,12 @@ private def recursive_projection_converter
     struct RecToken
     end
 
+    struct MacroValue
+    end
+
+    struct OtherMacroValue
+    end
+
     struct WideRecToken
       def initialize(@code : Int32, @wide : Int64)
       end
@@ -1127,6 +1173,16 @@ private def recursive_projection_converter
 
       def self.value : RecToken
         RecToken.new
+      end
+
+      def self.fixed_retry_callback(seed : Int32, & : -> MacroValue) : MacroValue
+        return yield if seed == 0
+        yield
+      end
+
+      def self.fixed_retry_callback_other(seed : Int32, & : -> OtherMacroValue) : OtherMacroValue
+        return yield if seed == 0
+        yield
       end
 
       def self.value_for(flag : Bool) : RecToken
@@ -1208,6 +1264,8 @@ private def recursive_projection_converter
     end
 
     RecFactory.value
+    RecFactory.fixed_retry_callback(1) { MacroValue.new }
+    RecFactory.fixed_retry_callback_other(1) { OtherMacroValue.new }
     RecFactory.consumer
     RecFactory.reference
     RecFactory.object_type
@@ -1253,6 +1311,14 @@ end
 describe "source result projection inside a recursive specialization" do
   it "admits the published instance of an explicitly declared final struct" do
     recursive_projection_converter.__test_projection_fact("value").should eq("RecToken")
+  end
+
+  it "retries a materialized anonymous fixed callback body only with its live Proc contract" do
+    converter = recursive_projection_converter
+    converter.__test_ordinary_callback_body_retry?.should be_true
+    [:wrong_proc, :wrong_positionals, :stale_definition, :stale_arena, :active_inline_frame].each do |change|
+      converter.__test_ordinary_callback_body_retry?(change).should be_false
+    end
   end
 
   it "opens a result-only edge of a live cycle while keeping its body obligations" do

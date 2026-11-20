@@ -35,6 +35,17 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-19 — Retry materialized bodies with a fixed callback
+- [x] Allow an ordinary completed callback body to replay its own checked
+  fixed Proc parameter after its dependencies settle. The exact source,
+  fixed Proc carrier and positional HIR arguments must all agree.
+- [x] The HIR regression rejects changed arguments, Proc types, Def/Arena
+  receipts and active inline frames. Both fresh S1-to-S2 runs discharge
+  `apply_macro_index_assignment` and `assign_macro_target`.
+- [ ] Installed 1.22.3 (229s) and bundled 1.18.2 (231s) both exit 1 later
+  when a generated callback in `evaluate_expression` needs the checked
+  result of `evaluate_to_macro_value`. Neither produces S2.
+
 ### 2026-11-19 — Scope ordinary source replay to the selected method body
 - [x] Blockless instance replay compares its own type environment. Preserve
   declared generic bindings and discard the enclosing callback's two

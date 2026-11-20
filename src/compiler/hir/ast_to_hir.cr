@@ -116666,9 +116666,9 @@ module Adamas::HIR
       if provisional && function_has_explicit_return_annotation?(name)
         return false unless request.replay_callsite && @force_lower_replay_source_bindings.has_key?(name)
       end
-      return false unless callee_is_yield_free?(name) || ordinary_raw_callback_replay_context?(request)
       return false unless @module.has_function_with_body?(name)
       return false if function_state(name).in_progress?
+      return false unless callee_is_yield_free?(name) || ordinary_callback_body_retry?(request)
 
       work_mark = @force_lower_retry_work.size
       candidates = refused.reject { |callee| callee == name || (provisional && !dependencies.not_nil!.includes?(callee)) }
@@ -116845,18 +116845,35 @@ module Adamas::HIR
       saw_nil && saw_reference && saw_self
     end
 
-    # A raw callback body can be rebuilt in an ordinary lowering context
-    # after its exact producers settle. Its ABI receipt does not prove Proc
-    # materialization and grants no exception to any inline/yield-free guard.
-    private def ordinary_raw_callback_replay_context?(request : ForceLowerRetryRequest) : Bool
+    # A callback body may be rebuilt through its own block parameter in an
+    # ordinary context. This gives no authority to borrow a caller's frame or
+    # to use the provisional body's result before its dependencies settle.
+    private def ordinary_callback_body_retry?(request : ForceLowerRetryRequest) : Bool
       return false if request.bypass_inline_yield || @suppress_force_lower_return_type_depth > 0 ||
                       @force_lower_yield_free_only_depth > 0 || @inline_yield_function_depth > 0 ||
                       @inline_yield_block_body_depth > 0 || @inline_yield_proc_depth > 0 ||
                       !@inline_yield_name_stack.empty?
+      name = request.name
       replay = request.replay_callsite
-      return false unless replay && replay.callback_abi && replay.callback_source &&
-                          replay.callsite.has_block
-      force_lower_replay_callsite_current?(request.name, replay)
+      return false unless replay && replay.callsite.has_block && force_lower_replay_callsite_current?(name, replay)
+      return !!replay.callback_source if replay.callback_abi
+
+      # A fixed callback needs no raw ABI record: the selected declaration
+      # determines its type and the live HIR parameter owns its carrier.
+      return false unless @explicit_yield_target_stack.empty? && @expected_proc_return_type_hint_stack.empty?
+      source = request.exact_source
+      captured = replay.exact_source_binding
+      return false unless source && captured && same_force_lower_exact_source_binding?(source, captured)
+      return false unless function_state(name).completed?
+      callback_type = ordinary_fixed_callback_type(name, source, replay.callsite) || return false
+      function = @module.function_by_name(name) || return false
+      params = function.params
+      block = params.last? || return false
+      return false unless block.is_block && block.type == callback_type
+      return false unless function.heap_block_param == def_requires_heap_block?(source.source_def, source.source_arena)
+      offset = params.first?.try(&.name) == "self" ? 1 : 0
+      positionals = params[offset...-1]
+      positionals.none?(&.is_block) && positionals.map(&.type) == replay.callsite.types
     end
 
     private def relay_suspended_exact_result(
@@ -118778,24 +118795,24 @@ module Adamas::HIR
     # and emitted by its caller. The non-inlined callee needs only that ABI
     # and its own positional inputs during result replay. Its continuation
     # must not pick up another caller's pending argument entry.
-    private def ordinary_fixed_callback_callsite?(
+    private def ordinary_fixed_callback_type(
       name : String, source : ForceLowerExactSourceBinding, callsite : CallsiteArgs,
-    ) : Bool
-      return false unless callsite.has_block && ordinary_active_body_callsite?(callsite, allow_block: true) &&
+    ) : TypeRef?
+      return nil unless callsite.has_block && ordinary_active_body_callsite?(callsite, allow_block: true) &&
                           callsite.types.none? { |type| type == TypeRef::VOID }
-      return false if source.inherited_nilary_member_alias || raw_callback_abi_for(name) || raw_callback_source_binding_for(name)
+      return nil if source.inherited_nilary_member_alias || raw_callback_abi_for(name) || raw_callback_source_binding_for(name)
       definition = source.source_def
-      return false unless definition.body && !definition.is_abstract && definition.forall_type_params.empty?
+      return nil unless definition.body && !definition.is_abstract && definition.forall_type_params.empty?
       params = function_param_infos(definition, source.source_arena)
       formals = params.reject(&.is_block)
-      return false unless params.size == formals.size + 1 && formals.size == callsite.types.size
-      return false unless formals.none? do |param|
+      return nil unless params.size == formals.size + 1 && formals.size == callsite.types.size
+      return nil unless formals.none? do |param|
         param.default_value || param.is_splat || param.is_double_splat || named_only_separator?(param)
       end
-      callback = definition.params.try { |parameters| find_param(parameters, &.is_block) } || return false
-      block_type = callback.type_annotation || return false
-      return false if block_annotation_leaves_return_open?(block_type)
-      owner = exact_source_declaration_owner(name, source) || return false
+      callback = definition.params.try { |parameters| find_param(parameters, &.is_block) } || return nil
+      block_type = callback.type_annotation || return nil
+      return nil if block_annotation_leaves_return_open?(block_type)
+      owner = exact_source_declaration_owner(name, source) || return nil
       bindings = type_param_map_for_generic_type_name(owner)
       compatible = with_arena(source.source_arena) do
         with_namespace_override_or_clear(owner) do
@@ -118805,9 +118822,9 @@ module Adamas::HIR
           end
         end
       end
-      compatible && concrete_force_lower_callback_annotation?(name, source, block_type)
+      concrete_force_lower_callback_type(name, source, block_type) if compatible
     rescue LoweringError
-      false
+      nil
     end
 
     # Preserve this invocation before a nested force can consume its pending
@@ -118830,7 +118847,7 @@ module Adamas::HIR
       evidence = if positional_evidence
                    positional_evidence
                  elsif ordinary_recursive_source_callsite?(name, source, callsite) ||
-                       (retain_fixed_callback && ordinary_fixed_callback_callsite?(name, source, callsite))
+                       (retain_fixed_callback && ordinary_fixed_callback_type(name, source, callsite))
                    callsite
                  elsif callsite.has_named_args && !source.inherited_nilary_member_alias &&
                        !raw_callback_source_binding_for(name) && !raw_callback_abi_for(name) &&
@@ -119088,13 +119105,13 @@ module Adamas::HIR
       return false unless param_name = param.name
       return false if param_name.empty?
       return false unless block_annotation = param.type_annotation
-      concrete_force_lower_callback_annotation?(name, source, block_annotation)
+      !concrete_force_lower_callback_type(name, source, block_annotation).nil?
     end
 
-    private def concrete_force_lower_callback_annotation?(
+    private def concrete_force_lower_callback_type(
       name : String, source : ForceLowerExactSourceBinding, block_annotation : Slice(UInt8),
-    ) : Bool
-      owner = exact_source_declaration_owner(name, source) || return false
+    ) : TypeRef?
+      owner = exact_source_declaration_owner(name, source) || return nil
       bindings = type_param_map_for_generic_type_name(owner)
       with_arena(source.source_arena) do
         with_namespace_override_or_clear(owner) do
@@ -119102,22 +119119,20 @@ module Adamas::HIR
             text = safe_slice_to_string(block_annotation) || ""
             # This guard owns the declaration's generic projection, but no
             # exact call-local forall binding. A name-keyed map cannot supply it.
-            return false if forall_type_param_names(source.source_def).any? do |formal|
+            return nil if forall_type_param_names(source.source_def).any? do |formal|
               contains_type_param_token?(text, formal)
             end
             type = method_forall_annotation_type_ref(text, owner, source.source_def, bindings)
             descriptor = @module.get_type_descriptor(type)
-            return false unless descriptor
-            descriptor.kind == TypeKind::Proc &&
-              !descriptor.type_params.empty? &&
-              descriptor.type_params.none? do |slot|
-                slot == TypeRef::VOID || unresolved_generic_return_type?(slot)
-              end
+            return nil unless descriptor
+            return nil unless descriptor.kind == TypeKind::Proc && !descriptor.type_params.empty?
+            return nil if descriptor.type_params.any? { |slot| slot == TypeRef::VOID || unresolved_generic_return_type?(slot) }
+            type
           end
         end
       end
     rescue LoweringError
-      false
+      nil
     end
 
     private def maybe_log_pending_explosion(name : String, source : String) : Nil

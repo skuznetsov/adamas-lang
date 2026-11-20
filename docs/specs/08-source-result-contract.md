@@ -1310,6 +1310,18 @@ identity. Retain those hints for block-bearing, raw callback, yielding, and
 non-instance calls. Use the same entry environment for capture, refresh, and
 reconciliation, so replay cannot borrow bindings from a different call.
 
+### Completed fixed callback body replay
+
+An ordinary, materialized source body with a fixed callback can itself depend
+on a result that is only checked after that body was emitted. Its queued
+body retry may use the exact selected Def, arena, ordinary actuals and
+completed HIR parameter list. The source's concrete Proc restriction must
+match the live final block parameter and the source capture mode must
+match its carrier. No active inline or inherited yield frame may supply
+the body replay. The originating call retains its block and its own return
+check. A fixed callback body may replay without supplying an independent
+early return witness for another consumer.
+
 ### Implicit callback tuple unpack
 
 A selected callback input may bind a source formal to one Tuple. Recover its
