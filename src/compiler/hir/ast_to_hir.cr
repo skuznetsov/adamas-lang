@@ -110935,39 +110935,6 @@ module Adamas::HIR
         ["Int32", "Int64", "String", "Bool", "Nil", "Float64"].includes?(name)
     end
 
-    # Return the local name represented by a case subject when branch
-    # narrowing should re-register that local.  A bare IdentifierNode is not
-    # necessarily a source local: lowering may already have cached a prior
-    # receiverless call under the same name (for example, `case current_byte`).
-    # Use lexical evidence plus bounded value provenance instead of trusting
-    # ctx.lookup_local alone; treating that cached method result as a local
-    # makes later calls read a stale subject value.
-    private def case_subject_cached_method_result?(
-      ctx : LoweringContext,
-      value_id : ValueId,
-      source_name : String,
-    ) : Bool
-      current = value_id
-      depth = 0
-      while depth < 16
-        value = ctx.value_for(current)
-        case value
-        when Copy
-          current = value.source
-        when Cast
-          current = value.value
-        when Call
-          call_base = strip_type_suffix(value.method_name)
-          call_name = method_short_from_name(call_base) || call_base
-          return call_name == source_name
-        else
-          return false
-        end
-        depth += 1
-      end
-      false
-    end
-
     # `case {left, right} when {Int64, Int64}` narrows each local element of
     # the subject tuple to its pattern type: original Crystal expands the
     # pattern to `Int64 === left && Int64 === right`.
@@ -111011,16 +110978,11 @@ module Adamas::HIR
       node = node_for_expr(expr_id)
       case node
       when Adamas::Compiler::Frontend::IdentifierNode
-        name = safe_slice_to_string(node.name) || ""
-        assigned_locals = @assigned_vars_stack.last?
-        source_local = assigned_locals.try(&.includes?(name)) ||
-                       ctx.function.params.any? { |param| param.name == name }
-        if !source_local
-          if local_id = ctx.lookup_local(name)
-            source_local = !case_subject_cached_method_result?(ctx, local_id, name)
-          end
-        end
-        source_local ? name : nil
+        name = identifier_name_text(node)
+        # Use the live binding that identifier lowering reads. Even an
+        # unresolved bare call emits a Call without introducing a local.
+        # The value assigned to a local may come from a same-named method.
+        name if ctx.lookup_local(name)
       when Adamas::Compiler::Frontend::AssignNode
         target_node = node_for_expr(node.target)
         if target_node.is_a?(Adamas::Compiler::Frontend::IdentifierNode)

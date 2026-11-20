@@ -35,6 +35,22 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-19 — Narrow the source binding used by a case subject
+- [x] Case subjects now use the same live local binding as identifier
+  lowering. Assignment from a same-named getter used to be mistaken for a
+  bare method read, leaving the branch argument nilable.
+- [x] The native regression matches Crystal 1.22.3 in lazy and eager mode
+  for a same-named member, a bare initializer and an assignment inside the
+  subject. A fresh bare read and a reassignment to Nil still fail strict
+  call checking. The parent fails the positive.
+- [x] Existing case regressions passed. The full HIR suite has the same 57
+  failures and 41 errors as the parent, with one obsolete implementation
+  test removed.
+- [ ] Fresh S1-to-S2 on installed 1.22.3 (237s) passes the former
+  `intern_name` error and reaches the return check in `macro_value_to_iterable`.
+  Bundled 1.18.2 (236s) still reports a pending `CLI#run_check` result.
+  Neither run produces S2.
+
 ### 2026-11-19 — Keep terminal case merges unreachable
 - [x] A case with no flowing arms marks its synthetic merge as dead. The
   placeholder Nil cannot become the method's implicit return or reach
