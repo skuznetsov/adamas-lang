@@ -7,11 +7,24 @@
 - [ ] Fresh S1-to-S2 on bundled 1.18.2 settles both scanner children and
   resumes `collect_instance_vars`. A longer cycle through `visit`,
   `handle_class` and `collect_class_body` still relays a pending
-  result to `CLI#run_check`. Installed 1.22.3 stops at the
-  `Array(Nil | Slice(UInt8) | String)#join(String)` return check.
+  result to `CLI#run_check`. Installed 1.22.3 also reaches the
+  pending result after the source `super` fix.
 - [x] Rebuild an emitted but provisional consumer when a shallower retry can
   reach its exact depth-refused producer. Keep the new body's own dependencies
   and type checks (`regression_tests/exact_cycle_generation_repro.sh`).
+
+### 2026-11-20 — Use checked argument types for module super
+
+- [x] Resolve source and fallback module `super` calls with known actual
+  argument types, preserving existing nilable-query lookup. An arity-only
+  lookup in the parent selected the IO overload for a String separator.
+- [x] `source_typed_super_overload_repro.sh` selects the String overload and
+  rejects an incompatible unannotated call in Crystal 1.22.3 and in lazy
+  and eager HIR lowering. The parent picks the wrong overload on the
+  positive fixture.
+- [ ] Fresh S1-to-S2 crosses the former `Array#join(String)` return error
+  on installed 1.22.3 (174s). Both that run and bundled 1.18.2 (188s)
+  stop on the pending source result in `CLI#run_check` before producing S2.
 
 ### S1 -> S2 bootstrap blockers (2026-10-26)
 Each fix has its own commit and regression (original Crystal 1.22.1 first).

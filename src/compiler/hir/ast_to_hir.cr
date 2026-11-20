@@ -54671,6 +54671,14 @@ module Adamas::HIR
       type == TypeRef::VOID || type == TypeRef::POINTER
     end
 
+    private def typed_super_lookup_arg_types(method_name : String, arg_types : Array(TypeRef)) : Array(TypeRef)?
+      return nil if arg_types.empty?
+      if !NILABLE_QUERY_METHODS.includes?(method_name) && arg_types.all? { |type| weak_callsite_arg_type?(type) }
+        return nil
+      end
+      arg_types
+    end
+
     private def refine_void_args_from_source_calls(
       ctx : LoweringContext,
       args : Array(ValueId),
@@ -85332,11 +85340,7 @@ module Adamas::HIR
       module_map = included_module_type_param_map_for_origin(owner, module_base, application)
       return nil if !declared_module_type_param_names(module_base).empty? && module_map.nil?
 
-      typed_lookup_arg_types = if NILABLE_QUERY_METHODS.includes?(method_name) && !arg_types.empty?
-                                 arg_types
-                               else
-                                 nil
-                               end
+      typed_lookup_arg_types = typed_super_lookup_arg_types(method_name, arg_types)
       found = find_module_def_recursive_with_owner(
         module_base,
         method_name,
@@ -102239,11 +102243,7 @@ module Adamas::HIR
             next if module_base == skip_mod || module_name == skip_mod
           end
           visited = Set(String).new
-          typed_lookup_arg_types = if NILABLE_QUERY_METHODS.includes?(method_name) && !arg_types.empty?
-                                     arg_types
-                                   else
-                                     nil
-                                   end
+          typed_lookup_arg_types = typed_super_lookup_arg_types(method_name, arg_types)
           found = if candidate = source_candidate
                     {candidate[0], candidate[1], candidate[2]}
                   else
@@ -102343,11 +102343,7 @@ module Adamas::HIR
 
       if source_module = invocation_context.super_source_module
         class_info_for_super = class_info
-        typed_lookup_arg_types = if NILABLE_QUERY_METHODS.includes?(method_name) && !arg_types.empty?
-                                   arg_types
-                                 else
-                                   nil
-                                 end
+        typed_lookup_arg_types = typed_super_lookup_arg_types(method_name, arg_types)
         visited = Set(String).new
         if !source_super_order_selected && class_info_for_super &&
            (found = find_module_super_def_recursive(source_module, method_name, args.size, visited, typed_lookup_arg_types))
