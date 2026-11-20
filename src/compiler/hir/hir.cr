@@ -2235,6 +2235,15 @@ module Adamas::HIR
       @value_facts[id]?.try(&.dup)
     end
 
+    # The caller must verify the old receipt and prove the mutation preserves
+    # both the reachable returns and their complete source value graph.
+    def with_body(function : Function, seal : String) : SourceReturnResultReceipt
+      SourceReturnResultReceipt.new(
+        @definition_id, @arena_key, function.body_revision, seal,
+        function.scopes, function.blocks, @result_facts, @value_facts, @discard_type,
+      )
+    end
+
     def body_objects_match?(scopes : Array(Scope), blocks : Array(Block)) : Bool
       return false unless scopes.size == @scope_refs.size && blocks.size == @block_refs.size
 

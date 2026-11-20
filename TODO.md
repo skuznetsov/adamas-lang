@@ -1,5 +1,19 @@
 ### Recursive source result replay
 
+- [x] An effect-only call lowering a recursive collector can continue from a
+  checked normal return of the exact callee body. Keep the original call and
+  recheck its source owner, operands, normal exit, and unused result before
+  settling its ABI. Calls whose values are consumed still need the checked
+  source result before lowering can continue.
+- [x] `discarded_recursive_result_repro.sh` reproduces a pending result on
+  the parent. The candidate matches Crystal 1.22.3 in eager and lazy modes
+  for recursive effects and retained result arms. Both reject the missing
+  method in a reachable tail.
+- [ ] Fresh S1-to-S2 at seal
+  `3289e52c4731d65def20c0393c35d9ecc5ca9d4f809df14fb73a5beff1a42ee0`
+  crosses the discarded `expand_accessor_macro` edges on installed 1.22.3
+  (195s) and bundled 1.18.2 (195s). Both runs still stop in the collector
+  cycle through `handle_class` and `collect_class_body` and emit no S2.
 - [x] A completed recursive body can supply an exact closed reference or
   nullable reference result while an unused recursive call still awaits
   replay. Prove each result arm on an independent HIR path and check the
@@ -28456,10 +28470,10 @@ changes. No stdlib edits.
   The focused result and retry suite passes 42 HIR examples.
 - Fresh S1 → S2 attempts at seal
   `b46bdb5e0f5cbfc3fd676bed7b033b52a287911ef4d31e06563c5fefadcf5085`
-  pass the former `CLI#run_check` suspension with both installed 1.22.3 and
-  bundled 1.18.2. Both exit 1 in `reflection_collection_for_symbol` after a
-  forwarded `Hash#map` callback leaves `Array(U)` untyped at allocation.
-  These attempts emit no S2, so S3 is still pending.
+  leave `CLI#run_check` suspended with both installed 1.22.3 and bundled
+  1.18.2. Both exit 1 in `reflection_collection_for_symbol` before that result
+  is retried, after a forwarded `Hash#map` callback leaves `Array(U)` untyped
+  at allocation. Neither run emits S2.
 
 ## Exact forwarded block results before yield (2026-11-19)
 

@@ -2314,6 +2314,7 @@ module Adamas::HIR
       property binding : ForceLowerReplayCallsite?
       property source : ForceLowerExactSourceBinding?
       property active_body : ForceLowerActiveBody?
+      property normal_exit_body : Function?
       property provisional_calls : Array(ForceLowerProvisionalCall)?
       getter name : String
       getter parent : ForceLowerReplayCapture?
@@ -7350,6 +7351,7 @@ module Adamas::HIR
     # provisional return evidence. A guessed non-Void carrier is not a settled
     # result merely because it can be stored in the return-type cache.
     @force_lower_provisional_dependencies = {} of String => Set(String)
+    @discarded_source_calls = {} of Function => Array(ForceLowerProvisionalCall)
     @force_lower_publication_frames = [] of ForceLowerPublicationFrame
     # One-shot replay bindings pin a retried caller to the selected Def/arena.
     @force_lower_active_replay_captures = {} of String => ForceLowerReplayCapture
@@ -10162,6 +10164,7 @@ module Adamas::HIR
       @force_lower_depth_refused.clear
       @force_lower_discharged_edges.clear
       @force_lower_provisional_dependencies.clear
+      @discarded_source_calls.clear
       @deferred_struct_result_uses.clear
       @force_lower_suspended_call_replay = nil
       @source_result_replay_children.clear
@@ -53381,6 +53384,9 @@ module Adamas::HIR
         "params=#{func.params.size},auto_assign=#{auto_assign_params.size}"
       )
 
+      if capture = @force_lower_active_replay_captures[func.name]?
+        capture.normal_exit_body = func
+      end
       retain_active_force_lower_body(func, node, def_arena, ctx)
 
       # Emit auto-assignments for @param style parameters
@@ -61716,6 +61722,7 @@ module Adamas::HIR
         func.blocks.each do |block|
           block.instructions.each_with_index do |inst, idx|
             next unless inst.is_a?(Call)
+            next if @discarded_source_calls[func]?.try &.any? { |entry| entry.call.same?(inst) }
             # Class-method calls (separator '.') resolve to a single implementation even when
             # marked virtual; skip only true instance-method virtual dispatch where return
             # types may genuinely differ across overrides.
@@ -77734,6 +77741,7 @@ module Adamas::HIR
     end
 
     private def retire_recursive_struct_result_emissions(function : Function) : Nil
+      @discarded_source_calls.delete(function)
       @deferred_struct_result_uses.each_value do |use|
         use.retire_function_body(function)
       end
@@ -88512,7 +88520,7 @@ module Adamas::HIR
         saved_arena = @arena
         @arena = def_arena
         begin
-          last_value = lower_expr(ctx, expr_id)
+          last_value = lower_expr(ctx, expr_id, result_discarded: i + 1 < body.size)
         ensure
           @arena = saved_arena
         end
@@ -88539,7 +88547,7 @@ module Adamas::HIR
         saved_arena = @arena
         @arena = method_arena
         begin
-          last_value = lower_expr(ctx, expr_id)
+          last_value = lower_expr(ctx, expr_id, result_discarded: body_index + 1 < body.size)
         ensure
           @arena = saved_arena
         end
@@ -88625,7 +88633,7 @@ module Adamas::HIR
               STDERR.puts "[LOWER_METHOD] inspect_failed expr=#{expr_id.index} (null/invalid/OOB)"
             end
           end
-          l9_raw = lower_expr(ctx, expr_id)
+          l9_raw = lower_expr(ctx, expr_id, result_discarded: body_index + 1 < body.size)
           last_value = l9_raw
           if debug_env_filter_match?("DEBUG_L9_BODYLOOP", method_name, base_name, full_name)
             # Avoid interpolation of numeric locals here: interpolation itself
@@ -90286,6 +90294,7 @@ module Adamas::HIR
       # once lowering settles, so fix it here over the finalized HIR.
       repair_named_tuple_call_arguments
       sanitize_scalar_pointer_nil_checks
+      settle_discarded_source_calls
       validate_recursive_struct_results
 
       if phase_stats
@@ -93483,7 +93492,7 @@ module Adamas::HIR
     end
 
     # Lower a single expression, returns ValueId of result
-    def lower_expr(ctx : LoweringContext, expr_id : ExprId) : ValueId
+    def lower_expr(ctx : LoweringContext, expr_id : ExprId, *, result_discarded : Bool = false) : ValueId
       if env_get("DEBUG_INLINE_CRASH")
         if @inline_yield_name_stack.any? { |name| name.includes?("Char::Reader#decode_char_at") }
           stack = @inline_yield_name_stack.join(" -> ")
@@ -93539,7 +93548,7 @@ module Adamas::HIR
         previous_location = ctx.current_source_location
         ctx.current_source_location = source_location_for_node(@arena, node)
         result = begin
-          lower_node(ctx, node, expr_id)
+          lower_node(ctx, node, expr_id, result_discarded: result_discarded)
         ensure
           ctx.current_source_location = previous_location
         end
@@ -93550,7 +93559,7 @@ module Adamas::HIR
           previous_location = ctx.current_source_location
           ctx.current_source_location = source_location_for_node(@arena, node)
           result = begin
-            lower_node(ctx, node, expr_id)
+            lower_node(ctx, node, expr_id, result_discarded: result_discarded)
           ensure
             ctx.current_source_location = previous_location
           end
@@ -93560,7 +93569,7 @@ module Adamas::HIR
     end
 
     # Lower an AST node to HIR
-    def lower_node(ctx : LoweringContext, node : AstNode, expr_id : ExprId = ExprId.new(-1)) : ValueId
+    def lower_node(ctx : LoweringContext, node : AstNode, expr_id : ExprId = ExprId.new(-1), *, result_discarded : Bool = false) : ValueId
       maybe_log_lower_histo(node)
       kind = Adamas::Compiler::Frontend.node_kind(node)
       if !@pending_def_annotations.empty? &&
@@ -93574,7 +93583,8 @@ module Adamas::HIR
       # the concrete payload with unsafe_as for hot lowering paths.
       case kind
       when Adamas::Compiler::Frontend::NodeKind::Call
-        return narrow_direct_call_result(ctx, lower_call(ctx, node.unsafe_as(Adamas::Compiler::Frontend::CallNode), expr_id))
+        value = lower_call(ctx, node.unsafe_as(Adamas::Compiler::Frontend::CallNode), expr_id, result_discarded: result_discarded)
+        return narrow_direct_call_result(ctx, value)
       when Adamas::Compiler::Frontend::NodeKind::Assign
         return lower_assign(ctx, node.unsafe_as(Adamas::Compiler::Frontend::AssignNode), expr_id)
       when Adamas::Compiler::Frontend::NodeKind::Identifier
@@ -93590,7 +93600,7 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::NodeKind::Nil
         return lower_nil(ctx, node.unsafe_as(Adamas::Compiler::Frontend::NilNode))
       when Adamas::Compiler::Frontend::NodeKind::If
-        return lower_if(ctx, node.unsafe_as(Adamas::Compiler::Frontend::IfNode))
+        return lower_if(ctx, node.unsafe_as(Adamas::Compiler::Frontend::IfNode), result_discarded: result_discarded)
       when Adamas::Compiler::Frontend::NodeKind::While
         return lower_while(ctx, node.unsafe_as(Adamas::Compiler::Frontend::WhileNode))
       when Adamas::Compiler::Frontend::NodeKind::Block
@@ -93624,7 +93634,7 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::NodeKind::HashLiteral
         return lower_hash_literal(ctx, node.unsafe_as(Adamas::Compiler::Frontend::HashLiteralNode))
       when Adamas::Compiler::Frontend::NodeKind::Case
-        return lower_case(ctx, node.unsafe_as(Adamas::Compiler::Frontend::CaseNode))
+        return lower_case(ctx, node.unsafe_as(Adamas::Compiler::Frontend::CaseNode), result_discarded: result_discarded)
       when Adamas::Compiler::Frontend::NodeKind::Binary
         return lower_binary(ctx, node.unsafe_as(Adamas::Compiler::Frontend::BinaryNode))
       when Adamas::Compiler::Frontend::NodeKind::Unary
@@ -93697,9 +93707,9 @@ module Adamas::HIR
         # ═══════════════════════════════════════════════════════════════════
 
       when Adamas::Compiler::Frontend::IfNode
-        lower_if(ctx, node)
+        lower_if(ctx, node, result_discarded: result_discarded)
       when Adamas::Compiler::Frontend::UnlessNode
-        lower_unless(ctx, node)
+        lower_unless(ctx, node, result_discarded: result_discarded)
       when Adamas::Compiler::Frontend::WhileNode
         lower_while(ctx, node)
       when Adamas::Compiler::Frontend::UntilNode
@@ -93707,7 +93717,7 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::TernaryNode
         lower_ternary(ctx, node)
       when Adamas::Compiler::Frontend::CaseNode
-        lower_case(ctx, node)
+        lower_case(ctx, node, result_discarded: result_discarded)
         # ═══════════════════════════════════════════════════════════════════
         # FUNCTION-RELATED
         # ═══════════════════════════════════════════════════════════════════
@@ -93726,7 +93736,7 @@ module Adamas::HIR
           end
         end
         if blk = @inline_yield_block_stack.last?
-          inline_block_body(ctx, node, blk)
+          inline_block_body(ctx, node, blk, result_discarded: result_discarded)
         else
           lower_yield(ctx, node)
         end
@@ -105019,9 +105029,10 @@ module Adamas::HIR
       body : Array(ExprId),
       targets : Array(String),
       capture_sources : Array({String, ValueId}),
+      *, result_discarded : Bool = false,
     ) : ValueId
       with_direct_capture_truthy_narrowing(ctx, targets, capture_sources) do
-        lower_body(ctx, body)
+        lower_body(ctx, body, result_discarded: result_discarded)
       end
     end
 
@@ -107087,6 +107098,7 @@ module Adamas::HIR
       ctx : LoweringContext,
       node : Adamas::Compiler::Frontend::IfNode,
       elsifs : Array(Adamas::Compiler::Frontend::ElsifBranch),
+      *, result_discarded : Bool,
     ) : ValueId
       first = elsifs.first
       remaining = elsifs.size > 1 ? elsifs[1..] : nil
@@ -107097,7 +107109,7 @@ module Adamas::HIR
         remaining,
         node.else_body,
       )
-      lower_if(ctx, continuation)
+      lower_if(ctx, continuation, result_discarded: result_discarded)
     end
 
     # Conditional branch lowering can raise while a lexical scope is active.
@@ -107117,7 +107129,7 @@ module Adamas::HIR
       end
       raise error
     end
-    private def lower_if(ctx : LoweringContext, node : Adamas::Compiler::Frontend::IfNode) : ValueId
+    private def lower_if(ctx : LoweringContext, node : Adamas::Compiler::Frontend::IfNode, *, result_discarded : Bool = false) : ValueId
       STDERR.puts "[NILABLE_BRANCH] lower_if start func=#{ctx.function.name}" if env_has?("ADAMAS_TRACE_NILABLE_BRANCH_REPRO")
       truthy_targets = truthy_narrowing_targets(node.condition)
       falsy_targets = falsy_narrowing_targets(node.condition)
@@ -107134,14 +107146,14 @@ module Adamas::HIR
             apply_truthy_narrowing(ctx, truthy_targets)
             apply_is_a_narrowing(ctx, is_a_targets)
             lower_static_if_branch(ctx, pre_branch_locals, pre_inline_caller_locals, branch_scope) do
-              lower_body(ctx, node.then_body)
+              lower_body(ctx, node.then_body, result_discarded: result_discarded)
             end
           end
         end
 
         if elsifs = node.elsifs
           unless elsifs.empty?
-            return lower_if_from_first_elsif(ctx, node, elsifs)
+            return lower_if_from_first_elsif(ctx, node, elsifs, result_discarded: result_discarded)
           end
         end
 
@@ -107156,7 +107168,7 @@ module Adamas::HIR
                 ctx.emit(nil_lit)
                 nil_lit.id
               else
-                lower_body(ctx, else_body)
+                lower_body(ctx, else_body, result_discarded: result_discarded)
               end
             else
               nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
@@ -107229,6 +107241,7 @@ module Adamas::HIR
                   node.then_body,
                   truthy_targets,
                   then_capture_sources,
+                  result_discarded: result_discarded,
                 )
               end
             end
@@ -107236,7 +107249,7 @@ module Adamas::HIR
 
           if elsifs
             unless elsifs.empty?
-              return lower_if_from_first_elsif(ctx, node, elsifs)
+              return lower_if_from_first_elsif(ctx, node, elsifs, result_discarded: result_discarded)
             end
           end
 
@@ -107250,7 +107263,7 @@ module Adamas::HIR
                   ctx.emit(nil_lit)
                   nil_lit.id
                 else
-                  lower_body(ctx, else_body)
+                  lower_body(ctx, else_body, result_discarded: result_discarded)
                 end
               else
                 nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
@@ -107288,6 +107301,7 @@ module Adamas::HIR
                   node.then_body,
                   truthy_targets,
                   then_capture_sources,
+                  result_discarded: result_discarded,
                 )
               end
             end
@@ -107306,7 +107320,7 @@ module Adamas::HIR
                   ctx.emit(nil_lit)
                   nil_lit.id
                 else
-                  lower_body(ctx, else_body)
+                  lower_body(ctx, else_body, result_discarded: result_discarded)
                 end
               else
                 nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
@@ -107340,6 +107354,7 @@ module Adamas::HIR
             node.then_body,
             truthy_targets,
             then_capture_sources,
+            result_discarded: result_discarded,
           )
           exit_block = ctx.current_block
           cell_proofs = ctx.closure_cell_write_proofs_on(exit_block)
@@ -107456,6 +107471,7 @@ module Adamas::HIR
                 elsif_branch.body,
                 elsif_truthy_targets,
                 elsif_capture_sources,
+                result_discarded: result_discarded,
               )
               exit_block = ctx.current_block
               cell_proofs = ctx.closure_cell_write_proofs_on(exit_block)
@@ -107503,7 +107519,7 @@ module Adamas::HIR
                                ctx.emit(nil_lit)
                                nil_lit.id
                              else
-                               lower_body(ctx, else_body)
+                               lower_body(ctx, else_body, result_discarded: result_discarded)
                              end
                            else
                              # No else: produce nil
@@ -108427,7 +108443,7 @@ module Adamas::HIR
       end
     end
 
-    private def lower_unless(ctx : LoweringContext, node : Adamas::Compiler::Frontend::UnlessNode) : ValueId
+    private def lower_unless(ctx : LoweringContext, node : Adamas::Compiler::Frontend::UnlessNode, *, result_discarded : Bool = false) : ValueId
       truthy_targets = truthy_narrowing_targets(node.condition)
       falsy_targets = falsy_narrowing_targets(node.condition)
       is_a_targets = is_a_narrowing_targets(node.condition)
@@ -108446,7 +108462,7 @@ module Adamas::HIR
             apply_is_a_narrowing(ctx, is_a_targets)
             lower_static_if_branch(ctx, pre_branch_locals, pre_inline_caller_locals, branch_scope) do
               if else_branch = node.else_branch
-                lower_body(ctx, else_branch)
+                lower_body(ctx, else_branch, result_discarded: result_discarded)
               else
                 nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
                 ctx.emit(nil_lit)
@@ -108457,7 +108473,7 @@ module Adamas::HIR
             apply_truthy_narrowing(ctx, falsy_targets)
             apply_is_a_else_narrowing(ctx, is_a_else_targets)
             lower_static_if_branch(ctx, pre_branch_locals, pre_inline_caller_locals, branch_scope) do
-              lower_body(ctx, node.then_branch)
+              lower_body(ctx, node.then_branch, result_discarded: result_discarded)
             end
           end
         end
@@ -108500,7 +108516,7 @@ module Adamas::HIR
           # The unless body runs when the condition fails, so it sees the
           # negative is_a? filters, as the else arm of lower_if does.
           apply_is_a_else_narrowing(ctx, is_a_else_targets)
-          branch_value = lower_body(ctx, node.then_branch)
+          branch_value = lower_body(ctx, node.then_branch, result_discarded: result_discarded)
           exit_block = ctx.current_block
           cell_proofs = ctx.closure_cell_write_proofs_on(exit_block)
           locals = ctx.save_locals.locals
@@ -108537,7 +108553,7 @@ module Adamas::HIR
           apply_truthy_narrowing(ctx, truthy_targets)
           apply_is_a_narrowing(ctx, is_a_targets)
           branch_value = if else_branch = node.else_branch
-                           lower_body(ctx, else_branch)
+                           lower_body(ctx, else_branch, result_discarded: result_discarded)
                          else
                            nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
                            ctx.emit(nil_lit)
@@ -108845,7 +108861,7 @@ module Adamas::HIR
         ctx, node, cond_block, exit_block, phi_nodes, assigned_vars, inline_vars,
         break_inline_locals: break_inline_locals, shadow_key: shadow_key,
       ) do
-        lower_body(ctx, node.body)
+        lower_body(ctx, node.body, result_discarded: true)
       end
       body_exit_block = ctx.current_block
 
@@ -111390,7 +111406,7 @@ module Adamas::HIR
       result
     end
 
-    private def lower_case(ctx : LoweringContext, node : Adamas::Compiler::Frontend::CaseNode) : ValueId
+    private def lower_case(ctx : LoweringContext, node : Adamas::Compiler::Frontend::CaseNode, *, result_discarded : Bool = false) : ValueId
       # Lower case subject
       subject_id = if subj = node.value
                      lower_expr(ctx, subj)
@@ -111626,7 +111642,7 @@ module Adamas::HIR
         end
 
         result, exit_block, post_when_locals = with_case_branch_scope(ctx, node) do
-          result = lower_body(ctx, when_branch.body)
+          result = lower_body(ctx, when_branch.body, result_discarded: result_discarded)
           # Snapshot assignments before the scope restores the pre-branch locals.
           {result, ctx.current_block, ctx.save_locals.locals}
         end
@@ -111712,7 +111728,7 @@ module Adamas::HIR
                           ctx.emit(nil_lit)
                           nil_lit.id
                         else
-                          lower_body(ctx, else_body)
+                          lower_body(ctx, else_body, result_discarded: result_discarded)
                         end
                       else
                         nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
@@ -119681,17 +119697,204 @@ module Adamas::HIR
     ) : Nil
       return unless observed && (capture = @force_lower_current_replay_capture) && capture.binding
       name = ctx.function.name
-      producer, replay = observed
+      producer = observed[0]
       return unless capture.name == name && ctx.source_result_replay_parent.nil? &&
-                    @force_lower_provisional_dependencies[name]?.try(&.includes?(producer)) == true &&
-                    call.method_name == producer && !call.virtual && !call.has_block? &&
+                    @force_lower_provisional_dependencies[name]?.try(&.includes?(producer)) == true
+      proof = capture_exact_direct_call(ctx, call, observed) || return
+      (capture.provisional_calls ||= [] of ForceLowerProvisionalCall) << proof
+    end
+
+    private def capture_exact_direct_call(
+      ctx : LoweringContext, call : Call, observed : {String, ForceLowerReplayCallsite},
+    ) : ForceLowerProvisionalCall?
+      producer, replay = observed
+      return unless call.method_name == producer && !call.virtual && !call.has_block? &&
                     provisional_source_call_arguments_match?(ctx, call, replay.callsite)
       receiver = call.receiver_value if call.has_receiver?
       operands = receiver ? [receiver] + call.args : call.args
       witnesses = recursive_struct_result_operand_witnesses(ctx.function, operands) || return
       block = ctx.function.get_block(ctx.current_block_id)
-      calls = capture.provisional_calls ||= [] of ForceLowerProvisionalCall
-      calls << ForceLowerProvisionalCall.new(ctx, block, call, producer, replay, call.args.dup, receiver, witnesses)
+      ForceLowerProvisionalCall.new(ctx, block, call, producer, replay, call.args.dup, receiver, witnesses)
+    end
+
+    private def pending_discarded_source_call?(
+      ctx : LoweringContext, observed : {String, ForceLowerReplayCallsite}, name : String,
+      selected_def : Adamas::Compiler::Frontend::DefNode?,
+    ) : Bool
+      producer, replay = observed
+      return false unless name == producer && name != ctx.function.name && ctx.source_result_replay_parent.nil?
+      definition = replay.source_def
+      return false unless selected_def.try(&.same?(definition)) == true && definition.return_type.nil?
+      return false if settled_force_lower_result?(name) || source_owned_bodyless_primitive_target?(name)
+      source = replay.exact_source_binding || return false
+      return false unless ordinary_recursive_source_callsite?(name, source, replay.callsite) &&
+                          force_lower_replay_callsite_current?(name, replay)
+      return false unless exact_pending_body_has_normal_exit?(name, replay)
+      if env_has?("DEBUG_FORCE_LOWER_DEPTH")
+        STDERR.puts "[FORCE_LOWER_CHECKED_DISCARD] consumer=#{ctx.function.name} producer=#{name}"
+      end
+      true
+    end
+
+    # A discarded value needs no type in its consumer. Its invocation can still
+    # make the continuation unreachable. Require an independent, already typed
+    # Return from this exact specialization before emitting that continuation.
+    private def exact_pending_body_has_normal_exit?(name : String, replay : ForceLowerReplayCallsite) : Bool
+      if capture = @force_lower_active_replay_captures[name]?
+        return force_lower_normal_exit_current?(capture, replay, active: true)
+      end
+      @force_lower_retry_work.any? do |request|
+        next false unless request.is_a?(ForceLowerSuspendedRequest)
+        pending = request.pending.as(ExactResultPending?)
+        found = false
+        while pending
+          if (capture = pending.consumer_capture) && capture.name == name &&
+             force_lower_normal_exit_current?(capture, replay, active: false)
+            found = true
+            break
+          end
+          pending = pending.producer_pending
+        end
+        found
+      end
+    end
+
+    private def force_lower_normal_exit_current?(
+      capture : ForceLowerReplayCapture, replay : ForceLowerReplayCallsite, *, active : Bool,
+    ) : Bool
+      bound = capture.binding
+      body = capture.normal_exit_body
+      return false unless bound && body && body.name == capture.name
+      return false unless force_lower_replay_callsite_current?(capture.name, bound) &&
+                          reconcile_recursive_producer_replays(replay, bound)
+      if active
+        return false unless function_state(capture.name).in_progress? &&
+                            @module.function_by_name(capture.name).try(&.same?(body))
+      else
+        return false if @module.function_by_name(capture.name) || function_state(capture.name).in_progress?
+      end
+      source_checked_normal_exit?(body)
+    end
+
+    private def source_checked_normal_exit?(root : Function) : Bool
+      # Reachability grows only from an exact entry or a call already proved to
+      # return. Each suspended program point is resumed at most once.
+      work = [{root, root.entry_block, 0}]
+      visited = Set({Function, BlockId}).new
+      visited.add({root, root.entry_block})
+      returns = Set(Function).new
+      waiting = {} of Function => Array({Function, BlockId, Int32})
+      while step = work.pop?
+        function, block_id, index = step
+        next if returns.includes?(function) || @control_flow_dead_blocks.includes?({function.id, block_id})
+        block = function.blocks[block_id]? || next
+        while instruction = block.instructions[index]?
+          case instruction
+          when TryBegin, Raise, Yield
+            break
+          when ExternCall
+            break if instruction.noreturn
+          when Call
+            target = normal_exit_call_target(instruction) || break
+            unless returns.includes?(target)
+              (waiting[target] ||= [] of {Function, BlockId, Int32}) << {function, block_id, index + 1}
+              if visited.add?({target, target.entry_block})
+                work << {target, target.entry_block, 0}
+              end
+              break
+            end
+          end
+          index += 1
+        end
+        next if index < block.instructions.size
+
+        terminator = block.terminator
+        if terminator.is_a?(Return)
+          return true if function.same?(root)
+          returns.add(function)
+          if callers = waiting.delete(function)
+            work.concat(callers)
+          end
+        else
+          terminator.successors.each do |successor|
+            if visited.add?({function, successor})
+              work << {function, successor, 0}
+            end
+          end
+        end
+      end
+      false
+    end
+
+    private def normal_exit_call_target(call : Call) : Function?
+      return if call.virtual || call.has_block? || noreturn_type?(call.type)
+      name = call.method_name
+      return unless settled_force_lower_result?(name)
+      target = @module.function_by_name(name)
+      definition = @function_defs[name]?
+      arena = @function_def_arenas[name]?
+      return unless target && definition && arena && !noreturn_type?(target.return_type) &&
+                    target.source_return_definition_id == definition.object_id.to_u64 &&
+                    target.source_return_arena_key == arena_map_key(arena)
+      target
+    end
+
+    private def settle_discarded_source_calls : Nil
+      @discarded_source_calls.each do |caller, calls|
+        next unless @module.function_by_name(caller.name).try(&.same?(caller))
+        # The result slot must be absent from the consumer's value graph.
+        ignored = calls.map(&.call.id).to_set
+        unless discarded_recursive_call_values?(caller.blocks, ignored) && ignored.size == calls.size
+          raise LoweringError.new("unfinished discarded call used as a value in #{caller.name}")
+        end
+        receipt = caller.source_return_result_receipt
+        if receipt && (receipt.body_revision != caller.body_revision ||
+                       receipt.body_seal != source_return_function_body_seal(caller) ||
+                       !receipt.body_objects_match?(caller.scopes, caller.blocks))
+          receipt = nil
+        end
+        original_revision = caller.body_revision
+        result_types = calls.map do |observed|
+          name = observed.producer
+          target = @module.function_by_name(name)
+          unless target && settled_force_lower_result?(name) &&
+                 force_lower_replay_callsite_current?(name, observed.replay) &&
+                 retained_provisional_call_current?(observed, caller) &&
+                 recursive_struct_result_abi_matches?(
+                   observed.context, target, observed.receiver, observed.replay.callsite.types,
+                 )
+            raise LoweringError.new("unsettled discarded call body or arguments: #{name} in #{caller.name}")
+          end
+          if noreturn_type?(target.return_type) || !source_checked_normal_exit?(target)
+            raise LoweringError.new("discarded recursive call lost its normal exit: #{name} in #{caller.name}")
+          end
+          target.return_type
+        end
+        calls.each_with_index do |observed, call_index|
+          name = observed.producer
+          call = observed.call
+          block = observed.block
+          index = block.instructions.index { |value| value.same?(call) }.not_nil!
+          result_type = result_types[call_index]
+          next if call.type == result_type
+          replacement = if receiver = observed.receiver
+                          Call.with_receiver(call.id, result_type, receiver, name, call.args)
+                        else
+                          Call.without_receiver(call.id, result_type, name, call.args)
+                        end
+          replace_repaired_result_type(caller, block, index, replacement)
+          observed.context.register_type(call.id, result_type)
+        end
+        if receipt && caller.body_revision != original_revision
+          # Only the ABI of unreferenced results changed. The earlier proof of
+          # normal continuation is rechecked above, so source result facts are
+          # still owned by the original body.
+          caller.source_return_result_receipt = receipt.with_body(
+            caller, source_return_function_body_seal(caller),
+          )
+        end
+      end
+      @discarded_source_calls.clear
     end
 
     private def provisional_source_call_arguments_match?(
@@ -124684,6 +124887,7 @@ module Adamas::HIR
       ctx : LoweringContext,
       node : Adamas::Compiler::Frontend::CallNode,
       expr_id : ExprId = ExprId.new(-1),
+      *, result_discarded : Bool = false,
     ) : ValueId
       debug_lower_call_arena_phase(ctx, node, "entry")
       debug_lower_call_arena_expr(ctx, node, "entry.callee", node.callee, @arena, "lower_call.current")
@@ -134724,10 +134928,21 @@ module Adamas::HIR
       # paths can return early. A successful sibling call cannot discharge a
       # later invocation that exits before producing its direct Call.
       cycle_result_ticket = begin_recursive_struct_result_emission!(ctx, mangled_method_name, !cycle_result.nil?)
+      discarded_source_call = if result_discarded && !noreturn_type?(return_type) &&
+                                 !pending_method_macro_callback && exact_source_discard_result_type.nil? &&
+                                 dependent_callback_return_pending.nil? && cycle_result_ticket.nil? &&
+                                 !call_virtual && !has_block_call && block_id.nil? && !has_named_args &&
+                                 !has_splat && !splat_packed && !source_default_entry &&
+                                 generated_allocator_call_target.nil? && !allocator_explicit_new_call && method_name != "new"
+                                if observation = source_call_observation
+                                  observation if pending_discarded_source_call?(ctx, observation, mangled_method_name, selected_return_def)
+                                end
+                              end
       # A checked recursive call already has both a result type and a source
       # value kind. Its emission ticket and the final producer body still have
       # to agree. Both eager result queries must honor that same evidence.
-      needs_source_result = !pending_method_macro_callback && exact_source_discard_result_type.nil? && cycle_result_ticket.nil?
+      needs_source_result = discarded_source_call.nil? && !pending_method_macro_callback &&
+                            exact_source_discard_result_type.nil? && cycle_result_ticket.nil?
       force_return_type_needed = !!dependent_callback_return_pending ||
                                  (allocator_explicit_new_call && !has_block_call) ||
                                  (needs_source_result &&
@@ -134794,7 +135009,7 @@ module Adamas::HIR
         rt_name = get_type_name_from_ref(return_type)
         STDERR.puts "[GET_CACHE_RT] 3. before_re-check return_type=#{rt_name} mangled=#{mangled_method_name}"
       end
-      if !pending_method_macro_callback && return_type == TypeRef::VOID && exact_source_discard_result_type.nil?
+      if discarded_source_call.nil? && !pending_method_macro_callback && return_type == TypeRef::VOID && exact_source_discard_result_type.nil?
         return_type = get_function_return_type(
           mangled_method_name,
           return_def_arg_count,
@@ -134845,7 +135060,7 @@ module Adamas::HIR
 
       # If return type is still VOID, the function may have been deferred due to inside_lowering?.
       # Force-lower it now to get the correct return type.
-      if !pending_method_macro_callback && return_type == TypeRef::VOID && exact_source_discard_result_type.nil?
+      if discarded_source_call.nil? && !pending_method_macro_callback && return_type == TypeRef::VOID && exact_source_discard_result_type.nil?
         force_lowered = false
         debug_force = env_get("DEBUG_FORCE_LOWER") && method_name == "get_cache"
         if debug_force
@@ -134926,7 +135141,7 @@ module Adamas::HIR
       end
 
       # The yield-free retry above can be the first force to reach the depth cap.
-      unless cycle_result
+      unless cycle_result || discarded_source_call
         queued_source_result_required = needs_source_result && !noreturn_type?(return_type)
         record_force_lower_result_dependency(
           ctx, mangled_method_name, selected_return_def, refused_before_call_force,
@@ -134941,7 +135156,7 @@ module Adamas::HIR
         )
       end
 
-      if !pending_method_macro_callback && unresolved_generic_return_type?(return_type) && exact_source_discard_result_type.nil?
+      if discarded_source_call.nil? && !pending_method_macro_callback && unresolved_generic_return_type?(return_type) && exact_source_discard_result_type.nil?
         [primary_mangled_name, mangled_method_name, base_method_name].uniq.each do |name|
           next if name.empty?
           next if (unselected_family_body || exact_result_owner || base_return_def_foreign) && name == base_method_name
@@ -136105,6 +136320,13 @@ module Adamas::HIR
       end
       ctx.emit(call)
       ctx.register_type(call.id, return_type)
+      if observation = discarded_source_call
+        proof = capture_exact_direct_call(ctx, call, observation)
+        unless proof && call.atomic_primitive_authority.nil?
+          raise LoweringError.new("discarded call lost its selected source: #{call.method_name}", node)
+        end
+        (@discarded_source_calls[ctx.function] ||= [] of ForceLowerProvisionalCall) << proof
+      end
       if plan = included_virtual_plan
         if receiver_id
           @included_forall_virtual_return_certificates << IncludedForallVirtualReturnCertificate.new(
@@ -136117,7 +136339,9 @@ module Adamas::HIR
         end
       end
       write_back_block_proc_captures(ctx, uncoerced_args)
-      result_id = if exact_source_discard_result_type == TypeRef::VOID && !call.virtual &&
+      result_id = if discarded_source_call
+                    nil_value(ctx)
+                  elsif exact_source_discard_result_type == TypeRef::VOID && !call.virtual &&
                      !control_flow_dead_block?(ctx, ctx.current_block)
                     # Crystal's source expression for an effectful :Void call is
                     # Nil, even though its emitted HIR Call retains a void ABI.
@@ -145248,7 +145472,7 @@ module Adamas::HIR
       @loop_phi_stack << incr_phi_nodes
       @loop_break_info_stack << [] of {BlockId, Hash(String, ValueId)}
       begin
-        lower_body(ctx, block.body)
+        lower_body(ctx, block.body, result_discarded: true)
       ensure
         @inline_loop_vars_stack.pop? if pushed_inline
         @loop_exit_stack.pop?
@@ -145465,7 +145689,7 @@ module Adamas::HIR
         break_info = [] of {BlockId, Hash(String, ValueId)}
         @loop_break_info_stack << break_info
         begin
-          lower_body(ctx, block.body)
+          lower_body(ctx, block.body, result_discarded: true)
         ensure
           @inline_loop_vars_stack.pop? if pushed_inline
           @loop_exit_stack.pop?
@@ -151201,6 +151425,7 @@ module Adamas::HIR
       ctx : LoweringContext,
       yield_node : Adamas::Compiler::Frontend::YieldNode,
       block : Adamas::Compiler::Frontend::BlockNode,
+      *, result_discarded : Bool = false,
     ) : ValueId
       saved_local_declaration_scopes = ctx.save_local_declaration_scopes
       @inline_yield_block_body_depth += 1
@@ -151257,6 +151482,9 @@ module Adamas::HIR
 
         callback_return_owner = inline_block_return_owner(ctx, block)
         owner_return_context = callback_return_owner.try(&.[1])
+        block_result_contract = owner_return_context.try(&.block_result_contract)
+        discard_block_result = result_discarded && owner_return_context.try(&.callback_result_context).nil? &&
+                               (block_result_contract.nil? || block_result_contract.discards_result?)
         owner_return_index = callback_return_owner.try(&.[0]) || -1
 
         # Lower yield arguments. `yield *args` spreads a tuple into separate
@@ -151581,7 +151809,7 @@ module Adamas::HIR
                            @source_yield_context = owner.try(&.source_yield_context) || saved_inlined_block_source_yield_context
                            @captured_block_return_owner = @inline_yield_caller_return_owner_stack.last? || false
                            block_body_lr = begin
-                             lower_body(ctx, block.body)
+                             lower_body(ctx, block.body, result_discarded: discard_block_result)
                            ensure
                              @captured_block_return_owner = saved_inlined_block_return_owner
                              @source_yield_context = saved_inlined_block_source_yield_context
@@ -151743,12 +151971,12 @@ module Adamas::HIR
                      old_arena = @arena
                      @arena = chosen
                      begin
-                       lower_body(ctx, block.body)
+                       lower_body(ctx, block.body, result_discarded: discard_block_result)
                      ensure
                        @arena = old_arena
                      end
                    else
-                     lower_body(ctx, block.body)
+                     lower_body(ctx, block.body, result_discarded: discard_block_result)
                    end
                  end
 
@@ -165399,7 +165627,7 @@ module Adamas::HIR
       false
     end
 
-    private def lower_body(ctx : LoweringContext, body : Array(ExprId)) : ValueId
+    private def lower_body(ctx : LoweringContext, body : Array(ExprId), *, result_discarded : Bool = false) : ValueId
       last_value : ValueId? = nil
       progress_filter = env_get("DEBUG_LOWER_PROGRESS")
       progress_match = nil
@@ -165409,6 +165637,7 @@ module Adamas::HIR
       end
       progress_every = env_get("DEBUG_LOWER_PROGRESS_EVERY").try(&.to_i?)
       slow_only = env_has?("DEBUG_LOWER_SLOW_ONLY")
+      last_index = body.rindex { |expr_id| !expr_id.invalid? } || -1
       body.each_with_index do |expr_id, idx|
         next if expr_id.invalid?
         if progress_match && !slow_only
@@ -165423,7 +165652,7 @@ module Adamas::HIR
         end
         if progress_match
           start_time = Time.instant
-          last_value = lower_expr(ctx, expr_id)
+          last_value = lower_expr(ctx, expr_id, result_discarded: result_discarded || idx < last_index)
           elapsed_ms = (Time.instant - start_time).total_milliseconds
           slow_threshold = 200.0
           if threshold_str = env_get("DEBUG_LOWER_SLOW_MS")
@@ -165466,7 +165695,7 @@ module Adamas::HIR
             end
           end
         else
-          last_value = lower_expr(ctx, expr_id)
+          last_value = lower_expr(ctx, expr_id, result_discarded: result_discarded || idx < last_index)
         end
         break if should_stop_sequential_lowering?(ctx)
       end
