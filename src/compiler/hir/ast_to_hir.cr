@@ -1423,7 +1423,13 @@ module Adamas::HIR
 
     private record InlineCallbackSourceWitness,
       inputs : Array(SourceCallArgument),
-      result : SourceCallArgument
+      result : SourceCallArgument,
+      subtype_stable_input_indices : Array(Int32) = [] of Int32
+
+    private record InlineCallbackExpressionWitness,
+      value : SourceCallArgument,
+      input_leaves : Array(Int32) = [] of Int32,
+      fixed_initializer_leaves : Array(Int32) = [] of Int32
 
     private alias IncludedModuleDefOrigin = Tuple(
       Adamas::Compiler::Frontend::DefNode,
@@ -78794,7 +78800,7 @@ module Adamas::HIR
           with_isolated_type_param_map(lexical_bindings) do
             with_arena(block_arena) do
               params = block.params || [] of Adamas::Compiler::Frontend::Parameter
-              source_locals = {} of String => SourceCallArgument
+              source_locals = {} of String => InlineCallbackExpressionWitness
               body = block.body
               return nil if body.empty?
               tail = body.last
@@ -78813,11 +78819,16 @@ module Adamas::HIR
               # specialization.
               return nil if params.size > positional_inputs.size
               return nil unless params.all? { |param| inline_yield_param_is_plain_unannotated?(param) }
+              next_source_input_index = 0
               params.each_with_index do |param, index|
                 name = safe_slice_to_string(param.name.not_nil!) || return nil
                 input = positional_inputs[index]
                 return nil if input.type_ref == TypeRef::VOID
-                source_locals[name] = input
+                input_indices = [] of Int32
+                next_source_input_index = inline_callback_append_source_input_indices(
+                  input, next_source_input_index, input_indices,
+                )
+                source_locals[name] = InlineCallbackExpressionWitness.new(input, input_indices)
               end
 
               # A non-local return is not the callback's source result.
@@ -78827,18 +78838,20 @@ module Adamas::HIR
                 target = node_for_expr(assignment.target).as?(Adamas::Compiler::Frontend::IdentifierNode) || return nil
                 name = safe_slice_to_string(target.name) || return nil
                 return nil if name.empty?
-                value = inline_block_source_argument_for_expr(
+                value = inline_block_source_witness_for_expr(
                   ctx, assignment.value, source_locals, lexical_owner.class_name,
                 ) || return nil
                 source_locals[name] = value
                 index += 1
               end
 
-              result = inline_block_source_argument_for_expr(
+              result = inline_block_source_witness_for_expr(
                 ctx, tail, source_locals, lexical_owner.class_name,
                 forwarded_source, lexical_locals,
               ) || return nil
-              InlineCallbackSourceWitness.new(source_inputs, result)
+              InlineCallbackSourceWitness.new(
+                source_inputs, result.value, result.fixed_initializer_leaves.uniq.sort,
+              )
             end
           end
         end
@@ -78865,6 +78878,78 @@ module Adamas::HIR
         !class_has_subclasses?(strip_generic_args(name)) && !module_like_type_name?(name)
     end
 
+    private def inline_callback_append_source_input_indices(
+      input : SourceCallArgument,
+      next_index : Int32,
+      indices : Array(Int32),
+    ) : Int32
+      if values = input.tuple_values
+        values.each do |value|
+          next_index = inline_callback_append_source_input_indices(value, next_index, indices)
+        end
+        next_index
+      else
+        indices << next_index
+        next_index + 1
+      end
+    end
+
+    private def inline_callback_forwarded_yield_stable_input_indices(
+      source : InlineCallbackSourceWitness,
+      args : Array(InlineCallbackExpressionWitness),
+    ) : Array(Int32)
+      result = [] of Int32
+      source_input_index = 0
+      args.each_with_index do |arg, argument_index|
+        expected = source.inputs[argument_index]? || break
+        expected_leaf_indices = [] of Int32
+        next_source_input_index = inline_callback_append_source_input_indices(
+          expected, source_input_index, expected_leaf_indices,
+        )
+        argument_origins = arg.input_leaves
+        if argument_origins.size == expected_leaf_indices.size
+          expected_leaf_indices.each_with_index do |expected_index, leaf_index|
+            next unless source.subtype_stable_input_indices.includes?(expected_index)
+            origin = argument_origins[leaf_index]
+            result << origin unless result.includes?(origin)
+          end
+        end
+        source_input_index = next_source_input_index
+      end
+      result.sort!
+      result
+    end
+
+    private def inline_callback_forward_source_inputs_stable?(source : InlineCallbackSourceWitness) : Bool
+      input_index = 0
+      source.inputs.all? do |input|
+        stable, input_index = inline_callback_forward_source_input_stable?(
+          input, source.subtype_stable_input_indices, input_index,
+        )
+        stable
+      end
+    end
+
+    private def inline_callback_forward_source_input_stable?(
+      input : SourceCallArgument,
+      subtype_stable_input_indices : Array(Int32),
+      input_index : Int32,
+    ) : Tuple(Bool, Int32)
+      if values = input.tuple_values
+        values.each do |value|
+          stable, input_index = inline_callback_forward_source_input_stable?(
+            value, subtype_stable_input_indices, input_index,
+          )
+          return {false, input_index} unless stable
+        end
+        return {true, input_index}
+      end
+
+      stable = exact_inline_callback_input?(input) ||
+               (subtype_stable_input_indices.includes?(input_index) && !!inline_callback_nominal_reference(input))
+      {stable, input_index + 1}
+    end
+
     private def active_forwarded_callback_source(
       ctx : LoweringContext,
       lexical_source : SourceYieldContext,
@@ -78878,81 +78963,87 @@ module Adamas::HIR
       return nil unless lexical_source.source_def.try(&.same?(callback.definition)) &&
                         lexical_source.source_arena.try(&.same?(callback.arena))
       source = callback.early_source || return nil
-      source if source.inputs.all? { |input| exact_inline_callback_input?(input) }
+      source if inline_callback_forward_source_inputs_stable?(source)
     end
 
-    private def inline_block_source_argument_for_expr(
+    private def inline_block_source_witness_for_expr(
       ctx : LoweringContext,
       expr : ExprId,
-      source_locals : Hash(String, SourceCallArgument),
+      source_locals : Hash(String, InlineCallbackExpressionWitness),
       self_type_name : String?,
       forwarded_source : InlineCallbackSourceWitness? = nil,
       lexical_locals : Hash(String, ValueId)? = nil,
-    ) : SourceCallArgument?
+    ) : InlineCallbackExpressionWitness?
       node = node_for_expr(expr) || return nil
       if identifier = node.as?(Adamas::Compiler::Frontend::IdentifierNode)
         name = safe_slice_to_string(identifier.name) || return nil
-        return source_locals[name]? if source_locals.has_key?(name)
+        if source = source_locals[name]?
+          return source
+        end
         # A remaining lowercase identifier may be a captured local or a
         # nilary call; neither has a source witness here. Uppercase type
         # paths use the registered source resolver even when the caller has
         # no typeof-local inventory (for example, top-level code).
         return nil if name.empty? || !name[0].ascii_uppercase?
         if literal_name = infer_type_literal_name_from_expr(expr)
-          return with_canonical_type_scope do
+          value = with_canonical_type_scope do
             source_call_argument_from_name(root_anchored_canonical_type_name("#{literal_name}.class"))
           end
+          return InlineCallbackExpressionWitness.new(value)
         end
         return nil
       end
 
-      case node
+      value = case node
       when Adamas::Compiler::Frontend::PathNode,
            Adamas::Compiler::Frontend::GenericNode
         if literal_name = infer_type_literal_name_from_expr(expr)
-          return with_canonical_type_scope do
+          with_canonical_type_scope do
             source_call_argument_from_name(root_anchored_canonical_type_name("#{literal_name}.class"))
           end
         end
-        nil
       when Adamas::Compiler::Frontend::GroupingNode
-        inline_block_source_argument_for_expr(
+        return inline_block_source_witness_for_expr(
           ctx, node.expression, source_locals, self_type_name, forwarded_source, lexical_locals,
         )
       when Adamas::Compiler::Frontend::YieldNode
         return nil unless forwarded_source
         args = node.args || [] of ExprId
         return nil unless args.size == forwarded_source.inputs.size
-        args.each_with_index do |arg, index|
-          actual = inline_block_source_argument_for_expr(ctx, arg, source_locals, self_type_name) || return nil
+        actuals = args.map_with_index do |arg, index|
+          actual = inline_block_source_witness_for_expr(ctx, arg, source_locals, self_type_name) || return nil
           expected = forwarded_source.inputs[index]
-          return nil unless actual.type_ref == expected.type_ref &&
-                            proc_source_type_name(actual) == proc_source_type_name(expected)
+          return nil unless actual.value.type_ref == expected.type_ref &&
+                            proc_source_type_name(actual.value) == proc_source_type_name(expected)
+          actual
         end
-        forwarded_source.result
+        return InlineCallbackExpressionWitness.new(forwarded_source.result,
+          fixed_initializer_leaves: inline_callback_forwarded_yield_stable_input_indices(forwarded_source, actuals))
       when Adamas::Compiler::Frontend::AsNode
         target_name = resolve_type_name_in_context(safe_slice_to_string(node.target_type) || "")
         target = source_call_argument_from_name(target_name)
         target_info = inline_callback_nominal_reference(target) || return nil
         operand = node_for_expr(node.expression)
         source = if operand.is_a?(Adamas::Compiler::Frontend::CallNode)
-                   inline_callback_allocator_source_argument(ctx, operand, source_locals, self_type_name, lexical_locals)
+                   inline_callback_allocator_witness(ctx, operand, source_locals, self_type_name, lexical_locals)
                  else
-                   inline_block_source_argument_for_expr(ctx, node.expression, source_locals, self_type_name)
+                   inline_block_source_witness_for_expr(ctx, node.expression, source_locals, self_type_name)
                  end
-        source_info = source.try { |value| inline_callback_nominal_reference(value) } || return nil
-        target if class_inherits_from?(source_info.name, target_info.name)
+        return nil unless source && (source_info = inline_callback_nominal_reference(source.value)) &&
+                          class_inherits_from?(source_info.name, target_info.name)
+        return InlineCallbackExpressionWitness.new(target, fixed_initializer_leaves: source.fixed_initializer_leaves)
       when Adamas::Compiler::Frontend::MemberAccessNode
-        receiver = inline_block_source_argument_for_expr(
+        receiver = inline_block_source_witness_for_expr(
           ctx, node.object, source_locals, self_type_name,
         ) || return nil
-        inline_block_completed_member_source_argument(ctx, receiver, node)
+        inline_block_completed_member_source_argument(ctx, receiver.value, node)
       when Adamas::Compiler::Frontend::TupleLiteralNode
         node = node.as(Adamas::Compiler::Frontend::TupleLiteralNode)
         values = node.elements.map do |element|
-          inline_block_source_argument_for_expr(
+          witness = inline_block_source_witness_for_expr(
             ctx, element, source_locals, self_type_name,
           ) || return nil
+          witness.value
         end
         return nil if values.empty?
         tuple_name = "Tuple(#{values.map { |value| proc_source_type_name(value) }.join(", ")})"
@@ -78978,6 +79069,7 @@ module Adamas::HIR
       else
         nil
       end
+      InlineCallbackExpressionWitness.new(value) if value
     end
 
     private def inline_callback_nominal_reference(value : SourceCallArgument) : ClassInfo?
@@ -78995,13 +79087,13 @@ module Adamas::HIR
     # An upcast of a synthesized allocation can bind a callback result before
     # yield. Check ordinary initializer selection with the source operands.
     # Factories and macro calls have their own result and must be lowered.
-    private def inline_callback_allocator_source_argument(
+    private def inline_callback_allocator_witness(
       ctx : LoweringContext,
       call : Adamas::Compiler::Frontend::CallNode,
-      source_locals : Hash(String, SourceCallArgument),
+      source_locals : Hash(String, InlineCallbackExpressionWitness),
       self_type_name : String?,
       lexical_locals : Hash(String, ValueId)?,
-    ) : SourceCallArgument?
+    ) : InlineCallbackExpressionWitness?
       return nil if call.has_block? || call.named_args || call.args.empty?
       member = node_for_expr(call.callee).as?(Adamas::Compiler::Frontend::MemberAccessNode) || return nil
       return nil unless member_access_name_text(member) == "new"
@@ -79017,7 +79109,7 @@ module Adamas::HIR
       return nil unless receiver_path && !receiver_path.empty?
       binding = resolve_expression_path_item(receiver_path.strip) || return nil
       return nil if constant_name_exists?(binding)
-      receiver = inline_block_source_argument_for_expr(ctx, member.object, source_locals, self_type_name) || return nil
+      receiver = inline_block_source_witness_for_expr(ctx, member.object, source_locals, self_type_name).try(&.value) || return nil
       return nil unless source_call_argument_value_facts(receiver) == [{receiver.type_ref, true}]
 
       instance = SourceCallArgument.new(receiver.type_ref, false)
@@ -79028,10 +79120,19 @@ module Adamas::HIR
       return nil if info.ivars.any?(&.default_source)
 
       facts = [] of SourceCallArgument?
+      broad_nominal_arguments = false
+      fixed_initializer_leaves = [] of Int32
       call.args.each do |arg|
-        value = inline_block_source_argument_for_expr(ctx, arg, source_locals, self_type_name) ||
-                inline_callback_constructor_capture(ctx, arg, lexical_locals)
-        return nil unless value && exact_inline_callback_input?(value)
+        witness = inline_block_source_witness_for_expr(ctx, arg, source_locals, self_type_name) ||
+                  inline_callback_constructor_capture(ctx, arg, lexical_locals).try { |value| InlineCallbackExpressionWitness.new(value) }
+        return nil unless witness
+        value = witness.value
+        unless exact_inline_callback_input?(value)
+          return nil unless inline_callback_nominal_reference(value)
+          broad_nominal_arguments = true
+          fixed_initializer_leaves.concat(witness.input_leaves)
+          fixed_initializer_leaves.concat(witness.fixed_initializer_leaves)
+        end
         facts << value
       end
       types = facts.map { |fact| fact.not_nil!.type_ref }
@@ -79042,7 +79143,8 @@ module Adamas::HIR
       # Defaults or an initializer with its own control flow can suspend or
       # never return and need their ordinary completed body instead.
       return nil unless @function_def_arenas[name]?.try(&.same?(declaration_arena))
-      return nil unless direct_source_constructor_initializers(owner).includes?(name)
+      direct_initializers = direct_source_constructor_initializers(owner)
+      return nil unless direct_initializers.includes?(name)
       return nil unless definition.body.try(&.empty?) && !definition.is_abstract &&
                         forall_type_param_names(definition).empty?
       return nil if definition.visibility.try { |visibility| !visibility.public? }
@@ -79050,7 +79152,50 @@ module Adamas::HIR
       return nil unless stats.param_count == types.size && stats.required == types.size &&
                         !stats.has_block && !stats.has_splat && !stats.has_double_splat && !stats.has_named_only
       return nil unless positional_allocator_initializer_accepts_call_shape?(owner, types, facts)
-      instance
+      if broad_nominal_arguments
+        # Open nominal values are safe here only when this synthesized
+        # allocator has one direct source initializer and its fixed nominal
+        # formals exactly match the statically checked actual types. This
+        # keeps dynamic subtypes from selecting a different source contract.
+        return nil unless direct_initializers.all? do |candidate|
+          @function_defs[candidate]?.try(&.same?(definition)) &&
+            @function_def_arenas[candidate]?.try(&.same?(declaration_arena))
+        end
+        return nil unless inline_callback_fixed_nominal_initializer_formals?(
+          owner, definition, declaration_arena, facts,
+        )
+      end
+      InlineCallbackExpressionWitness.new(instance, fixed_initializer_leaves: fixed_initializer_leaves)
+    end
+
+    private def inline_callback_fixed_nominal_initializer_formals?(
+      owner : String,
+      definition : Adamas::Compiler::Frontend::DefNode,
+      declaration_arena : Adamas::Compiler::Frontend::ArenaLike,
+      actuals : Array(SourceCallArgument?),
+    ) : Bool
+      params = [] of Adamas::Compiler::Frontend::Parameter
+      if source_params = definition.params
+        each_param(source_params) do |param|
+          next if param.is_block || named_only_separator?(param)
+          params << param
+        end
+      end
+      return false unless params.size == actuals.size
+
+      with_arena(declaration_arena) do
+        params.each_with_index do |param, index|
+          actual = actuals[index] || return false
+          formal_annotation = param.type_annotation || return false
+          annotation_name = safe_slice_to_string(formal_annotation) || return false
+          formal = annotation_type_contract_fragment(annotation_name, owner).type_ref
+          return false unless formal == actual.type_ref
+          if !exact_inline_callback_input?(actual)
+            return false unless inline_callback_nominal_reference(SourceCallArgument.new(formal, false))
+          end
+        end
+      end
+      true
     end
 
     private def inline_callback_constructor_capture(

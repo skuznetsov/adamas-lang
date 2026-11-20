@@ -1118,7 +1118,7 @@ after call selection, include projection, or callback binding changes.
 A reference upcast can establish an early source result when the source
 operand is proved to be an instance in the target's inheritance chain.
 A synthesized allocation can supply that proof when ordinary positional
-selection reaches a public direct initializer with an empty body, exact
+selection reaches a public direct initializer with an empty body, checked
 source arguments, and no optional slots or instance defaults. A user factory,
 macro, dynamic class value or unknown argument requires ordinary lowering.
 Read captured arguments from the block's saved caller values and decline
@@ -1130,6 +1130,32 @@ lazy and eager lowering. The early allocation must use the upcast result.
 Incompatible casts, argument types, factories and initializer visibility must
 still fail. Refresh after cast, allocator selection or source callback changes.
 Rollback is the atomic checked reference upcast commit.
+
+An open nominal initializer actual can use this early path only when
+the synthesized allocator selects the owner's sole direct source initializer,
+all actuals are known checked values, and each fixed formal resolves to the
+same source type as its actual. Open actuals also require nominal reference
+formals. This proves that runtime subtypes cannot change the selected
+initializer contract. The result expression and bare local copies own the exact
+callback input leaves used by that proof. At a transparent lexical yield,
+forward an open nominal input only when the matching source input leaf carries
+that proof and the yielded argument traces back to the corresponding local.
+Overloaded initializers, `.as?`, unknown or unproved broad operands, and
+unrelated expressions remain on ordinary lowering.
+
+Run nominal_callback_forward_result_repro.sh COMPILER against stock Crystal,
+lazy and eager lowering. It checks two independent callback outputs, runtime
+sibling inputs, invalid casts and incompatible initializer arguments. The HIR
+lineage spec checks same-typed yield permutation, a literal with no local
+origin, and an unrelated expression after a checked assignment.
+
+```bash
+scripts/run_safe.sh crystal 180 14336 spec \
+  spec/hir/inline_callback_forwarding_stability_spec.cr --single-module --no-debug
+```
+
+Refresh after cast, allocator selection or source callback changes. Rollback is
+the atomic forwarded callback proof commit.
 
 
 ### Resolved type identities remain owned across callback and alias boundaries

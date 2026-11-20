@@ -35,6 +35,22 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-20 — Preserve exact callback inputs through nominal yield forwarding
+- [x] A uniquely selected ordinary initializer with exact automatic ivar
+  parameters can determine an inline block's instance result for a
+  subtype-open parameter. Keep the source expression and ordered yield
+  origins through each transparent forwarding frame.
+- [x] 24 HIR checks cover proof admission, substituted and reordered
+  arguments, and stale source owners. The native regression matches Crystal
+  1.22.3 for two independent result types in lazy and raw callback lowering.
+  The parent rejects the positive case. All three compilers reject the
+  wrong-kind and wrong-type cases.
+- [ ] Fresh S1-to-S2 settles `macro_value_to_iterable` with
+  `Nil | Array(MacroValue)` on bundled 1.18.2 (249s) and installed 1.22.3
+  (239s). Both builds then stop in `CLI#run_check` with pending
+  `evaluate_pieces_range` dependencies from the control-block handlers.
+  Neither produces S2.
+
 ### 2026-11-20 — Preserve checked calls when their source body suspends
 - [x] Keep the already checked inverse calls with the exact suspended body.
   An independent dependency can suspend that body before it publishes a
