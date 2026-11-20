@@ -27450,15 +27450,71 @@ One fix per commit, each with an oracle-qualified regression.
 - [x] 8c4dbc82 module type literals use Class meta methods per owner: a
   module's metaclass inherits Class, so `Mo.to_s(io)`/`Mo.name`/`Mo == U`
   are Class methods with `@type` = Mo (`module_type_literal_print_repro.sh`).
-- [ ] A generic module instance literal (`STDERR.puts Gen(Int32)`) lowers to
-  `literal nil : Void`: lower_generic_type_ref reads the TypeRef from
-  ClassInfo, which modules lack; prints an unrelated type name.
-- [ ] Splat print of a type literal: `STDERR.print Int32, "\n"` prints
-  `{0, "\n"}`; with a module literal it fails to compile ("undefined method
-  'to_s' for Mo" at object.cr:354). Tuples/arrays of types share Bug C.
-- [ ] `puts String` overload, `p Int32`, `print Int32.name, "\n"` truncation,
-  `Array(Int32.class)#name`.
+- [x] fd72a92d generic module instance literals (`STDERR.puts Gen(Int32)`)
+  get a ClassInfo, one canonical name and a `@type.name`
+  (`generic_module_type_literal_print_repro.sh`). Crystal quirk not
+  replicated: `Gen(X) == Gen(X)` is false in Crystal (Value#==), true here.
+- [x] 272fd36f generic module class methods specialize per instance and
+  record `T`-returning bodies as type literals
+  (`generic_module_class_method_type_param_repro.sh`).
+- [x] 947b9f8a lazy materialization keeps the `.class` source kind of a
+  requested suffix: `STDERR.puts String` no longer binds
+  `puts(string : String)` (`type_literal_arg_lazy_overload_kind_repro.sh`).
+- [x] 0335bdff splat calls follow Crystal's packing rules: `f *t` over a
+  Tuple selects overloads by the expanded actuals, the packed body keeps its
+  `_splat` marker and splat flag, a Tuple-typed actual packs as one element
+  (`only({1, 2})` → `xs = { {1, 2} }`, `Object#in?` reaches
+  `in?(collection)`), and the bare family alias is not lowered with
+  `xs : Tuple()` (`splat_overload_tuple_expansion_repro.sh`).
+- [ ] Splat print of a type literal: `STDERR.print Int32, "\n"` now selects
+  the right overload but prints `0` (type-literal kind lost per element);
+  with a module literal it fails to compile ("undefined method 'to_s' for
+  Mo" at object.cr:354). Tuples/arrays of types share Bug C.
+- [ ] `Tuple#to_s` (Object#to_s → `String.build { to_s io }`) and Tuple
+  interpolation return `""`, while `print({1, 2})` prints `{1, 2}`.
+- [ ] `p`/`pp`/`puts` of an Array in one program fails with
+  "undefined constant T" (pre-existing before 0335bdff).
+- [ ] `p Int32`, `print Int32.name, "\n"` truncation, `Array(Int32.class)#name`.
 - Full sweep after 8c4dbc82: 328 pass / 78 fail vs 320/86 at the chain 6
   baseline run (8 fixed, 0 new). Two new FAILs were environmental and pass
   on rerun; captured_yield_producer_repro.sh hit its 8192 MB stock spec
   compile bound (b2929f0f raises it to 14336 MB).
+- Full sweep after 0335bdff (sweep_t28): 327 pass / 79 fail. Fixed vs the
+  previous sweep: captured_yield_producer, macro_source_declaration,
+  rooted_block_result_namespace. New FAILs: zip_nested_tuple_yield (fixed by
+  db13f15d) plus macro_interpolation_expressions,
+  named_included_constructor and qualified_type_declaration_identity,
+  which pass on rerun with 4326eff9. The sweep runs were environmental:
+  a run_safe `setpgid` warning inside the checked program output, a 5 s
+  kill of a program stalled at startup (RSS 32 KB), and one native run
+  with a nonzero exit that did not reproduce.
+- [x] db13f15d packed splat bodies are named and recorded by the packed
+  Tuple; a duplicate unpacked `zip` body hung `[1, 2].zip([3, 4])`
+  (`zip_nested_tuple_yield_repro.sh`).
+- [x] db1187c2 `Type[args]` lowers as the class-method call `Type.[](args)`
+  (splat packing, overload selection, callsite recording;
+  `static_bracket_class_method_call_repro.sh`).
+- [x] 3eeacbf3 a callback that never completes binds its result free
+  variable to NoReturn: `ENV["HOME"]`/`ENV.fetch` no longer fail with
+  "cannot establish source return contract String | T"
+  (`noreturn_callback_result_binding_repro.sh`).
+- [x] f8e53f25 a union argument instantiates whole-type parameters (`obj`,
+  `obj : _`, bare `forall T`) of its arm overload with the union and passes
+  the union value; the `IO#puts$arity1` family alias hung `STDERR.puts z`
+  after `STDERR.puts "abcd"` (`union_arg_whole_type_untyped_overload_repro.sh`).
+- [x] 4326eff9 top-level bare calls with a union argument dispatch per arm even when
+  the whole-union symbol is registered: `h(x : String)` beside
+  `h(x : Int32 | String)` and a second `fv(y)` over `forall T` took the
+  exact-name shortcut (`union_arg_top_level_exact_shortcut_dispatch_repro.sh`).
+- [ ] Union-argument calls with a block never dispatch per arm
+  (`try_emit_union_arg_dispatch` returns nil for blocks): `fb(y) { 2 }`
+  over `fb(s : String, &)` / `fb(x : T, &) forall T` runs the free-variable
+  body for String values, `hb(y) { 3 }` beside `hb(x : Int32 | String, &)`
+  runs the union body.
+- [ ] `typeof` of a nilable union prints `(Nil | Int32)`; Crystal prints
+  `(Int32 | Nil)` (Nil last in union names).
+- [ ] `typeof` inside a forall body called with a block reports Void.
+- [ ] Parser: `x = call { .. } rescue v` and one-line
+  `begin; 1; rescue; 2; end`.
+- [ ] `Tuple()#join`, `typeof(Tuple[...])`, "undefined constant T" for
+  `#{T}` in a forall body.
