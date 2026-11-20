@@ -35,6 +35,21 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-20 — Prove computed integer operands of recursive tuple returns
+- [x] Prove operands in an independent physical tuple return through their
+  dominating definitions. Checked integer operations retain instance facts.
+  Call operands require a current source result receipt and current receipts
+  for the values it depends on.
+- [x] 50 HIR examples cover valid projections, changed and stale producers,
+  and operands that do not dominate the return. The native regression
+  matches Crystal 1.22.3 in lazy and eager mode and rejects all three invalid
+  return cases. The parent rejects the positive case.
+- [ ] Fresh S1-to-S2 opens both `evaluate_if_block` and `evaluate_for_block`
+  recursive results. Installed 1.22.3 (234s) stalls at the `evaluate_begin_block`
+  dependency. Bundled 1.18.2 (254s) resumes all three handlers and ultimately
+  relays a `Parser#parse_program` dependency to `CLI#run_check`. Neither run
+  produces S2.
+
 ### 2026-11-20 — Preserve exact callback inputs through nominal yield forwarding
 - [x] A uniquely selected ordinary initializer with exact automatic ivar
   parameters can determine an inline block's instance result for a

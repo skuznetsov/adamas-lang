@@ -2247,7 +2247,11 @@ module Adamas::HIR
       block : Block,
       terminator : Return,
       value : Allocate,
-      operands : Array(Array(RecursiveStructResultOperandWitness))
+      operands : Array(PartialTupleOperandLineage)
+
+    private record PartialTupleOperandLineage,
+      values : Array(RecursiveStructResultOperandWitness),
+      calls : Array(PartialStructCallResult)
 
     private record PartialExactInstanceReturn,
       block : Block,
@@ -31891,13 +31895,14 @@ module Adamas::HIR
     # Return only CFG-reachable blocks from function entry.
     # Detached blocks (for example from helper/lambda lowering artifacts)
     # must not participate in return-type inference.
-    private def reachable_blocks(func : Adamas::HIR::Function) : Array(Adamas::HIR::Block)
+    private def reachable_blocks(func : Adamas::HIR::Function, *, excluding : BlockId? = nil) : Array(Adamas::HIR::Block)
       blocks = func.blocks
       return [] of Block if blocks.empty?
 
       block_count = blocks.size.to_u32
       entry_id = blocks.first.id
       visited = Array(Bool).new(blocks.size, false)
+      visited[excluding] = true if excluding && excluding < block_count
       queue = Array(BlockId).new(blocks.size)
       queue << entry_id
       result = Array(Block).new(blocks.size)
@@ -84017,9 +84022,27 @@ module Adamas::HIR
           facts_by_value[value_id] = facts.dup
         elsif producer.is_a?(Literal)
           facts_by_value[value_id] = source_block_result_value_facts(ctx, value_id)
+        elsif producer.is_a?(Value) && exact_integer_return_instruction?(ctx, producer)
+          facts_by_value[value_id] = [{producer.type, false}]
         end
       end
       facts_by_value
+    end
+
+    private def exact_integer_return_instruction?(ctx : LoweringContext, producer : Value) : Bool
+      type = producer.type
+      return false unless signed_integer_primitive?(type) || unsigned_integer_type?(type)
+      return false unless enum_tracked_type(ctx, producer.id) == type && !ctx.type_literal?(producer.id)
+      # These instructions produce an integer instance by construction. The
+      # instruction seal authenticates the producer, including its operands.
+      case producer
+      when BinaryOperation
+        recursive_tuple_integer_operation?(producer.op)
+      when ArraySize
+        type == TypeRef::INT32
+      else
+        false
+      end
     end
 
     private def fresh_source_return_result_facts(
@@ -116611,7 +116634,7 @@ module Adamas::HIR
       when PartialTupleReturn
         second.is_a?(PartialTupleReturn) && first.block.same?(second.block) &&
           first.terminator.same?(second.terminator) && first.value.same?(second.value) &&
-          first.operands == second.operands
+          same_partial_tuple_operands?(first.operands, second.operands)
       when PartialNullableStructReturn
         second.is_a?(PartialNullableStructReturn) && first.contract == second.contract &&
           first.arms.size == second.arms.size && first.arms.zip(second.arms).all? do |a, b|
@@ -117406,7 +117429,7 @@ module Adamas::HIR
         anchor = use.checked_return.not_nil!
         slots = recursive_tuple_result_slots(anchor.context, use.expected) || return false
         return slots.size == tuple.operands.size && slots.each_with_index.all? do |slot, index|
-          tuple.operands[index].all? { |operand| operand.type == slot }
+          tuple.operands[index].values.all? { |operand| operand.type == slot }
         end
       end
       contract = tagged.not_nil!.contract
@@ -117719,12 +117742,21 @@ module Adamas::HIR
     private def suspended_tuple_return_current?(
       ctx : LoweringContext, type : TypeRef, evidence : PartialTupleReturn,
     ) : Bool
-      suspended_tuple_return_operands(ctx, type, evidence.block, evidence.terminator, evidence.value) == evidence.operands
+      current = suspended_tuple_return_operands(ctx, type, evidence.block, evidence.terminator, evidence.value)
+      !!current && same_partial_tuple_operands?(evidence.operands, current)
+    end
+
+    private def same_partial_tuple_operands?(left : Array(PartialTupleOperandLineage), right : Array(PartialTupleOperandLineage)) : Bool
+      left.size == right.size && left.each_with_index.all? do |operand, index|
+        other = right[index]
+        operand.values == other.values && operand.calls.size == other.calls.size &&
+          operand.calls.each_with_index.all? { |call, i| same_suspended_return_call_result?(call, other.calls[i]) }
+      end
     end
 
     private def suspended_tuple_return_operands(
       ctx : LoweringContext, type : TypeRef, block : Block, returned : Return, value : Allocate,
-    ) : Array(Array(RecursiveStructResultOperandWitness))?
+    ) : Array(PartialTupleOperandLineage)?
       slots = recursive_tuple_result_slots(ctx, type) || return
       return unless value.type == type && slots.size == value.constructor_args.size &&
                     suspended_return_slot_current?(ctx, block, returned, value) &&
@@ -117735,33 +117767,89 @@ module Adamas::HIR
       end
     end
 
-    # A local read is a Copy of its source value. Keep the actual chain to an
-    # entry parameter or literal. Each instruction must precede its use in
-    # this return block and agree on the source type and kind independently.
+    # Check each physical use, then visit its producer once. Integer
+    # operations have a closed instance result when their operands do.
+    # A direct call supplies evidence only from its own settled source body.
     private def suspended_tuple_operand_lineage(
       ctx : LoweringContext, block : Block, id : ValueId, type : TypeRef, before : Int32,
-    ) : Array(RecursiveStructResultOperandWitness)?
+    ) : PartialTupleOperandLineage?
+      pending = [{id, block, before}]
+      seen = Set(ValueId).new
       ids = [] of ValueId
-      loop do
-        return unless ctx.type_of(id) == type && !ctx.type_literal?(id) &&
-                      source_block_result_value_facts(ctx, id) == [{type, false}]
-        ids << id
-        instruction = ctx.value_for(id)
-        break unless instruction
-        index = block.instructions.index { |candidate| candidate.same?(instruction) } || return
-        return unless index < before
-        if instruction.is_a?(Copy)
-          before = index
-          id = instruction.source
+      calls = [] of PartialStructCallResult
+      integer = signed_integer_primitive?(type) || unsigned_integer_type?(type)
+
+      until pending.empty?
+        operand, use_block, use_index = pending.pop
+        return unless ctx.type_of(operand) == type && !ctx.type_literal?(operand) &&
+                      source_block_result_value_facts(ctx, operand) == [{type, false}]
+        instruction = ctx.value_for(operand)
+        unless instruction
+          ids << operand if seen.add?(operand)
           next
         end
-        return unless instruction.is_a?(Literal) && recursive_literal_result_type?(type) &&
-                      recursive_return_literal_instance?(ctx, instruction, type)
-        break
+
+        definition_block_id = ctx.value_block(operand) || return
+        definition_block = ctx.function.blocks[definition_block_id]? || return
+        return unless instruction.type == type
+        index = definition_block.instructions.index { |candidate| candidate.same?(instruction) } || return
+        if definition_block.same?(use_block)
+          return unless index < use_index
+        else
+          # The return is reachable. A definition dominates this use only
+          # when removing its block breaks every path from entry to the use.
+          return if reachable_blocks(ctx.function, excluding: definition_block.id).any? { |reached| reached.same?(use_block) }
+        end
+        next unless seen.add?(operand)
+        ids << operand
+
+        case instruction
+        when Copy
+          pending << {instruction.source, definition_block, index}
+        when Literal
+          if integer
+            return unless recursive_tuple_integer_literal?(instruction)
+          else
+            return unless recursive_literal_result_type?(type) && recursive_return_literal_instance?(ctx, instruction, type)
+          end
+        when BinaryOperation
+          return unless integer && recursive_tuple_integer_operation?(instruction.op)
+          pending << {instruction.right, definition_block, index}
+          pending << {instruction.left, definition_block, index}
+        when Call
+          return unless integer
+          proof = suspended_return_call_result(ctx, instruction) || return
+          return unless suspended_return_call_current?(ctx, instruction, proof, tuple_integer: true)
+          calls << proof
+        else
+          return
+        end
       end
+
       witnesses = recursive_struct_result_operand_witnesses(ctx.function, ids) || return
-      return if witnesses.last.parameter_is_block || !witnesses.all? { |operand| operand.type == type }
-      witnesses if recursive_struct_result_operand_witnesses_current?(ctx, ctx.function, witnesses)
+      return unless witnesses.all? { |operand| operand.type == type && !operand.parameter_is_block }
+      return unless recursive_struct_result_operand_witnesses_current?(ctx, ctx.function, witnesses)
+      PartialTupleOperandLineage.new(witnesses, calls)
+    end
+
+    private def recursive_tuple_integer_literal?(literal : Literal) : Bool
+      case literal.type
+      when TypeRef::INT128
+        literal.value.is_a?(Int128)
+      when TypeRef::UINT128
+        literal.value.is_a?(UInt128)
+      else
+        signed_integer_primitive?(literal.type) ? literal.value.is_a?(Int64) : literal.value.is_a?(UInt64)
+      end
+    end
+
+    private def recursive_tuple_integer_operation?(op : BinaryOp) : Bool
+      case op
+      when .add?, .sub?, .mul?, .div?, .mod?, .bit_and?, .bit_or?, .bit_xor?, .shl?, .shr?
+        true
+      else
+        false
+      end
     end
 
     private def suspended_nullable_struct_return(
@@ -118096,7 +118184,7 @@ module Adamas::HIR
     end
 
     private def suspended_return_call_current?(
-      ctx : LoweringContext, call : Call, result : PartialStructCallResult,
+      ctx : LoweringContext, call : Call, result : PartialStructCallResult, *, tuple_integer : Bool = false,
     ) : Bool
       name = call.method_name
       receiver = call.receiver_value if call.has_receiver?
@@ -118104,7 +118192,12 @@ module Adamas::HIR
       return false unless call.args == result.arguments && receiver == result.receiver &&
                           result.target.name == name && @module.function_by_name(name).try(&.same?(result.target)) &&
                           result.target.source_return_result_receipt.try(&.same?(result.receipt))
-      return false unless settled_force_lower_result?(name) && exact_final_struct_result(name, result.source) == call.type
+      return false unless settled_force_lower_result?(name)
+      if tuple_integer
+        return false unless fresh_suspended_integer_call_result?(ctx, call, result)
+      else
+        return false unless exact_final_struct_result(name, result.source) == call.type
+      end
       # These uses remain subject to the final emission check. A completed
       # result is not independent evidence while its own proof borrows one.
       return false if @deferred_struct_result_uses.any? do |(consumer, _), _|
@@ -118113,6 +118206,21 @@ module Adamas::HIR
       types = call.args.map { |arg| ctx.type_of(arg) }
       recursive_struct_result_abi_matches?(ctx, result.target, receiver, types) &&
         recursive_struct_result_operand_witnesses_current?(ctx, ctx.function, result.operands)
+    end
+
+    private def fresh_suspended_integer_call_result?(
+      ctx : LoweringContext, call : Call, result : PartialStructCallResult,
+    ) : Bool
+      return false unless (signed_integer_primitive?(call.type) || unsigned_integer_type?(call.type)) &&
+                          result.target.return_type == call.type
+      source = result.source
+      name = call.method_name
+      return false unless force_lower_exact_source_matches?(name, source)
+      return false if source.inherited_nilary_member_alias || raw_callback_abi_for(name) || raw_callback_source_binding_for(name)
+      definition = source.source_def
+      return false unless definition.body && definition.forall_type_params.empty? && !definition.is_abstract
+      facts = fresh_source_return_result_facts(name, result.target, definition, source.source_arena, Set{ctx.function.name})
+      facts == [{call.type, false}]
     end
 
     private def cycle_work_reaches?(producer : String, consumer : String) : Bool

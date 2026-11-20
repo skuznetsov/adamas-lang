@@ -1378,6 +1378,51 @@ class Adamas::HIR::AstToHir
     suspended_tuple_return_current?(ctx, value.type, evidence)
   end
 
+  def __test_computed_tuple_return?(change : Symbol = :current) : Bool
+    name = __test_projection_method_name("computed_tuple")
+    source = __test_projection_source(name)
+    function = @module.function_by_name(name).not_nil!
+    ctx = LoweringContext.new(function, @module, source.source_arena)
+    ctx.__test_register_existing_hir_body
+    ctx.source_declared_return_contract = recursive_declared_result_contract(name, source, "Tuple(String, Int32)")
+
+    return_block = function.blocks.find do |block|
+      block.terminator.is_a?(Return) && block.instructions.any?(&.is_a?(BinaryOperation))
+    end.not_nil!
+    returned = return_block.terminator.as(Return)
+    tuple = ctx.value_for(returned.value.not_nil!).as(Allocate)
+    addition = ctx.value_for(tuple.constructor_args[1]).as(BinaryOperation)
+    call_block = function.blocks.find { |block| block.instructions.any?(&.is_a?(Call)) }.not_nil!
+    call = call_block.instructions.find(&.is_a?(Call)).as(Call)
+    ctx.register_source_value_facts(call.id, [{TypeRef::INT32, false}])
+
+    evidence = suspended_tuple_return(ctx, return_block, returned, tuple) || return false
+    evidence.should_not be_nil
+    case change
+    when :bypass_definition
+      condition = function.params.first.id
+      function.blocks.first.terminator = Branch.new(condition, call_block.id, return_block.id)
+    when :stale_receipt
+      @module.function_by_name(call.method_name).not_nil!.source_return_result_receipt = nil
+    when :stale_transitive_receipt
+      leaf = @module.function_by_name(__test_projection_method_name("backing_integer")).not_nil!
+      wrapper = @module.function_by_name(call.method_name).not_nil!
+      wrapper.blocks.any? { |block| block.instructions.any? { |value| value.is_a?(Call) && value.method_name == leaf.name } }.should be_true
+      leaf.source_return_result_receipt = nil
+    when :provisional_call
+      @force_lower_provisional_dependencies[call.method_name] = Set{name}
+    when :changed_kind
+      ctx.register_source_value_facts(addition.right, [{TypeRef::INT32, true}])
+    when :late_operand
+      literal = ctx.value_for(addition.right).as(Literal)
+      literal_index = return_block.instructions.index { |value| value.same?(literal) }.not_nil!
+      addition_index = return_block.instructions.index { |value| value.same?(addition) }.not_nil!
+      return_block.replace(literal_index, addition)
+      return_block.replace(addition_index, literal)
+    end
+    suspended_tuple_return_current?(ctx, tuple.type, evidence)
+  end
+
   private def __test_open_projection_use(owner : String = "RecFactory", *, nilary : Bool = false)
     producer = nilary ? "RecFactory.value" : __test_projection_method_name("value_for", owner)
     consumer = nilary ? "RecFactory.consumer" : __test_projection_method_name("consumer_for", owner)
@@ -1466,6 +1511,22 @@ private def recursive_projection_converter
       def self.tuple_value(flag : Bool, context : RecTupleContext) : Tuple(Bool, RecTupleContext)
         return {false, context} if flag
         {true, context}
+      end
+
+      def self.backing_integer(value : Int32) : Int32
+        value &+ 1
+      end
+
+      def self.integer_leaf(value : Int32) : Int32
+        backing_integer(value)
+      end
+
+      def self.computed_tuple(visit : Bool, early : Bool) : {String, Int32}
+        if visit
+          index = integer_leaf(2)
+          return {"", index &+ 1} if early
+        end
+        {"", 5}
       end
 
       def self.value : RecToken
@@ -1581,6 +1642,7 @@ private def recursive_projection_converter
     RecFactory.consumer_for(false)
     RecFactory.nullable_wide(false)
     RecFactory.tuple_value(false, RecTupleContext.new)
+    RecFactory.computed_tuple(true, true)
     CRYSTAL
   parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
   program = parser.parse_program
@@ -1867,6 +1929,16 @@ describe "source result projection inside a recursive specialization" do
     [:class_fact, :source_class_fact, :changed_inner_type, :reordered, :changed_operand,
      :replaced_operand, :replaced_copy, :late_copy].each do |change|
       recursive_projection_converter.__test_suspended_tuple_return?(change).should be_false
+    end
+  end
+
+  it "retains a computed tuple slot with a settled call in a dominating block" do
+    recursive_projection_converter.__test_computed_tuple_return?.should be_true
+  end
+
+  it "rejects non-dominating operands, stale source receipts and incorrect integer facts" do
+    [:bypass_definition, :stale_receipt, :stale_transitive_receipt, :provisional_call, :changed_kind, :late_operand].each do |change|
+      recursive_projection_converter.__test_computed_tuple_return?(change).should be_false
     end
   end
 

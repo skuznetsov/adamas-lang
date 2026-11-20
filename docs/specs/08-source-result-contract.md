@@ -1294,10 +1294,13 @@ result commit.
 An exact ordinary body with a declared tuple return can establish its type
 from an already reached tuple allocation. Each ordered slot must resolve to
 one concrete instance type, and the returned allocation must match the
-descriptor. Each operand must originate at an ordinary parameter of the
-current function or a checked literal. Copies can preserve that witness when
-each physical instruction, source type, and value kind agree, and each
-instruction appears before its use in the return block.
+descriptor. The witness follows physical operands back to ordinary parameters
+or checked literals. Copies preserve that lineage. Closed integer operations
+can compose it, and a direct integer call can supply it through its settled
+source result. For each use, the definition must precede it in the same block
+or dominate the block. The source type, instance kind, and current HIR must
+agree. Direct calls also require current source, ABI and transitive result
+receipts.
 
 The tuple witness belongs to a single suspended source body and reachable
 Return. Check currentness before replay. The finished producer still owes a
@@ -1308,8 +1311,13 @@ annotation alone do not supply any of these proofs.
 Gate: `recursive_tuple_source_result_repro.sh COMPILER` compares native output
 with Crystal, exercises tuple projection, and rejects reordered or
 same-layout unrelated slots. The HIR projection spec rejects stale witnesses
-and conflicting source kinds or physical types. Refresh after changing
-tuple lowering, source value facts, or retry and emission ownership.
+and conflicting source kinds or physical types.
+`recursive_computed_tuple_result_repro.sh COMPILER` exercises integer
+operands computed before their return block. It compares native output with
+Crystal and rejects invalid slot and helper results. The HIR spec also
+invalidates a direct and an indirect result receipt and tests a path that
+bypasses an operand definition. Refresh after changing tuple lowering,
+source value facts, or retry and emission ownership.
 
 ### Literal instance results in recursive lowering
 
