@@ -1223,6 +1223,73 @@ class Adamas::HIR::AstToHir
     !checked_partial_struct_result(pending, anchor).nil?
   end
 
+  def __test_suspended_tuple_return?(change : Symbol = :current) : Bool
+    name = __test_projection_method_name("tuple_value")
+    source = __test_projection_source(name)
+    function = @module.function_by_name(name) || return false
+    ctx = LoweringContext.new(function, @module, source.source_arena)
+    ctx.__test_register_existing_hir_body
+    ctx.source_declared_return_contract = recursive_declared_result_contract(
+      name, source, "Tuple(Bool, RecTupleContext)",
+    )
+
+    block = function.blocks.find do |candidate|
+      if returned = candidate.terminator.as?(Return)
+        returned.value.try { |id| ctx.value_for(id).is_a?(Allocate) } == true
+      else
+        false
+      end
+    end || return false
+    returned = block.terminator.as?(Return) || return false
+    value = ctx.value_for(returned.value || return false).as?(Allocate) || return false
+    slots = recursive_tuple_result_slots(ctx, value.type) || return false
+    return false unless slots.size == 2 && value.constructor_args.size == 2
+    context_copy = ctx.value_for(value.constructor_args[1]).as?(Copy) || return false
+    return false unless function.params.any? { |param| param.id == context_copy.source }
+
+    value.constructor_args.each do |id|
+      ctx.register_source_value_facts(id, [{ctx.type_of(id), false}])
+    end
+
+    case change
+    when :class_fact
+      ctx.mark_type_literal(context_copy.id)
+      ctx.register_source_value_facts(context_copy.id, [{slots[1], true}])
+    when :source_class_fact
+      ctx.register_source_value_facts(context_copy.source, [{slots[1], true}])
+    when :changed_inner_type
+      index = block.instructions.index { |instruction| instruction.same?(context_copy) } || return false
+      inner = Copy.new(function.next_value_id, TypeRef::INT32, context_copy.source)
+      block.replace(index, Copy.new(context_copy.id, slots[1], inner.id))
+      block.insert(index, inner)
+      ctx.__test_register_existing_hir_body
+      ctx.register_type(inner.id, slots[1])
+    when :reordered
+      value.constructor_args.reverse!
+    end
+
+    evidence = suspended_tuple_return(ctx, block, returned, value) || return false
+    case change
+    when :changed_operand
+      flag = function.params.find { |parameter| parameter.type == slots[0] } || return false
+      ctx.register_source_value_facts(flag.id, [{slots[0], false}])
+      value.constructor_args[0] = flag.id
+    when :replaced_operand
+      literal = ctx.value_for(value.constructor_args[0]).as?(Literal) || return false
+      index = block.instructions.index { |instruction| instruction.same?(literal) } || return false
+      block.replace(index, Literal.new(literal.id, literal.type, literal.value))
+    when :replaced_copy
+      index = block.instructions.index { |instruction| instruction.same?(context_copy) } || return false
+      block.replace(index, Copy.new(context_copy.id, context_copy.type, context_copy.source))
+    when :late_copy
+      copy_index = block.instructions.index { |instruction| instruction.same?(context_copy) } || return false
+      allocation_index = block.instructions.index { |instruction| instruction.same?(value) } || return false
+      block.replace(copy_index, value)
+      block.replace(allocation_index, context_copy)
+    end
+    suspended_tuple_return_current?(ctx, value.type, evidence)
+  end
+
   private def __test_open_projection_use(owner : String = "RecFactory", *, nilary : Bool = false)
     producer = nilary ? "RecFactory.value" : __test_projection_method_name("value_for", owner)
     consumer = nilary ? "RecFactory.consumer" : __test_projection_method_name("consumer_for", owner)
@@ -1295,6 +1362,9 @@ private def recursive_projection_converter
       end
     end
 
+    class RecTupleContext
+    end
+
     module RecFactory
       def self.wide_return : WideRecToken
         WideRecToken.new(65, 123_i64)
@@ -1303,6 +1373,11 @@ private def recursive_projection_converter
       def self.nullable_wide(flag : Bool) : WideRecToken?
         return nil if flag
         wide_return
+      end
+
+      def self.tuple_value(flag : Bool, context : RecTupleContext) : Tuple(Bool, RecTupleContext)
+        return {false, context} if flag
+        {true, context}
       end
 
       def self.value : RecToken
@@ -1417,6 +1492,7 @@ private def recursive_projection_converter
     RecFactory.sibling_value(false)
     RecFactory.consumer_for(false)
     RecFactory.nullable_wide(false)
+    RecFactory.tuple_value(false, RecTupleContext.new)
     CRYSTAL
   parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
   program = parser.parse_program
@@ -1663,6 +1739,17 @@ describe "source result projection inside a recursive specialization" do
     recursive_projection_converter.__test_suspended_tagged_struct_return?(:unchanged).should be_true
     [:one_arm, :wrong_tag, :stale_receipt, :changed_kind, :replaced_wrap, :replaced_return].each do |change|
       recursive_projection_converter.__test_suspended_tagged_struct_return?(change).should be_false
+    end
+  end
+
+  it "admits a suspended tuple return with current ordinary instance operands" do
+    recursive_projection_converter.__test_suspended_tuple_return?.should be_true
+  end
+
+  it "rejects changed tuple slots, stale copies, and disagreements on source type or kind" do
+    [:class_fact, :source_class_fact, :changed_inner_type, :reordered, :changed_operand,
+     :replaced_operand, :replaced_copy, :late_copy].each do |change|
+      recursive_projection_converter.__test_suspended_tuple_return?(change).should be_false
     end
   end
 

@@ -2233,7 +2233,13 @@ module Adamas::HIR
       replay : ForceLowerReplayCallsite,
       context : LoweringContext,
       body : ForceLowerActiveBody,
-      evidence : PartialExactInstanceReturn | PartialNullableStructReturn | PartialVirtualReferenceReturn
+      evidence : PartialExactInstanceReturn | PartialTupleReturn | PartialNullableStructReturn | PartialVirtualReferenceReturn
+
+    private record PartialTupleReturn,
+      block : Block,
+      terminator : Return,
+      value : Allocate,
+      operands : Array(Array(RecursiveStructResultOperandWitness))
 
     private record PartialExactInstanceReturn,
       block : Block,
@@ -116474,6 +116480,10 @@ module Adamas::HIR
           first.terminator.same?(second.terminator) && first.value.same?(second.value) &&
           same_suspended_return_call_result?(first.call_result, second.call_result) &&
           same_recursive_literal_inputs?(first.literal_inputs, second.literal_inputs)
+      when PartialTupleReturn
+        second.is_a?(PartialTupleReturn) && first.block.same?(second.block) &&
+          first.terminator.same?(second.terminator) && first.value.same?(second.value) &&
+          first.operands == second.operands
       when PartialNullableStructReturn
         second.is_a?(PartialNullableStructReturn) && first.contract == second.contract &&
           first.arms.size == second.arms.size && first.arms.zip(second.arms).all? do |a, b|
@@ -117188,19 +117198,28 @@ module Adamas::HIR
       if evidence.is_a?(PartialVirtualReferenceReturn)
         return final_recursive_virtual_reference_result?(pending, use.expected)
       end
+      tuple = evidence.as?(PartialTupleReturn)
       tagged = evidence.as?(PartialNullableStructReturn)
-      return exact_final_struct_result(pending) == use.expected unless tagged
+      return exact_final_struct_result(pending) == use.expected unless tagged || tuple
       return false unless pending.producer_requires_result && nested_recursive_result_demands_settled?(pending)
       name = pending.producer
       source = pending.producer_source
       return false unless force_lower_exact_source_matches?(name, source) &&
                           function_state(name).completed? && @module.has_function_with_body?(name)
       function = @module.function_by_name(name) || return false
-      return false unless function.return_type == use.expected &&
-                          union_descriptor_from_sidecar(use.expected) == tagged.contract.descriptor
+      return false unless function.return_type == use.expected
       facts = function.source_return_value_facts
-      facts == use.expected_facts && current_recursive_return_receipt?(function, source, facts.not_nil!) &&
-        recursive_nullable_struct_return_tags_current?(function, tagged.contract)
+      return false unless facts == use.expected_facts && current_recursive_return_receipt?(function, source, facts.not_nil!)
+      if tuple
+        anchor = use.checked_return.not_nil!
+        slots = recursive_tuple_result_slots(anchor.context, use.expected) || return false
+        return slots.size == tuple.operands.size && slots.each_with_index.all? do |slot, index|
+          tuple.operands[index].all? { |operand| operand.type == slot }
+        end
+      end
+      contract = tagged.not_nil!.contract
+      union_descriptor_from_sidecar(use.expected) == contract.descriptor &&
+        recursive_nullable_struct_return_tags_current?(function, contract)
     end
 
     # Every reachable value in this carrier must come from a checked box or
@@ -117451,6 +117470,10 @@ module Adamas::HIR
         returned = block.terminator.as?(Return) || next
         value_id = returned.value || next
         value = ctx.value_for(value_id)
+        if value.is_a?(Allocate) && value.type == body.return_type
+          evidence = suspended_tuple_return(ctx, block, returned, value)
+          return PartialRecursiveReturn.new(replay, ctx, body, evidence) if evidence
+        end
         next unless value.is_a?(ClassVarGet) || value.is_a?(Call) || value.is_a?(Literal) || value.is_a?(Phi)
         next unless value.type == body.return_type
         next if value.is_a?(Literal) && !recursive_literal_result_type?(value.type)
@@ -117465,6 +117488,88 @@ module Adamas::HIR
         return anchor if suspended_return_value_current?(anchor)
       end
       nil
+    end
+
+    # A bound Tuple annotation is a closed instance result when each
+    # declared slot has one concrete source type and matches the carrier.
+    private def recursive_tuple_result_slots(ctx : LoweringContext, type : TypeRef) : Array(TypeRef)?
+      pattern = ctx.source_declared_return_contract || return
+      descriptor = @module.get_type_descriptor(type) || return
+      return unless pattern.valid && pattern.kind.tuple? && pattern.type_ref == type && descriptor.kind.tuple?
+      slots = descriptor.type_params
+      return unless slots.size == pattern.children.size && !slots.empty?
+      return unless pattern.children.each_with_index.all? do |slot, index|
+        ref = slots[index]
+        slot.valid && slot.kind.concrete? && slot.type_ref == ref && ref != TypeRef::VOID &&
+          !source_declared_return_contract_guarantees_type_literal_kind?(slot) && recursive_tuple_instance_slot?(ref)
+      end
+      slots
+    end
+
+    private def recursive_tuple_instance_slot?(type : TypeRef) : Bool
+      return true if primitive_type?(type) || recursive_literal_result_type?(type)
+      name = get_type_name_from_ref(type)
+      info = @class_info[name]?
+      !!info && info.type_ref == type && !primitive_template_owner(name) &&
+        !registered_abstract_class_name?(name) && !class_has_subclasses?(name) &&
+        !@generic_templates.has_key?(name) && !name.includes?('(')
+    end
+
+    # The returned allocation and its inputs must already be real HIR,
+    # independent of the dependency that suspended this result.
+    private def suspended_tuple_return(
+      ctx : LoweringContext, block : Block, returned : Return, value : Allocate,
+    ) : PartialTupleReturn?
+      operands = suspended_tuple_return_operands(ctx, value.type, block, returned, value) || return
+      PartialTupleReturn.new(block, returned, value, operands)
+    end
+
+    private def suspended_tuple_return_current?(
+      ctx : LoweringContext, type : TypeRef, evidence : PartialTupleReturn,
+    ) : Bool
+      suspended_tuple_return_operands(ctx, type, evidence.block, evidence.terminator, evidence.value) == evidence.operands
+    end
+
+    private def suspended_tuple_return_operands(
+      ctx : LoweringContext, type : TypeRef, block : Block, returned : Return, value : Allocate,
+    ) : Array(Array(RecursiveStructResultOperandWitness))?
+      slots = recursive_tuple_result_slots(ctx, type) || return
+      return unless value.type == type && slots.size == value.constructor_args.size &&
+                    suspended_return_slot_current?(ctx, block, returned, value) &&
+                    source_block_result_value_facts(ctx, value.id) == [{type, false}]
+      allocation_index = block.instructions.index { |instruction| instruction.same?(value) } || return
+      slots.map_with_index do |slot, index|
+        suspended_tuple_operand_lineage(ctx, block, value.constructor_args[index], slot, allocation_index) || return nil
+      end
+    end
+
+    # A local read is a Copy of its source value. Keep the actual chain to an
+    # entry parameter or literal. Each instruction must precede its use in
+    # this return block and agree on the source type and kind independently.
+    private def suspended_tuple_operand_lineage(
+      ctx : LoweringContext, block : Block, id : ValueId, type : TypeRef, before : Int32,
+    ) : Array(RecursiveStructResultOperandWitness)?
+      ids = [] of ValueId
+      loop do
+        return unless ctx.type_of(id) == type && !ctx.type_literal?(id) &&
+                      source_block_result_value_facts(ctx, id) == [{type, false}]
+        ids << id
+        instruction = ctx.value_for(id)
+        break unless instruction
+        index = block.instructions.index { |candidate| candidate.same?(instruction) } || return
+        return unless index < before
+        if instruction.is_a?(Copy)
+          before = index
+          id = instruction.source
+          next
+        end
+        return unless instruction.is_a?(Literal) && recursive_literal_result_type?(type) &&
+                      recursive_return_literal_instance?(ctx, instruction, type)
+        break
+      end
+      witnesses = recursive_struct_result_operand_witnesses(ctx.function, ids) || return
+      return if witnesses.last.parameter_is_block || !witnesses.all? { |operand| operand.type == type }
+      witnesses if recursive_struct_result_operand_witnesses_current?(ctx, ctx.function, witnesses)
     end
 
     private def suspended_nullable_struct_return(
@@ -117563,6 +117668,8 @@ module Adamas::HIR
                       recursive_nullable_struct_result_contract(ctx, type) == evidence.contract
       when PartialVirtualReferenceReturn
         return unless ordinary_struct_result_source?(name, source) && recursive_virtual_reference_contract?(ctx, type)
+      when PartialTupleReturn
+        return unless ordinary_struct_result_source?(name, source)
       else
         return unless recursive_exact_instance_declared_result?(name, source, type)
       end
@@ -117575,6 +117682,8 @@ module Adamas::HIR
       case evidence
       when PartialNullableStructReturn
         return suspended_nullable_return_current?(ctx, anchor.body.return_type, evidence)
+      when PartialTupleReturn
+        return suspended_tuple_return_current?(ctx, anchor.body.return_type, evidence)
       when PartialVirtualReferenceReturn
         return false unless recursive_reference_join?(anchor.body.return_type, evidence.left.call.type, evidence.right.call.type)
         return [evidence.left, evidence.right].all? do |arm|
@@ -117875,6 +117984,8 @@ module Adamas::HIR
       if env_has?("DEBUG_FORCE_LOWER_DEPTH")
         if anchor.try(&.evidence.is_a?(PartialVirtualReferenceReturn))
           STDERR.puts "[FORCE_LOWER_RECURSIVE_REFERENCE] consumer=#{pending.consumer} producer=#{pending.producer}"
+        elsif anchor.try(&.evidence.is_a?(PartialTupleReturn))
+          STDERR.puts "[FORCE_LOWER_RECURSIVE_TUPLE] consumer=#{pending.consumer} producer=#{pending.producer}"
         end
         if observed
           STDERR.puts "[FORCE_LOWER_RECURSIVE_PROVISIONAL_CALL] consumer=#{pending.consumer} producer=#{pending.producer}"

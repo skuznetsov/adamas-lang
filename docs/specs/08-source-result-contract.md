@@ -1248,6 +1248,28 @@ hierarchy joins, direct-call result receipts, allocator ownership, body replay,
 or emission validation changes. Rollback is the atomic virtual-reference
 result commit.
 
+### Concrete tuple results in recursive lowering
+
+An exact ordinary body with a declared tuple return can establish its type
+from an already reached tuple allocation. Each ordered slot must resolve to
+one concrete instance type, and the returned allocation must match the
+descriptor. Each operand must originate at an ordinary parameter of the
+current function or a checked literal. Copies can preserve that witness when
+each physical instruction, source type, and value kind agree, and each
+instruction appears before its use in the return block.
+
+The tuple witness belongs to a single suspended source body and reachable
+Return. Check currentness before replay. The finished producer still owes a
+current source return receipt for the exact tuple, and the original consumer
+still owes its emitted call for the selected source. Tuple arity, ABI, or the
+annotation alone do not supply any of these proofs.
+
+Gate: `recursive_tuple_source_result_repro.sh COMPILER` compares native output
+with Crystal, exercises tuple projection, and rejects reordered or
+same-layout unrelated slots. The HIR projection spec rejects stale witnesses
+and conflicting source kinds or physical types. Refresh after changing
+tuple lowering, source value facts, or retry and emission ownership.
+
 ### Literal instance results in recursive lowering
 
 An already reached Bool or String literal can establish an exact instance

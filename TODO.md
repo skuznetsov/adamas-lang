@@ -35,6 +35,20 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-19 — Keep concrete tuple results through suspended local reads
+- [x] A recursive result can use a reached tuple allocation whose ordered
+  ordinary instance slots are already proven. Bind each local read through
+  its current HIR copies to an ordinary parameter or literal. Check the
+  declared slots and the completed result receipt before publication.
+- [x] The HIR and native tuple regressions exercise the cycle and reject
+  changed order, a same-layout unrelated class, stale HIR and conflicting
+  type or kind facts.
+- [ ] Fresh S1-to-S2 runs on installed 1.22.3 (229s) and bundled 1.18.2
+  (234s) both activate the exact tuple edge in the macro evaluator. Installed
+  advances to a false Nil from the terminal `evaluate_condition` case.
+  Bundled still relays a pending `CLI#run_check` with a different live
+  dependency to identify. Neither run produces S2.
+
 ### 2026-11-19 — Keep recursive result calls in their generated Proc bodies
 - [x] A generated Proc now records its exact live HIR parent. The source
   method's replay can request a proven result from the Proc, which owns
