@@ -115865,12 +115865,11 @@ module Adamas::HIR
       return false if function_state(name).completed?
       # Prevent deep chaining: A needs ret type of B, B needs C, C needs D...
       # Use a tighter limit in bypass/yield-free-only mode to cap stack usage.
-      max_force_depth = (bypass_inline_yield || in_yield_free_only || owned_callback) ? 2 : 4
       # The cap bounds recursive body lowering. An exact `abstract def` target
       # never lowers a source body (at most an accessor), so it cannot recurse.
       # Refusing it would record a producer that no replay can ever settle and
       # strand every consumer suspended on it (`read slice` in IO#read_fully?).
-      if @force_lower_return_type_depth >= max_force_depth && !exact_abstract_force_target?(name)
+      unless force_lower_return_depth_available?(name, replay_bypass_inline_yield || !!owned_callback)
         STDERR.puts "[FORCE_LOWER_DEPTH_LIMIT] depth=#{@force_lower_return_type_depth} name=#{name}" if env_has?("DEBUG_FORCE_LOWER_DEPTH")
         @force_lower_depth_refused << name
         return false
@@ -116104,6 +116103,12 @@ module Adamas::HIR
             !force_lower_retry_waits_for_queued_producer?(queued)
           end
           ready_index ||= open_recursive_struct_result
+          producer_only = ready_index.nil?
+          if producer_only
+            ready_index = @force_lower_retry_work.rindex do |queued|
+              queued.is_a?(ForceLowerSuspendedRequest) && ready_suspended_source_producer?(queued)
+            end
+          end
           break unless ready_index
           current_request = @force_lower_retry_work.delete_at(ready_index)
           active = current_request
@@ -116118,7 +116123,7 @@ module Adamas::HIR
           advanced = case current_request
                      when ForceLowerSuspendedRequest
                        begin
-                         resume_suspended_exact_result(current_request)
+                         resume_suspended_exact_result(current_request, producer_only: producer_only)
                        rescue pending : ExactResultPending
                          if current_request.pending.same?(pending)
                            raise pending unless force_lower_retry_source_current?(current_request) &&
@@ -116604,6 +116609,24 @@ module Adamas::HIR
       any_queued_force_lower_dependency?(request) { true }
     end
 
+    # The suspension can own the only replay of a depth-refused producer.
+    # Work on that producer can proceed while the consumer's previous HIR
+    # generation still waits on a different queued result.
+    private def ready_suspended_source_producer?(request : ForceLowerSuspendedRequest) : Bool
+      pending = request.pending
+      producer = pending.producer
+      replay = pending.producer_replay
+      return false unless replay && pending.producer_pending.nil? && producer != request.name &&
+                          force_lower_retry_source_current?(request)
+      state = function_state(producer)
+      return false if state.in_progress? || state.completed? || @module.has_function_with_body?(producer) ||
+                      @force_lower_provisional_dependencies.has_key?(producer) ||
+                      force_lower_retry_has_queued_producer?(producer, false)
+      bypass = pending.producer_bypass_inline_yield.nil? ? request.bypass_inline_yield : pending.producer_bypass_inline_yield.not_nil!
+      return false unless force_lower_return_depth_available?(producer, bypass || @force_lower_yield_free_only_depth > 0)
+      !!reconciled_force_lower_callsite(@pending_arg_types[producer]?, replay.callsite)
+    end
+
     # Readiness and cycle discovery must use the same live edges. A stale
     # request or a body-only obligation cannot certify a queued result.
     private def any_queued_force_lower_dependency?(request : ForceLowerWorkRequest, &matches : String -> Bool) : Bool
@@ -116977,6 +117000,11 @@ module Adamas::HIR
       !!source_def.try(&.is_abstract)
     end
 
+    private def force_lower_return_depth_available?(name : String, restricted : Bool) : Bool
+      limit = restricted ? 2 : 4
+      @force_lower_return_type_depth < limit || exact_abstract_force_target?(name)
+    end
+
     # The driver removes a request from the queue before resuming it, so a
     # queued source-current request for the same consumer/producer edge
     # proves that this discovery is not that request's own replay. It comes
@@ -117020,7 +117048,7 @@ module Adamas::HIR
       false
     end
 
-    private def resume_suspended_exact_result(request : ForceLowerSuspendedRequest) : Bool
+    private def resume_suspended_exact_result(request : ForceLowerSuspendedRequest, *, producer_only : Bool = false) : Bool
       pending = request.pending
       consumer = pending.consumer
       producer = pending.producer
@@ -117028,8 +117056,11 @@ module Adamas::HIR
       replay = request.replay_callsite
       raise pending unless force_lower_pending_producer_current?(pending) && force_lower_replay_callsite_current?(consumer, replay)
       producer_replay = pending.producer_replay
-      projected_result = recursive_struct_result_available?(request)
-      unless settled_force_lower_producer?(pending) || projected_result
+      # A projection can unblock a consumer, but it cannot settle the
+      # producer-only work item or account for progress on the worklist.
+      already_settled = settled_force_lower_producer?(pending)
+      projected_result = !producer_only && recursive_struct_result_available?(request)
+      unless already_settled || projected_result
         work_mark = @force_lower_retry_work.size
         producer_bypass = pending.producer_bypass_inline_yield.nil? ? bypass_inline_yield : pending.producer_bypass_inline_yield.not_nil!
         producer_settled = with_force_lower_exact_source(producer, pending.producer_source) do
@@ -117062,6 +117093,14 @@ module Adamas::HIR
           return false
         end
         raise pending unless producer_settled
+      end
+
+      if producer_only
+        enqueue_force_lower_retry_work(request, 0)
+        if !already_settled && env_has?("DEBUG_FORCE_LOWER_DEPTH")
+          STDERR.puts "[FORCE_LOWER_PRODUCER_RESUMED] consumer=#{consumer} producer=#{producer}"
+        end
+        return !already_settled
       end
 
       unless settled_force_lower_demand?(consumer, pending.consumer_requires_result)

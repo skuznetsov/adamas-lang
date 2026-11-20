@@ -988,6 +988,18 @@ class Adamas::HIR::AstToHir
     when :changed_replay_source
       other = __test_projection_replay("RecFactory.reference")
       anchor = PartialRecursiveReturn.new(other, ctx, body, PartialExactInstanceReturn.new(block, returned, read))
+    when :materialize_producer
+      consumer = pending.consumer
+      pending = ExactResultPending.new(consumer, name, source, replay)
+      request = ForceLowerSuspendedRequest.new(pending, __test_projection_replay(consumer), false)
+      @deferred_struct_result_uses[{consumer, name}] = DeferredStructResultUse.new(request, type, replay, anchor)
+      remove_hir_function(name).should be_true
+      clear_function_state(name)
+      @pending_arg_types.delete(name)
+      recursive_struct_result_available?(request).should be_true
+      ready_suspended_source_producer?(request).should be_true
+      resume_suspended_exact_result(request, producer_only: true).should be_true
+      return settled_force_lower_result?(name)
     end
     !checked_partial_struct_result(pending, anchor).nil?
   end
@@ -1717,6 +1729,10 @@ describe "source result projection inside a recursive specialization" do
      :changed_operand, :changed_replay_source].each do |change|
       converter.__test_suspended_constant_return?(change).should be_false
     end
+  end
+
+  it "counts producer-only work as progress only after replaying its complete body" do
+    recursive_projection_converter.__test_suspended_constant_return?(:materialize_producer).should be_true
   end
 
   it "keeps a direct call result only with its active checked body and exact emitted operands" do

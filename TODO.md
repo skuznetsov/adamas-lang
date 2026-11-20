@@ -35,6 +35,18 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-19 — Schedule an independent suspended producer
+- [x] Replay the exact unqueued producer when an unrelated live dependency
+  blocks its consumer. Keep the consumer queued and count progress only when
+  the producer body completes its own result check.
+- [x] 46 HIR checks cover the blocked worklist and existing replay paths.
+  The new regressions reject absent or conflicting recipes and bad returns
+  and cover a retained partial projection after its producer body retires.
+- [ ] Fresh S1-to-S2 on bundled 1.18.2 (251s) settles
+  `MacroHashValue#assign`. A smaller macro evaluation cycle still reports a
+  pending `CLI#run_check` result. Installed 1.22.3 (247s) still reaches
+  the `macro_value_to_iterable` return check. Neither run produces S2.
+
 ### 2026-11-19 — Narrow the source binding used by a case subject
 - [x] Case subjects now use the same live local binding as identifier
   lowering. Assignment from a same-named getter used to be mistaken for a

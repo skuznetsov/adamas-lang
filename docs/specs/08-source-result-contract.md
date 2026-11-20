@@ -1195,6 +1195,12 @@ when the producer already reaches the consumer, including direct recursion.
 A repeated active edge is legal only while the driver still owns an equivalent
 current queued continuation; a name pair alone grants no replay permission.
 
+If an independent queued dependency blocks a consumer, its continuation can
+still replay a depth-refused producer with a current, compatible callsite.
+Schedule that producer separately when it has no body, queued work, or pending
+dependencies and the depth budget permits it. Keep the consumer queued.
+Separate producer work counts as progress only after complete checked replay.
+
 Queue coalescing requires equality of retained Def/Arena identities, complete
 callsite and source-argument facts, source binding including block result, entry
 namespace/type map, callback ABI/source, nested pending/capture/active-body
