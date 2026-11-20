@@ -35,6 +35,18 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-19 — Keep terminal case merges unreachable
+- [x] A case with no flowing arms marks its synthetic merge as dead. The
+  placeholder Nil cannot become the method's implicit return or reach
+  statements following the case.
+- [x] The native regression agrees with Crystal 1.22.3 in eager and lazy
+  mode for terminal, flowing and exhaustive arms. Wrong explicit returns
+  and a real missing else value still fail.
+- [ ] Fresh S1-to-S2 on installed 1.22.3 (260s) discharges the
+  `evaluate_condition` replay and reaches a nilable argument in
+  `MacroExpander#intern_name`. Bundled 1.18.2 (241s) still reports a
+  pending `CLI#run_check` result. Both exit 1 before producing S2.
+
 ### 2026-11-19 — Keep concrete tuple results through suspended local reads
 - [x] A recursive result can use a reached tuple allocation whose ordered
   ordinary instance slots are already proven. Bind each local read through

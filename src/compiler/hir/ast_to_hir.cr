@@ -111560,7 +111560,9 @@ module Adamas::HIR
 
       # Only merge locals and create phi if at least one branch flows
       if incoming.empty?
-        # No branches flow to merge - emit nil placeholder
+        # Keep the expression placeholder in a detached block. No case arm
+        # can reach it, so it must not become an implicit result or edge.
+        @control_flow_dead_blocks.add({ctx.function.id, merge_block})
         nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
         ctx.emit(nil_lit)
         return nil_lit.id
