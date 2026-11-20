@@ -80,10 +80,15 @@ module Adamas::HIR
     # proven annotation bindings. Its generated name is not a source Def key.
     property source_annotation_type_params : Hash(String, String)? = nil
 
-    # Synthetic callbacks own their ABI result but are generated within the
-    # enclosing source method attempt. Forward only its replay consumer name;
-    # the existing exact Def/Arena capture remains the continuation authority.
-    property source_result_replay_consumer : String? = nil
+    # A generated Proc belongs to one exact lowering attempt. The enclosing
+    # source method owns the retry. Each Proc still owns its emitted calls
+    # and checked return independently.
+    getter source_result_replay_parent : LoweringContext?
+
+    def source_result_replay_consumer : String
+      parent = @source_result_replay_parent
+      parent ? parent.source_result_replay_consumer : @function.name
+    end
 
     # Current block being built
     property current_block : BlockId
@@ -221,7 +226,8 @@ module Adamas::HIR
     @debug_type_literal_enabled : Bool
     @trace_call_name_filter : String?
 
-    def initialize(@function : Adamas::HIR::Function, @module : Adamas::HIR::Module, @arena)
+    def initialize(@function : Adamas::HIR::Function, @module : Adamas::HIR::Module, @arena,
+                   *, @source_result_replay_parent : LoweringContext? = nil)
       @current_block = @function.entry_block
       @current_source_location = nil
       @locals = {} of String => ValueId
@@ -7322,6 +7328,7 @@ module Adamas::HIR
     @force_lower_retry_driver_active = false
     @force_lower_retry_work = [] of ForceLowerWorkRequest
     @deferred_struct_result_uses = {} of Tuple(String, String) => DeferredStructResultUse
+    @source_result_replay_children = {} of FunctionId => Array(Function)
     # When true, skip expensive infer_concrete_return_type_from_body during
     # monomorphization triggered by ensure_monomorphized_type (lowering path).
     # Return types will be inferred lazily when the method is actually called.
@@ -10122,6 +10129,7 @@ module Adamas::HIR
       @force_lower_discharged_edges.clear
       @force_lower_provisional_dependencies.clear
       @deferred_struct_result_uses.clear
+      @source_result_replay_children.clear
       @force_lower_retry_driver_active = false
       @force_lower_retry_work.clear
       @defer_body_return_inference = false
@@ -77680,6 +77688,12 @@ module Adamas::HIR
       @deferred_struct_result_uses.each_value do |use|
         use.retire_function_body(function)
       end
+      if children = @source_result_replay_children[function.id]?
+        @source_result_replay_children.delete(function.id)
+        children.each do |child|
+          remove_hir_function(child.name) if @module.function_by_name(child.name).try(&.same?(child)) == true
+        end
+      end
     end
 
     private def retry_module_virtual_fanout_pending_targets(fanout_key : String) : Int32
@@ -118193,6 +118207,30 @@ module Adamas::HIR
         force_lower_retry_source_current?(request) && recursive_struct_result_available?(use.request)
     end
 
+    private def owned_source_result_proc_context(
+      parent : LoweringContext, function : Function, arena : Adamas::Compiler::Frontend::ArenaLike,
+    ) : LoweringContext
+      context = LoweringContext.new(function, @module, arena, source_result_replay_parent: parent)
+      if force_lower_replay_recipe_available?(parent.source_result_replay_consumer) &&
+         live_source_result_replay_owner(parent)
+        (@source_result_replay_children[parent.function.id] ||= [] of Function) << function
+      end
+      context
+    end
+
+    private def live_source_result_replay_owner(ctx : LoweringContext) : Function?
+      current = ctx
+      while parent = current.source_result_replay_parent
+        child = current.function
+        return unless @module.function_by_name(child.name).try(&.same?(child)) == true
+        children = @source_result_replay_children[parent.function.id]? || return
+        return unless children.any? { |function| function.same?(child) }
+        current = parent
+      end
+      owner = current.function
+      owner if @module.function_by_name(owner.name).try(&.same?(owner)) == true
+    end
+
     private def recursive_struct_result_at_source_call?(
       ctx : LoweringContext, producer : String, result : TypeRef, arg_types : Array(TypeRef),
       arg_facts : Array(SourceCallArgument?)?, receiver_id : ValueId?,
@@ -118201,10 +118239,9 @@ module Adamas::HIR
       arena : Adamas::Compiler::Frontend::ArenaLike?, registry : String?,
     ) : Bool
       return false if @deferred_struct_result_uses.empty?
-      consumer = ctx.source_result_replay_consumer || ctx.function.name
-      return false unless ctx.function.name == consumer
+      consumer = ctx.source_result_replay_consumer
       use = @deferred_struct_result_uses[{consumer, producer}]? || return false
-      return false unless use.expected == result
+      return false unless live_source_result_replay_owner(ctx) && use.expected == result
       callsite = use.producer_replay.callsite
       return false unless recursive_struct_result_argument_facts_match?(callsite, arg_types, arg_facts)
       function = @module.function_by_name(producer) || checked_partial_struct_result(use.request.pending, use.checked_return).try(&.body.function) || return false
@@ -118226,8 +118263,7 @@ module Adamas::HIR
       arg_types : Array(TypeRef),
       receiver_id : ValueId?,
     ) : RecursiveStructResultEmissionWitness?
-      consumer = ctx.source_result_replay_consumer || ctx.function.name
-      return nil unless ctx.function.name == consumer
+      consumer = ctx.source_result_replay_consumer
       use = @deferred_struct_result_uses[{consumer, producer}]? || return nil
       callsite = use.producer_replay.callsite
       return nil unless call.method_name == producer && call.type == use.expected && !call.virtual &&
@@ -118274,7 +118310,7 @@ module Adamas::HIR
       ctx : LoweringContext, producer : String, ticket : RecursiveStructResultEmissionTicket?, call : Call,
     ) : Bool
       return false unless ticket && !call.virtual && call.method_name == producer
-      use = @deferred_struct_result_uses[{ctx.function.name, producer}]? || return false
+      use = @deferred_struct_result_uses[{ctx.source_result_replay_consumer, producer}]? || return false
       anchor = checked_partial_struct_result(use.request.pending, use.checked_return) || return false
       return false unless anchor.body.return_type == call.type
       ctx.register_source_value_facts(call.id, use.expected_facts.dup)
@@ -118290,7 +118326,7 @@ module Adamas::HIR
       receiver_id : ValueId?,
     ) : Nil
       return unless ticket
-      consumer = ctx.source_result_replay_consumer || ctx.function.name
+      consumer = ctx.source_result_replay_consumer
       use = @deferred_struct_result_uses[{consumer, producer}]? || raise "missing deferred recursive result use"
       witness = recursive_struct_result_emission_witness(ctx, producer, call, arg_types, receiver_id)
       raise use.request.pending unless witness
@@ -118303,8 +118339,8 @@ module Adamas::HIR
       cycle_result : Bool,
     ) : RecursiveStructResultEmissionTicket?
       return nil unless cycle_result
-      consumer = ctx.source_result_replay_consumer || ctx.function.name
-      raise "recursive result emission escaped its consumer" unless ctx.function.name == consumer
+      consumer = ctx.source_result_replay_consumer
+      raise "recursive result emission escaped its consumer" unless live_source_result_replay_owner(ctx)
       use = @deferred_struct_result_uses[{consumer, producer}]? || raise "missing deferred recursive result use"
       use.begin_emission_ticket(ctx.function)
     end
@@ -118370,8 +118406,8 @@ module Adamas::HIR
       producer = request.pending.producer
       return false unless force_lower_retry_source_current?(request) &&
                           force_lower_replay_callsite_current?(producer, use.producer_replay) &&
-                          @module.function_by_name(consumer).try(&.same?(witness.function)) == true &&
-                          witness.function.name == consumer &&
+                          witness.context.function.same?(witness.function) &&
+                          live_source_result_replay_owner(witness.context).try(&.name) == consumer &&
                           witness.function.blocks.any? { |block| block.same?(witness.block) } &&
                           witness.block.instructions.count { |instruction| instruction.same?(witness.call) } == 1
       call = witness.call
@@ -118838,8 +118874,9 @@ module Adamas::HIR
       positional_argument_facts : Array(SourceCallArgument?)? = nil,
       retain_fixed_callback : Bool = false,
     ) : {String, ForceLowerReplayCallsite}?
-      return unless (capture = @force_lower_current_replay_capture) && capture.name == ctx.function.name &&
+      return unless (capture = @force_lower_current_replay_capture) && capture.name == ctx.source_result_replay_consumer &&
                     capture.binding && definition && arena && callsite
+      return if ctx.source_result_replay_parent && !live_source_result_replay_owner(ctx)
       source = force_lower_exact_source_binding(name, definition, definition, arena, source_key) || return
       positional_evidence = if materialized_arguments && positional_argument_facts
                               observed_narrowed_positional_callsite(ctx, name, source, callsite, materialized_arguments, positional_argument_facts)
@@ -118871,7 +118908,7 @@ module Adamas::HIR
       return unless observed && (capture = @force_lower_current_replay_capture) && capture.binding
       name = ctx.function.name
       producer, replay = observed
-      return unless capture.name == name && (ctx.source_result_replay_consumer || name) == name &&
+      return unless capture.name == name && ctx.source_result_replay_parent.nil? &&
                     @force_lower_provisional_dependencies[name]?.try(&.includes?(producer)) == true &&
                     call.method_name == producer && !call.virtual && !call.has_block? &&
                     provisional_source_call_arguments_match?(ctx, call, replay.callsite)
@@ -118908,7 +118945,7 @@ module Adamas::HIR
       # Suspend its exact consumer before narrowing or a declared-return check
       # consumes Void; the replay recipe and source identity checks below own
       # the continuation independently of the active inline context.
-      consumer = ctx.source_result_replay_consumer || ctx.function.name
+      consumer = ctx.source_result_replay_consumer
       source = selected_source_binding ||
                force_lower_exact_source_binding(name, selected_def, selected_call_def, selected_call_arena, selected_registry_name)
       return unless source
@@ -118925,7 +118962,7 @@ module Adamas::HIR
       if env_has?("DEBUG_FORCE_LOWER_DEPTH")
         STDERR.puts "[FORCE_LOWER_SUSPENDED] consumer=#{consumer} context=#{ctx.function.name} producer=#{name}"
       end
-      checked_return = suspended_struct_return(ctx) if ctx.function.name == consumer
+      checked_return = suspended_struct_return(ctx) unless ctx.source_result_replay_parent
       producer_replay = if observed_call && observed_call[0] == name
                           held = observed_call[1]
                           if held_source = held.exact_source_binding
@@ -123461,7 +123498,7 @@ module Adamas::HIR
       binding = force_lower_exact_source_binding(target, source, selected_call_def, selected_call_arena, selected_registry_name)
       return unless binding
       return if source_owned_bodyless_primitive?(binding.source_def, binding.source_arena)
-      consumer = ctx.source_result_replay_consumer || ctx.function.name
+      consumer = ctx.source_result_replay_consumer
       return unless (!@module.has_function_with_body?(target) &&
                      @force_lower_depth_refused[refused_before_force...].includes?(target)) ||
                     @force_lower_provisional_dependencies.has_key?(target) ||
@@ -126093,7 +126130,7 @@ module Adamas::HIR
                       selected_initializer: !!selected_constructor_target,
                       selected_init_target: selected_constructor_target,
                       source_argument_facts: constructor_source_facts,
-                      source_result_consumer: ctx.source_result_replay_consumer || ctx.function.name,
+                      source_result_consumer: ctx.source_result_replay_consumer,
                       explicit_new_target: explicit_new_autocast_target)
                   end
                 end
@@ -126220,7 +126257,7 @@ module Adamas::HIR
                         call_block_node: alloc_block.try(&.[0]), call_block_param_types: alloc_block.try(&.[1]),
                         call_block_return_name: alloc_block.try(&.[2]),
                         source_argument_facts: allocator_source_facts,
-                        source_result_consumer: ctx.source_result_replay_consumer || ctx.function.name)
+                        source_result_consumer: ctx.source_result_replay_consumer)
                     end
                     full_method_name = "#{resolved_type}.new"
                     static_class_name = resolved_type
@@ -126365,7 +126402,7 @@ module Adamas::HIR
                         selected_initializer: !!selected_constructor_target,
                         selected_init_target: selected_constructor_target,
                         source_argument_facts: allocator_source_facts,
-                        source_result_consumer: ctx.source_result_replay_consumer || ctx.function.name)
+                        source_result_consumer: ctx.source_result_replay_consumer)
                     end
                   end
                 else
@@ -126387,7 +126424,7 @@ module Adamas::HIR
                     full_method_name = resolve_method_with_inheritance(name, method_name)
                     full_method_name ||= "#{name}##{method_name}"
                   end
-                  generate_allocator(name, info, source_result_consumer: ctx.source_result_replay_consumer || ctx.function.name) if method_name == "new"
+                  generate_allocator(name, info, source_result_consumer: ctx.source_result_replay_consumer) if method_name == "new"
                 end
               end
 
@@ -126459,7 +126496,7 @@ module Adamas::HIR
                     end
                     if method_name == "new"
                       if class_info = @class_info[type_name]?
-                        generate_allocator(type_name, class_info, source_result_consumer: ctx.source_result_replay_consumer || ctx.function.name)
+                        generate_allocator(type_name, class_info, source_result_consumer: ctx.source_result_replay_consumer)
                       end
                     end
                   elsif type_desc && type_desc.kind == TypeKind::Module
@@ -126489,7 +126526,7 @@ module Adamas::HIR
                     end
                     if method_name == "new"
                       if class_info = @class_info[type_name]?
-                        generate_allocator(type_name, class_info, source_result_consumer: ctx.source_result_replay_consumer || ctx.function.name)
+                        generate_allocator(type_name, class_info, source_result_consumer: ctx.source_result_replay_consumer)
                       end
                     end
                   end
@@ -126519,7 +126556,7 @@ module Adamas::HIR
                         static_class_name = class_name
                         if method_name == "new"
                           if class_info = @class_info[class_name]?
-                            generate_allocator(class_name, class_info, source_result_consumer: ctx.source_result_replay_consumer || ctx.function.name)
+                            generate_allocator(class_name, class_info, source_result_consumer: ctx.source_result_replay_consumer)
                           end
                         end
                       end
@@ -128143,7 +128180,7 @@ module Adamas::HIR
           full_method_name = "#{range_name}.new"
           static_class_name = range_name
           if class_info = @class_info[range_name]?
-            generate_allocator(range_name, class_info, arg_types, source_result_consumer: ctx.source_result_replay_consumer || ctx.function.name)
+            generate_allocator(range_name, class_info, arg_types, source_result_consumer: ctx.source_result_replay_consumer)
           end
         end
       end
@@ -129702,7 +129739,7 @@ module Adamas::HIR
                 selected_initializer: prefer_allocator_new_call,
                 selected_init_target: source_initializer_entry,
                 source_argument_facts: constructor_source_facts_after_lowering,
-                source_result_consumer: ctx.source_result_replay_consumer || ctx.function.name,
+                source_result_consumer: ctx.source_result_replay_consumer,
               )
               allocator_call_shape_target = allocator_generated_target_name_for_call(
                 class_name,
@@ -137125,7 +137162,7 @@ module Adamas::HIR
     private def suspend_behind_queued_union_arm(ctx : LoweringContext, name : String) : Nil
       return if @module.has_function_with_body?(name)
       return unless @force_lower_retry_driver_active
-      consumer = ctx.source_result_replay_consumer || ctx.function.name
+      consumer = ctx.source_result_replay_consumer
       return if consumer == name
       return unless force_lower_replay_recipe_available?(consumer)
       queued = @force_lower_retry_work.find do |request|
@@ -160094,8 +160131,7 @@ module Adamas::HIR
       # The annotation constrains admission; it must not coerce invalid values
       # into apparently compatible types before that check.
       proc_func = @module.create_function(proc_func_name, TypeRef::VOID)
-      proc_ctx = LoweringContext.new(proc_func, @module, @arena)
-      proc_ctx.source_result_replay_consumer = ctx.source_result_replay_consumer || ctx.function.name
+      proc_ctx = owned_source_result_proc_context(ctx, proc_func, @arena)
       lexical_owner = @block_owner[node.object_id]?
       lexical_owner_name = lexical_owner.try(&.class_name) ||
                            lexical_owner.try(&.namespace_override) ||
@@ -161673,8 +161709,7 @@ module Adamas::HIR
 
       # Create standalone function for the block body
       proc_func = @module.create_function(proc_func_name, proc_return_type)
-      proc_ctx = LoweringContext.new(proc_func, @module, block_arena)
-      proc_ctx.source_result_replay_consumer = ctx.source_result_replay_consumer || ctx.function.name
+      proc_ctx = owned_source_result_proc_context(ctx, proc_func, block_arena)
       saved_enum_value_types = @enum_value_types
       @enum_value_types = nil
 

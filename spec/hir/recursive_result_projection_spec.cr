@@ -75,7 +75,6 @@ class Adamas::HIR::AstToHir
     call = block.instructions.compact_map(&.as?(Call)).find { |candidate| candidate.method_name == producer } || return false
     ctx = LoweringContext.new(function, @module, consumer_source.source_arena)
     ctx.__test_register_existing_hir_body
-    ctx.source_result_replay_consumer = consumer
 
     @force_lower_retry_work.clear
     @force_lower_provisional_dependencies[consumer] = Set{producer}
@@ -457,7 +456,6 @@ class Adamas::HIR::AstToHir
       foreign.add_param(parameter.name, parameter.type, parameter.is_block)
     end
     foreign_ctx = LoweringContext.new(foreign, @module, @arena)
-    foreign_ctx.source_result_replay_consumer = consumer
     foreign_value_id = foreign_ctx.next_id
     while foreign_value_id < old_value.id
       foreign_value_id = foreign_ctx.next_id
@@ -486,7 +484,6 @@ class Adamas::HIR::AstToHir
       replacement.add_param(parameter.name, parameter.type, parameter.is_block)
     end
     new_ctx = LoweringContext.new(replacement, @module, @arena)
-    new_ctx.source_result_replay_consumer = consumer
     new_value_id = new_ctx.next_id
     while new_value_id < old_value.id
       new_value_id = new_ctx.next_id
@@ -529,6 +526,144 @@ class Adamas::HIR::AstToHir
     witness = recursive_struct_result_emission_witness(ctx, producer, call, [TypeRef::BOOL], nil) || return false
     unrelated.same?(ctx.function).should be_false
     use.discharge_emission_ticket(ticket, witness) && use.emission_obligations_complete?
+  end
+
+  def __test_nested_generated_proc_projection?(change : Symbol = :current) : Bool
+    producer, consumer, request, parent_ctx, producer_source, consumer_source = __test_open_projection_use
+    previous_current = @force_lower_current_replay_capture
+    previous_active = @force_lower_active_replay_captures[consumer]?
+    capture = ForceLowerReplayCapture.new(consumer, nil)
+    capture.binding = request.replay_callsite
+    capture.source = consumer_source
+    request.pending.consumer_capture = capture
+    @force_lower_active_replay_captures[consumer] = capture
+    @force_lower_current_replay_capture = capture
+
+    child_name = "__crystal_block_proc_projection_owner_probe"
+    child = @module.create_function(child_name, TypeRef::VOID)
+    child_ctx = if change == :unregistered
+                  LoweringContext.new(child, @module, consumer_source.source_arena,
+                    source_result_replay_parent: parent_ctx)
+                else
+                  owned_source_result_proc_context(parent_ctx, child, consumer_source.source_arena)
+                end
+    value = Literal.new(child_ctx.next_id, TypeRef::BOOL, false)
+    child_ctx.emit(value)
+    facts = call_resolution_source_argument_facts(child_ctx, [value.id], [TypeRef::BOOL])
+    result = @module.function_by_name(producer).not_nil!.return_type
+    admitted = recursive_struct_result_at_source_call?(child_ctx, producer, result, [TypeRef::BOOL], facts, nil,
+      producer_source.source_def, producer_source.source_def, producer_source.source_arena,
+      producer_source.source_registry_name)
+
+    if change == :unregistered
+      return live_source_result_replay_owner(child_ctx).nil? && !admitted
+    end
+
+    if change == :replaced
+      return false unless admitted && remove_hir_function(child_name)
+      replacement = @module.create_function(child_name, TypeRef::VOID)
+      return !replacement.same?(child) && live_source_result_replay_owner(child_ctx).nil? &&
+             !recursive_struct_result_at_source_call?(child_ctx, producer, result, [TypeRef::BOOL], facts, nil,
+               producer_source.source_def, producer_source.source_def, producer_source.source_arena,
+               producer_source.source_registry_name)
+    end
+
+    return false unless admitted &&
+                        live_source_result_replay_owner(child_ctx).try { |owner| owner.same?(parent_ctx.function) }
+    sibling_source = __test_projection_source(__test_projection_method_name("sibling_value"))
+    foreign_source_admitted = recursive_struct_result_at_source_call?(child_ctx, producer, result,
+      [TypeRef::BOOL], facts, nil, sibling_source.source_def, producer_source.source_def,
+      sibling_source.source_arena, sibling_source.source_registry_name)
+    return false if foreign_source_admitted
+
+    use = @deferred_struct_result_uses[{consumer, producer}].not_nil!
+    ticket = begin_recursive_struct_result_emission!(child_ctx, producer, true).not_nil!
+    return false unless ticket.owner.same?(child)
+    call = Call.new(child_ctx.next_id, result, "")
+    call.configure_without_receiver(producer, [value.id])
+    child_ctx.emit(call)
+    child_ctx.register_source_value_facts(call.id, [{result, false}])
+    witness = recursive_struct_result_emission_witness(child_ctx, producer, call, [TypeRef::BOOL], nil) || return false
+    return false unless use.discharge_emission_ticket(ticket, witness) &&
+                        recursive_struct_result_emission_witness_current?(use, witness)
+
+    if change == :mutated_operand
+      block = child.get_block(child_ctx.current_block_id)
+      index = block.instructions.index! { |instruction| instruction.same?(value) }
+      block.replace(index, Literal.new(value.id, TypeRef::BOOL, false))
+      return !recursive_struct_result_emission_witness_current?(use, witness)
+    end
+    true
+  ensure
+    @force_lower_current_replay_capture = previous_current
+    if consumer
+      if previous_active
+        @force_lower_active_replay_captures[consumer] = previous_active
+      else
+        @force_lower_active_replay_captures.delete(consumer)
+      end
+    end
+  end
+
+  def __test_parent_abort_retires_nested_proc_bodies? : Bool
+    producer, consumer, request, parent_ctx, producer_source, consumer_source = __test_open_projection_use
+    previous_current = @force_lower_current_replay_capture
+    previous_active = @force_lower_active_replay_captures[consumer]?
+    capture = ForceLowerReplayCapture.new(consumer, nil)
+    capture.binding = request.replay_callsite
+    capture.source = consumer_source
+    request.pending.consumer_capture = capture
+    @force_lower_active_replay_captures[consumer] = capture
+    @force_lower_current_replay_capture = capture
+
+    first_name = "__crystal_block_proc_projection_parent_abort"
+    nested_name = "__crystal_block_proc_projection_nested_abort"
+    first = @module.create_function(first_name, TypeRef::VOID)
+    first_ctx = owned_source_result_proc_context(parent_ctx, first, consumer_source.source_arena)
+    nested = @module.create_function(nested_name, TypeRef::VOID)
+    nested_ctx = owned_source_result_proc_context(first_ctx, nested, consumer_source.source_arena)
+    nested_value = Literal.new(nested_ctx.next_id, TypeRef::BOOL, false)
+    nested_ctx.emit(nested_value)
+    nested_facts = call_resolution_source_argument_facts(nested_ctx, [nested_value.id], [TypeRef::BOOL])
+    use = @deferred_struct_result_uses[{consumer, producer}].not_nil!
+    first_ticket = begin_recursive_struct_result_emission!(first_ctx, producer, true).not_nil!
+    nested_ticket = begin_recursive_struct_result_emission!(nested_ctx, producer, true).not_nil!
+    return false unless first_ticket.owner.same?(first) && nested_ticket.owner.same?(nested) &&
+                        use.emissions.size == 2
+
+    unrelated_name = "RecFactory.unrelated_proc_abort_probe"
+    unrelated = @module.create_function(unrelated_name, TypeRef::BOOL)
+    unrelated_ctx = LoweringContext.new(unrelated, @module, @arena)
+    value = Literal.new(unrelated_ctx.next_id, TypeRef::BOOL, false)
+    unrelated_ctx.emit(value)
+    unrelated_ctx.terminate(Return.new(value.id))
+
+    return false unless remove_hir_function(consumer)
+    return false unless @module.function_by_name(first_name).nil? && @module.function_by_name(nested_name).nil? &&
+                        use.emissions.empty?
+
+    replacement_parent = @module.create_function(consumer, parent_ctx.function.return_type)
+    stale_child_name = "__crystal_block_proc_after_parent_abort"
+    stale_child = @module.create_function(stale_child_name, TypeRef::VOID)
+    stale_ctx = owned_source_result_proc_context(parent_ctx, stale_child, consumer_source.source_arena)
+    stale_admitted = recursive_struct_result_at_source_call?(stale_ctx, producer,
+      @module.function_by_name(producer).not_nil!.return_type, [TypeRef::BOOL], nested_facts, nil,
+      producer_source.source_def, producer_source.source_def, producer_source.source_arena,
+      producer_source.source_registry_name)
+    !replacement_parent.same?(parent_ctx.function) &&
+      live_source_result_replay_owner(nested_ctx).nil? && live_source_result_replay_owner(stale_ctx).nil? &&
+      !stale_admitted && @module.function_by_name(consumer).try(&.same?(replacement_parent)) == true &&
+      @module.function_by_name(unrelated_name).try(&.same?(unrelated)) == true &&
+      @module.has_function_with_body?(unrelated_name) && use.emissions.empty?
+  ensure
+    @force_lower_current_replay_capture = previous_current
+    if consumer
+      if previous_active
+        @force_lower_active_replay_captures[consumer] = previous_active
+      else
+        @force_lower_active_replay_captures.delete(consumer)
+      end
+    end
   end
 
   def __test_instance_projection_emission_current?(
@@ -1111,7 +1246,6 @@ class Adamas::HIR::AstToHir
     @force_lower_replay_source_bindings[consumer] = consumer_source
     function = @module.function_by_name(consumer).not_nil!
     ctx = LoweringContext.new(function, @module, @arena)
-    ctx.source_result_replay_consumer = consumer
     {producer, consumer, request, ctx, producer_source, consumer_source}
   end
 
@@ -1556,5 +1690,21 @@ describe "source result projection inside a recursive specialization" do
 
   it "preserves a ticket when an unrelated physical function is retired" do
     recursive_projection_converter.__test_unrelated_retirement_preserves_physical_ticket?.should be_true
+  end
+
+  it "projects a source result through a tracked generated proc with its own live call operands" do
+    converter = recursive_projection_converter
+    converter.__test_nested_generated_proc_projection?.should be_true
+    converter.__test_nested_generated_proc_projection?(:mutated_operand).should be_true
+  end
+
+  it "rejects an unregistered generated proc and a replaced physical proc" do
+    converter = recursive_projection_converter
+    converter.__test_nested_generated_proc_projection?(:unregistered).should be_true
+    converter.__test_nested_generated_proc_projection?(:replaced).should be_true
+  end
+
+  it "recursively retires nested proc tickets when their parent body aborts" do
+    recursive_projection_converter.__test_parent_abort_retires_nested_proc_bodies?.should be_true
   end
 end

@@ -64,7 +64,6 @@ class Adamas::HIR::AstToHir
 
     function = @module.function_by_name(consumer) || @module.create_function(consumer, TypeRef::VOID)
     ctx = LoweringContext.new(function, @module, @arena)
-    ctx.source_result_replay_consumer = consumer
     published = @force_lower_provisional_dependencies[consumer]?.try(&.includes?(target)) || false
 
     pending_seen = false

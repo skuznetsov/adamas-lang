@@ -1322,6 +1322,25 @@ the body replay. The originating call retains its block and its own return
 check. A fixed callback body may replay without supplying an independent
 early return witness for another consumer.
 
+### Recursive source results in generated Proc bodies
+
+A Proc materialized during exact source replay belongs to one live HIR
+parent generation. The exact source method owns the continuation, while
+the call, operands, ABI and emission ticket belong to the physical Proc
+body. Admit the result only through registered live parent links. A Proc's
+return cannot stand in for the enclosing source method's return witness.
+Finalization checks the same physical call and links again. Removing a
+generation retires its generated descendants and their tickets. Other
+source bodies, including separately materialized callees, keep their
+independent lifetimes.
+
+Gate: recursive_proc_source_result_repro.sh COMPILER compares stock,
+eager and lazy output, and rejects invalid Proc and producer results.
+HIR specs cover unregistered and replaced bodies, operand identity, and
+subtree retirement. Refresh after generated function ownership, replay
+or emission validation changes. Rollback is the atomic Proc ownership
+commit.
+
 ### Implicit callback tuple unpack
 
 A selected callback input may bind a source formal to one Tuple. Recover its

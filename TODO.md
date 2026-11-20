@@ -35,6 +35,19 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-19 — Keep recursive result calls in their generated Proc bodies
+- [x] A generated Proc now records its exact live HIR parent. The source
+  method's replay can request a proven result from the Proc, which owns
+  its call, operand checks and emission ticket. Retiring the parent
+  invalidates the old subtree and all of its tickets.
+- [x] The no-prelude native regression matches Crystal 1.22.3 in eager and
+  lazy mode and rejects incorrect Proc and producer results. The parent
+  compiler fails the positive while compiling the recursive chain.
+- [ ] Fresh S1-to-S2 on installed 1.22.3 (233s) and bundled 1.18.2 (243s)
+  both replay `evaluate_expression` through the former generated Proc
+  failure. The driver still returns an unsettled `CLI#run_check` result.
+  Neither produces S2.
+
 ### 2026-11-19 — Retry materialized bodies with a fixed callback
 - [x] Allow an ordinary completed callback body to replay its own checked
   fixed Proc parameter after its dependencies settle. The exact source,
