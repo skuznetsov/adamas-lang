@@ -28437,3 +28437,26 @@ changes. No stdlib edits.
   call from `assign_macro_target` to `apply_macro_index_assignment`.
   Bundled reports the outer `CLI#run_check` continuation after the driver
   reaches the assignment paths. Neither emits S2.
+
+## Exact replay of fixed callbacks (2026-11-19)
+
+- [x] Retain the selected declaration, arena, and ordinary positional inputs
+  when a literal callback's concrete type is owned by the declaration.
+  The caller still lowers and checks its original block. The replay admits
+  no provisional result from a block-bearing call.
+- A native acyclic literal callback agrees with Crystal 1.22.3 on output
+  and rejection of an incompatible block result. The HIR tests check exact
+  replay admission and reject invalid actuals and stale declarations.
+- Fresh S1 → S2 used source seal
+  `4c3fb9c23cebf252860f47904d46ff1e2e84f4978c57114b488aefd7ec750bbf`.
+  Installed 1.22.3 (222.42s) reaches the macro version comparison through the
+  formerly blocked assignment methods. Bundled 1.18.2 (235.55s) resumes the
+  macro condition number helper and returns to the pending parser call.
+  Both exit 1 with `CLI#run_check` pending and emit no S2.
+
+- [ ] Require ordinary source argument checking on literal-block target
+  selection, including unused typed formals. The parent compiler and this
+  candidate accept `def run(value : Int32, & : -> String); yield; end`
+  called with a String or the `Int32` metaclass. Crystal 1.22.3 rejects both.
+  Replay admission checks the exact formal restrictions, but the original
+  call must reject these arguments even when no replay is involved.

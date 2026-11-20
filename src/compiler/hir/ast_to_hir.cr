@@ -113627,8 +113627,8 @@ module Adamas::HIR
       incoming.with_source_evidence(facts, binding)
     end
 
-    private def ordinary_active_body_callsite?(callsite : CallsiteArgs) : Bool
-      return false if callsite.has_block || callsite.has_named_args ||
+    private def ordinary_active_body_callsite?(callsite : CallsiteArgs, *, allow_block : Bool = false) : Bool
+      return false if (callsite.has_block && !allow_block) || callsite.has_named_args ||
                       callsite.selected_target || callsite.source_binding ||
                       callsite.literals.try(&.any?) || callsite.enum_names.try(&.any?)
       kinds_known = callsite.types.empty?
@@ -118756,6 +118756,42 @@ module Adamas::HIR
       evidence if ordinary_active_body_callsite?(evidence)
     end
 
+    # A literal passed to a declaration with a fixed callback ABI is checked
+    # and emitted by its caller. The non-inlined callee needs only that ABI
+    # and its own positional inputs during result replay. Its continuation
+    # must not pick up another caller's pending argument entry.
+    private def ordinary_fixed_callback_callsite?(
+      name : String, source : ForceLowerExactSourceBinding, callsite : CallsiteArgs,
+    ) : Bool
+      return false unless callsite.has_block && ordinary_active_body_callsite?(callsite, allow_block: true) &&
+                          callsite.types.none? { |type| type == TypeRef::VOID }
+      return false if source.inherited_nilary_member_alias || raw_callback_abi_for(name) || raw_callback_source_binding_for(name)
+      definition = source.source_def
+      return false unless definition.body && !definition.is_abstract && definition.forall_type_params.empty?
+      params = function_param_infos(definition, source.source_arena)
+      formals = params.reject(&.is_block)
+      return false unless params.size == formals.size + 1 && formals.size == callsite.types.size
+      return false unless formals.none? do |param|
+        param.default_value || param.is_splat || param.is_double_splat || named_only_separator?(param)
+      end
+      callback = definition.params.try { |parameters| find_param(parameters, &.is_block) } || return false
+      block_type = callback.type_annotation || return false
+      return false if block_annotation_leaves_return_open?(block_type)
+      owner = exact_source_declaration_owner(name, source) || return false
+      bindings = type_param_map_for_generic_type_name(owner)
+      compatible = with_arena(source.source_arena) do
+        with_namespace_override_or_clear(owner) do
+          with_isolated_type_param_map(bindings) do
+            params_compatible_with_args?(definition, callsite.types, owner, params,
+              source_argument_facts: callsite.source_argument_facts)
+          end
+        end
+      end
+      compatible && concrete_force_lower_callback_annotation?(name, source, block_type)
+    rescue LoweringError
+      false
+    end
+
     # Preserve this invocation before a nested force can consume its pending
     # argument entry. Other calls sharing the target name cannot supply its
     # actuals, source owner or entry environment.
@@ -118765,6 +118801,7 @@ module Adamas::HIR
       arena : Adamas::Compiler::Frontend::ArenaLike?, source_key : String?,
       *, default_binding : SourceCallBinding? = nil, materialized_arguments : Array(ValueId)? = nil,
       positional_argument_facts : Array(SourceCallArgument?)? = nil,
+      retain_fixed_callback : Bool = false,
     ) : {String, ForceLowerReplayCallsite}?
       return unless (capture = @force_lower_current_replay_capture) && capture.name == ctx.function.name &&
                     capture.binding && definition && arena && callsite
@@ -118774,7 +118811,8 @@ module Adamas::HIR
                             end
       evidence = if positional_evidence
                    positional_evidence
-                 elsif ordinary_recursive_source_callsite?(name, source, callsite)
+                 elsif ordinary_recursive_source_callsite?(name, source, callsite) ||
+                       (retain_fixed_callback && ordinary_fixed_callback_callsite?(name, source, callsite))
                    callsite
                  elsif callsite.has_named_args && !source.inherited_nilary_member_alias &&
                        !raw_callback_source_binding_for(name) && !raw_callback_abi_for(name) &&
@@ -119031,6 +119069,12 @@ module Adamas::HIR
       return false unless param_name = param.name
       return false if param_name.empty?
       return false unless block_annotation = param.type_annotation
+      concrete_force_lower_callback_annotation?(name, source, block_annotation)
+    end
+
+    private def concrete_force_lower_callback_annotation?(
+      name : String, source : ForceLowerExactSourceBinding, block_annotation : Slice(UInt8),
+    ) : Bool
       owner = exact_source_declaration_owner(name, source) || return false
       bindings = type_param_map_for_generic_type_name(owner)
       with_arena(source.source_arena) do
@@ -133577,12 +133621,16 @@ module Adamas::HIR
           source_binding: named_replay_binding || callsite_source_binding,
         )
       end
-      source_call_observation = unless call_virtual || has_block_call || has_splat || source_has_splat ||
+      retain_fixed_callback = has_block_call && !block_for_inline.nil? && block_id.nil? &&
+                              block_pass_expr.nil? && method_macro_scope.nil? && raw_callback_target.nil?
+      source_call_observation = unless call_virtual || (has_block_call && !retain_fixed_callback) ||
+                                       has_splat || source_has_splat ||
                                        (has_named_args && !named_replay_binding) || reuses_suspended_body
                                   observed_force_lower_source_call(ctx, mangled_method_name, actual_callsite,
                                     selected_call_entry_def, selected_call_entry_arena, selected_call_entry_name,
                                     default_binding: source_default_entry ? source_call_binding : nil, materialized_arguments: args,
-                                    positional_argument_facts: positional_replay_facts)
+                                    positional_argument_facts: positional_replay_facts,
+                                    retain_fixed_callback: retain_fixed_callback)
                                 end
       if receiver_id
         receiver_type = ctx.type_of(receiver_id)

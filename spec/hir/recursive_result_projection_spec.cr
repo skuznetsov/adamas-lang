@@ -647,6 +647,83 @@ class Adamas::HIR::AstToHir
     }
   end
 
+  def __test_fixed_callback_replay(change : Symbol = :valid) : Tuple(Bool, Bool, Bool)
+    producer = ""
+    previous_capture = @force_lower_current_replay_capture
+    old_definition = nil.as(Adamas::Compiler::Frontend::DefNode?)
+    old_arena = nil.as(Adamas::Compiler::Frontend::ArenaLike?)
+    consumer = __test_projection_method_name("consumer_for")
+    producer = __test_projection_method_name(change == :open_callback ? "open_callback" : "fixed_callback")
+    old_definition = @function_defs[producer]?
+    old_arena = @function_def_arenas[producer]?
+    source = __test_projection_source(producer)
+    type = change == :incompatible_input ? TypeRef::INT32 : TypeRef::BOOL
+    fact_type = change == :mismatched_fact ? TypeRef::INT32 : type
+    fact = SourceCallArgument.new(fact_type, false)
+    callsite = case change
+               when :unknown_operand
+                 CallsiteArgs.new([type], nil, nil, has_block: true)
+               when :mismatched_fact
+                 CallsiteArgs.new([type], [false], nil, has_block: true,
+                   source_argument_facts: [fact.as(SourceCallArgument?)])
+               when :no_block
+                 CallsiteArgs.new([type], [false], nil,
+                   source_argument_facts: [fact.as(SourceCallArgument?)])
+               when :named_arguments
+                 CallsiteArgs.new([type], [false], nil, has_block: true, has_named_args: true,
+                   source_argument_facts: [fact.as(SourceCallArgument?)])
+               else
+                 CallsiteArgs.new([type], [false], nil, has_block: true,
+                   source_argument_facts: [fact.as(SourceCallArgument?)])
+               end
+    function = @module.function_by_name(consumer) || return {false, false, false}
+    ctx = LoweringContext.new(function, @module, source.source_arena)
+    ctx.__test_register_existing_hir_body
+    replay = __test_projection_replay(consumer, __test_ordinary_projection_callsite)
+    capture = ForceLowerReplayCapture.new(consumer, nil)
+    capture.binding = replay
+    capture.source = __test_projection_source(consumer)
+
+    case change
+    when :stale_definition
+      replacement = @function_defs.values.find { |candidate| !candidate.same?(source.source_def) } || return {false, false, false}
+      @function_defs[producer] = replacement
+    when :stale_arena
+      @function_def_arenas[producer] = Adamas::Compiler::Frontend::AstArena.new
+    end
+
+    value = if type == TypeRef::BOOL
+              Literal.new(ctx.next_id, type, false)
+            else
+              Literal.new(ctx.next_id, type, 1_i64)
+            end
+    ctx.emit(value)
+    @force_lower_current_replay_capture = capture
+    observed = observed_force_lower_source_call(ctx, producer, callsite,
+      source.source_def, source.source_arena, source.source_registry_name,
+      materialized_arguments: [value.id],
+      positional_argument_facts: call_resolution_source_argument_facts(ctx, [value.id], [type]),
+      retain_fixed_callback: true)
+    return {false, false, false} unless observed
+
+    observed_name, observed_replay = observed
+    exact = observed_name == producer && observed_replay.source_def.same?(source.source_def) &&
+            observed_replay.source_arena.same?(source.source_arena) &&
+            observed_replay.source_registry_name == source.source_registry_name &&
+            observed_replay.exact_source_binding.try do |binding|
+              same_force_lower_exact_source_binding?(binding, source)
+            end == true && observed_replay.callsite == callsite
+
+    # A callback-bearing source call can carry replay evidence, but its actual
+    # block operand must never become a recursive struct-result projection.
+    projection_blocked = recursive_struct_result_callsite_argument_facts(observed_replay.callsite).nil?
+    {true, exact, projection_blocked}
+  ensure
+    @force_lower_current_replay_capture = previous_capture
+    @function_defs[producer] = old_definition if producer && old_definition
+    @function_def_arenas[producer] = old_arena if producer && old_arena
+  end
+
   def __test_recursive_producer_callsite_consensus(change : Symbol = :unchanged) : Bool
     name = __test_projection_method_name("value_for")
     source = __test_projection_source(name)
@@ -1074,6 +1151,14 @@ private def recursive_projection_converter
         RecToken.new
       end
 
+      def self.fixed_callback(flag : Bool, &block : Bool -> RecToken) : RecToken
+        block.call(flag)
+      end
+
+      def self.open_callback(flag : Bool, &block : Bool ->) : RecToken
+        RecToken.new
+      end
+
       def self.consumer
         value
       end
@@ -1113,6 +1198,8 @@ private def recursive_projection_converter
     RecClass.new.consumer_for(false)
     RecFactory.value_for(false)
     RecFactory.value_with_default(false)
+    RecFactory.fixed_callback(false) { |flag| RecToken.new }
+    RecFactory.open_callback(false) { |flag| RecToken.new }
     RecFactory.recursive_value(true)
     RecFactory.recursive_reference(true)
     RecFactory.recursive_tagged(true)
@@ -1302,6 +1389,19 @@ describe "source result projection inside a recursive specialization" do
     class_object.should be_false
     unknown_kind.should be_false
     callback.should be_false
+  end
+
+  it "retains exact fixed-callback evidence without projecting a block-bearing producer" do
+    converter = recursive_projection_converter
+    admitted, exact, projection_blocked = converter.__test_fixed_callback_replay
+    admitted.should be_true
+    exact.should be_true
+    projection_blocked.should be_true
+
+    [:unknown_operand, :mismatched_fact, :no_block, :named_arguments,
+     :incompatible_input, :open_callback, :stale_definition, :stale_arena].each do |change|
+      converter.__test_fixed_callback_replay(change).should eq({false, false, false})
+    end
   end
 
   it "keeps the richer equivalent instance recipe and rejects missing or crossed evidence" do

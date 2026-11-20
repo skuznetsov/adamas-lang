@@ -1286,6 +1286,21 @@ from a later branch. The HIR projection suite checks the bound formal witness
 and its invalidation. Refresh after specialization binding or recursive result
 replay changes. Rollback is the atomic inferred-formal receipt commit.
 
+### Fixed callback continuations
+
+An ordinary call with a literal block and one concrete callback annotation
+may retain the exact callee inputs for a suspended source-result demand.
+The selected declaration and arena own the callback type. This replay owns
+the ordinary positional operands and the callee body; the caller still
+checks and emits its original block. Shared ABI symbols cannot transfer
+block bodies between calls.
+
+Check the exact declaration, positional input kinds, and concrete callback
+restrictions. An open, raw, or deferred callback needs its own replay
+contract. A block-bearing call does not supply an independent recursive
+return witness. Refresh after callback selection, source registration or
+retry dispatch changes.
+
 ### Implicit callback tuple unpack
 
 A selected callback input may bind a source formal to one Tuple. Recover its
