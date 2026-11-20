@@ -35,6 +35,18 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-19 — Scope ordinary source replay to the selected method body
+- [x] Blockless instance replay compares its own type environment. Preserve
+  declared generic bindings and discard the enclosing callback's two
+  internal entries only when the selected source does not use that callback.
+- [x] The focused HIR suite passes 34 examples. Crystal 1.22.3 and the
+  candidate agree on two separate callback bodies sharing an ABI and reject
+  a wrong callback result and a wrong later method result.
+- [ ] Fresh S1-to-S2 on installed 1.22.3 (226s) and bundled 1.18.2 (236s)
+  both open the checked macro evaluator result edge. Both stop later on
+  the fixed-callback `apply_macro_index_assignment` body retry during
+  `CLI#run_check`. Neither produces S2.
+
 ### 2026-11-19 — Bind unannotated captured literals before exact result demand
 - [x] For a selected ordinary bare call with an unannotated captured block
   parameter, bind the literal's zero inputs and Nil result before probing the

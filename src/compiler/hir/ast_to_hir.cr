@@ -117918,6 +117918,22 @@ module Adamas::HIR
       end
     end
 
+    # An ordinary instance body has its own declaration and call bindings.
+    # Inline-yield hints describe the enclosing callback and cannot be inputs
+    # to an exact blockless callee, even when it is first demanded from a block.
+    private def force_lower_replay_entry_type_params(
+      name : String, source : ForceLowerExactSourceBinding, callsite : CallsiteArgs,
+      entries : Hash(String, String) = @type_param_map,
+    ) : Hash(String, String)
+      return entries unless entries.has_key?("__block_return__") || entries.has_key?("__yield_call_abi__")
+      return entries if callsite.has_block || source.inherited_nilary_member_alias ||
+                        !parse_method_name(name).is_instance ||
+                        raw_callback_abi_for(name) || raw_callback_source_binding_for(name) ||
+                        def_accepts_block_param?(source.source_def) ||
+                        def_contains_yield?(source.source_def, source.source_arena)
+      entries.reject("__block_return__", "__yield_call_abi__")
+    end
+
     # Nested lowering can consume a pending callsite before its owner retries.
     # Restore it only when every live observation identifies the same ordinary
     # specialization in this entry namespace and generic environment.
@@ -117930,7 +117946,8 @@ module Adamas::HIR
                       active_force_lower_source_current?(name, replay) && force_lower_replay_callsite_current?(name, replay) &&
                       !replay.callsite.has_block &&
                       (!replay.callsite.has_named_args || recursive_struct_result_replay_arguments?(name, replay)) &&
-                      replay.entry_type_param_map == @type_param_map && replay.entry_namespace_override == @current_namespace_override
+                      replay.entry_type_param_map == force_lower_replay_entry_type_params(name, source, replay.callsite) &&
+                      replay.entry_namespace_override == @current_namespace_override
         if prior = retained
           retained = reconcile_recursive_producer_replays(prior, replay) || return
         else
@@ -118142,7 +118159,7 @@ module Adamas::HIR
         replay_source = replay.exact_source_binding ||
                         ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name)
         same_force_lower_exact_source_binding?(source, replay_source) &&
-          replay.entry_type_param_map == @type_param_map &&
+          replay.entry_type_param_map == force_lower_replay_entry_type_params(name, source, replay.callsite) &&
           replay.entry_namespace_override == @current_namespace_override &&
           (replay.callsite.has_named_args ? recursive_struct_result_replay_arguments?(name, replay) :
              named_call && ordinary_active_body_callsite?(replay.callsite)) &&
@@ -118478,7 +118495,8 @@ module Adamas::HIR
       if prior
         capture.binding = ForceLowerReplayCallsite.new(
           source_def, source_arena, copy_force_lower_callsite(prior.callsite),
-          prior.entry_type_param_map.dup, prior.entry_namespace_override, registry_name,
+          force_lower_replay_entry_type_params(capture.name, source, prior.callsite, prior.entry_type_param_map).dup,
+          prior.entry_namespace_override, registry_name,
           copy_initializer_callback_abi(raw_callback_abi_for(capture.name)),
           copy_initializer_callback_source(raw_callback_source_binding_for(capture.name)),
           prior.exact_source_binding.try do |exact|
@@ -118826,7 +118844,8 @@ module Adamas::HIR
                  end
       return unless evidence
       {name, ForceLowerReplayCallsite.new(definition, arena, copy_force_lower_callsite(evidence),
-        @type_param_map.dup, @current_namespace_override, source.source_registry_name, exact_source_binding: source)}
+        force_lower_replay_entry_type_params(name, source, evidence).dup,
+        @current_namespace_override, source.source_registry_name, exact_source_binding: source)}
     end
 
     private def retain_force_lower_provisional_call(
@@ -121933,7 +121952,7 @@ module Adamas::HIR
             resolved_func_def,
             arena,
             copy_force_lower_callsite(callsite_args),
-            @type_param_map.dup,
+            force_lower_replay_entry_type_params(name, capture_source, callsite_args).dup,
             @current_namespace_override,
             selected_replay_registry_name,
             copy_initializer_callback_abi(raw_callback_abi_for(name)),

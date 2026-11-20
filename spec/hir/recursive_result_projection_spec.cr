@@ -620,6 +620,25 @@ class Adamas::HIR::AstToHir
     @force_lower_retry_work.clear
   end
 
+  def __test_source_replay_callback_scope : Nil
+    name = __test_projection_method_name("value_for", "RecClass")
+    source = __test_projection_source(name)
+    ordinary = __test_ordinary_projection_callsite
+    entries = {
+      "T" => "RecToken",
+      "__block_return__" => "String",
+      "__yield_call_abi__" => "Proc(String)",
+    }
+    force_lower_replay_entry_type_params(name, source, ordinary, entries).should eq({"T" => "RecToken"})
+    entries.size.should eq(3)
+
+    callback = CallsiteArgs.new([TypeRef::BOOL], [false], nil, has_block: true)
+    force_lower_replay_entry_type_params(name, source, callback, entries).should eq(entries)
+    static_name = __test_projection_method_name("value_for")
+    static_source = __test_projection_source(static_name)
+    force_lower_replay_entry_type_params(static_name, static_source, ordinary, entries).should eq(entries)
+  end
+
   def __test_ordinary_recovery_callsite_kinds : Tuple(Bool, Bool, Bool, Bool)
     name = __test_projection_method_name("value_for")
     source = __test_projection_source(name)
@@ -1381,6 +1400,10 @@ describe "source result projection inside a recursive specialization" do
     [:registered_definition, :registered_arena, :entry_namespace, :entry_type_param_map].each do |change|
       converter.__test_ordinary_queued_owner_recovery?(change).should be_true
     end
+  end
+
+  it "keeps real generic bindings and leaves callback and static replay contexts intact" do
+    recursive_projection_converter.__test_source_replay_callback_scope
   end
 
   it "admits a nonempty instance recipe but rejects a class object, unknown kind, or callback" do

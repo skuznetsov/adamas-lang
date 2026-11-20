@@ -1301,6 +1301,15 @@ contract. A block-bearing call does not supply an independent recursive
 return witness. Refresh after callback selection, source registration or
 retry dispatch changes.
 
+### Callback hints in blockless replay
+
+Exact replay of an ordinary blockless instance call retains its declaration,
+arena, namespace, and generic substitutions. The enclosing block's return
+hint and yield ABI belong to that block. They do not enter this call's replay
+identity. Retain those hints for block-bearing, raw callback, yielding, and
+non-instance calls. Use the same entry environment for capture, refresh, and
+reconciliation, so replay cannot borrow bindings from a different call.
+
 ### Implicit callback tuple unpack
 
 A selected callback input may bind a source formal to one Tuple. Recover its
