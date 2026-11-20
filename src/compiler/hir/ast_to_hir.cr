@@ -4046,8 +4046,10 @@ module Adamas::HIR
     # redispatch through `self`. Preserve the concrete runtime reference owner
     # only for that structural wrapper shape; ordinary inherited Object bodies
     # keep their existing ancestor-owned lowering. A body inherited from any
-    # other reference ancestor keeps the receiver owner exactly when one of
-    # its self dispatches resolves differently for that receiver.
+    # other class ancestor keeps the receiver owner exactly when it, or a
+    # shared body it self-calls, expands `@type`, or, for a reference
+    # receiver, when one of its self dispatches resolves differently for that
+    # receiver.
     private def preserve_requested_runtime_reference_wrapper_owner?(
       requested_name : String,
       resolved_name : String,
@@ -4104,8 +4106,17 @@ module Adamas::HIR
     ) : Bool
       return false if source_owner.empty?
       receiver_info = @class_info[receiver_owner]?
-      return false unless receiver_info && !receiver_info.is_struct
-      return false unless class_inherits_from?(receiver_owner, "Reference")
+      return false unless receiver_info
+      # A value receiver specializes only a body that expands `@type` (an
+      # abstract struct parent's `{{@type}}::K`); its redeclared self calls
+      # keep the shared body. Primitive receivers bind their Int/Float
+      # template source separately.
+      dispatch_differs = !receiver_info.is_struct
+      if dispatch_differs
+        return false unless class_inherits_from?(receiver_owner, "Reference")
+      else
+        return false if primitive_template_owner(receiver_owner)
+      end
       source_base = strip_generic_args(source_owner)
       return false if strip_generic_args(receiver_owner) == source_base
       # Only a class ancestor of the receiver qualifies. Module and unrelated
@@ -4120,16 +4131,21 @@ module Adamas::HIR
       return cached unless cached.nil?
       # A query re-entered while the walk runs sees the shared-body answer.
       @inherited_self_dispatch_differs[cache_key] = false
-      result = inherited_self_dispatch_walk_differs?(receiver_owner, stop_owner, resolved_name, resolved_def)
+      result = inherited_self_dispatch_walk_differs?(receiver_owner, stop_owner, resolved_name, resolved_def, dispatch_differs)
       @inherited_self_dispatch_differs[cache_key] = result
       result
     end
 
+    # A body that expands `@type` differs for every receiver below its
+    # declaring owner, and so does a shared body that self-calls one. With
+    # `dispatch_differs`, a self call the receiver redeclares below the
+    # declaring owner differs as well.
     private def inherited_self_dispatch_walk_differs?(
       receiver_owner : String,
       stop_owner : String,
       resolved_name : String,
       resolved_def : Adamas::Compiler::Frontend::DefNode,
+      dispatch_differs : Bool,
     ) : Bool
       receiver_base = strip_generic_args(receiver_owner)
       visited = Set(String).new
@@ -4146,6 +4162,7 @@ module Adamas::HIR
         arena = @function_def_arenas[name]? ||
                 @function_def_arenas[strip_type_suffix(name)]? ||
                 resolve_arena_for_def(def_node, @arena)
+        return true if def_macro_references_type_ivar?(def_node, arena)
         locals.clear
         calls.clear
         if params = def_node.params
@@ -4160,7 +4177,8 @@ module Adamas::HIR
 
         calls.each do |call|
           method_name, arity = call
-          if receiver_family_declares_method_below?(receiver_owner, receiver_base, method_name, arity, stop_owner)
+          if dispatch_differs &&
+             receiver_family_declares_method_below?(receiver_owner, receiver_base, method_name, arity, stop_owner)
             return true
           end
           next unless shared_base = resolve_method_with_inheritance(stop_owner, method_name)
@@ -32130,7 +32148,7 @@ module Adamas::HIR
                def_body_returns_self?(self_def)
               return obj_type
             end
-            ret_type = get_function_return_type(base_name, 0)
+            ret_type = get_function_return_type(selected_inherited_receiver_member_access_target(base_name, obj_type), 0)
             if ret_type != TypeRef::VOID
               return ret_type
             end
@@ -32493,7 +32511,7 @@ module Adamas::HIR
                         return ret if is_union_or_nilable_type?(ret)
                         return create_union_type_for_nullable(ret)
                       end
-                      if ret = get_function_return_type(base_name)
+                      if ret = get_function_return_type(selected_inherited_receiver_member_access_target(base_name, non_nil_type))
                         return ret if is_union_or_nilable_type?(ret)
                         return create_union_type_for_nullable(ret) if ret != TypeRef::VOID && ret != TypeRef::NIL
                       end
@@ -149403,8 +149421,31 @@ module Adamas::HIR
       physical_name
     end
 
+    # An inherited body that runs per receiver (see
+    # preserve_requested_runtime_reference_wrapper_owner?) is demanded under
+    # the receiver owner. Demanding the ancestor key lowers the body with the
+    # ancestor as self: `{{@type}}::K` in an abstract `Nb` reads `Nb::K`,
+    # where Crystal only instantiates it for the receiver.
+    private def selected_inherited_receiver_member_access_target(name : String, receiver_type : TypeRef) : String
+      parts = parse_method_name(name)
+      return name unless parts.is_instance
+      method = parts.method
+      return name unless method
+      receiver_owner = normalize_method_owner_name(get_type_name_from_ref(receiver_type))
+      return name if receiver_owner.empty? || receiver_owner == parts.owner
+      source = lookup_function_def_for_call(name, 0, false, [] of TypeRef)
+      return name unless source
+      receiver_name = "#{receiver_owner}##{method}"
+      return name unless preserve_requested_runtime_reference_wrapper_owner?(receiver_name, source[0], source[1])
+      if suffix = parts.suffix
+        receiver_name = "#{receiver_name}$#{suffix}"
+      end
+      receiver_name
+    end
+
     private def selected_member_access_return_type(name : String, receiver_type : TypeRef) : TypeRef
       target_name = selected_primitive_member_access_target(name, receiver_type)
+      target_name = selected_inherited_receiver_member_access_target(target_name, receiver_type)
       selected = lookup_function_def_for_call(target_name, 0, false, [] of TypeRef)
       if selected
         get_function_return_type(target_name, 0, selected[1])
