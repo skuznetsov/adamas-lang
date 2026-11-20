@@ -1202,6 +1202,16 @@ chain, result requirements and bypass flags. Do not merge body-only and result
 demands, stale receipts, or different callback contexts. Revalidate source
 currentness both before coalescing and while draining.
 
+A completed provisional body can own the inverse edge even when it has no
+suspended continuation. Retain the emitted direct call with its exact source
+replay, physical function and block, and operand witnesses in that body's retry
+request. At a stalled cycle, require a current reachable call and replay that
+agree with the current Def, arena, ABI, and argument kinds. Wait for any other
+unsettled dependencies on that body. Rebuilding the exact consumer carries the
+same result and emission obligations as a suspended call. The parsed-source
+projection specs exercise rebuilding and reject missing or stale call, source,
+and cycle evidence.
+
 Gate: initializer_body_demand_replay_repro.sh runs parsed-source graph controls
 alongside initializer replay. It checks nested chains, shared producers, actual
 cycles, changed Def/Arena receipts, callback identity and retained demand rights.

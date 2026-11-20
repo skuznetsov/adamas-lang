@@ -28380,7 +28380,25 @@ changes. No stdlib edits.
   1.18.2 (233.61s) uses that method's proved result and advances the
   consuming call. Both still exit 1 with `CLI#run_check` pending and
   emit no S2.
-- [ ] Close the remaining macro evaluation retry cycle. The installed queue
-  contains a completed provisional index-evaluator body waiting on the
-  value evaluator. Examine how the driver's name dependencies relate to the
-  exact inverse call and its replay before opening a recursive result.
+- [x] Retain the completed index evaluator's exact inverse call in
+  provisional retry work. That call and its checked arguments now let the
+  installed bootstrap resume the index evaluator against the value evaluator.
+
+## Exact call evidence in completed provisional retry work (2026-11-19)
+
+- [x] Carry replay evidence from the emitted direct call through a completed
+  provisional body into its retry request. Recheck the current physical
+  function, block, call, ABI, argument kinds, and dependency graph before
+  projecting that edge. Rebuilding the caller still requires checked emissions
+  and a final source result receipt.
+- The source-backed projection suite passes all 31 examples, including
+  rebuilding, stale Def/Arena and call identities, changed arguments,
+  missing observations, and absent inverse dependency or retry work.
+- Fresh S1 → S2 used source seal
+  `9eba60d72dc14eacd0cb7be90547309ff415e30decc22e9ba16c8f041c89ba16`.
+  Installed 1.22.3 (223.87s) opens the exact completed-body edge, discharges
+  it, and resumes `evaluate_index_to_macro_value`. Bundled 1.18.2 (232.06s)
+  resumes that evaluator through the existing suspended edge. Both exit 1
+  with `CLI#run_check` still pending and emit no S2.
+- [ ] Resolve the remaining dependency between the value and text evaluators
+  for macro member access. Preserve the exact replay and final return checks.

@@ -3,7 +3,123 @@ require "../../src/compiler/hir/ast_to_hir"
 require "../../src/compiler/frontend/parser"
 require "../../src/compiler/frontend/lexer"
 
+class Adamas::HIR::LoweringContext
+  def __test_register_existing_hir_body : Nil
+    @function.params.each { |parameter| register_type(parameter.id, parameter.type) }
+    @function.blocks.each do |block|
+      block.instructions.each do |instruction|
+        @value_types[instruction.id] = instruction.type
+        @values[instruction.id] = instruction
+        @value_blocks[instruction.id] = block.id
+      end
+    end
+  end
+end
+
 class Adamas::HIR::AstToHir
+  def __test_completed_provisional_projection(change : Symbol = :current, *, rebuild : Bool = false) : Bool
+    previous_capture = @force_lower_current_replay_capture
+    consumer = __test_projection_method_name("consumer_for")
+    producer = __test_projection_method_name("value_for")
+    consumer_source = __test_projection_source(consumer)
+    producer_source = __test_projection_source(producer)
+    consumer_callsite = __test_projection_bool_callsite(consumer, false)
+    producer_callsite = __test_ordinary_projection_callsite
+    consumer_replay = __test_projection_replay(consumer, consumer_callsite)
+    function = @module.function_by_name(consumer) || return false
+    block = function.blocks.find do |candidate|
+      candidate.instructions.any? do |instruction|
+        instruction.is_a?(Call) && instruction.method_name == producer
+      end
+    end || return false
+    call = block.instructions.compact_map(&.as?(Call)).find { |candidate| candidate.method_name == producer } || return false
+    ctx = LoweringContext.new(function, @module, consumer_source.source_arena)
+    ctx.__test_register_existing_hir_body
+    ctx.source_result_replay_consumer = consumer
+
+    @force_lower_retry_work.clear
+    @force_lower_provisional_dependencies[consumer] = Set{producer}
+    @force_lower_provisional_dependencies[producer] = Set{consumer}
+    @force_lower_replay_source_bindings[consumer] = consumer_source
+    @force_lower_replay_source_bindings[producer] = producer_source
+    @pending_arg_types[consumer] = consumer_callsite
+
+    capture = ForceLowerReplayCapture.new(consumer, nil)
+    capture.binding = consumer_replay
+    @force_lower_current_replay_capture = capture
+    observed = observed_force_lower_source_call(ctx, producer, producer_callsite,
+      producer_source.source_def, producer_source.source_arena, producer_source.source_registry_name) || return false
+    if change != :missing_observation
+      retain_force_lower_provisional_call(ctx, call, observed)
+      capture.provisional_calls.try(&.size).should eq(1)
+    end
+    @force_lower_current_replay_capture = previous_capture
+
+    producer_replay = observed[1]
+    provisional_calls = if change == :missing_observation
+                          nil.as(Array(ForceLowerProvisionalCall)?)
+                        else
+                          capture.provisional_calls
+                        end
+    consumer_request = ForceLowerRetryRequest.new(consumer, [producer], false,
+      consumer_replay, consumer_source, true, provisional_calls: provisional_calls)
+    producer_request = ForceLowerRetryRequest.new(producer, [consumer], false,
+      producer_replay, producer_source, true)
+    @force_lower_retry_work << consumer_request
+    @force_lower_retry_work << producer_request
+
+    original_def = @function_defs[producer]
+    original_arena = @function_def_arenas[producer]
+    case change
+    when :mutated_arguments
+      call.configure_without_receiver(producer, [] of ValueId)
+    when :replaced_call
+      replacement = Call.new(call.id, call.type, "")
+      replacement.configure_without_receiver(producer, call.args.dup)
+      index = block.instructions.index! { |instruction| instruction.same?(call) }
+      block.replace(index, replacement)
+    when :removed_inverse
+      @force_lower_provisional_dependencies[producer] = Set{"RecFactory.inferred"}
+    when :removed_inverse_request
+      @force_lower_retry_work.delete_at(1)
+    when :stale_definition
+      sibling = __test_projection_method_name("sibling_value")
+      @function_defs[producer] = @function_defs[sibling]
+    when :stale_arena
+      @function_def_arenas[producer] = Adamas::Compiler::Frontend::AstArena.new
+    end
+
+    index = open_recursive_struct_result
+    if change == :current
+      index.should eq(0)
+      use = @deferred_struct_result_uses[{consumer, producer}].not_nil!
+      recursive_struct_result_available?(use.request).should be_true
+      return true unless rebuild
+
+      retry_request = @force_lower_retry_work.delete_at(index.not_nil!).as(ForceLowerRetryRequest)
+      rebuilt_request = with_force_lower_exact_source(consumer, consumer_source) do
+        retry_force_lower_depth_request(retry_request)
+      end
+      rebuilt_request.should be_true
+      rebuilt = @module.function_by_name(consumer) || return false
+      rebuilt.same?(function).should be_false
+      settled_force_lower_result?(consumer).should be_true
+      rebuilt.source_return_result_receipt.should_not be_nil
+      rebuilt.blocks.flat_map(&.instructions).compact_map(&.as?(Call))
+        .count { |emitted| emitted.method_name == producer && emitted.type == use.expected }.should eq(1)
+      use.emission_obligations_complete?.should be_true
+      true
+    else
+      index.should be_nil
+      @deferred_struct_result_uses.has_key?({consumer, producer}).should be_false
+      false
+    end
+  ensure
+    @force_lower_current_replay_capture = previous_capture
+    @function_defs[producer] = original_def if producer && original_def && change == :stale_definition
+    @function_def_arenas[producer] = original_arena if producer && original_arena && change == :stale_arena
+  end
+
   def __test_queue_projection(*, close_cycle : Bool = true, need_result : Bool = true, change_source : Bool = false)
     consumer = "RecFactory.consumer"
     producer = "RecFactory.value"
@@ -584,7 +700,7 @@ class Adamas::HIR::AstToHir
     ctx.terminate(returned)
     body = ForceLowerActiveBody.new(partial, source.source_def, source.source_arena,
       [] of TypeRef, [] of String, type)
-    anchor = PartialRecursiveReturn.new(replay, ctx, body, PartialStructReturnValue.new(block, returned, read))
+    anchor = PartialRecursiveReturn.new(replay, ctx, body, PartialExactInstanceReturn.new(block, returned, read))
     pending = nested ? __test_nested_projection_pending(change) : ExactResultPending.new("RecFactory.consumer", name, source)
 
     case change
@@ -600,7 +716,7 @@ class Adamas::HIR::AstToHir
       ctx.register_source_value_facts(read.id, [{type, true}])
     when :changed_replay_source
       other = __test_projection_replay("RecFactory.reference")
-      anchor = PartialRecursiveReturn.new(other, ctx, body, PartialStructReturnValue.new(block, returned, read))
+      anchor = PartialRecursiveReturn.new(other, ctx, body, PartialExactInstanceReturn.new(block, returned, read))
     end
     !checked_partial_struct_result(pending, anchor).nil?
   end
@@ -630,7 +746,7 @@ class Adamas::HIR::AstToHir
     result = suspended_return_call_result(ctx, call) || return false
     body = ForceLowerActiveBody.new(partial, source.source_def, source.source_arena,
       [] of TypeRef, [] of String, type)
-    anchor = PartialRecursiveReturn.new(replay, ctx, body, PartialStructReturnValue.new(block, returned, call, result))
+    anchor = PartialRecursiveReturn.new(replay, ctx, body, PartialExactInstanceReturn.new(block, returned, call, result))
 
     case change
     when :different_operand
@@ -960,6 +1076,18 @@ describe "source result projection inside a recursive specialization" do
     recursive_projection_converter.__test_queue_projection(close_cycle: false).should be_false
     recursive_projection_converter.__test_queue_projection(need_result: false).should be_false
     recursive_projection_converter.__test_queue_projection(change_source: true).should be_false
+  end
+
+  it "projects a completed provisional body's exact inverse call without a surviving suspension" do
+    recursive_projection_converter.__test_completed_provisional_projection.should be_true
+    [:missing_observation, :mutated_arguments, :replaced_call, :removed_inverse,
+     :removed_inverse_request, :stale_definition, :stale_arena].each do |change|
+      recursive_projection_converter.__test_completed_provisional_projection(change).should be_false
+    end
+  end
+
+  it "rebuilds a completed provisional consumer and discharges its physical call" do
+    recursive_projection_converter.__test_completed_provisional_projection(:current, rebuild: true).should be_true
   end
 
   it "rebuilds a completed recursive body after its independent producer settles" do

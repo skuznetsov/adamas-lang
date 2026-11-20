@@ -2271,10 +2271,23 @@ module Adamas::HIR
       arguments : Array(ValueId),
       operands : Array(RecursiveStructResultOperandWitness)
 
+    # Retain the direct call that recorded an unfinished result dependency.
+    # The old call identifies the edge; its provisional result proves nothing.
+    private record ForceLowerProvisionalCall,
+      context : LoweringContext,
+      block : Block,
+      call : Call,
+      producer : String,
+      replay : ForceLowerReplayCallsite,
+      arguments : Array(ValueId),
+      receiver : ValueId?,
+      operands : Array(RecursiveStructResultOperandWitness)
+
     private class ForceLowerReplayCapture
       property binding : ForceLowerReplayCallsite?
       property source : ForceLowerExactSourceBinding?
       property active_body : ForceLowerActiveBody?
+      property provisional_calls : Array(ForceLowerProvisionalCall)?
       getter name : String
       getter parent : ForceLowerReplayCapture?
 
@@ -2288,7 +2301,8 @@ module Adamas::HIR
       bypass_inline_yield : Bool,
       replay_callsite : ForceLowerReplayCallsite?,
       exact_source : ForceLowerExactSourceBinding? = nil,
-      requires_result : Bool = true
+      requires_result : Bool = true,
+      provisional_calls : Array(ForceLowerProvisionalCall)? = nil
 
     private record ForceLowerSuspendedRequest,
       pending : ExactResultPending,
@@ -116018,8 +116032,9 @@ module Adamas::HIR
         end
       end
       unless refused.empty?
+        provisional_calls = replay_capture.try(&.provisional_calls) if retained_dependencies
         request = ForceLowerRetryRequest.new(name, refused, replay_bypass_inline_yield,
-          replay, exact_source, requires_result)
+          replay, exact_source, requires_result, provisional_calls)
         if retained_dependencies && @force_lower_retry_driver_active &&
            @force_lower_retry_work.size > retry_work_mark
           # The stack drains children first. Put this continuation below the
@@ -116297,7 +116312,8 @@ module Adamas::HIR
           left.bypass_inline_yield == right.bypass_inline_yield &&
           left.requires_result == right.requires_result &&
           same_optional_force_lower_exact_source_binding?(left.exact_source, right.exact_source) &&
-          same_force_lower_replay_callsite?(left.replay_callsite, right.replay_callsite)
+          same_force_lower_replay_callsite?(left.replay_callsite, right.replay_callsite) &&
+          left.provisional_calls.same?(right.provisional_calls)
       elsif left.is_a?(ForceLowerSuspendedRequest)
         return false unless right.is_a?(ForceLowerSuspendedRequest)
         left.bypass_inline_yield == right.bypass_inline_yield &&
@@ -117697,27 +117713,95 @@ module Adamas::HIR
 
     private def open_recursive_struct_result : Int32?
       @force_lower_retry_work.each_with_index do |entry, index|
-        next unless entry.is_a?(ForceLowerSuspendedRequest) && force_lower_retry_source_current?(entry)
-        pending = entry.pending
-        edge = {pending.consumer, pending.producer}
-        next if pending.consumer == pending.producer || @deferred_struct_result_uses.has_key?(edge)
-        next unless force_lower_retry_has_queued_producer?(pending.producer, true) &&
-                    cycle_work_reaches?(pending.producer, pending.consumer)
-        producer_replay = recursive_struct_result_producer_replay(pending) || next
-        type = if @force_lower_provisional_dependencies.has_key?(pending.producer)
-                 exact_final_struct_result(pending)
-               end
-        anchor = type ? nil : queued_partial_struct_result(pending, producer_replay)
-        type ||= anchor.try(&.body.return_type)
-        next unless type
-        next unless recursive_struct_result_replay_arguments?(pending.producer, producer_replay)
-        @deferred_struct_result_uses[edge] = DeferredStructResultUse.new(entry, type, producer_replay, anchor)
-        if anchor.try(&.evidence.is_a?(PartialVirtualReferenceReturn)) && env_has?("DEBUG_FORCE_LOWER_DEPTH")
-          STDERR.puts "[FORCE_LOWER_RECURSIVE_REFERENCE] consumer=#{pending.consumer} producer=#{pending.producer}"
+        if entry.is_a?(ForceLowerSuspendedRequest) && open_recursive_struct_result_use(entry)
+          return index
         end
-        return index
+      end
+      @force_lower_retry_work.each_with_index do |entry, index|
+        next unless entry.is_a?(ForceLowerRetryRequest) && entry.requires_result &&
+                    (calls = entry.provisional_calls) && force_lower_retry_source_current?(entry)
+        calls.each do |observed|
+          request = provisional_call_result_request(entry, observed) || next
+          return index if open_recursive_struct_result_use(request, observed)
+        end
       end
       nil
+    end
+
+    private def open_recursive_struct_result_use(
+      entry : ForceLowerSuspendedRequest, observed : ForceLowerProvisionalCall? = nil,
+    ) : Bool
+      return false unless force_lower_retry_source_current?(entry)
+      pending = entry.pending
+      edge = {pending.consumer, pending.producer}
+      return false if pending.consumer == pending.producer || @deferred_struct_result_uses.has_key?(edge)
+      return false unless force_lower_retry_has_queued_producer?(pending.producer, true) &&
+                          cycle_work_reaches?(pending.producer, pending.consumer)
+      producer_replay = recursive_struct_result_producer_replay(pending) || return false
+      type = if @force_lower_provisional_dependencies.has_key?(pending.producer)
+               exact_final_struct_result(pending)
+             end
+      anchor = type ? nil : queued_partial_struct_result(pending, producer_replay)
+      type ||= anchor.try(&.body.return_type)
+      return false unless type && recursive_struct_result_replay_arguments?(pending.producer, producer_replay)
+      if observed
+        producer = @module.function_by_name(pending.producer) || anchor.try(&.body.function) || return false
+        return false unless recursive_struct_result_abi_matches?(
+          observed.context, producer, observed.receiver, producer_replay.callsite.types,
+        )
+      end
+      @deferred_struct_result_uses[edge] = DeferredStructResultUse.new(entry, type, producer_replay, anchor)
+      if env_has?("DEBUG_FORCE_LOWER_DEPTH")
+        if anchor.try(&.evidence.is_a?(PartialVirtualReferenceReturn))
+          STDERR.puts "[FORCE_LOWER_RECURSIVE_REFERENCE] consumer=#{pending.consumer} producer=#{pending.producer}"
+        end
+        if observed
+          STDERR.puts "[FORCE_LOWER_RECURSIVE_PROVISIONAL_CALL] consumer=#{pending.consumer} producer=#{pending.producer}"
+        end
+      end
+      true
+    end
+
+    # A completed provisional body can be the only owner of the inverse
+    # edge. Reopen that exact call through the same checked result and fresh
+    # emission obligations as an exact suspension.
+    private def provisional_call_result_request(
+      request : ForceLowerRetryRequest, observed : ForceLowerProvisionalCall,
+    ) : ForceLowerSuspendedRequest?
+      name = request.name
+      producer = observed.producer
+      source = observed.replay.exact_source_binding || return
+      replay = request.replay_callsite || return
+      dependencies = @force_lower_provisional_dependencies[name]? || return
+      return unless producer != name && dependencies.includes?(producer) && request.refused.includes?(producer) &&
+                    !settled_force_lower_result?(producer) && function_state(name).completed?
+      return unless dependencies.all? do |callee|
+        if callee == name
+          checked_recursive_self_result?(request)
+        else
+          callee == producer || settled_force_lower_result?(callee) || recursive_struct_result_for_body_retry?(request, callee)
+        end
+      end
+
+      ctx = observed.context
+      function = ctx.function
+      call = observed.call
+      return unless function.name == name && @module.function_by_name(name).try(&.same?(function)) == true &&
+                    reachable_blocks(function).any? { |block| block.same?(observed.block) } &&
+                    observed.block.instructions.count { |instruction| instruction.same?(call) } == 1 &&
+                    ctx.value_for(call.id).try(&.same?(call)) == true
+      return unless call.method_name == producer && !call.virtual && !call.has_block? &&
+                    call.args == observed.arguments && call.has_receiver? == !observed.receiver.nil? &&
+                    (!observed.receiver || call.receiver_value == observed.receiver) &&
+                    recursive_struct_result_operand_witnesses_current?(ctx, function, observed.operands)
+      return unless provisional_source_call_arguments_match?(ctx, call, observed.replay.callsite)
+      return unless request.provisional_calls.not_nil!.all? do |other|
+        other.producer != producer || reconcile_recursive_producer_replays(other.replay, observed.replay)
+      end
+
+      pending = ExactResultPending.new(name, producer, source, observed.replay)
+      pending.consumer_bypass_inline_yield = request.bypass_inline_yield
+      ForceLowerSuspendedRequest.new(pending, replay, request.bypass_inline_yield)
     end
 
     private def each_queued_force_lower_replay(name : String, & : ForceLowerReplayCallsite ->) : Nil
@@ -118615,6 +118699,32 @@ module Adamas::HIR
       return unless evidence
       {name, ForceLowerReplayCallsite.new(definition, arena, copy_force_lower_callsite(evidence),
         @type_param_map.dup, @current_namespace_override, source.source_registry_name, exact_source_binding: source)}
+    end
+
+    private def retain_force_lower_provisional_call(
+      ctx : LoweringContext, call : Call, observed : {String, ForceLowerReplayCallsite}?,
+    ) : Nil
+      return unless observed && (capture = @force_lower_current_replay_capture) && capture.binding
+      name = ctx.function.name
+      producer, replay = observed
+      return unless capture.name == name && (ctx.source_result_replay_consumer || name) == name &&
+                    @force_lower_provisional_dependencies[name]?.try(&.includes?(producer)) == true &&
+                    call.method_name == producer && !call.virtual && !call.has_block? &&
+                    provisional_source_call_arguments_match?(ctx, call, replay.callsite)
+      receiver = call.receiver_value if call.has_receiver?
+      operands = receiver ? [receiver] + call.args : call.args
+      witnesses = recursive_struct_result_operand_witnesses(ctx.function, operands) || return
+      block = ctx.function.get_block(ctx.current_block_id)
+      calls = capture.provisional_calls ||= [] of ForceLowerProvisionalCall
+      calls << ForceLowerProvisionalCall.new(ctx, block, call, producer, replay, call.args.dup, receiver, witnesses)
+    end
+
+    private def provisional_source_call_arguments_match?(
+      ctx : LoweringContext, call : Call, callsite : CallsiteArgs,
+    ) : Bool
+      types = call.args.map { |argument| ctx.type_of(argument) }
+      facts = call_resolution_source_argument_facts(ctx, call.args, types)
+      recursive_struct_result_argument_facts_match?(callsite, types, facts)
     end
 
     private def suspend_depth_refused_source_result(
@@ -135069,6 +135179,7 @@ module Adamas::HIR
       end
       record_recursive_struct_result_emission!(ctx, mangled_method_name, cycle_result_ticket,
         call, arg_types, receiver_id)
+      retain_force_lower_provisional_call(ctx, call, source_call_observation)
       if source_return_flow_trace_match?(lookup_name, base_method_name, mangled_method_name, emit_method_name)
         location = source_location_for_node(call_arena, node).try(&.to_s) || "unknown"
         arg_text = arg_types.map { |type| get_type_name_from_ref(type) }.join(",")
@@ -154747,6 +154858,7 @@ module Adamas::HIR
         register_materialized_source_return_value_facts(ctx, call.id, actual_name)
       end
       record_recursive_struct_result_emission!(ctx, actual_name, member_result_ticket, call, arg_types, object_id)
+      retain_force_lower_provisional_call(ctx, call, member_call_observation)
       # As in lower_call: an exact bottom target ends the block, so an
       # enclosing call does not resolve against the NoReturn value.
       unless call_virtual
