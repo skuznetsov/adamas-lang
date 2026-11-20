@@ -839,6 +839,74 @@ class Adamas::HIR::AstToHir
     recursive_nullable_struct_return_tags_current?(function, contract)
   end
 
+  def __test_inferred_formal_partial_projection(change : Symbol = :current) : Tuple(Bool, Bool, Bool)
+    name = __test_projection_method_name(
+      change == :missing_restriction ? "inferred_formal_unrestricted" : "inferred_formal_value",
+    )
+    source = __test_projection_source(name)
+    original = @module.function_by_name(name).not_nil!
+    remove_hir_function(name).should be_true
+    function = @module.create_function(name, original.return_type)
+    function.add_param("flag", TypeRef::BOOL)
+
+    callsite = case change
+               when :unknown_kind
+                 CallsiteArgs.new([TypeRef::BOOL], nil, nil)
+               when :class_object
+                 fact = SourceCallArgument.new(TypeRef::BOOL, true)
+                 CallsiteArgs.new([TypeRef::BOOL], [true], nil,
+                   source_argument_facts: [fact.as(SourceCallArgument?)])
+               else
+                 __test_ordinary_projection_callsite
+               end
+    callsite.types.should eq([TypeRef::BOOL])
+    replay = __test_projection_replay(name, callsite)
+    capture = ForceLowerReplayCapture.new(name, nil)
+    capture.binding = replay
+    @force_lower_active_replay_captures[name] = capture
+    @force_lower_replay_source_bindings[name] = source
+    set_function_state(name, FunctionLoweringState::InProgress)
+
+    ctx = LoweringContext.new(function, @module, source.source_arena)
+    if change != :missing_restriction
+      ctx.source_declared_return_contract = recursive_declared_result_contract(name, source, "RecToken")
+    else
+      ctx.source_declared_return_contract.should be_nil
+    end
+    parameter = function.params.first
+    parameter_type = change == :different_actual ? TypeRef::INT32 : TypeRef::BOOL
+    ctx.register_type(parameter.id, parameter_type)
+    ctx.register_source_value_facts(parameter.id, [{parameter_type, false}])
+    if change == :current
+      inferred_force_lower_formals_current?(ctx, callsite).should be_true
+    elsif change == :different_actual
+      inferred_force_lower_formals_current?(ctx, callsite).should be_false
+    elsif change == :unknown_kind || change == :class_object
+      ordinary_active_body_callsite?(callsite).should be_false
+    end
+    retain_active_force_lower_body(function, source.source_def, source.source_arena, ctx)
+    retained = !capture.active_body.nil?
+    coalesces = active_force_lower_body_owns_callsite?(name, callsite)
+
+    type = function.return_type
+    read = ClassVarGet.new(ctx.next_id, type, "RecFactory", "INFERRED_BASE")
+    ctx.emit(read)
+    facts = [{type, false}]
+    ctx.register_source_value_facts(read.id, facts)
+    @constant_types["RecFactory::INFERRED_BASE"] = type
+    @constant_source_value_facts["RecFactory::INFERRED_BASE"] = facts
+    ctx.terminate(Return.new(read.id))
+    if change == :stale_param_kind
+      ctx.mark_type_literal(parameter.id)
+      inferred_force_lower_formals_current?(ctx, callsite).should be_false
+    end
+
+    anchor = suspended_struct_return(ctx)
+    pending = ExactResultPending.new("RecFactory.consumer", name, source)
+    projected = anchor ? !checked_partial_struct_result(pending, anchor).nil? : false
+    {retained, projected, coalesces}
+  end
+
   def __test_suspended_return_with_default?(change : Symbol) : Bool
     name = __test_projection_method_name("value_with_default")
     source = __test_projection_source(name)
@@ -1025,6 +1093,14 @@ private def recursive_projection_converter
       def self.inferred
         RecToken.new
       end
+
+      def self.inferred_formal_value(flag) : RecToken
+        RecToken.new
+      end
+
+      def self.inferred_formal_unrestricted(flag)
+        RecToken.new
+      end
     end
 
     RecFactory.value
@@ -1032,6 +1108,8 @@ private def recursive_projection_converter
     RecFactory.reference
     RecFactory.object_type
     RecFactory.inferred
+    RecFactory.inferred_formal_value(false)
+    RecFactory.inferred_formal_unrestricted(false)
     RecClass.new.consumer_for(false)
     RecFactory.value_for(false)
     RecFactory.value_with_default(false)
@@ -1088,6 +1166,25 @@ describe "source result projection inside a recursive specialization" do
 
   it "rebuilds a completed provisional consumer and discharges its physical call" do
     recursive_projection_converter.__test_completed_provisional_projection(:current, rebuild: true).should be_true
+  end
+
+  it "retains an inferred formal partial result only for its bound instance ABI" do
+    retained, projected, coalesces = recursive_projection_converter.__test_inferred_formal_partial_projection
+    retained.should be_true
+    projected.should be_true
+    coalesces.should be_false
+
+    [:unknown_kind, :class_object, :different_actual, :stale_param_kind, :missing_restriction].each do |change|
+      converter = recursive_projection_converter
+      retained, projected, coalesces = converter.__test_inferred_formal_partial_projection(change)
+      if change == :stale_param_kind
+        retained.should be_true
+      else
+        retained.should be_false
+      end
+      projected.should be_false
+      coalesces.should be_false
+    end
   end
 
   it "rebuilds a completed recursive body after its independent producer settles" do

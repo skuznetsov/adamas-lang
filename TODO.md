@@ -28418,3 +28418,22 @@ changes. No stdlib edits.
   the same unresolved `CLI#run_check` demand. Neither emits S2.
   The isolated literal join repair does not settle the macro member
   evaluator cycle in the full bootstrap.
+
+## Active recursive bodies with inferred formals (2026-11-19)
+
+- [x] Preserve the active body of an exact, source-annotated result even when
+  a regular input formal has no restriction. Require the bound function
+  parameters to agree with the checked instance actuals. This evidence is
+  scoped to reached return projection and grants no callsite coalescing.
+- Removing only the argument annotation makes the parent fail with a pending
+  source result. Crystal 1.22.3 and candidate lazy/eager builds agree on
+  the native fixture and reject an invalid final result. The related 32 HIR
+  examples include unknown or class-object kinds, conflicting or stale
+  HIR parameters, and a missing declared result.
+- Fresh S1 → S2 used source seal
+  `e0165025d1a55d390c6cc30d212ee41924444bdbd7eb91b466629123d9376784`.
+  Installed 1.22.3 (225.92s) and bundled 1.18.2 (237.12s) both settle the
+  macro member evaluator edge. Installed stops on the exact block-bearing
+  call from `assign_macro_target` to `apply_macro_index_assignment`.
+  Bundled reports the outer `CLI#run_check` continuation after the driver
+  reaches the assignment paths. Neither emits S2.

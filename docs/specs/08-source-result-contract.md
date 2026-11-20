@@ -1270,6 +1270,22 @@ rejects a wrong type or kind in either the join or a later return. Refresh
 after literal or Phi lowering, source return checking or retry projection
 changes. Rollback is the atomic commit for the affected witness.
 
+### Active bodies with inferred formals
+
+An ordinary exact positional invocation may bind an unannotated formal to a
+known instance type. The active body can retain those bound formal types and
+kinds alongside the current Def and Arena. Every actual must agree with its
+physical formal. Check the retained formal facts and the independently reached
+return on replay, then require the completed result receipt and checked call
+emissions. This receipt cannot claim another invocation by its ABI or remove
+a dependency of the body.
+
+The inferred-formal variant of `recursive_literal_result_repro.sh COMPILER`
+compares Crystal with lazy and eager lowering and rejects a metaclass result
+from a later branch. The HIR projection suite checks the bound formal witness
+and its invalidation. Refresh after specialization binding or recursive result
+replay changes. Rollback is the atomic inferred-formal receipt commit.
+
 ### Implicit callback tuple unpack
 
 A selected callback input may bind a source formal to one Tuple. Recover its

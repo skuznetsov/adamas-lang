@@ -2217,7 +2217,8 @@ module Adamas::HIR
       param_types : Array(TypeRef),
       param_names : Array(String),
       return_type : TypeRef,
-      param_defaults : Array(String?)? = nil
+      param_defaults : Array(String?)? = nil,
+      inferred_formals : Bool = false
 
     # Independently typed returns reached before this exact body suspended.
     # Their source and HIR must survive replay. Only the finished body's receipt
@@ -53331,7 +53332,7 @@ module Adamas::HIR
         "params=#{func.params.size},auto_assign=#{auto_assign_params.size}"
       )
 
-      retain_active_force_lower_body(func, node, def_arena)
+      retain_active_force_lower_body(func, node, def_arena, ctx)
 
       # Emit auto-assignments for @param style parameters
       auto_assign_params.each do |(ivar_name, param_id, offset)|
@@ -113679,6 +113680,7 @@ module Adamas::HIR
       function : Function,
       source_def : Adamas::Compiler::Frontend::DefNode,
       source_arena : Adamas::Compiler::Frontend::ArenaLike,
+      ctx : LoweringContext? = nil,
     ) : Nil
       capture = @force_lower_active_replay_captures[function.name]?
       return unless capture
@@ -113686,10 +113688,23 @@ module Adamas::HIR
       return unless replay && active_force_lower_source_current?(function.name, replay)
       return unless replay.source_def.same?(source_def) && replay.source_arena.same?(source_arena)
       return if function.return_type == TypeRef::VOID
-      params = typed_recursive_body_formals(source_def, source_arena) || return
+      params = typed_recursive_body_formals(source_def, source_arena)
       callsite = replay.callsite
-      return unless ordinary_active_body_callsite?(callsite) ||
-                    checked_named_recursive_callsite?(function.name, source_def, source_arena, callsite, params)
+      inferred_formals = params.nil?
+      if params
+        return unless ordinary_active_body_callsite?(callsite) ||
+                      checked_named_recursive_callsite?(function.name, source_def, source_arena, callsite, params)
+      else
+        return unless ctx && ctx.function.same?(function) && ctx.source_declared_return_contract &&
+                      ordinary_active_body_callsite?(callsite)
+        source = replay.exact_source_binding ||
+                 ForceLowerExactSourceBinding.new(source_def, source_arena, replay.source_registry_name)
+        return unless force_lower_plain_source_formals?(function.name, source, callsite.types.size)
+        params = function_param_infos(source_def, source_arena)
+        return unless params.any? { |param| param.type_annotation.nil? } &&
+                      params.none? { |param| param.type_annotation == "_" } &&
+                      inferred_force_lower_formals_current?(ctx, callsite)
+      end
       formals = function.params
       offset = formals.first?.try(&.name) == "self" ? 1 : 0
       return unless formals.size == params.size + offset && replay.callsite.types.size == params.size
@@ -113708,11 +113723,28 @@ module Adamas::HIR
         return unless param_types.skip(offset) == callsite.types
       end
       capture.active_body = ForceLowerActiveBody.new(
-        function, source_def, source_arena, param_types, formals.map(&.name), function.return_type, param_defaults,
+        function, source_def, source_arena, param_types, formals.map(&.name), function.return_type, param_defaults, inferred_formals,
       )
     end
 
-    private def current_active_force_lower_body(name : String, *, allow_named_or_defaulted : Bool = false) : ForceLowerActiveBody?
+    # This evidence belongs to the already bound formals of one invocation.
+    # Every actual has a checked instance kind before it supplies an inferred
+    # parameter. The same physical slots must still carry those input facts.
+    private def inferred_force_lower_formals_current?(ctx : LoweringContext, callsite : CallsiteArgs) : Bool
+      formals = ctx.function.params
+      offset = formals.first?.try(&.name) == "self" ? 1 : 0
+      return false unless formals.size == callsite.types.size + offset
+      formals.skip(offset).each_with_index.all? do |param, index|
+        type = callsite.types[index]
+        facts = ctx.source_value_facts(param.id)
+        type != TypeRef::VOID && param.type == type && ctx.type_of(param.id) == type &&
+          !ctx.type_literal?(param.id) && (facts.nil? || facts == [{type, false}])
+      end
+    end
+
+    private def current_active_force_lower_body(
+      name : String, *, allow_named_or_defaulted : Bool = false, allow_inferred : Bool = false,
+    ) : ForceLowerActiveBody?
       return unless function_state(name).in_progress?
       capture = @force_lower_active_replay_captures[name]?
       return unless capture && capture.name == name
@@ -113721,6 +113753,7 @@ module Adamas::HIR
       return unless replay && active && active_force_lower_source_current?(name, replay)
       return unless replay.source_def.same?(active.source_def) && replay.source_arena.same?(active.source_arena)
       return if !allow_named_or_defaulted && (active.param_defaults || replay.callsite.has_named_args)
+      return if active.inferred_formals && !allow_inferred
       function = active.function
       return unless @module.function_by_name(name).try(&.same?(function)) == true
       active if active_force_lower_body_abi_current?(active)
@@ -116395,7 +116428,7 @@ module Adamas::HIR
       left.function.same?(right.function) && left.source_def.same?(right.source_def) &&
         left.source_arena.same?(right.source_arena) && left.param_types == right.param_types &&
         left.param_names == right.param_names && left.return_type == right.return_type &&
-        left.param_defaults == right.param_defaults
+        left.param_defaults == right.param_defaults && left.inferred_formals == right.inferred_formals
     end
 
     private def same_force_lower_replay_capture?(
@@ -117372,7 +117405,7 @@ module Adamas::HIR
     private def suspended_struct_return(ctx : LoweringContext) : PartialRecursiveReturn?
       capture = @force_lower_active_replay_captures[ctx.function.name]? || return
       replay = capture.binding || return
-      body = current_active_force_lower_body(ctx.function.name, allow_named_or_defaulted: true) || return
+      body = current_active_force_lower_body(ctx.function.name, allow_named_or_defaulted: true, allow_inferred: true) || return
       return unless body.function.same?(ctx.function)
       if @module.get_type_descriptor(body.return_type).try(&.kind.union?)
         return suspended_nullable_struct_return(ctx, replay, body)
@@ -117488,6 +117521,10 @@ module Adamas::HIR
                     active_force_lower_source_current?(name, replay) && force_lower_replay_callsite_current?(name, replay)
       return unless ctx.function.same?(body.function) && ctx.function.name == name &&
                     active_force_lower_body_abi_current?(body) && suspended_return_value_current?(anchor)
+      if body.inferred_formals
+        return unless ordinary_active_body_callsite?(replay.callsite) &&
+                      inferred_force_lower_formals_current?(ctx, replay.callsite)
+      end
       evidence = anchor.evidence
       case evidence
       when PartialNullableStructReturn
