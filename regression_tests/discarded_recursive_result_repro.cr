@@ -1,3 +1,18 @@
+macro getter(declaration)
+  @{{declaration.var}} : {{declaration.type}}
+
+  def {{declaration.var}} : {{declaration.type}}
+    @{{declaration.var}}
+  end
+end
+
+class VisitLimit
+  getter threshold : Int32
+
+  def initialize(@threshold : Int32)
+  end
+end
+
 lib Native
   fun putchar(value : Int32) : Int32
 end
@@ -18,6 +33,7 @@ class VisitChildren
 end
 
 class Collector
+  @limit = VisitLimit.new(1)
   @table = Table.new
   @children = VisitChildren.new
   @visits = 0
@@ -77,7 +93,7 @@ class Collector
 
   private def visit(value : Int32)
     @visits &+= 1
-    return if value < 1
+    return if value < @limit.threshold
     if value > 2
       visit(value &- 1)
     elsif value == 2

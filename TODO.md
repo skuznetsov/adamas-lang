@@ -1,5 +1,17 @@
 ### Recursive source result replay
 
+- [x] Follow a directly generated HIR field reader when checking the normal
+  exit of a recursive body. The field reader has no source Def or return
+  receipt. Check its direct receiver ABI and its single field load and return.
+  The getter case in `discarded_recursive_result_repro.sh` fails on the
+  parent and matches Crystal 1.22.3 in eager and lazy modes. The reachable
+  missing-method case still fails.
+- [ ] At seal
+  `8f8d197ab2c68c6556ed14a57e801f7c1109bc3f56ccad41a9e1c9f9a9fc081e`,
+  fresh S1-to-S2 crosses the discarded calls from `collect_class_body`
+  to `handle_class` and `handle_module` on installed 1.22.3 (187s)
+  and bundled 1.18.2 (197s). The inverse `handle_class` call still
+  suspends, relaying a pending result to the CLI. Neither run produces S2.
 - [x] An effect-only call lowering a recursive collector can continue from a
   checked normal return of the exact callee body. Keep the original call and
   recheck its source owner, operands, normal exit, and unused result before

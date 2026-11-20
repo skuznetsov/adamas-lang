@@ -119795,7 +119795,7 @@ module Adamas::HIR
           when ExternCall
             break if instruction.noreturn
           when Call
-            target = normal_exit_call_target(instruction) || break
+            target = normal_exit_call_target(function, instruction) || break
             unless returns.includes?(target)
               (waiting[target] ||= [] of {Function, BlockId, Int32}) << {function, block_id, index + 1}
               if visited.add?({target, target.entry_block})
@@ -119826,17 +119826,38 @@ module Adamas::HIR
       false
     end
 
-    private def normal_exit_call_target(call : Call) : Function?
+    private def normal_exit_call_target(caller : Function, call : Call) : Function?
       return if call.virtual || call.has_block? || noreturn_type?(call.type)
       name = call.method_name
-      return unless settled_force_lower_result?(name)
-      target = @module.function_by_name(name)
+      target = @module.function_by_name(name) || return
       definition = @function_defs[name]?
       arena = @function_def_arenas[name]?
-      return unless target && definition && arena && !noreturn_type?(target.return_type) &&
+      if definition.nil? && arena.nil? && checked_field_reader_body?(caller, call, target)
+        return target
+      end
+      return unless definition && arena && settled_force_lower_result?(name) && !noreturn_type?(target.return_type) &&
                     target.source_return_definition_id == definition.object_id.to_u64 &&
                     target.source_return_arena_key == arena_map_key(arena)
       target
+    end
+
+    # A field reader generated directly in HIR has no source return receipt.
+    # Check its current body and direct call ABI before following its Return.
+    private def checked_field_reader_body?(caller : Function, call : Call, target : Function) : Bool
+      return false if function_state(target.name).in_progress? || @force_lower_provisional_dependencies.has_key?(target.name)
+      return false unless call.has_receiver? && call.args.empty? && target.blocks.size == 1 &&
+                          call.type != TypeRef::VOID && call.type == target.return_type
+      params = target.params
+      return false unless params.size == 1
+      receiver = params[0]
+      return false unless receiver.name == "self" && !receiver.is_block &&
+                          hir_value_type_in_function(caller, call.receiver_value) == receiver.type
+
+      entry = target.get_block(target.entry_block)
+      field = entry.instructions.first?
+      result = entry.terminator
+      entry.instructions.size == 1 && field.is_a?(FieldGet) && field.object == receiver.id &&
+        field.type == target.return_type && result.is_a?(Return) && result.value == field.id
     end
 
     private def settle_discarded_source_calls : Nil
