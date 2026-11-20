@@ -388,8 +388,40 @@ class Adamas::HIR::AstToHir
     ctx.mark_type_literal(value.id) if literal
     facts = call_resolution_source_argument_facts(ctx, [value.id], [TypeRef::BOOL])
     result = @module.function_by_name(producer).not_nil!.return_type
-    recursive_struct_result_at_source_call?(ctx, producer, result, [TypeRef::BOOL], facts, nil,
+    !!recursive_struct_result_type_at_source_call(ctx, producer, result, [TypeRef::BOOL], facts, nil,
       source.source_def, source.source_def, source.source_arena, producer)
+  end
+
+  def __test_completed_reference_replay_type(change : Symbol = :current) : String?
+    producer = __test_projection_method_name("reference_result_for")
+    consumer = __test_projection_method_name("reference_result_consumer")
+    producer_source = __test_projection_source(producer)
+    consumer_source = __test_projection_source(consumer)
+    producer_replay = __test_projection_replay(producer, __test_projection_bool_callsite(producer, false))
+    consumer_replay = __test_projection_replay(consumer, __test_projection_bool_callsite(consumer, false))
+    pending = ExactResultPending.new(consumer, producer, producer_source, producer_replay)
+    request = ForceLowerSuspendedRequest.new(pending, consumer_replay, false)
+    result = checked_completed_recursive_result(pending) || raise "missing checked reference result"
+    result.facts.should contain({TypeRef::NIL, false})
+    @deferred_struct_result_uses[{consumer, producer}] =
+      DeferredStructResultUse.new(request, result.type, producer_replay, completed_result: result)
+    @force_lower_replay_source_bindings[consumer] = consumer_source
+
+    function = @module.function_by_name(consumer).not_nil!
+    ctx = LoweringContext.new(function, @module, consumer_source.source_arena)
+    value = Literal.new(ctx.next_id, TypeRef::BOOL, false)
+    ctx.emit(value)
+    ctx.mark_type_literal(value.id) if change == :wrong_kind
+    facts = call_resolution_source_argument_facts(ctx, [value.id], [TypeRef::BOOL])
+    hint = @module.function_by_name("RecFactory.reference").not_nil!.return_type
+    selected_source = change == :wrong_source ? __test_projection_source("RecFactory.reference") : producer_source
+    if change == :stale_receipt
+      @module.function_by_name(producer).not_nil!.source_return_result_receipt = nil
+    end
+
+    recursive_struct_result_type_at_source_call(ctx, producer, hint, [TypeRef::BOOL], facts, nil,
+      selected_source.source_def, selected_source.source_def, selected_source.source_arena,
+      selected_source.source_registry_name, pinned_result: change == :pinned).try { |type| get_type_name_from_ref(type) }
   end
 
   def __test_projection_emission_current?(
@@ -407,7 +439,7 @@ class Adamas::HIR::AstToHir
     ctx.mark_type_literal(value.id) if literal
     facts = call_resolution_source_argument_facts(ctx, [value.id], [TypeRef::BOOL])
     result = @module.function_by_name(producer).not_nil!.return_type
-    admitted = recursive_struct_result_at_source_call?(ctx, producer, result, [TypeRef::BOOL], facts, nil,
+    admitted = recursive_struct_result_type_at_source_call(ctx, producer, result, [TypeRef::BOOL], facts, nil,
       producer_source.source_def, producer_source.source_def, producer_source.source_arena, producer)
     return false unless admitted
 
@@ -597,7 +629,7 @@ class Adamas::HIR::AstToHir
     child_ctx.emit(value)
     facts = call_resolution_source_argument_facts(child_ctx, [value.id], [TypeRef::BOOL])
     result = @module.function_by_name(producer).not_nil!.return_type
-    admitted = recursive_struct_result_at_source_call?(child_ctx, producer, result, [TypeRef::BOOL], facts, nil,
+    admitted = recursive_struct_result_type_at_source_call(child_ctx, producer, result, [TypeRef::BOOL], facts, nil,
       producer_source.source_def, producer_source.source_def, producer_source.source_arena,
       producer_source.source_registry_name)
 
@@ -609,7 +641,7 @@ class Adamas::HIR::AstToHir
       return false unless admitted && remove_hir_function(child_name)
       replacement = @module.create_function(child_name, TypeRef::VOID)
       return !replacement.same?(child) && live_source_result_replay_owner(child_ctx).nil? &&
-             !recursive_struct_result_at_source_call?(child_ctx, producer, result, [TypeRef::BOOL], facts, nil,
+             !recursive_struct_result_type_at_source_call(child_ctx, producer, result, [TypeRef::BOOL], facts, nil,
                producer_source.source_def, producer_source.source_def, producer_source.source_arena,
                producer_source.source_registry_name)
     end
@@ -617,7 +649,7 @@ class Adamas::HIR::AstToHir
     return false unless admitted &&
                         live_source_result_replay_owner(child_ctx).try { |owner| owner.same?(parent_ctx.function) }
     sibling_source = __test_projection_source(__test_projection_method_name("sibling_value"))
-    foreign_source_admitted = recursive_struct_result_at_source_call?(child_ctx, producer, result,
+    foreign_source_admitted = recursive_struct_result_type_at_source_call(child_ctx, producer, result,
       [TypeRef::BOOL], facts, nil, sibling_source.source_def, producer_source.source_def,
       sibling_source.source_arena, sibling_source.source_registry_name)
     return false if foreign_source_admitted
@@ -692,7 +724,7 @@ class Adamas::HIR::AstToHir
     stale_child_name = "__crystal_block_proc_after_parent_abort"
     stale_child = @module.create_function(stale_child_name, TypeRef::VOID)
     stale_ctx = owned_source_result_proc_context(parent_ctx, stale_child, consumer_source.source_arena)
-    stale_admitted = recursive_struct_result_at_source_call?(stale_ctx, producer,
+    stale_admitted = recursive_struct_result_type_at_source_call(stale_ctx, producer,
       @module.function_by_name(producer).not_nil!.return_type, [TypeRef::BOOL], nested_facts, nil,
       producer_source.source_def, producer_source.source_def, producer_source.source_arena,
       producer_source.source_registry_name)
@@ -1604,6 +1636,15 @@ private def recursive_projection_converter
         RecClass.new
       end
 
+      def self.reference_result_for(flag : Bool)
+        return nil if flag
+        reference
+      end
+
+      def self.reference_result_consumer(flag : Bool)
+        reference_result_for(flag)
+      end
+
       def self.object_type : RecToken.class
         RecToken
       end
@@ -1626,6 +1667,7 @@ private def recursive_projection_converter
     RecFactory.fixed_retry_callback_other(1) { OtherMacroValue.new }
     RecFactory.consumer
     RecFactory.reference
+    RecFactory.reference_result_consumer(false)
     RecFactory.object_type
     RecFactory.inferred
     RecFactory.inferred_formal_value(false)
@@ -1804,6 +1846,13 @@ describe "source result projection inside a recursive specialization" do
     converter.__test_projection_input_admitted?.should be_true
     converter.__test_projection_input_admitted?(literal: true).should be_false
     converter.__test_projection_input_admitted?(sibling_source: true).should be_false
+  end
+
+  it "replays a checked nilable result despite a narrower unpinned syntax hint" do
+    recursive_projection_converter.__test_completed_reference_replay_type.should eq("Nil | RecClass")
+    [:pinned, :wrong_kind, :wrong_source, :stale_receipt].each do |change|
+      recursive_projection_converter.__test_completed_reference_replay_type(change).should be_nil
+    end
   end
 
   it "requires the same direct call object, target, and instance result at HIR emission" do

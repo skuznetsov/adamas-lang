@@ -1,5 +1,18 @@
 ### Recursive source result replay
 
+- [x] A completed recursive body can supply an exact closed reference or
+  nullable reference result while an unused recursive call still awaits
+  replay. Prove each result arm on an independent HIR path and check the
+  final source result and call after replay. The exact checked body supersedes
+  an unpinned result hint that missed an early `Nil` return.
+- [x] `completed_recursive_reference_result_repro.sh` matches Crystal 1.22.3
+  in eager and lazy modes, including recursive side effects and two invalid
+  bodies. `exact_cycle_generation_repro.sh` also passes. The two failures in
+  `recursive_exact_body_callsite_spec.cr` reproduce on the parent revision.
+- [ ] Fresh S1-to-S2 on bundled 1.18.2 (186s) and installed 1.22.3 (196s)
+  both use the checked `visit` call to `handle_def`. Both subsequently
+  suspend in the cycle through `handle_class`, `collect_class_body`, and
+  `expand_accessor_macro`. Neither run produces S2.
 - [x] Track dependencies of the active physical body even when its result is
   still uninferred. Its self-call inherits the existing child dependencies.
   A different Def, arena, or HIR body keeps its own result obligation

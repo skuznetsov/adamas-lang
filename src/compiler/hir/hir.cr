@@ -220,6 +220,46 @@ module Adamas::HIR
       value
     end
 
+    # Unknown instructions cannot certify that a value has no uses.
+    def input_value_ids : Array(ValueId)?
+      case value = self
+      when Literal, Local, Parameter, ClassVarGet, FuncPointer, GetException, TryBegin, TryEnd
+        [] of ValueId
+      when ArrayLiteral        then value.elements
+      when StringInterpolation then value.parts
+      when Allocate            then value.constructor_args
+      when FieldGet            then [value.object]
+      when FieldSet            then [value.object, value.value]
+      when ClassVarSet         then [value.value]
+      when PointerMalloc       then [value.count]
+      when PointerLoad         then value.index ? [value.pointer, value.index.not_nil!] : [value.pointer]
+      when PointerStore        then value.index ? [value.pointer, value.value, value.index.not_nil!] : [value.pointer, value.value]
+      when PointerAdd          then [value.pointer, value.offset]
+      when PointerRealloc      then [value.pointer, value.new_size]
+      when AddressOf           then [value.operand]
+      when IndexGet            then [value.object, value.index]
+      when IndexSet            then [value.object, value.index, value.value]
+      when ArraySize           then [value.array_value]
+      when ArraySetSize        then [value.array_value, value.size_value]
+      when ArrayNew            then [value.capacity_value]
+      when Call                then value.has_receiver? ? [value.receiver_value] + value.args : value.args
+      when ExternCall          then value.args
+      when Yield               then value.target ? [value.target.not_nil!] + value.args : value.args
+      when MakeClosure         then value.captures.map(&.value_id)
+      when MakeProc            then [value.fn_ptr, value.env_ptr]
+      when Cast, IsA           then [value.value]
+      when BinaryOperation     then [value.left, value.right]
+      when UnaryOperation      then [value.operand]
+      when Phi                 then value.incoming_values
+      when Copy                then [value.source]
+      when UnionWrap           then [value.value]
+      when UnionUnwrap, UnionTypeId, UnionIs
+        [value.union_value]
+      when Raise
+        value.exception ? [value.exception.not_nil!] : [] of ValueId
+      end
+    end
+
     # For debug printing
     abstract def to_s(io : IO) : Nil
   end
@@ -1844,6 +1884,15 @@ module Adamas::HIR
   abstract class Terminator
     abstract def to_s(io : IO) : Nil
     abstract def successors : Array(BlockId)
+
+    def input_value_ids : Array(ValueId)?
+      case term = self
+      when Return            then term.value ? [term.value.not_nil!] : [] of ValueId
+      when Branch            then [term.condition]
+      when Switch            then [term.value] + term.cases.map(&.[0])
+      when Jump, Unreachable then [] of ValueId
+      end
+    end
   end
 
   # Return from function

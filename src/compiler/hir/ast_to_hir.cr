@@ -2388,6 +2388,8 @@ module Adamas::HIR
       id : UInt64,
       owner : Function
 
+    private record CompletedRecursiveResult, type : TypeRef, facts : Array({TypeRef, Bool})
+
     private class DeferredStructResultUse
       getter request : ForceLowerSuspendedRequest
       getter expected : TypeRef
@@ -2395,6 +2397,7 @@ module Adamas::HIR
       getter producer_replay : ForceLowerReplayCallsite
       getter checked_return : PartialRecursiveReturn?
       getter suspended_consumer : ExactResultPending?
+      getter completed_result : CompletedRecursiveResult?
       getter emissions = {} of UInt64 => {Function, RecursiveStructResultEmissionWitness?}
       @next_emission_ticket : UInt64 = 0_u64
 
@@ -2404,9 +2407,10 @@ module Adamas::HIR
         @producer_replay : ForceLowerReplayCallsite,
         @checked_return : PartialRecursiveReturn? = nil,
         @suspended_consumer : ExactResultPending? = nil,
+        @completed_result : CompletedRecursiveResult? = nil,
       )
         nullable = @checked_return.try(&.evidence.as?(PartialNullableStructReturn))
-        @expected_facts = nullable ? nullable.contract.facts : [{@expected, false}]
+        @expected_facts = @completed_result.try(&.facts) || nullable.try(&.contract.facts) || [{@expected, false}]
       end
 
       def begin_emission_ticket(owner : Function) : RecursiveStructResultEmissionTicket
@@ -31896,7 +31900,9 @@ module Adamas::HIR
     # Return only CFG-reachable blocks from function entry.
     # Detached blocks (for example from helper/lambda lowering artifacts)
     # must not participate in return-type inference.
-    private def reachable_blocks(func : Adamas::HIR::Function, *, excluding : BlockId? = nil) : Array(Adamas::HIR::Block)
+    private def reachable_blocks(
+      func : Adamas::HIR::Function, *, excluding : BlockId? = nil, blocked : Set(BlockId)? = nil,
+    ) : Array(Adamas::HIR::Block)
       blocks = func.blocks
       return [] of Block if blocks.empty?
 
@@ -31904,6 +31910,9 @@ module Adamas::HIR
       entry_id = blocks.first.id
       visited = Array(Bool).new(blocks.size, false)
       visited[excluding] = true if excluding && excluding < block_count
+      if blocked
+        blocked.each { |id| visited[id] = true if id < block_count }
+      end
       queue = Array(BlockId).new(blocks.size)
       queue << entry_id
       result = Array(Block).new(blocks.size)
@@ -84072,9 +84081,11 @@ module Adamas::HIR
       definition : Adamas::Compiler::Frontend::DefNode,
       declaration_arena : Adamas::Compiler::Frontend::ArenaLike,
       active_functions : Set(String),
+      *, allow_provisional : Bool = false, checked_reference_calls : Bool = false,
+      independent_blocks : Set(BlockId)? = nil,
     ) : Tuple(Array({TypeRef, Bool}), Array({TypeRef, Bool}))?
       return nil if name.empty? || active_functions.includes?(name)
-      return nil unless function_state(name).completed? && settled_force_lower_result?(name)
+      return nil unless function_state(name).completed? && (allow_provisional || settled_force_lower_result?(name))
       return nil unless @module.has_function_with_body?(name) &&
                         @module.function_by_name(name).try(&.same?(function))
       return nil unless @function_defs[name]?.try(&.same?(definition)) &&
@@ -84093,6 +84104,14 @@ module Adamas::HIR
       published_facts = function.source_return_value_facts || return nil
       return nil unless receipt.result_facts_match?(published_facts)
 
+      # A settled, closed instance restriction has already been checked for
+      # every normal return. Use it where a load in the body has no standalone
+      # source-kind witness, but only while its exact body receipt is current.
+      if checked_reference_calls && !allow_provisional && receipt.discard_type.nil? &&
+         settled_declared_reference_result?(name, function, definition, declaration_arena, published_facts)
+        return {published_facts.dup, published_facts.dup}
+      end
+
       # Source :Nil/:Void is a language-level discard contract. It owns the
       # caller-visible result independently of the discarded body's last HIR
       # value, while the exact function body and dependencies above remain
@@ -84104,7 +84123,9 @@ module Adamas::HIR
               else
                 next_active = active_functions.dup
                 next_active.add(name)
-                fresh_source_return_body_proof(function, receipt, next_active) || return nil
+                fresh_source_return_body_proof(
+                  function, receipt, next_active, checked_reference_calls, independent_blocks,
+                ) || return nil
               end
       facts = normalize_source_return_result_facts(proof[0])
       published_body_facts = normalize_source_return_result_facts(proof[1])
@@ -84120,10 +84141,19 @@ module Adamas::HIR
       function : Function,
       receipt : SourceReturnResultReceipt,
       active_functions : Set(String),
+      checked_reference_calls : Bool,
+      independent_blocks : Set(BlockId)?,
     ) : Tuple(Array({TypeRef, Bool}), Array({TypeRef, Bool}))?
       values = {} of ValueId => Value
+      if checked_reference_calls
+        function.params.each do |parameter|
+          return nil if values.has_key?(parameter.id)
+          values[parameter.id] = parameter
+        end
+      end
       function.blocks.each do |block|
         block.instructions.each do |instruction|
+          return nil if checked_reference_calls && values.has_key?(instruction.id)
           values[instruction.id] = instruction
         end
       end
@@ -84132,9 +84162,11 @@ module Adamas::HIR
       saw_return = false
       published_facts = [] of {TypeRef, Bool}
       reachable_blocks(function).each do |block|
+        next if independent_blocks && !independent_blocks.includes?(block.id)
         ret = block.terminator.as?(Return) || next
         saw_return = true
         if value_id = ret.value
+          return nil if checked_reference_calls && values[value_id]?.try(&.type) != function.return_type
           leaf_proof = fresh_source_return_value_proof(
             function,
             receipt,
@@ -84142,6 +84174,8 @@ module Adamas::HIR
             value_id,
             active_functions,
             Set(ValueId).new,
+            checked_reference_calls,
+            independent_blocks,
           ) || return nil
           facts.concat(leaf_proof[0])
           published_facts.concat(leaf_proof[1])
@@ -84161,6 +84195,8 @@ module Adamas::HIR
       value_id : ValueId,
       active_functions : Set(String),
       active_values : Set(ValueId),
+      checked_reference_calls : Bool,
+      independent_blocks : Set(BlockId)?,
     ) : Tuple(Array({TypeRef, Bool}), Array({TypeRef, Bool}))?
       return nil if active_values.includes?(value_id)
       next_values = active_values.dup
@@ -84172,23 +84208,39 @@ module Adamas::HIR
           return nil if phi.incoming_values.empty?
           facts = [] of {TypeRef, Bool}
           published_facts = [] of {TypeRef, Bool}
-          phi.incoming_values.each do |incoming|
+          if independent_blocks
+            return nil unless phi.incoming_size == phi.incoming_values.size &&
+                              phi.incoming_size == phi.incoming.size
+          end
+          phi.incoming_values.each_with_index do |incoming, index|
+            if independent_blocks
+              predecessor = phi.incoming_block_at(index)
+              return nil unless phi.incoming[index] == {predecessor, incoming}
+              next unless independent_blocks.includes?(predecessor)
+            end
             incoming_proof = fresh_source_return_value_proof(
-              function, receipt, values, incoming, active_functions, next_values,
+              function, receipt, values, incoming, active_functions, next_values, checked_reference_calls, independent_blocks,
             ) || return nil
             facts.concat(incoming_proof[0])
             published_facts.concat(incoming_proof[1])
           end
+          return nil if facts.empty?
           return {facts.uniq, published_facts.uniq}
         when Copy
           copy = producer
           return fresh_source_return_value_proof(
-            function, receipt, values, copy.source, active_functions, next_values,
+            function, receipt, values, copy.source, active_functions, next_values, checked_reference_calls, independent_blocks,
           )
         when UnionWrap
           wrapped = producer
+          if checked_reference_calls
+            payload = values[wrapped.value]? || return nil
+            descriptor = union_descriptor_from_sidecar(wrapped.type) || return nil
+            variant = descriptor.variants.find { |entry| entry.type_id == wrapped.variant_type_id }
+            return nil unless variant && variant.type_id >= 0 && variant.type_ref == hir_to_mir_type_ref(payload.type)
+          end
           return fresh_source_return_value_proof(
-            function, receipt, values, wrapped.value, active_functions, next_values,
+            function, receipt, values, wrapped.value, active_functions, next_values, checked_reference_calls, independent_blocks,
           )
         when Call
           call = producer
@@ -84210,12 +84262,21 @@ module Adamas::HIR
           target_arena = @function_def_arenas[target_name]? || return nil
           target_function = @module.function_by_name(target_name) || return nil
           return nil if call.type != target_function.return_type && !noreturn_type?(target_function.return_type)
+          if checked_reference_calls
+            return nil unless call.has_receiver? == (target_function.params.first?.try(&.name) == "self")
+            args = call.has_receiver? ? [call.receiver_value] + call.args : call.args
+            return nil unless args.size == target_function.params.size && args.each_with_index.all? do |id, index|
+              param = target_function.params[index]
+              !param.is_block && values[id]?.try(&.type) == param.type
+            end
+          end
           computed = fresh_source_return_result_proof(
             target_name,
             target_function,
             target_definition,
             target_arena,
             active_functions,
+            checked_reference_calls: checked_reference_calls,
           ) || return nil
           return nil if computed[0].empty? || computed[0].any? { |(type, _)| type == TypeRef::VOID || noreturn_type?(type) }
           published = receipt.value_facts_for(value_id) || return nil
@@ -117495,6 +117556,9 @@ module Adamas::HIR
 
     private def final_recursive_struct_use_result?(use : DeferredStructResultUse) : Bool
       pending = use.request.pending
+      if completed = use.completed_result
+        return checked_completed_recursive_result(pending) == completed
+      end
       evidence = use.checked_return.try(&.evidence)
       if evidence.is_a?(PartialVirtualReferenceReturn)
         return final_recursive_virtual_reference_result?(pending, use.expected)
@@ -117632,6 +117696,133 @@ module Adamas::HIR
       facts = function.source_return_value_facts
       return unless facts == [{type, false}] && current_recursive_return_receipt?(function, source, facts.not_nil!)
       type
+    end
+
+    # A completed provisional body may know its result even though a recursive
+    # call whose value is unused still needs replay. Prove a closed instance
+    # result from this exact body and require each arm to occur on a path that
+    # does not rely on an unfinished call returning normally.
+    private def checked_completed_recursive_result(pending : ExactResultPending) : CompletedRecursiveResult?
+      return unless pending.producer_requires_result && nested_recursive_result_demands_settled?(pending)
+      name = pending.producer
+      source = pending.producer_source
+      return unless force_lower_exact_source_matches?(name, source) && ordinary_struct_result_source?(name, source)
+      return unless function_state(name).completed?
+      function = @module.function_by_name(name) || return
+      type = function.return_type
+      facts = function.source_return_value_facts || return
+      return unless completed_recursive_reference_shape?(type, facts) &&
+                    function.source_return_discard_type.nil? &&
+                    !materialized_function_noreturn?(name, Set(String).new)
+      provisional = !settled_force_lower_result?(name)
+      if provisional
+        independent_blocks = independent_recursive_result_blocks(function) || return
+      end
+      proof = fresh_source_return_result_proof(
+        name, function, source.source_def, source.source_arena, Set(String).new,
+        allow_provisional: true, checked_reference_calls: true,
+      ) || return
+      return unless proof[0] == facts && proof[1] == facts
+      if independent_blocks
+        independent_proof = fresh_source_return_result_proof(
+          name, function, source.source_def, source.source_arena, Set(String).new,
+          allow_provisional: true, checked_reference_calls: true, independent_blocks: independent_blocks,
+        ) || return
+        return unless independent_proof[0] == facts
+      end
+      CompletedRecursiveResult.new(type, facts.dup)
+    end
+
+    private def completed_recursive_reference_shape?(type : TypeRef, facts : Array({TypeRef, Bool})) : Bool
+      return closed_reference_result_type?(type) if facts == [{type, false}]
+      return false unless facts.size == 2 && facts.includes?({TypeRef::NIL, false}) && facts.none?(&.[1])
+      payload = facts.find { |(arm, _)| arm != TypeRef::NIL }
+      return false unless payload && closed_reference_result_type?(payload[0])
+      descriptor = union_descriptor_from_sidecar(type) || return false
+      descriptor.variants.size == 2 && descriptor.variants[0].type_id != descriptor.variants[1].type_id &&
+        descriptor.variants.all? { |variant| variant.type_id >= 0 } &&
+        facts.all? { |(arm, _)| descriptor.variants.any? { |variant| variant.type_ref == hir_to_mir_type_ref(arm) } }
+    end
+
+    private def closed_reference_result_type?(type : TypeRef) : Bool
+      name = get_type_name_from_ref(type)
+      info = @class_info[name]?
+      @module.get_type_descriptor(type).try(&.kind.class?) == true &&
+        !!info && info.type_ref == type && !info.is_struct && !registered_abstract_class_name?(name) &&
+        !class_has_subclasses?(name) && !unresolved_generic_return_type?(type)
+    end
+
+    private def settled_declared_reference_result?(
+      name : String,
+      function : Function,
+      definition : Adamas::Compiler::Frontend::DefNode,
+      arena : Adamas::Compiler::Frontend::ArenaLike,
+      facts : Array({TypeRef, Bool}),
+    ) : Bool
+      type = function.return_type
+      return false unless facts == [{type, false}] && closed_reference_result_type?(type)
+      source = force_lower_exact_source_binding(name, definition, definition, arena) || return false
+      return false unless ordinary_struct_result_source?(name, source)
+      spelling = definition.return_type.try { |slice| safe_slice_to_string(slice) } || return false
+      restriction = recursive_declared_result_contract(name, source, spelling) || return false
+      restriction.kind.concrete? && restriction.type_ref == type &&
+        !source_declared_return_contract_guarantees_type_literal_kind?(restriction) &&
+        !materialized_function_noreturn?(name, Set(String).new)
+    end
+
+    private def independent_recursive_result_blocks(function : Function) : Set(BlockId)?
+      dependencies = @force_lower_provisional_dependencies[function.name]? || return
+      pending = dependencies.reject { |callee| settled_force_lower_result?(callee) }.to_set
+      return if pending.empty?
+      observed = Set(String).new
+      discarded = Set(ValueId).new
+      blocked = Set(BlockId).new
+      blocks = reachable_blocks(function)
+      blocks.each do |block|
+        block.instructions.each do |instruction|
+          case instruction
+          when TryBegin
+            return # Exception continuations are outside this CFG proof.
+          when Raise
+            blocked << block.id
+          when ExternCall
+            blocked << block.id if instruction.noreturn
+          when Call
+            blocked << block.id if noreturn_type?(instruction.type)
+            next unless pending.includes?(instruction.method_name)
+            return if instruction.virtual || instruction.has_block?
+            observed << instruction.method_name
+            discarded << instruction.id
+            blocked << block.id
+          end
+        end
+      end
+      return unless observed == pending && discarded_recursive_call_values?(blocks, discarded)
+      reachable_blocks(function, blocked: blocked).map(&.id).to_set
+    end
+
+    private def discarded_recursive_call_values?(blocks : Array(Block), pending : Set(ValueId)) : Bool
+      # Inlining may leave the unused result in one or more forwarding Phis.
+      # Reject uses that can influence a return, dispatch, branch, or side effect.
+      uses = {} of ValueId => Array(Value?)
+      blocks.each do |block|
+        block.instructions.each do |instruction|
+          ids = instruction.input_value_ids || return false
+          ids.each { |id| (uses[id] ||= [] of Value?) << instruction }
+        end
+        ids = block.terminator.input_value_ids || return false
+        ids.each { |id| (uses[id] ||= [] of Value?) << nil }
+      end
+      work = pending.to_a
+      until work.empty?
+        id = work.pop
+        next unless users = uses[id]?
+        users.each do |user|
+          return false unless user.is_a?(Phi) || user.is_a?(Copy)
+          work << user.id if pending.add?(user.id)
+        end
+      end
+      true
     end
 
     private def current_recursive_return_receipt?(
@@ -118358,6 +118549,10 @@ module Adamas::HIR
       type = if @force_lower_provisional_dependencies.has_key?(pending.producer)
                exact_final_struct_result(pending)
              end
+      completed = if !type && @force_lower_provisional_dependencies.has_key?(pending.producer)
+                    checked_completed_recursive_result(pending)
+                  end
+      type ||= completed.try(&.type)
       anchor = type ? nil : queued_partial_struct_result(pending, producer_replay)
       type ||= anchor.try(&.body.return_type)
       return false unless type && recursive_struct_result_replay_arguments?(pending.producer, producer_replay)
@@ -118367,12 +118562,16 @@ module Adamas::HIR
           observed.context, producer, observed.receiver, producer_replay.callsite.types,
         )
       end
-      @deferred_struct_result_uses[edge] = DeferredStructResultUse.new(entry, type, producer_replay, anchor, suspended_consumer)
+      @deferred_struct_result_uses[edge] = DeferredStructResultUse.new(
+        entry, type, producer_replay, anchor, suspended_consumer, completed_result: completed,
+      )
       if env_has?("DEBUG_FORCE_LOWER_DEPTH")
         if anchor.try(&.evidence.is_a?(PartialVirtualReferenceReturn))
           STDERR.puts "[FORCE_LOWER_RECURSIVE_REFERENCE] consumer=#{pending.consumer} producer=#{pending.producer}"
         elsif anchor.try(&.evidence.is_a?(PartialTupleReturn))
           STDERR.puts "[FORCE_LOWER_RECURSIVE_TUPLE] consumer=#{pending.consumer} producer=#{pending.producer}"
+        elsif completed
+          STDERR.puts "[FORCE_LOWER_RECURSIVE_COMPLETED_RESULT] consumer=#{pending.consumer} producer=#{pending.producer}"
         end
         if observed
           STDERR.puts "[FORCE_LOWER_RECURSIVE_PROVISIONAL_CALL] consumer=#{pending.consumer} producer=#{pending.producer}"
@@ -118795,32 +118994,36 @@ module Adamas::HIR
       owner if @module.function_by_name(owner.name).try(&.same?(owner)) == true
     end
 
-    private def recursive_struct_result_at_source_call?(
+    private def recursive_struct_result_type_at_source_call(
       ctx : LoweringContext, producer : String, result : TypeRef, arg_types : Array(TypeRef),
       arg_facts : Array(SourceCallArgument?)?, receiver_id : ValueId?,
       selected : Adamas::Compiler::Frontend::DefNode?,
       called : Adamas::Compiler::Frontend::DefNode?,
       arena : Adamas::Compiler::Frontend::ArenaLike?, registry : String?,
-    ) : Bool
-      return false if @deferred_struct_result_uses.empty?
+      *, pinned_result : Bool = false,
+    ) : TypeRef?
+      return if @deferred_struct_result_uses.empty?
       consumer = ctx.source_result_replay_consumer
-      use = @deferred_struct_result_uses[{consumer, producer}]? || return false
+      use = @deferred_struct_result_uses[{consumer, producer}]? || return
       if owner = use.suspended_consumer
-        return false unless owner.same?(@force_lower_suspended_call_replay)
+        return unless owner.same?(@force_lower_suspended_call_replay)
       end
-      return false unless live_source_result_replay_owner(ctx) && use.expected == result
+      return unless live_source_result_replay_owner(ctx)
+      # A syntax-only lookup can miss an early Nil return. A completed body
+      # proves its exact result independently of that hint and of this replay.
+      return unless use.expected == result || (use.completed_result && !pinned_result)
       callsite = use.producer_replay.callsite
-      return false unless recursive_struct_result_argument_facts_match?(callsite, arg_types, arg_facts)
-      function = @module.function_by_name(producer) || checked_partial_struct_result(use.request.pending, use.checked_return).try(&.body.function) || return false
-      return false unless recursive_struct_result_abi_matches?(ctx, function, receiver_id, arg_types)
+      return unless recursive_struct_result_argument_facts_match?(callsite, arg_types, arg_facts)
+      function = @module.function_by_name(producer) || checked_partial_struct_result(use.request.pending, use.checked_return).try(&.body.function) || return
+      return unless recursive_struct_result_abi_matches?(ctx, function, receiver_id, arg_types)
       request = use.request
-      source = force_lower_exact_source_binding(producer, selected, called, arena, registry) || return false
-      body_source = @force_lower_replay_source_bindings[consumer]? || return false
+      source = force_lower_exact_source_binding(producer, selected, called, arena, registry) || return
+      body_source = @force_lower_replay_source_bindings[consumer]? || return
       replay = use.request.replay_callsite
-      return false unless body_source.source_def.same?(replay.source_def) && body_source.source_arena.same?(replay.source_arena)
-      return false unless same_force_lower_exact_source_binding?(source, request.pending.producer_source) &&
-                          recursive_struct_result_available?(use.request)
-      true
+      return unless body_source.source_def.same?(replay.source_def) && body_source.source_arena.same?(replay.source_arena)
+      return unless same_force_lower_exact_source_binding?(source, request.pending.producer_source) &&
+                    recursive_struct_result_available?(request)
+      use.expected
     end
 
     private def recursive_struct_result_emission_witness(
@@ -118878,8 +119081,12 @@ module Adamas::HIR
     ) : Bool
       return false unless ticket && !call.virtual && call.method_name == producer
       use = @deferred_struct_result_uses[{ctx.source_result_replay_consumer, producer}]? || return false
-      anchor = checked_partial_struct_result(use.request.pending, use.checked_return) || return false
-      return false unless anchor.body.return_type == call.type
+      if completed = use.completed_result
+        return false unless completed.type == call.type
+      else
+        anchor = checked_partial_struct_result(use.request.pending, use.checked_return) || return false
+        return false unless anchor.body.return_type == call.type
+      end
       ctx.register_source_value_facts(call.id, use.expected_facts.dup)
       true
     end
@@ -134496,22 +134703,27 @@ module Adamas::HIR
           return_type_pinned = true
         end
       end
-      cycle_result = false
+      cycle_result = nil.as(TypeRef?)
       if !@deferred_struct_result_uses.empty? && !call_virtual && !has_block_call && block_id.nil? && !has_splat &&
          generated_allocator_call_target.nil? && !allocator_explicit_new_call && method_name != "new"
         # The source binding proves which actual reached each formal after
         # keyword reordering and defaults. Validate it against the selected
         # declaration and the lowered values before reading a checked result.
         if !has_named_args || bound_recursive_call
-          cycle_result = recursive_struct_result_at_source_call?(ctx, mangled_method_name, return_type, arg_types,
+          cycle_result = recursive_struct_result_type_at_source_call(ctx, mangled_method_name, return_type, arg_types,
             call_resolution_source_argument_facts(ctx, args, arg_types), receiver_id,
-            selected_return_def, selected_call_entry_def, selected_call_entry_arena, selected_call_entry_name)
+            selected_return_def, selected_call_entry_def, selected_call_entry_arena, selected_call_entry_name,
+            pinned_result: return_type_pinned)
+          if cycle_result
+            return_type = cycle_result
+            return_type_pinned = true
+          end
         end
       end
       # Admit a distinct emission obligation before the remaining lower_call
       # paths can return early. A successful sibling call cannot discharge a
       # later invocation that exits before producing its direct Call.
-      cycle_result_ticket = begin_recursive_struct_result_emission!(ctx, mangled_method_name, cycle_result)
+      cycle_result_ticket = begin_recursive_struct_result_emission!(ctx, mangled_method_name, !cycle_result.nil?)
       # A checked recursive call already has both a result type and a source
       # value kind. Its emission ticket and the final producer body still have
       # to agree. Both eager result queries must honor that same evidence.
@@ -135802,7 +136014,9 @@ module Adamas::HIR
       # ordinary force path was suppressed by inline lowering. A guard still
       # needs the exact body before it can eliminate its terminating branch.
       # Bypass inline suppression only through the existing yield-free check.
-      if !call_virtual && !has_block_call && block_id.nil? &&
+      if cycle_result
+        return_type = cycle_result
+      elsif !call_virtual && !has_block_call && block_id.nil? &&
          noreturn_type?(return_type) && selected_source_result_pending?(emit_method_name, selected_call_entry_def)
         force_lower_function_for_return_type(emit_method_name, bypass_inline_yield: true)
         if target = @module.function_by_name(emit_method_name)
@@ -155465,13 +155679,18 @@ module Adamas::HIR
       end
       member_return_def = member_exact_source.try(&.source_def) || @function_defs[actual_name]?
       member_return_arena = member_exact_source.try(&.source_arena) || @function_def_arenas[actual_name]?
-      member_result_ticket = if !call_virtual && member_name != "new" && actual_name == primary_name &&
-                                  args.empty? && arg_types.empty? &&
-                                  recursive_struct_result_at_source_call?(ctx, actual_name, return_type, arg_types,
-                                    nil, object_id, member_return_def, member_return_def, member_return_arena,
-                                    member_exact_source.try(&.source_registry_name) || selected_member_registry_name)
-                               begin_recursive_struct_result_emission!(ctx, actual_name, true)
-                             end
+      member_cycle_result = if !call_virtual && member_name != "new" && actual_name == primary_name &&
+                               args.empty? && arg_types.empty?
+                              recursive_struct_result_type_at_source_call(ctx, actual_name, return_type, arg_types,
+                                nil, object_id, member_return_def, member_return_def, member_return_arena,
+                                member_exact_source.try(&.source_registry_name) || selected_member_registry_name,
+                                pinned_result: forced_return_type)
+                            end
+      if member_cycle_result
+        return_type = member_cycle_result
+        forced_return_type = true
+      end
+      member_result_ticket = begin_recursive_struct_result_emission!(ctx, actual_name, !member_cycle_result.nil?)
       refused_before_member_force = @force_lower_depth_refused.size
       unresolved_included_result = included_noarg_source_result && included_noarg_source_result[0].nil?
       # A registered or declared ABI does not publish body-owned source facts.
@@ -155600,7 +155819,9 @@ module Adamas::HIR
       # same type that source overload preselection observed. A selected but
       # unresolved source result remains Void; it cannot inherit a sibling
       # application's concrete cache entry.
-      if source_result = included_noarg_source_result
+      if member_cycle_result
+        return_type = member_cycle_result
+      elsif source_result = included_noarg_source_result
         return_type = source_result[0] || TypeRef::VOID
         forced_return_type = true
       end
