@@ -119990,6 +119990,40 @@ module Adamas::HIR
       ext_call.id
     end
 
+    # Crystal splits a union argument across overloads: with `f(x : String)`
+    # beside `f(x : T) forall T`, an `Int32 | String` argument runs the String
+    # overload for String values even though the free variable also accepts
+    # the whole union. A whole-union selection is the call target only when
+    # every variant resolves to that same declaration.
+    private def union_argument_arm_selects_other_source?(
+      base_name : String,
+      arg_types : Array(TypeRef),
+      has_block_call : Bool,
+      selected_def : Adamas::Compiler::Frontend::DefNode,
+    ) : Bool
+      arg_types.each_with_index do |type, index|
+        next if type == TypeRef::VOID || !is_union_type?(type)
+        next unless desc = @module.get_type_descriptor(type)
+        split_union_type_name(desc.name).each do |name|
+          variant = type_ref_for_name(name)
+          next if variant == TypeRef::VOID
+          arm_types = arg_types.dup
+          arm_types[index] = variant
+          arm = resolve_call_target(CallResolutionInput.new(
+            func_name: base_name,
+            arg_count: arm_types.size,
+            arg_types: arm_types,
+            has_block: has_block_call,
+            has_splat: false,
+            has_named: false,
+            named_names: nil,
+          ))
+          return true if arm && !arm.def_node.same?(selected_def)
+        end
+      end
+      false
+    end
+
     private def emit_top_level_bare_call(
       ctx : LoweringContext,
       method_name : String,
@@ -120030,6 +120064,9 @@ module Adamas::HIR
       return nil unless selected_arena &&
                         @function_defs[target_name]?.try(&.same?(selected_def)) &&
                         @function_def_arenas[target_name]?.try(&.same?(selected_arena))
+      # A union argument whose variants select other declarations dispatches
+      # per arm; only the ordinary corridor emits that dispatch.
+      return nil if union_argument_arm_selects_other_source?(base_name, arg_types, has_block_call, selected_def)
       # Rest packing changes the physical signature. The ordinary path owns
       # deriving and binding that target from this exact source declaration.
       return nil if missing_positional_splat_index(selected.symbol_name, selected_def, args.size)
