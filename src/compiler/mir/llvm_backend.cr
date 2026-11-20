@@ -15,6 +15,7 @@
 
 require "./mir"
 require "../layout_probe"
+require "../type_display_name"
 
 # Debug-only structural-size helpers that reopen the top-level builtin
 # containers. They MUST stay OUTSIDE `module Adamas::MIR`: an absolute
@@ -30194,7 +30195,7 @@ module Adamas::MIR
       type_info_entries.each do |entry|
         # Look up name from string table using name_offset
         name = read_string_from_table(entry.name_offset)
-        type_names[entry.type_id] = name unless name.empty?
+        type_names[entry.type_id] = Adamas::TypeDisplayName.crystal(name) unless name.empty?
       end
 
       return if type_names.empty?

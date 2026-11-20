@@ -6,6 +6,7 @@ require "./symbol"
 require "./symbol_table"
 require "./diagnostic"
 require "./macro_value"
+require "../type_display_name"
 
 module Adamas
   module Compiler
@@ -3149,13 +3150,14 @@ module Adamas
               when "abstract?"
                 return class_symbol.is_abstract? ? "true" : ""
               when "name"
-                # @type.name returns full name with generic parameters by default
+                # @type.name returns full name with generic parameters by default,
+                # spelled as Crystal prints it (Nil last in every union).
                 base_name = class_symbol.name
                 type_params = class_symbol.type_parameters
                 if type_params && !type_params.empty?
                   return "#{base_name}(#{type_params.join(", ")})"
                 else
-                  return base_name
+                  return Adamas::TypeDisplayName.crystal(base_name)
                 end
               when "superclass"
                 return class_symbol.superclass_name || ""
@@ -3498,7 +3500,7 @@ module Adamas
                     return "#{base_name}(#{type_params.join(", ")})"
                   else
                     # Return base name without generic parameters
-                    return base_name
+                    return Adamas::TypeDisplayName.crystal(base_name)
                   end
                 when "size"
                   # Approximate @type.size for tuples/named tuples by counting

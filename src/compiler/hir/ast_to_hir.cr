@@ -22,6 +22,7 @@ require "../semantic/macro_expander"
 require "../semantic/diagnostic_formatter"
 require "../semantic/symbol_table"
 require "./source_block_result_pattern"
+require "../type_display_name"
 
 {% if flag?(:darwin) %}
   lib LibMachVM
@@ -50622,7 +50623,7 @@ module Adamas::HIR
 
         func = @module.create_function(full_name, TypeRef::STRING)
         ctx = LoweringContext.new(func, @module, @arena)
-        lit = Literal.new(ctx.next_id, TypeRef::STRING, owner_name)
+        lit = Literal.new(ctx.next_id, TypeRef::STRING, Adamas::TypeDisplayName.crystal(owner_name))
         ctx.emit(lit)
         ctx.register_type(lit.id, TypeRef::STRING)
         ctx.terminate(Return.new(lit.id))
@@ -50781,7 +50782,7 @@ module Adamas::HIR
 
       # Typeof preserves its source-level type display (including union
       # parentheses) separately from the normalized dispatch owner.
-      display_name = literal_owner
+      display_name = Adamas::TypeDisplayName.crystal(literal_owner)
       if receiver_id && (identity = ctx.runtime_type_identity?(receiver_id)) && identity.origin.typeof?
         display_name = identity.display_name
       end
@@ -97996,7 +97997,7 @@ module Adamas::HIR
       runtime_stringification_required : Bool,
       display_name : String? = nil,
     ) : Nil
-      display = display_name || type_value_display_name(semantic_type)
+      display = Adamas::TypeDisplayName.crystal(display_name || type_value_display_name(semantic_type))
       ctx.mark_runtime_type_identity(
         value_id,
         RuntimeTypeIdentity.new(
@@ -98105,7 +98106,7 @@ module Adamas::HIR
         if virtual_class_receiver_type?(member_type)
           emit_runtime_class_name(ctx, emit_union_variant_unwrap(ctx, object_id, member_type, variant_id))
         else
-          lit = Literal.new(ctx.next_id, TypeRef::STRING, get_type_name_from_ref(member_type))
+          lit = Literal.new(ctx.next_id, TypeRef::STRING, Adamas::TypeDisplayName.crystal(get_type_name_from_ref(member_type)))
           ctx.emit(lit)
           ctx.register_type(lit.id, TypeRef::STRING)
           lit.id
@@ -99259,7 +99260,7 @@ module Adamas::HIR
               if ctx.dot_class_literal?(val_id)
                 dcl_name = get_type_name_from_ref(val_type)
                 unless dcl_name.empty?
-                  str_lit = Literal.new(ctx.next_id, TypeRef::STRING, dcl_name)
+                  str_lit = Literal.new(ctx.next_id, TypeRef::STRING, Adamas::TypeDisplayName.crystal(dcl_name))
                   ctx.emit(str_lit)
                   ctx.register_type(str_lit.id, TypeRef::STRING)
                   val_id = str_lit.id
@@ -102406,7 +102407,7 @@ module Adamas::HIR
         elsif ctx.dot_class_literal?(right_id)
           dcl_class_name = get_type_name_from_ref(right_type)
           unless dcl_class_name.empty?
-            str_lit = Literal.new(ctx.next_id, TypeRef::STRING, dcl_class_name)
+            str_lit = Literal.new(ctx.next_id, TypeRef::STRING, Adamas::TypeDisplayName.crystal(dcl_class_name))
             ctx.emit(str_lit)
             ctx.register_type(str_lit.id, TypeRef::STRING)
             right_id = str_lit.id
@@ -125471,7 +125472,7 @@ module Adamas::HIR
         elsif ctx.dot_class_literal?(arg_id)
           class_name_for_lit = get_type_name_from_ref(arg_types[i])
           next if class_name_for_lit.empty?
-          str_lit = Literal.new(ctx.next_id, TypeRef::STRING, class_name_for_lit)
+          str_lit = Literal.new(ctx.next_id, TypeRef::STRING, Adamas::TypeDisplayName.crystal(class_name_for_lit))
           ctx.emit(str_lit)
           ctx.register_type(str_lit.id, TypeRef::STRING)
           args[i] = str_lit.id
