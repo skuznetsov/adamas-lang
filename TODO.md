@@ -27506,13 +27506,27 @@ One fix per commit, each with an oracle-qualified regression.
   the whole-union symbol is registered: `h(x : String)` beside
   `h(x : Int32 | String)` and a second `fv(y)` over `forall T` took the
   exact-name shortcut (`union_arg_top_level_exact_shortcut_dispatch_repro.sh`).
-- [ ] Union-argument calls with a block never dispatch per arm
-  (`try_emit_union_arg_dispatch` returns nil for blocks): `fb(y) { 2 }`
-  over `fb(s : String, &)` / `fb(x : T, &) forall T` runs the free-variable
-  body for String values, `hb(y) { 3 }` beside `hb(x : Int32 | String, &)`
-  runs the union body.
-- [ ] `typeof` of a nilable union prints `(Nil | Int32)`; Crystal prints
-  `(Int32 | Nil)` (Nil last in union names).
+- [x] bbefba2f union-argument calls with a block dispatch per member: each
+  arm lowers the call with the argument (evaluated once) narrowed by its
+  tags, the block keeps its locals' union types; `rt(z) { |k| k }` over
+  Int32/String overloads no longer inlines the Int32 body with the union
+  value and hangs (`block_call_union_arg_dispatch_repro.sh`).
+- [ ] Block-call union dispatch still declines: two or more union
+  arguments, a union receiver, splat/named arguments, captured blocks
+  (`def_requires_heap_block?`), and receivers/other arguments that are not
+  plain locals, literals, constants, `self` or ivars.
+- [ ] `x.odd?` on Int32 fails to compile with "undefined constant Int::MIN".
+- [x] 7c562db1 program-visible union names put Nil last and drop root
+  anchors, as Crystal's `UnionType#to_s` does: `typeof`, `.class`, `.name`,
+  `Class#to_s` (macro `@type.name`), interpolation, `inspect` and the runtime
+  type-name table (`union_display_nil_last_repro.sh`,
+  `spec/compiler/type_display_name_spec.cr`). Canonical names keep Nil first.
+- [ ] Multi-arg `STDERR.puts typeof(a), typeof(b)` prints empty lines.
+- [ ] `STDERR.puts Union(Int32, Nil)` prints `Class`.
+- [ ] `typeof(v)` of a declared local (`v : Int32 | String | Nil = c ? "s" :
+  nil`) prints the declared type; Crystal prints the flow type
+  `(String | Nil)`.
+- [ ] `typeof(g) == Int32?` fails with "undefined constant Int32?".
 - [ ] `typeof` inside a forall body called with a block reports Void.
 - [ ] Parser: `x = call { .. } rescue v` and one-line
   `begin; 1; rescue; 2; end`.
