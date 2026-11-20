@@ -2231,8 +2231,9 @@ module Adamas::HIR
     private record PartialExactInstanceReturn,
       block : Block,
       terminator : Return,
-      value : ClassVarGet | Call | Literal,
-      call_result : PartialStructCallResult? = nil
+      value : ClassVarGet | Call | Literal | Phi,
+      call_result : PartialStructCallResult? = nil,
+      literal_inputs : Array({Block, Literal})? = nil
 
     private record PartialVirtualReferenceReturn,
       left : PartialReferenceReturnArm,
@@ -116424,7 +116425,8 @@ module Adamas::HIR
       when PartialExactInstanceReturn
         second.is_a?(PartialExactInstanceReturn) && first.block.same?(second.block) &&
           first.terminator.same?(second.terminator) && first.value.same?(second.value) &&
-          same_suspended_return_call_result?(first.call_result, second.call_result)
+          same_suspended_return_call_result?(first.call_result, second.call_result) &&
+          same_recursive_literal_inputs?(first.literal_inputs, second.literal_inputs)
       when PartialNullableStructReturn
         second.is_a?(PartialNullableStructReturn) && first.contract == second.contract &&
           first.arms.size == second.arms.size && first.arms.zip(second.arms).all? do |a, b|
@@ -117385,13 +117387,16 @@ module Adamas::HIR
         returned = block.terminator.as?(Return) || next
         value_id = returned.value || next
         value = ctx.value_for(value_id)
-        next unless value.is_a?(ClassVarGet) || value.is_a?(Call) || value.is_a?(Literal)
+        next unless value.is_a?(ClassVarGet) || value.is_a?(Call) || value.is_a?(Literal) || value.is_a?(Phi)
         next unless value.type == body.return_type
         next if value.is_a?(Literal) && !recursive_literal_result_type?(value.type)
         call_result = if value.is_a?(Call)
                         suspended_return_call_result(ctx, value) || next
                       end
-        evidence = PartialExactInstanceReturn.new(block, returned, value, call_result)
+        literal_inputs = if value.is_a?(Phi)
+                           recursive_return_literal_inputs(ctx, block, value) || next
+                         end
+        evidence = PartialExactInstanceReturn.new(block, returned, value, call_result, literal_inputs)
         anchor = PartialRecursiveReturn.new(replay, ctx, body, evidence)
         return anchor if suspended_return_value_current?(anchor)
       end
@@ -117518,9 +117523,12 @@ module Adamas::HIR
       return false unless read.type == anchor.body.return_type &&
                           suspended_return_slot_current?(ctx, evidence.block, evidence.terminator, read)
       value_facts = ctx.source_value_facts(read.id)
-      if read.is_a?(Literal)
-        return false unless recursive_literal_result_type?(read.type) && (!value_facts || value_facts == facts)
-        return read.type == TypeRef::BOOL ? read.value.is_a?(Bool) : read.has_str_value?
+      case read
+      when Literal
+        return recursive_literal_result_type?(read.type) && recursive_return_literal_instance?(ctx, read, read.type)
+      when Phi
+        inputs = evidence.literal_inputs || return false
+        return same_recursive_literal_inputs?(inputs, recursive_return_literal_inputs(ctx, evidence.block, read))
       end
       return false unless value_facts == facts
       case read
@@ -117532,6 +117540,51 @@ module Adamas::HIR
         suspended_return_call_current?(ctx, read, result)
       else
         false
+      end
+    end
+
+    # A literal-only join independently proves an instance on every incoming
+    # edge. The carrier alone cannot distinguish a type object from an instance.
+    private def recursive_return_literal_inputs(
+      ctx : LoweringContext, block : Block, phi : Phi,
+    ) : Array({Block, Literal})?
+      type = phi.type
+      facts = ctx.source_value_facts(phi.id)
+      return unless recursive_literal_result_type?(type) && (!facts || facts == [{type, false}])
+      return unless phi.incoming.size >= 2 && phi.incoming.size == phi.incoming_size &&
+                    phi.incoming.size == phi.incoming_values.size
+
+      predecessors = {} of BlockId => Block
+      reachable_blocks(ctx.function).each do |candidate|
+        next unless candidate.terminator.successors.includes?(block.id)
+        return if candidate.same?(block)
+        predecessors[candidate.id] = candidate
+      end
+      return unless predecessors.size == phi.incoming.size
+
+      inputs = [] of {Block, Literal}
+      phi.incoming.each_with_index do |(predecessor, value_id), index|
+        return unless phi.incoming_block_at(index) == predecessor && phi.incoming_value_at(index) == value_id
+        incoming = predecessors.delete(predecessor) || return
+        literal = ctx.value_for(value_id).as?(Literal) || return
+        return unless suspended_return_instruction_current?(ctx, incoming, literal) &&
+                      recursive_return_literal_instance?(ctx, literal, type)
+        inputs << {incoming, literal}
+      end
+      inputs
+    end
+
+    private def recursive_return_literal_instance?(ctx : LoweringContext, literal : Literal, expected : TypeRef) : Bool
+      facts = ctx.source_value_facts(literal.id)
+      return false unless literal.type == expected && (!facts || facts == [{expected, false}])
+      expected == TypeRef::BOOL ? literal.value.is_a?(Bool) : literal.has_str_value?
+    end
+
+    private def same_recursive_literal_inputs?(left : Array({Block, Literal})?, right : Array({Block, Literal})?) : Bool
+      return right.nil? unless left
+      return false unless right && left.size == right.size
+      left.each_with_index.all? do |(block, literal), index|
+        block.same?(right[index][0]) && literal.same?(right[index][1])
       end
     end
 

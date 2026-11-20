@@ -1254,7 +1254,10 @@ An already reached Bool or String literal can establish an exact instance
 result when the current source declaration resolves to that concrete instance
 type and the hierarchy has no subclasses of it. The literal must occupy a
 reachable Return slot in the current body, carry the expected HIR payload,
-and agree with any recorded value-kind facts.
+and agree with any recorded value-kind facts. A returned Phi can carry the
+same proof when each distinct reachable predecessor owns a current literal
+of the exact instance type. Check the predecessor set, physical incoming
+values, payload and kind, and revalidate those witnesses on replay.
 
 The witness releases the specific recursive call for replay. The finished
 producer must still pass source return checking and supply a current result
@@ -1262,9 +1265,10 @@ receipt for the same instance type. Each projected call must pass the existing
 source, argument, and emission checks.
 
 Gate: recursive_literal_result_repro.sh COMPILER compares original Crystal and
-the two lowering modes and rejects a wrong type or kind in a later branch.
-Refresh after literal lowering, source return checking or retry projection
-changes. Rollback is the atomic literal result commit.
+the two lowering modes, exercises both edges of a literal-only join, and
+rejects a wrong type or kind in either the join or a later return. Refresh
+after literal or Phi lowering, source return checking or retry projection
+changes. Rollback is the atomic commit for the affected witness.
 
 ### Implicit callback tuple unpack
 

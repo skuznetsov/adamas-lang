@@ -28402,3 +28402,19 @@ changes. No stdlib edits.
   with `CLI#run_check` still pending and emit no S2.
 - [ ] Resolve the remaining dependency between the value and text evaluators
   for macro member access. Preserve the exact replay and final return checks.
+
+## Literal-only return joins in recursive lowering (2026-11-19)
+
+- [x] Preserve exact Bool/String evidence when a returned Phi joins
+  witnessed literals. Require one current literal for every reachable
+  predecessor and recheck the physical join and its witnesses on replay.
+  Source result and call emission validation still runs on the final body.
+- The String join reproducer fails on the parent with a pending source
+  result. It matches Crystal 1.22.3 in lazy and eager lowering on both
+  runtime branches. Five wrong type or kind variants are rejected.
+- Fresh S1 → S2 used source seal
+  `b69ef9c078755fd5d2f0d96a1a30e81daf4616ce5294031ddd5c6ed19fee4124`.
+  Installed 1.22.3 (221.63s) and bundled 1.18.2 (231.81s) reproduce
+  the same unresolved `CLI#run_check` demand. Neither emits S2.
+  The isolated literal join repair does not settle the macro member
+  evaluator cycle in the full bootstrap.
