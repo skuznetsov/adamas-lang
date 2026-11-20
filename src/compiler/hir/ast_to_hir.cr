@@ -154793,11 +154793,59 @@ module Adamas::HIR
     end
 
     # Scan proc body AST to collect referenced identifier names (for capture detection).
-    # Simple recursive walk — handles common node types.
-    private def collect_proc_body_identifiers(body : Array(ExprId)) : Set(String)
+    # Simple recursive walk — handles common node types. With `macro_ctx`,
+    # macro control nodes in the body are expanded in that context first.
+    private def collect_proc_body_identifiers(
+      body : Array(ExprId),
+      macro_ctx : LoweringContext? = nil,
+    ) : Set(String)
       names = Set(String).new
-      body.each { |eid| collect_proc_body_ident_walk(eid, names) }
+      with_proc_capture_scan_ctx(macro_ctx) do
+        body.each { |eid| collect_proc_body_ident_walk(eid, names) }
+      end
       names
+    end
+
+    # Lowering context of the closure whose body the capture scans walk.
+    # A macro control node in that body (`{% for ivar in @type.instance_vars %}
+    # io << ... {% end %}`) keeps its code as text until lowering expands it,
+    # so the scans expand it in the enclosing context to see which enclosing
+    # locals the generated code names. Without that, a parameter used only
+    # inside the expansion is not captured and the closure body lowers it as
+    # an unresolved call.
+    @proc_capture_scan_ctx : LoweringContext? = nil
+
+    private def with_proc_capture_scan_ctx(ctx : LoweringContext?, &)
+      return yield unless ctx
+      saved = @proc_capture_scan_ctx
+      @proc_capture_scan_ctx = ctx
+      begin
+        yield
+      ensure
+        @proc_capture_scan_ctx = saved
+      end
+    end
+
+    # The parsed code a macro control node in a scanned closure body expands
+    # to, in the scan's lowering context, or nil outside a scan.
+    private def proc_capture_scan_macro_expansion(
+      node : Adamas::Compiler::Frontend::Node,
+    ) : Tuple(Adamas::Compiler::Frontend::ArenaLike, Array(ExprId))?
+      ctx = @proc_capture_scan_ctx
+      return nil unless ctx
+      owner_type = @current_class ? macro_owner_type_for(@current_class.not_nil!) : nil
+      text = case node
+             when Adamas::Compiler::Frontend::MacroForNode
+               expand_macro_for_body(node, macro_vars_for_current_context(ctx), owner_type)
+             when Adamas::Compiler::Frontend::MacroIfNode
+               expand_macro_if_body_text(node, macro_vars_for_current_context(ctx), owner_type)
+             when Adamas::Compiler::Frontend::MacroLiteralNode
+               expand_macro_literal_with_controls(ctx, node.pieces)
+             end
+      return nil unless text
+      code = text.strip
+      return nil if code.empty?
+      parse_macro_literal_for_context(code)
     end
 
     private def proc_body_has_implicit_receiver_call?(
@@ -155501,6 +155549,15 @@ module Adamas::HIR
         if ensure_body = node.ensure_body
           ensure_body.each { |e| collect_proc_body_ident_walk(e, names) }
         end
+      when Adamas::Compiler::Frontend::MacroForNode,
+           Adamas::Compiler::Frontend::MacroIfNode,
+           Adamas::Compiler::Frontend::MacroLiteralNode
+        if expansion = proc_capture_scan_macro_expansion(node)
+          expansion_arena, expansion_body = expansion
+          with_arena(expansion_arena) do
+            expansion_body.each { |child| collect_proc_body_ident_walk(child, names) }
+          end
+        end
       else
         each_proc_scan_child(expr_id) { |child| collect_proc_body_ident_walk(child, names) }
       end
@@ -155518,6 +155575,7 @@ module Adamas::HIR
       capture_names : Set(String),
       arena : Adamas::Compiler::Frontend::ArenaLike,
       values : Hash(String, Array({ExprId, Int32}))? = nil,
+      macro_ctx : LoweringContext? = nil,
     ) : Set(String)
       written = Set(String).new
       saved_arena = @arena
@@ -155525,7 +155583,9 @@ module Adamas::HIR
       @arena = arena
       @written_capture_value_sink = values
       begin
-        body.each { |eid| detect_written_captures_walk(eid, capture_names, written) }
+        with_proc_capture_scan_ctx(macro_ctx) do
+          body.each { |eid| detect_written_captures_walk(eid, capture_names, written) }
+        end
       ensure
         @arena = saved_arena
         @written_capture_value_sink = saved_sink
@@ -155921,6 +155981,24 @@ module Adamas::HIR
         end
         if ensure_body = node.ensure_body
           ensure_body.each { |e| detect_written_captures_walk(e, capture_names, written) }
+        end
+      when Adamas::Compiler::Frontend::MacroForNode,
+           Adamas::Compiler::Frontend::MacroIfNode,
+           Adamas::Compiler::Frontend::MacroLiteralNode
+        if expansion = proc_capture_scan_macro_expansion(node)
+          expansion_arena, expansion_body = expansion
+          # The value sink keys right-hand sides by the scanned body's arena.
+          # An expansion's nodes live in their own arena, so a write there
+          # marks the capture without contributing a value type.
+          saved_sink = @written_capture_value_sink
+          @written_capture_value_sink = nil
+          begin
+            with_arena(expansion_arena) do
+              expansion_body.each { |child| detect_written_captures_walk(child, capture_names, written) }
+            end
+          ensure
+            @written_capture_value_sink = saved_sink
+          end
         end
       else
         each_proc_scan_child(expr_id) { |child| detect_written_captures_walk(child, capture_names, written) }
@@ -156683,7 +156761,7 @@ module Adamas::HIR
         end
       end
       # Detect captures: scan proc body for identifiers that reference parent locals
-      referenced_names = collect_proc_body_identifiers(node.body)
+      referenced_names = collect_proc_body_identifiers(node.body, ctx)
       implicit_receiver_call = proc_body_has_implicit_receiver_call?(node.body, proc_param_names, parent_locals)
       captures = [] of {String, ValueId, TypeRef} # {name, parent_value_id, type}
       referenced_names.each do |name|
@@ -156738,7 +156816,7 @@ module Adamas::HIR
       capture_names = capture_name_set(captures)
       proc_literal_arena : Adamas::Compiler::Frontend::ArenaLike = @arena
       written_values = {} of String => Array({ExprId, Int32})
-      written_captures = detect_written_captures(node.body, capture_names, proc_literal_arena, written_values)
+      written_captures = detect_written_captures(node.body, capture_names, proc_literal_arena, written_values, ctx)
       write_enums = {} of String => String?
       captures = widen_written_capture_types(ctx, captures, written_values, node.params, proc_param_types, proc_literal_arena, parent_locals, write_enums)
       captured_vars = captured_vars_for_env(ctx, captures, written_captures, write_enums)
@@ -158214,7 +158292,7 @@ module Adamas::HIR
           end
         end
       end
-      referenced_names = collect_proc_body_identifiers(block_node.body)
+      referenced_names = collect_proc_body_identifiers(block_node.body, ctx)
       @arena = saved_arena
 
       parent_locals = ctx.save_locals.locals
@@ -158324,7 +158402,7 @@ module Adamas::HIR
       @enum_value_types = saved_enum_value_types
       capture_names = capture_name_set(captures)
       written_values = {} of String => Array({ExprId, Int32})
-      written_captures = detect_written_captures(block_node.body, capture_names, block_arena, written_values)
+      written_captures = detect_written_captures(block_node.body, capture_names, block_arena, written_values, ctx)
       pattern_capture_names.each { |name| written_captures.add(name) }
       write_enums = {} of String => String?
       captures = widen_written_capture_types(ctx, captures, written_values, block_node.params, param_types || proc_param_types, block_arena, parent_locals, write_enums)
