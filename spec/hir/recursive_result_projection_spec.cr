@@ -57,7 +57,9 @@ class Adamas::HIR::AstToHir
     end
   end
 
-  def __test_completed_provisional_projection(change : Symbol = :current, *, rebuild : Bool = false) : Bool
+  def __test_completed_provisional_projection(
+    change : Symbol = :current, *, rebuild : Bool = false, suspended : Bool = false,
+  ) : Bool
     previous_capture = @force_lower_current_replay_capture
     consumer = __test_projection_method_name("consumer_for")
     producer = __test_projection_method_name("value_for")
@@ -92,16 +94,42 @@ class Adamas::HIR::AstToHir
       retain_force_lower_provisional_call(ctx, call, observed)
       capture.provisional_calls.try(&.size).should eq(1)
     end
-    @force_lower_current_replay_capture = previous_capture
-
     producer_replay = observed[1]
     provisional_calls = if change == :missing_observation
                           nil.as(Array(ForceLowerProvisionalCall)?)
                         else
                           capture.provisional_calls
                         end
-    consumer_request = ForceLowerRetryRequest.new(consumer, [producer], false,
-      consumer_replay, consumer_source, true, provisional_calls: provisional_calls)
+    consumer_request = if suspended
+      leaf = __test_projection_method_name("sibling_value")
+      leaf_source = __test_projection_source(leaf)
+      @force_lower_provisional_dependencies[consumer] << leaf
+      @force_lower_active_replay_captures[consumer] = capture
+      capture.source = consumer_source
+      set_function_state(consumer, FunctionLoweringState::InProgress)
+      refused_mark = @force_lower_depth_refused.size
+      begin
+        @force_lower_depth_refused << leaf
+        suspend_depth_refused_source_result(ctx, leaf, function.return_type, leaf_source.source_def,
+          leaf_source.source_def, leaf_source.source_arena, refused_mark, leaf_source.source_registry_name, leaf_source)
+        raise "expected source-result suspension"
+      rescue pending : ExactResultPending
+        pending.consumer_capture = capture
+        remove_hir_function(consumer) unless change == :replacement_body
+        clear_function_state(consumer)
+        if change == :unsettled_leaf
+          @force_lower_provisional_dependencies[leaf] = Set{"RecFactory.inferred"}
+        end
+        ForceLowerSuspendedRequest.new(pending, consumer_replay, false)
+      ensure
+        @force_lower_depth_refused.pop
+        @force_lower_active_replay_captures.delete(consumer)
+      end
+    else
+      ForceLowerRetryRequest.new(consumer, [producer], false,
+        consumer_replay, consumer_source, true, provisional_calls: provisional_calls)
+    end
+    @force_lower_current_replay_capture = previous_capture
     producer_request = ForceLowerRetryRequest.new(producer, [consumer], false,
       producer_replay, producer_source, true)
     @force_lower_retry_work << consumer_request
@@ -117,6 +145,8 @@ class Adamas::HIR::AstToHir
       replacement.configure_without_receiver(producer, call.args.dup)
       index = block.instructions.index! { |instruction| instruction.same?(call) }
       block.replace(index, replacement)
+    when :changed_generation
+      function.create_block(block.scope)
     when :removed_inverse
       @force_lower_provisional_dependencies[producer] = Set{"RecFactory.inferred"}
     when :removed_inverse_request
@@ -133,11 +163,27 @@ class Adamas::HIR::AstToHir
       index.should eq(0)
       use = @deferred_struct_result_uses[{consumer, producer}].not_nil!
       recursive_struct_result_available?(use.request).should be_true
+      if consumer_request.is_a?(ForceLowerSuspendedRequest)
+        owner = consumer_request.pending
+        other = ExactResultPending.new(consumer, owner.producer, owner.producer_source,
+          owner.producer_replay, suspended_calls: owner.suspended_calls)
+        other.consumer_capture = owner.consumer_capture
+        other_request = ForceLowerSuspendedRequest.new(other, consumer_replay, false)
+        queued_dependency_has_checked_result?(other_request, producer).should be_false
+        suspended_provisional_projection_current?(other_request, @force_lower_provisional_dependencies[consumer]).should be_false
+      end
       return true unless rebuild
 
-      retry_request = @force_lower_retry_work.delete_at(index.not_nil!).as(ForceLowerRetryRequest)
-      rebuilt_request = with_force_lower_exact_source(consumer, consumer_source) do
-        retry_force_lower_depth_request(retry_request)
+      retry_request = @force_lower_retry_work.delete_at(index.not_nil!)
+      rebuilt_request = case retry_request
+                        when ForceLowerSuspendedRequest
+                          resume_suspended_exact_result(retry_request)
+                        when ForceLowerRetryRequest
+                          with_force_lower_exact_source(consumer, consumer_source) do
+                            retry_force_lower_depth_request(retry_request)
+                          end
+                        else
+                          false
       end
       rebuilt_request.should be_true
       rebuilt = @module.function_by_name(consumer) || return false
@@ -1590,6 +1636,22 @@ describe "source result projection inside a recursive specialization" do
 
   it "rebuilds a completed provisional consumer and discharges its physical call" do
     recursive_projection_converter.__test_completed_provisional_projection(:current, rebuild: true).should be_true
+  end
+
+  it "replays the earlier inverse call of a body suspended on a settled independent producer" do
+    recursive_projection_converter.__test_completed_provisional_projection(
+      :current, rebuild: true, suspended: true,
+    ).should be_true
+  end
+
+  it "rejects changed inverse calls and unready independent producers from a suspended body" do
+    [:missing_observation, :mutated_arguments, :replaced_call, :changed_generation, :removed_inverse,
+     :removed_inverse_request, :stale_definition, :stale_arena, :replacement_body,
+     :unsettled_leaf].each do |change|
+      recursive_projection_converter.__test_completed_provisional_projection(
+        change, suspended: true,
+      ).should be_false
+    end
   end
 
   it "retains an inferred formal partial result only for its bound instance ABI" do

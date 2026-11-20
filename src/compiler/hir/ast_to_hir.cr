@@ -2194,6 +2194,7 @@ module Adamas::HIR
       getter producer_bypass_inline_yield : Bool?
       getter producer_pending : ExactResultPending?
       getter checked_return : PartialRecursiveReturn?
+      getter suspended_calls : ForceLowerSuspendedCalls?
       property consumer_capture : ForceLowerReplayCapture?
       property consumer_requires_result : Bool = true
       property consumer_bypass_inline_yield : Bool = false
@@ -2210,6 +2211,7 @@ module Adamas::HIR
         @producer_bypass_inline_yield : Bool? = nil,
         @producer_pending : ExactResultPending? = nil,
         @checked_return : PartialRecursiveReturn? = nil,
+        @suspended_calls : ForceLowerSuspendedCalls? = nil,
       )
         super("pending source result #{@producer} in #{@consumer}")
       end
@@ -2309,6 +2311,14 @@ module Adamas::HIR
       end
     end
 
+    # Calls already checked before a later demand stopped this body. The
+    # suspension owns the old generation only for finding an exact edge.
+    private record ForceLowerSuspendedCalls,
+      capture : ForceLowerReplayCapture,
+      function : Function,
+      body_revision : UInt64,
+      calls : Array(ForceLowerProvisionalCall)
+
     private record ForceLowerRetryRequest,
       name : String,
       refused : Array(String),
@@ -2373,6 +2383,7 @@ module Adamas::HIR
       getter expected_facts : Array({TypeRef, Bool})
       getter producer_replay : ForceLowerReplayCallsite
       getter checked_return : PartialRecursiveReturn?
+      getter suspended_consumer : ExactResultPending?
       getter emissions = {} of UInt64 => {Function, RecursiveStructResultEmissionWitness?}
       @next_emission_ticket : UInt64 = 0_u64
 
@@ -2381,6 +2392,7 @@ module Adamas::HIR
         @expected : TypeRef,
         @producer_replay : ForceLowerReplayCallsite,
         @checked_return : PartialRecursiveReturn? = nil,
+        @suspended_consumer : ExactResultPending? = nil,
       )
         nullable = @checked_return.try(&.evidence.as?(PartialNullableStructReturn))
         @expected_facts = nullable ? nullable.contract.facts : [{@expected, false}]
@@ -7334,6 +7346,7 @@ module Adamas::HIR
     @force_lower_retry_driver_active = false
     @force_lower_retry_work = [] of ForceLowerWorkRequest
     @deferred_struct_result_uses = {} of Tuple(String, String) => DeferredStructResultUse
+    @force_lower_suspended_call_replay : ExactResultPending? = nil
     @source_result_replay_children = {} of FunctionId => Array(Function)
     # When true, skip expensive infer_concrete_return_type_from_body during
     # monomorphization triggered by ensure_monomorphized_type (lowering path).
@@ -10135,6 +10148,7 @@ module Adamas::HIR
       @force_lower_discharged_edges.clear
       @force_lower_provisional_dependencies.clear
       @deferred_struct_result_uses.clear
+      @force_lower_suspended_call_replay = nil
       @source_result_replay_children.clear
       @force_lower_retry_driver_active = false
       @force_lower_retry_work.clear
@@ -116508,11 +116522,19 @@ module Adamas::HIR
                             pending_left.consumer_requires_result == pending_right.consumer_requires_result &&
                             pending_left.consumer_bypass_inline_yield == pending_right.consumer_bypass_inline_yield &&
                             same_suspended_struct_return?(pending_left.checked_return, pending_right.checked_return) &&
+                            same_suspended_provisional_calls?(pending_left.suspended_calls, pending_right.suspended_calls) &&
                             same_force_lower_replay_capture?(pending_left.consumer_capture, pending_right.consumer_capture)
         pending_left = pending_left.producer_pending
         pending_right = pending_right.producer_pending
       end
       pending_left.nil? && pending_right.nil?
+    end
+
+    private def same_suspended_provisional_calls?(left : ForceLowerSuspendedCalls?, right : ForceLowerSuspendedCalls?) : Bool
+      return right.nil? unless left
+      return false unless right
+      left.capture.same?(right.capture) && left.function.same?(right.function) &&
+        left.body_revision == right.body_revision && left.calls.same?(right.calls)
     end
 
     private def force_lower_retry_requires_result?(request : ForceLowerWorkRequest) : Bool
@@ -116598,6 +116620,9 @@ module Adamas::HIR
           return request.pending.producer_requires_result && recursive_struct_result_available?(request)
         end
         use = @deferred_struct_result_uses[{request.name, producer}]? || return false
+        if owner = use.suspended_consumer
+          return false unless owner.same?(request.pending)
+        end
         same_force_lower_replay_callsite?(request.replay_callsite, use.request.replay_callsite) &&
           force_lower_retry_source_current?(request) && recursive_struct_result_available?(use.request)
       else
@@ -117126,14 +117151,30 @@ module Adamas::HIR
             retry_force_lower_depth_request(retry_request)
           end
         else
-          if projected_result && !@module.has_function_with_body?(consumer) && dependencies
+          retired_dependencies = nil.as(Set(String)?)
+          if dependencies && suspended_provisional_projection_current?(request, dependencies)
+            # The recorded calls belong to the retired body. Replay from
+            # the exact source and rebuild its dependencies from fresh calls.
+            retired_dependencies = @force_lower_provisional_dependencies.delete(consumer)
+          elsif projected_result && !@module.has_function_with_body?(consumer) && dependencies
             # This dependency belonged to the aborted generation. The fresh
             # consumer records every demand again at its own source callsite.
             dependencies.delete(producer)
             @force_lower_provisional_dependencies.delete(consumer) if dependencies.empty?
           end
-          replay_force_lower_callsite(consumer, replay, bypass_inline_yield,
-            requires_result: pending.consumer_requires_result)
+          previous_suspended_call_replay = @force_lower_suspended_call_replay
+          @force_lower_suspended_call_replay = pending if retired_dependencies
+          replayed = false
+          begin
+            replayed = replay_force_lower_callsite(consumer, replay, bypass_inline_yield,
+              requires_result: pending.consumer_requires_result)
+          ensure
+            @force_lower_suspended_call_replay = previous_suspended_call_replay
+            if !replayed && retired_dependencies && @force_lower_retry_work.size == work_mark &&
+               !@module.function_by_name(consumer)
+              @force_lower_provisional_dependencies[consumer] ||= retired_dependencies
+            end
+          end
         end
         if @force_lower_retry_work.size > work_mark ||
            (!settled_force_lower_demand?(consumer, pending.consumer_requires_result) &&
@@ -117949,9 +117990,9 @@ module Adamas::HIR
 
     private def open_recursive_struct_result : Int32?
       @force_lower_retry_work.each_with_index do |entry, index|
-        if entry.is_a?(ForceLowerSuspendedRequest) && open_recursive_struct_result_use(entry)
-          return index
-        end
+        next unless entry.is_a?(ForceLowerSuspendedRequest)
+        return index if open_recursive_struct_result_use(entry)
+        return index if open_suspended_provisional_call_result(entry)
       end
       @force_lower_retry_work.each_with_index do |entry, index|
         next unless entry.is_a?(ForceLowerRetryRequest) && entry.requires_result &&
@@ -117966,6 +118007,7 @@ module Adamas::HIR
 
     private def open_recursive_struct_result_use(
       entry : ForceLowerSuspendedRequest, observed : ForceLowerProvisionalCall? = nil,
+      *, suspended_consumer : ExactResultPending? = nil,
     ) : Bool
       return false unless force_lower_retry_source_current?(entry)
       pending = entry.pending
@@ -117986,7 +118028,7 @@ module Adamas::HIR
           observed.context, producer, observed.receiver, producer_replay.callsite.types,
         )
       end
-      @deferred_struct_result_uses[edge] = DeferredStructResultUse.new(entry, type, producer_replay, anchor)
+      @deferred_struct_result_uses[edge] = DeferredStructResultUse.new(entry, type, producer_replay, anchor, suspended_consumer)
       if env_has?("DEBUG_FORCE_LOWER_DEPTH")
         if anchor.try(&.evidence.is_a?(PartialVirtualReferenceReturn))
           STDERR.puts "[FORCE_LOWER_RECURSIVE_REFERENCE] consumer=#{pending.consumer} producer=#{pending.producer}"
@@ -117998,6 +118040,63 @@ module Adamas::HIR
         end
       end
       true
+    end
+
+    private def current_suspended_provisional_calls(request : ForceLowerSuspendedRequest) : ForceLowerSuspendedCalls?
+      pending = request.pending
+      saved = pending.suspended_calls || return
+      capture = saved.capture
+      function = saved.function
+      return unless pending.consumer_requires_result && pending.producer_pending.nil? &&
+                    pending.consumer_capture.try(&.same?(capture)) == true && capture.name == request.name &&
+                    same_force_lower_replay_callsite?(request.replay_callsite, capture.binding) &&
+                    function.name == request.name && function.body_revision == saved.body_revision &&
+                    !@module.function_by_name(request.name) && !function_state(request.name).in_progress? &&
+                    active_force_lower_source_current?(request.name, request.replay_callsite) &&
+                    force_lower_retry_source_current?(request)
+      saved if settled_force_lower_producer?(pending)
+    end
+
+    private def open_suspended_provisional_call_result(entry : ForceLowerSuspendedRequest) : Bool
+      saved = current_suspended_provisional_calls(entry) || return false
+      dependencies = @force_lower_provisional_dependencies[entry.name]? || return false
+      saved.calls.any? do |observed|
+        producer = observed.producer
+        next false if producer == entry.name || producer == entry.pending.producer ||
+                      !dependencies.includes?(producer) || settled_force_lower_result?(producer)
+        next false unless other_suspended_call_dependencies_settled?(entry, dependencies, producer)
+        source = observed.replay.exact_source_binding || next false
+        next false unless saved.calls.all? do |other|
+          other.producer != producer ||
+            (retained_provisional_call_current?(other, saved.function) &&
+             reconcile_recursive_producer_replays(other.replay, observed.replay))
+        end
+
+        pending = ExactResultPending.new(entry.name, producer, source, observed.replay)
+        pending.consumer_bypass_inline_yield = entry.bypass_inline_yield
+        inverse = ForceLowerSuspendedRequest.new(pending, entry.replay_callsite, entry.bypass_inline_yield)
+        open_recursive_struct_result_use(inverse, observed, suspended_consumer: entry.pending)
+      end
+    end
+
+    private def suspended_provisional_projection_current?(
+      request : ForceLowerSuspendedRequest, dependencies : Set(String),
+    ) : Bool
+      return false unless current_suspended_provisional_calls(request)
+      dependencies.any? do |producer|
+        use = @deferred_struct_result_uses[{request.name, producer}]? || next false
+        use.suspended_consumer.try(&.same?(request.pending)) == true &&
+          other_suspended_call_dependencies_settled?(request, dependencies, producer) &&
+          recursive_struct_result_available?(use.request)
+      end
+    end
+
+    private def other_suspended_call_dependencies_settled?(
+      request : ForceLowerSuspendedRequest, dependencies : Set(String), producer : String,
+    ) : Bool
+      dependencies.all? do |callee|
+        callee == producer || callee == request.pending.producer || settled_force_lower_result?(callee)
+      end
     end
 
     # A completed provisional body can be the only owner of the inverse
@@ -118021,18 +118120,8 @@ module Adamas::HIR
         end
       end
 
-      ctx = observed.context
-      function = ctx.function
-      call = observed.call
-      return unless function.name == name && @module.function_by_name(name).try(&.same?(function)) == true &&
-                    reachable_blocks(function).any? { |block| block.same?(observed.block) } &&
-                    observed.block.instructions.count { |instruction| instruction.same?(call) } == 1 &&
-                    ctx.value_for(call.id).try(&.same?(call)) == true
-      return unless call.method_name == producer && !call.virtual && !call.has_block? &&
-                    call.args == observed.arguments && call.has_receiver? == !observed.receiver.nil? &&
-                    (!observed.receiver || call.receiver_value == observed.receiver) &&
-                    recursive_struct_result_operand_witnesses_current?(ctx, function, observed.operands)
-      return unless provisional_source_call_arguments_match?(ctx, call, observed.replay.callsite)
+      function = @module.function_by_name(name) || return
+      return unless retained_provisional_call_current?(observed, function)
       return unless request.provisional_calls.not_nil!.all? do |other|
         other.producer != producer || reconcile_recursive_producer_replays(other.replay, observed.replay)
       end
@@ -118040,6 +118129,20 @@ module Adamas::HIR
       pending = ExactResultPending.new(name, producer, source, observed.replay)
       pending.consumer_bypass_inline_yield = request.bypass_inline_yield
       ForceLowerSuspendedRequest.new(pending, replay, request.bypass_inline_yield)
+    end
+
+    private def retained_provisional_call_current?(observed : ForceLowerProvisionalCall, function : Function) : Bool
+      ctx = observed.context
+      call = observed.call
+      return false unless ctx.function.same?(function) && ctx.source_result_replay_parent.nil? &&
+                          reachable_blocks(function).any? { |block| block.same?(observed.block) } &&
+                          observed.block.instructions.count { |instruction| instruction.same?(call) } == 1 &&
+                          ctx.value_for(call.id).try(&.same?(call)) == true
+      return false unless call.method_name == observed.producer && !call.virtual && !call.has_block? &&
+                          call.args == observed.arguments && call.has_receiver? == !observed.receiver.nil? &&
+                          (!observed.receiver || call.receiver_value == observed.receiver) &&
+                          recursive_struct_result_operand_witnesses_current?(ctx, function, observed.operands)
+      provisional_source_call_arguments_match?(ctx, call, observed.replay.callsite)
     end
 
     private def each_queued_force_lower_replay(name : String, & : ForceLowerReplayCallsite ->) : Nil
@@ -118363,6 +118466,9 @@ module Adamas::HIR
       return false if @deferred_struct_result_uses.empty?
       consumer = ctx.source_result_replay_consumer
       use = @deferred_struct_result_uses[{consumer, producer}]? || return false
+      if owner = use.suspended_consumer
+        return false unless owner.same?(@force_lower_suspended_call_replay)
+      end
       return false unless live_source_result_replay_owner(ctx) && use.expected == result
       callsite = use.producer_replay.callsite
       return false unless recursive_struct_result_argument_facts_match?(callsite, arg_types, arg_facts)
@@ -119050,6 +119156,20 @@ module Adamas::HIR
       recursive_struct_result_argument_facts_match?(callsite, types, facts)
     end
 
+    private def retain_suspended_provisional_calls(ctx : LoweringContext) : ForceLowerSuspendedCalls?
+      function = ctx.function
+      name = function.name
+      return if ctx.source_result_replay_parent
+      capture = @force_lower_active_replay_captures[name]? || return
+      replay = capture.binding || return
+      calls = capture.provisional_calls || return
+      return unless @force_lower_current_replay_capture.try(&.same?(capture)) == true &&
+                    function_state(name).in_progress? && @module.function_by_name(name).try(&.same?(function)) == true &&
+                    active_force_lower_source_current?(name, replay) && calls.any? &&
+                    calls.all? { |observed| observed.context.same?(ctx) }
+      ForceLowerSuspendedCalls.new(capture, function, function.body_revision, calls.dup)
+    end
+
     private def suspend_depth_refused_source_result(
       ctx : LoweringContext,
       name : String,
@@ -119094,7 +119214,8 @@ module Adamas::HIR
                             end
                           end
                         end
-      raise ExactResultPending.new(consumer, name, source, producer_replay, checked_return: checked_return)
+      raise ExactResultPending.new(consumer, name, source, producer_replay,
+        checked_return: checked_return, suspended_calls: retain_suspended_provisional_calls(ctx))
     end
 
     # A producer that suspended on its own unsettled dependency is just as

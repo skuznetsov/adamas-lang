@@ -35,6 +35,20 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-20 — Preserve checked calls when their source body suspends
+- [x] Keep the already checked inverse calls with the exact suspended body.
+  An independent dependency can suspend that body before it publishes a
+  provisional result. Once the dependency settles, discard the retired body
+  and replay with the ordinary recursive-result proof. Reject stale bodies,
+  changed calls, conflicting source identities and unsettled dependencies.
+- [x] The existing initializer body replay runner passes 83 HIR examples.
+  The new suspension regression fails on the parent and covers recovery,
+  invalidation and the final result check.
+- [ ] Fresh S1-to-S2 on bundled 1.18.2 (246s) and installed 1.22.3 (235s)
+  replays both macro assignment methods and clears the pending
+  `CLI#run_check` result. Both reach the `macro_value_to_iterable` return
+  check and exit 1 before producing S2.
+
 ### 2026-11-19 — Restore checked inputs for a fixed callback replay
 - [x] A second force of an ordinary callback body can restore its exact
   positional inputs and fixed Proc parameter after a nested force consumes

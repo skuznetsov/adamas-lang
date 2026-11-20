@@ -12,6 +12,7 @@ trap 'rm -rf "$WORK"' EXIT
 SPEC_ARGS=(spec --no-color
   "$ROOT_DIR/spec/hir/force_lower_dependency_queue_spec.cr"
   "$ROOT_DIR/spec/hir/force_lower_active_edge_graph_spec.cr"
+  "$ROOT_DIR/spec/hir/recursive_result_projection_spec.cr"
   "$ROOT_DIR/spec/hir/initializer_body_pending_replay_spec.cr"
   "$ROOT_DIR/spec/hir/initializer_sequential_replay_spec.cr"
   "$ROOT_DIR/spec/hir/bound_initializer_result_replay_spec.cr"

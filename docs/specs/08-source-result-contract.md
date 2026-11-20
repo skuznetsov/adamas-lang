@@ -1218,6 +1218,15 @@ same result and emission obligations as a suspended call. The parsed-source
 projection specs exercise rebuilding and reject missing or stale call, source,
 and cycle evidence.
 
+A later exact-result suspension can retire a body that already emitted an
+inverse call. Retain those observations with that suspension and the retired
+function's body revision. Once the original producer and all unrelated
+dependencies settle, recheck the calls against the current queue and the
+selected producer's source, argument kinds and ABI. The exact suspension may
+then replay its source and emit new calls. The retired generation supplies
+cycle discovery only. The rebuilt generation still owes checked emissions
+and the producer's completed result receipt.
+
 Gate: initializer_body_demand_replay_repro.sh runs parsed-source graph controls
 alongside initializer replay. It checks nested chains, shared producers, actual
 cycles, changed Def/Arena receipts, callback identity and retained demand rights.
