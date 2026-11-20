@@ -1,5 +1,14 @@
 ### Recursive source result replay
 
+- [x] Track dependencies of the active physical body even when its result is
+  still uninferred. Its self-call inherits the existing child dependencies.
+  A different Def, arena, or HIR body keeps its own result obligation
+  (`force_lower_active_edge_graph_spec.cr`).
+- [ ] Fresh S1-to-S2 on bundled 1.18.2 settles both scanner children and
+  resumes `collect_instance_vars`. A longer cycle through `visit`,
+  `handle_class` and `collect_class_body` still relays a pending
+  result to `CLI#run_check`. Installed 1.22.3 stops at the
+  `Array(Nil | Slice(UInt8) | String)#join(String)` return check.
 - [x] Rebuild an emitted but provisional consumer when a shallower retry can
   reach its exact depth-refused producer. Keep the new body's own dependencies
   and type checks (`regression_tests/exact_cycle_generation_repro.sh`).

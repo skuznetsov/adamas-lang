@@ -124093,11 +124093,12 @@ module Adamas::HIR
                      !active_force_lower_result_generation?(target, binding) &&
                      queued_exact_force_lower_demand?(target, binding))
 
-      if consumer == target && (active = current_active_force_lower_body(target, allow_named_or_defaulted: true))
-        if active.function.same?(ctx.function) && active.source_def.same?(binding.source_def) &&
-           active.source_arena.same?(binding.source_arena)
+      if consumer == target
+        if @module.function_by_name(target).try(&.same?(ctx.function)) == true &&
+           active_force_lower_result_generation?(target, binding)
           # A call to this active body inherits the same unresolved children.
-          # A self edge would make their owner wait for its own completion.
+          # It does not add a producer to replay. This identifies the body,
+          # without certifying a return type or value kind for the call.
           return
         end
       end

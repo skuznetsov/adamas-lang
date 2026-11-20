@@ -98,6 +98,41 @@ class Adamas::HIR::AstToHir
     (@force_lower_provisional_dependencies[name]? || Set(String).new).to_a.sort
   end
 
+  def __test_active_recursion_dependency(context_kind : Symbol) : Array(String)
+    name = "edge_leaf"
+    child = "edge_pending_child"
+    source = __test_exact_source(name)
+    leaf = __test_exact_source(child)
+    function = @module.function_by_name(name).not_nil!
+    context = LoweringContext.new(function, @module, source.source_arena)
+    capture = ForceLowerReplayCapture.new(name, nil)
+    capture.source = context_kind == :foreign_source ? leaf : source
+    capture.binding = __test_replay_callsite(name)
+    @force_lower_active_replay_captures[name] = capture
+    set_function_state(name, FunctionLoweringState::InProgress)
+    mark = @force_lower_depth_refused.size
+    @force_lower_depth_refused << child
+    begin
+      record_force_lower_result_dependency(context, child, leaf.source_def, mark)
+      __test_provisional_dependency_names(name).should eq([child])
+      if context_kind == :detached_body
+        # A generated Proc can belong to the retry without sharing the
+        # original call's physical body.
+        detached = @module.function_by_name("edge_shared").not_nil!
+        context = LoweringContext.new(detached, @module, source.source_arena,
+          source_result_replay_parent: context)
+      end
+      record_force_lower_result_dependency(context, name, source.source_def, mark)
+      settled_force_lower_result?(name).should be_false
+      __test_provisional_dependency_names(name)
+    ensure
+      @force_lower_depth_refused.pop
+      @force_lower_provisional_dependencies.delete(name)
+      @force_lower_active_replay_captures.delete(name)
+      set_function_state(name, FunctionLoweringState::Completed)
+    end
+  end
+
   def __test_relay_preserves_nested_pending?(
     parent : ForceLowerReplayCapture,
     pending : ExactResultPending,
@@ -670,6 +705,18 @@ private def force_lower_active_edge_graph_fixture : Adamas::HIR::AstToHir
 end
 
 describe "exact source retry graph admission" do
+  it "does not enqueue an active unannotated body's own result as another producer" do
+    converter = force_lower_active_edge_graph_fixture
+    converter.__test_active_recursion_dependency(:current_body).should eq(["edge_pending_child"])
+  end
+
+  it "preserves the self-spelled edge when the source or physical body differs" do
+    converter = force_lower_active_edge_graph_fixture
+    [:foreign_source, :detached_body].each do |kind|
+      converter.__test_active_recursion_dependency(kind).should eq(["edge_leaf", "edge_pending_child"])
+    end
+  end
+
   it "coalesces only requests with the same complete demand and replay recipe" do
     converter = force_lower_active_edge_graph_fixture
     converter.__test_retry_request_pair_matches?(:same).should be_true

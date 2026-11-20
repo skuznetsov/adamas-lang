@@ -1428,6 +1428,12 @@ generation retires its generated descendants and their tickets. Other
 source bodies, including separately materialized callees, keep their
 independent lifetimes.
 
+A recursive call to the current physical source body shares that generation's
+unresolved child dependencies. Register a producer edge only for a different
+generation or body. The active replay capture must match the selected Def and
+arena, whether the return type is already bound or still being inferred. This
+identity check grants neither a result receipt nor an emission ticket.
+
 Gate: recursive_proc_source_result_repro.sh COMPILER compares stock,
 eager and lazy output, and rejects invalid Proc and producer results.
 HIR specs cover unregistered and replaced bodies, operand identity, and
