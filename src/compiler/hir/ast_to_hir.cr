@@ -8712,13 +8712,19 @@ module Adamas::HIR
       getter declaration_owner : String?
       getter input_bindings : Hash(String, String)
       getter result_facts : Array({TypeRef, Bool})
+      # True once a lowered callback invocation was recorded. An observed
+      # callback without result facts never completes normally (every edge
+      # raised, broke or returned), so its output is NoReturn.
+      getter? observed : Bool = false
 
       def initialize(@definition, @arena, @declaration_owner, input_bindings : Hash(String, String))
         @input_bindings = input_bindings.dup
         @result_facts = [] of {TypeRef, Bool}
       end
 
+      # Facts exclude bottom leaves; an empty set records a dead invocation.
       def record(facts : Array({TypeRef, Bool})) : Nil
+        @observed = true
         @result_facts.concat(facts)
         @result_facts.uniq!
       end
@@ -79108,7 +79114,15 @@ module Adamas::HIR
 
     private def inline_callback_result_argument(owner : InlineCallbackResultContext) : SourceCallArgument?
       facts = owner.result_facts
-      return nil if facts.empty? || facts.any? { |type, _| type == TypeRef::VOID || type.null_ptr? }
+      if facts.empty?
+        # Every lowered invocation of the callback escaped. As in Crystal, its
+        # output is NoReturn, which binds a free result variable
+        # (`&block : String -> T` with `{ raise ... }` gives `T = NoReturn`,
+        # so `String | T` is String). An unobserved callback binds nothing.
+        return nil unless owner.observed?
+        return SourceCallArgument.new(@module.intern_type(TypeDescriptor.new(TypeKind::Class, "NoReturn")), false)
+      end
+      return nil if facts.any? { |type, _| type == TypeRef::VOID || type.null_ptr? }
       result_type = union_type_for_value_set(facts.map(&.[0])) || return nil
       kinds = facts.map(&.[1]).uniq
       SourceCallArgument.new(result_type, kinds == [true], value_facts: kinds.size > 1 ? facts : nil)
@@ -147301,12 +147315,14 @@ module Adamas::HIR
 
         # Publish after all normal/next edges have merged and the caller's
         # lexical block scope has restored the callee. Escape and dead edges
-        # never supply callback output bindings, including placeholder Nil.
-        unless should_stop_sequential_lowering?(ctx)
+        # never supply callback output values, including placeholder Nil; an
+        # invocation with no completing edge is recorded as NoReturn.
+        callback_result = owner_return_context.try(&.callback_result_context)
+        if should_stop_sequential_lowering?(ctx)
+          callback_result.try(&.record([] of {TypeRef, Bool}))
+        else
           validate_source_block_result(ctx, block, owner_return_context.try(&.block_result_contract), result)
-          if callback_result = owner_return_context.try(&.callback_result_context)
-            callback_result.record(source_block_result_value_facts(ctx, result))
-          end
+          callback_result.try(&.record(source_block_result_value_facts(ctx, result)))
         end
 
         # The lowered body owns its result type. Nil is a concrete result, and
