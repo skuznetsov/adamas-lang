@@ -35,6 +35,22 @@ Each fix has its own commit and regression (original Crystal 1.22.1 first).
   print_error `%s` is not substituted; a top-level raise reaches
   `_URC_END_OF_STACK`; a top-level `fun` does not link without the prelude.
 
+### 2026-11-19 — Restore checked inputs for a fixed callback replay
+- [x] A second force of an ordinary callback body can restore its exact
+  positional inputs and fixed Proc parameter after a nested force consumes
+  the pending callsite. The retained recipes must agree on source identity,
+  call shape, namespace and type parameters. Each literal still owns its AST.
+- [x] 69 HIR checks cover the recovered parameter types and reject conflicting
+  callsites and active inline frames. The native macro regression passes all
+  seven cases in Crystal 1.22.3, lazy lowering and raw callback lowering,
+  including independent equal-ABI expansions and single execution before
+  a type error.
+- [ ] Fresh S1-to-S2 on bundled 1.18.2 (235s) recovers the callback inputs
+  and settles the independent hash assignment, but the remaining evaluator
+  cycle still leaves `CLI#run_check` pending. Installed 1.22.3 (235s)
+  opens the checked inverse edge and reaches the existing result error in
+  `macro_value_to_iterable`. Neither run produces S2.
+
 ### 2026-11-19 — Schedule an independent suspended producer
 - [x] Replay the exact unqueued producer when an unrelated live dependency
   blocks its consumer. Keep the consumer queued and count progress only when

@@ -116856,14 +116856,17 @@ module Adamas::HIR
       saw_nil && saw_reference && saw_self
     end
 
+    private def ordinary_callback_replay_context? : Bool
+      @suppress_force_lower_return_type_depth == 0 && @force_lower_yield_free_only_depth == 0 &&
+        @inline_yield_function_depth == 0 && @inline_yield_block_body_depth == 0 &&
+        @inline_yield_proc_depth == 0 && @inline_yield_name_stack.empty?
+    end
+
     # A callback body may be rebuilt through its own block parameter in an
     # ordinary context. This gives no authority to borrow a caller's frame or
     # to use the provisional body's result before its dependencies settle.
     private def ordinary_callback_body_retry?(request : ForceLowerRetryRequest) : Bool
-      return false if request.bypass_inline_yield || @suppress_force_lower_return_type_depth > 0 ||
-                      @force_lower_yield_free_only_depth > 0 || @inline_yield_function_depth > 0 ||
-                      @inline_yield_block_body_depth > 0 || @inline_yield_proc_depth > 0 ||
-                      !@inline_yield_name_stack.empty?
+      return false if request.bypass_inline_yield || !ordinary_callback_replay_context?
       name = request.name
       replay = request.replay_callsite
       return false unless replay && replay.callsite.has_block && force_lower_replay_callsite_current?(name, replay)
@@ -118089,10 +118092,15 @@ module Adamas::HIR
                    ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name)
         return unless same_force_lower_exact_source_binding?(source, observed) &&
                       active_force_lower_source_current?(name, replay) && force_lower_replay_callsite_current?(name, replay) &&
-                      !replay.callsite.has_block &&
-                      (!replay.callsite.has_named_args || recursive_struct_result_replay_arguments?(name, replay)) &&
                       replay.entry_type_param_map == force_lower_replay_entry_type_params(name, source, replay.callsite) &&
                       replay.entry_namespace_override == @current_namespace_override
+        if replay.callsite.has_block
+          return unless ordinary_callback_replay_context? && @explicit_yield_target_stack.empty? &&
+                        @expected_proc_return_type_hint_stack.empty? &&
+                        ordinary_fixed_callback_type(name, source, replay.callsite)
+        elsif replay.callsite.has_named_args
+          return unless recursive_struct_result_replay_arguments?(name, replay)
+        end
         if prior = retained
           retained = reconcile_recursive_producer_replays(prior, replay) || return
         else
@@ -121438,10 +121446,11 @@ module Adamas::HIR
           replay_source = candidate if force_lower_exact_source_matches?(name, candidate)
         end
         if replay_source && (retained = live_force_lower_callsite_for(name, replay_source))
-          # An ordinary lowering has no explicit right to an older call's
-          # arguments. Only a complete positional invocation on this exact
-          # registry entry can restore them in the same entry environment.
-          if exact_replay_source || ordinary_recursive_source_callsite?(name, replay_source, retained.callsite)
+          # A plain discovery can only recover an ordinary positional
+          # invocation. A retained block shape has already proved the fixed
+          # callback ABI; its literal body still belongs to the original call.
+          if exact_replay_source || retained.callsite.has_block ||
+             ordinary_recursive_source_callsite?(name, replay_source, retained.callsite)
             callsite_args = copy_force_lower_callsite(retained.callsite)
           end
         end

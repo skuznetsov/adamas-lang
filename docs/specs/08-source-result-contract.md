@@ -1326,8 +1326,12 @@ block bodies between calls.
 Check the exact declaration, positional input kinds, and concrete callback
 restrictions. An open, raw, or deferred callback needs its own replay
 contract. A block-bearing call does not supply an independent recursive
-return witness. Refresh after callback selection, source registration or
-retry dispatch changes.
+return witness. If a second force arrives after the pending argument entry has
+been consumed, restore the callee inputs from agreeing live continuations
+in the same namespace and type-parameter environment. Check the positional
+types and the declaration's fixed callback ABI in an ordinary replay context.
+Refresh after callback selection, source registration or retry dispatch
+changes.
 
 ### Callback hints in blockless replay
 

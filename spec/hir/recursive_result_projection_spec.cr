@@ -737,10 +737,18 @@ class Adamas::HIR::AstToHir
     !live_force_lower_callsite_for(name, source).nil?
   end
 
-  def __test_ordinary_queued_owner_recovery?(change : Symbol = :unchanged) : Bool
-    name = __test_projection_method_name("value_for")
+  def __test_ordinary_queued_owner_recovery?(change : Symbol = :unchanged, *, fixed_callback : Bool = false) : Bool
+    prior_driver = @force_lower_retry_driver_active
+    method = fixed_callback ? "fixed_retry_callback" : "value_for"
+    name = __test_projection_method_name(method)
     source = __test_projection_source(name)
-    callsite = __test_ordinary_projection_callsite
+    callsite = if fixed_callback
+                 input = change == :incompatible_callback_input ? TypeRef::BOOL : TypeRef::INT32
+                 kind = change == :callback_class_object
+                 CallsiteArgs.new([input], [kind], nil, has_block: true)
+               else
+                 __test_ordinary_projection_callsite
+               end
     replay = ForceLowerReplayCallsite.new(
       source.source_def,
       source.source_arena,
@@ -786,13 +794,35 @@ class Adamas::HIR::AstToHir
         @type_param_map.clear
         prior.each { |key, value| @type_param_map[key] = value }
       end
+    when :incompatible_callback_input, :callback_class_object
+      live_force_lower_callsite_for(name, source).nil?
+    when :foreign_yield_frame
+      @inline_yield_name_stack << "foreign_yield"
+      begin
+        live_force_lower_callsite_for(name, source).nil?
+      ensure
+        @inline_yield_name_stack.pop
+      end
     else
-      live_force_lower_callsite_for(name, source).try do |retained|
-        same_force_lower_replay_callsite?(retained, replay)
-      end || false
+      retained = live_force_lower_callsite_for(name, source) || return false
+      return false unless same_force_lower_replay_callsite?(retained, replay)
+      return true unless fixed_callback
+
+      callback_type = ordinary_fixed_callback_type(name, source, callsite) || return false
+      remove_hir_function(name).should be_true
+      clear_function_state(name)
+      @pending_arg_types.clear
+      @force_lower_retry_driver_active = true
+      capture = ForceLowerReplayCapture.new(name, nil)
+      lower_function_if_needed_profiled(name, __LINE__, capture)
+      block_param = @module.function_by_name(name).try(&.params.last?) || return false
+      block_param.is_block.should be_true
+      block_param.type.should eq(callback_type)
+      same_force_lower_replay_callsite?(capture.binding, replay)
     end
   ensure
     @force_lower_retry_work.clear
+    @force_lower_retry_driver_active = prior_driver || false
   end
 
   def __test_source_replay_callback_scope : Nil
@@ -1687,6 +1717,15 @@ describe "source result projection inside a recursive specialization" do
     converter.__test_ordinary_queued_owner_recovery?.should be_true
     [:registered_definition, :registered_arena, :entry_namespace, :entry_type_param_map].each do |change|
       converter.__test_ordinary_queued_owner_recovery?(change).should be_true
+    end
+  end
+
+  it "restores queued fixed callback inputs within the exact ordinary body environment" do
+    converter = recursive_projection_converter
+    converter.__test_ordinary_queued_owner_recovery?(fixed_callback: true).should be_true
+    [:registered_definition, :registered_arena, :entry_namespace, :entry_type_param_map,
+     :incompatible_callback_input, :callback_class_object, :foreign_yield_frame].each do |change|
+      converter.__test_ordinary_queued_owner_recovery?(change, fixed_callback: true).should be_true
     end
   end
 
