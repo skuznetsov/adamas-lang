@@ -1,3 +1,9 @@
+### Recursive source result replay
+
+- [x] Rebuild an emitted but provisional consumer when a shallower retry can
+  reach its exact depth-refused producer. Keep the new body's own dependencies
+  and type checks (`regression_tests/exact_cycle_generation_repro.sh`).
+
 ### S1 -> S2 bootstrap blockers (2026-10-26)
 Each fix has its own commit and regression (original Crystal 1.22.1 first).
 - [x] b2f293b5, 8aa7093c generic instances take constructor arity and ivar

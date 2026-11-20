@@ -2203,6 +2203,7 @@ module Adamas::HIR
       getter suspended_calls : ForceLowerSuspendedCalls?
       property consumer_capture : ForceLowerReplayCapture?
       property consumer_requires_result : Bool = true
+      property consumer_force_depth : Int32 = 0
       property consumer_bypass_inline_yield : Bool = false
       # Retry work belongs to this exact propagated suspension. The handoff
       # type is defined after the work-request union below.
@@ -116124,6 +116125,12 @@ module Adamas::HIR
       suspended = nil.as(ExactResultPending?)
       made_progress = false
       generation_finished = false
+      # A fresh physical body records its own call obligations. Edges from a
+      # retired body remain in the retry requests, not in its active generation.
+      retired_dependencies = if (source = @force_lower_replay_source_bindings[name]?) &&
+                                force_lower_exact_source_matches?(name, source)
+                               @force_lower_provisional_dependencies.delete(name)
+                             end
       publication_frame = ForceLowerPublicationFrame.new
       @force_lower_publication_frames << publication_frame
       if replay_capture
@@ -116158,6 +116165,7 @@ module Adamas::HIR
           suspended.not_nil!.consumer_capture = captured
           suspended.not_nil!.consumer_requires_result = requires_result
           suspended.not_nil!.consumer_bypass_inline_yield = replay_bypass_inline_yield
+          suspended.not_nil!.consumer_force_depth = @force_lower_return_type_depth
         end
       ensure
         if need_iy_reset
@@ -116179,6 +116187,10 @@ module Adamas::HIR
         end
         @force_lower_publication_frames.pop
         finish_force_lower_publication_frame(publication_frame, generation_finished)
+        if retired_dependencies &&
+           !(generation_finished && function_state(name).completed? && @module.has_function_with_body?(name))
+          (@force_lower_provisional_dependencies[name] ||= Set(String).new).concat(retired_dependencies)
+        end
       end
 
       if pending = suspended
@@ -116286,9 +116298,21 @@ module Adamas::HIR
           end
           ready_index ||= open_recursive_struct_result
           producer_only = ready_index.nil?
+          shallower_retry = false
           if producer_only
             ready_index = @force_lower_retry_work.rindex do |queued|
               queued.is_a?(ForceLowerSuspendedRequest) && ready_suspended_source_producer?(queued)
+            end
+          end
+          if ready_index.nil?
+            ready_index = @force_lower_retry_work.rindex do |queued|
+              queued.is_a?(ForceLowerSuspendedRequest) && shallower_suspended_producer?(queued, handoff)
+            end
+            producer_only = false
+            shallower_retry = !ready_index.nil?
+            if ready_index && env_has?("DEBUG_FORCE_LOWER_DEPTH")
+              queued = @force_lower_retry_work[ready_index].as(ForceLowerSuspendedRequest)
+              STDERR.puts "[FORCE_LOWER_SHALLOWER] consumer=#{queued.name} producer=#{queued.pending.producer} depth=#{@force_lower_return_type_depth} previous=#{queued.pending.consumer_force_depth}"
             end
           end
           break unless ready_index
@@ -116305,11 +116329,19 @@ module Adamas::HIR
           advanced = case current_request
                      when ForceLowerSuspendedRequest
                        begin
+                         retire_shallower_provisional_consumer(current_request) if shallower_retry
                          resume_suspended_exact_result(current_request, producer_only: producer_only)
                        rescue pending : ExactResultPending
                          if current_request.pending.same?(pending)
-                           raise pending unless force_lower_retry_source_current?(current_request) &&
-                                                schedule_settled_retry_sibling(current_request, handoff)
+                           raise pending unless force_lower_retry_source_current?(current_request)
+                           if shallower_retry
+                             # This edge reproduced the same suspension. Keep
+                             # it owned by the driver while another edge gets
+                             # its own attempt at this depth.
+                             enqueue_force_lower_retry_work(current_request, 0)
+                           else
+                             raise pending unless schedule_settled_retry_sibling(current_request, handoff)
+                           end
                          else
                            raise pending unless advance_suspended_consumer(current_request, pending)
                          end
@@ -116688,6 +116720,7 @@ module Adamas::HIR
                             pending_left.producer_requires_result == pending_right.producer_requires_result &&
                             pending_left.producer_bypass_inline_yield == pending_right.producer_bypass_inline_yield &&
                             pending_left.consumer_requires_result == pending_right.consumer_requires_result &&
+                            pending_left.consumer_force_depth == pending_right.consumer_force_depth &&
                             pending_left.consumer_bypass_inline_yield == pending_right.consumer_bypass_inline_yield &&
                             same_suspended_struct_return?(pending_left.checked_return, pending_right.checked_return) &&
                             same_suspended_provisional_calls?(pending_left.suspended_calls, pending_right.suspended_calls) &&
@@ -116818,6 +116851,63 @@ module Adamas::HIR
       bypass = pending.producer_bypass_inline_yield.nil? ? request.bypass_inline_yield : pending.producer_bypass_inline_yield.not_nil!
       return false unless force_lower_return_depth_available?(producer, bypass || @force_lower_yield_free_only_depth > 0)
       !!reconciled_force_lower_callsite(@pending_arg_types[producer]?, replay.callsite)
+    end
+
+    # A cycle reached at the depth limit can have no physical producer yet.
+    # Replay its exact inputs once the native stack has actually unwound.
+    private def shallower_suspended_producer?(
+      request : ForceLowerSuspendedRequest, handoff : ForceLowerRetryWorkHandoff,
+    ) : Bool
+      pending = request.pending
+      producer = pending.producer
+      return false unless (replay = pending.producer_replay) && pending.producer_pending.nil?
+      return false unless @force_lower_return_type_depth < pending.consumer_force_depth &&
+                          force_lower_retry_source_current?(request)
+      return false if function_state(producer).in_progress? || function_state(producer).completed? ||
+                      @module.has_function_with_body?(producer)
+      return false unless cycle_work_reaches?(producer, request.name)
+      bypass = pending.producer_bypass_inline_yield
+      bypass = request.bypass_inline_yield if bypass.nil?
+      return false unless force_lower_return_depth_available?(producer, bypass || @force_lower_yield_free_only_depth > 0) &&
+                          reconciled_force_lower_callsite(@pending_arg_types[producer]?, replay.callsite)
+      handoff.attempts.none? do |(attempt, depth)|
+        depth <= @force_lower_return_type_depth && same_force_lower_work_request?(attempt, request)
+      end
+    end
+
+    # An emitted consumer still depends on the previous recursive generation.
+    # Rebuild it with the producer under the checked callsite that owns it.
+    private def retire_shallower_provisional_consumer(request : ForceLowerSuspendedRequest) : Nil
+      name = request.name
+      producer = request.pending.producer
+      dependencies = @force_lower_provisional_dependencies[name]? || return
+      return unless dependencies.includes?(producer)
+      return unless dependencies.all? { |other| other == producer || settled_force_lower_result?(other) }
+      return unless function_state(name).completed?
+
+      replay = request.replay_callsite
+      return unless active_force_lower_source_current?(name, replay) &&
+                    ordinary_active_body_callsite?(replay.callsite) &&
+                    reconciled_force_lower_callsite(@pending_arg_types[name]?, replay.callsite)
+      function = @module.function_by_name(name) || return
+      params = function.params
+      offset = params.first?.try(&.name) == "self" ? 1 : 0
+      return if function.heap_block_param || params.any?(&.is_block)
+      return unless params.skip(offset).map(&.type) == replay.callsite.types
+      source = replay.exact_source_binding ||
+               ForceLowerExactSourceBinding.new(replay.source_def, replay.source_arena, replay.source_registry_name)
+      facts = function.source_return_value_facts || return
+      return unless current_recursive_return_receipt?(function, source, facts)
+
+      return unless remove_hir_function(name)
+      clear_function_type_entry(name)
+      clear_function_base_return_type(name) if name == strip_type_suffix(name)
+      clear_function_state(name)
+      @force_lower_provisional_dependencies.delete(name)
+      bump_infer_type_cache_version
+      if env_has?("DEBUG_FORCE_LOWER_DEPTH")
+        STDERR.puts "[FORCE_LOWER_REBUILT_CYCLE] consumer=#{name} producer=#{producer}"
+      end
     end
 
     # Readiness and cycle discovery must use the same live edges. A stale
@@ -124000,6 +124090,7 @@ module Adamas::HIR
                      @force_lower_depth_refused[refused_before_force...].includes?(target)) ||
                     @force_lower_provisional_dependencies.has_key?(target) ||
                     (allow_queued_result_demand && consumer != target &&
+                     !active_force_lower_result_generation?(target, binding) &&
                      queued_exact_force_lower_demand?(target, binding))
 
       if consumer == target && (active = current_active_force_lower_body(target, allow_named_or_defaulted: true))
@@ -124015,6 +124106,16 @@ module Adamas::HIR
       if env_has?("DEBUG_FORCE_LOWER_DEPTH")
         STDERR.puts "[FORCE_LOWER_PROVISIONAL] caller=#{consumer} context=#{ctx.function.name} callee=#{target}"
       end
+    end
+
+    # The exact producer's active generation owns its recursion. A queued
+    # request for an older attempt cannot make that call wait on a suspended body.
+    private def active_force_lower_result_generation?(
+      name : String, binding : ForceLowerExactSourceBinding,
+    ) : Bool
+      return false unless function_state(name).in_progress?
+      active = @force_lower_active_replay_captures[name]?.try(&.source)
+      !!active && same_force_lower_exact_source_binding?(active, binding)
     end
 
     # A syntactically inferred scalar is only a registration hint until the

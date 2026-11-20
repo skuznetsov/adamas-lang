@@ -1227,6 +1227,25 @@ Schedule that producer separately when it has no body, queued work, or pending
 dependencies and the depth budget permits it. Keep the consumer queued.
 Separate producer work counts as progress only after complete checked replay.
 
+A cycle with a depth-refused producer and no physical body can try that
+producer's exact inputs after the stack unwinds to a cheaper depth. Keep the
+ordinary depth, source, argument and emission checks. Bound retries for the
+same continuation at the same depth without intervening progress.
+
+A fresh exact body records dependencies from its own calls. The previous
+generation's dependencies stay available for retry and are restored if the new
+generation aborts. A queued request for the same active exact source cannot
+create an extra dependency on the superseded attempt. New depth refusals and
+unresolved dependencies of the active generation still need to settle, and
+the final body still owes its checked result contract.
+
+If a shallower retry enters a cycle whose consumer has an emitted body, that
+body can still depend on the missing producer. Retire that generation before
+replay only when its exact source, callsite, formals and result receipt are
+current and its other dependencies have settled. Rebuild the body and its
+dependencies from source. Reusing its provisional emission would preserve the
+cycle even after the depth refusal that caused it is gone.
+
 Queue coalescing requires equality of retained Def/Arena identities, complete
 callsite and source-argument facts, source binding including block result, entry
 namespace/type map, callback ABI/source, nested pending/capture/active-body
